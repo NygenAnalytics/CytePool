@@ -1,0 +1,41 @@
+# Validation
+
+Each script in this folder checks one area of CytePool against an independent
+reference: the package that defined the method, or a high-precision computation. A
+script generates its inputs from fixed random seeds, runs the reference and CytePool
+on the same inputs, prints a table of the agreement for every check, and exits with an
+error when a check falls outside its tolerance.
+
+With `--write-fixtures`, a script also saves a small set of inputs and reference
+outputs under `tests/data/`. The test suite compares CytePool against those files, so
+it runs in seconds and needs neither R nor the reference Python packages.
+
+## Tolerances
+
+| Tier | Applies to | Bound |
+| --- | --- | --- |
+| exact | closed-form results | relative difference at most 1e-10 |
+| close | iterative fits | relative difference at most 1e-6 |
+| calibrated | Monte Carlo methods | within simulation error, with the same calls |
+
+Each script states the tier of every check.
+
+## Requirements
+
+- Python 3.13 or newer with numpy and numba. Some scripts also need scipy, mpmath,
+  statsmodels or zarr; each script lists what it imports at the top.
+- R 4.4 or newer with the Bioconductor and CRAN packages a script names. Set `RSCRIPT`
+  to the `Rscript` executable when it is not on `PATH`.
+
+Run a script from the repository root, against the working tree:
+
+```bash
+PYTHONPATH=. python validation/<script>.py
+PYTHONPATH=. python validation/<script>.py --write-fixtures
+```
+
+## How reference packages are used
+
+Reference packages run as separate programs that produce outputs to compare against.
+Their source code is not read or copied: methods are implemented from their papers
+and documentation.
