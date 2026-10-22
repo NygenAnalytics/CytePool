@@ -35,6 +35,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+    "pandas>=2.2",
     "pytest>=8",
 ]
 
