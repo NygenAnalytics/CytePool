@@ -1,0 +1,69 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  quality:
+    runs-on: ubuntu-26.04
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        python-version: "3.13"
+    - name: Install dependencies
+      run: uv sync --locked --extra test --group dev
+    - name: Lint and check formatting
+      run: |
+        uv run ruff check cytepool tests validation
+        uv run ruff format --check cytepool tests validation
+    - name: Type check
+      run: uv run mypy cytepool
+
+  test:
+    name: test (${{ matrix.python-version }})
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14", "3.15"]
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: uv sync --locked --extra test
+    - name: Test
+      run: uv run pytest --durations=10
+
+  bounds-check:
+    # Compiles every routine with array bounds checks, so an out-of-range
+    # index fails the run instead of reading or writing outside an array.
+    runs-on: ubuntu-26.04
+    env:
+      NUMBA_BOUNDSCHECK: "1"
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        python-version: "3.13"
+    - name: Install dependencies
+      run: uv sync --locked --extra test
+    - name: Test with bounds checks
+      run: uv run pytest

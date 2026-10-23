@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=80", "setuptools-scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cytepool"
+dynamic = ["version"]
+description = "Statistics on pseudobulk and bulk omics data, built on numpy and numba"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.13"
+license = "BSD-3-Clause"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [
+    {name = "Parashar Dhapola", email = "parashar.dhapola@gmail.com"},
+]
+keywords = [
+    "pseudobulk",
+    "bulk RNA-seq",
+    "single-cell",
+    "differential expression",
+    "statistics",
+]
+classifiers = [
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numba>=0.61",
+    "numpy>=2.1",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+]
+
+[project.urls]
+Homepage = "https://github.com/NygenAnalytics/CytePool"
+Issues = "https://github.com/NygenAnalytics/CytePool/issues"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.15",
+    "ruff>=0.11",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cytepool*"]
+
+[tool.setuptools_scm]
+version_file = "cytepool/_version.py"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".venv",
+    "cytepool/_version.py",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.13"
+exclude = ["^cytepool/_version\\.py$"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = ["numba", "numba.*"]
+ignore_missing_imports = true
+
+# Numba's configuration and caching attributes exist only at run time.
+[[tool.mypy.overrides]]
+module = ["cytepool._jit"]
+disable_error_code = ["attr-defined", "list-item"]
