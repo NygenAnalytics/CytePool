@@ -587,3 +587,123 @@ def test_scalar_routines_can_be_called_from_compiled_code() -> None:
 
     t = np.array([0.1, 2.0, 7.5, 40.0])
     assert np.array_equal(two_sided_p_values(t, 6.5), 2.0 * dist.t_sf(np.abs(t), 6.5))
+
+
+# ---------------------------------------------------------------------------------------
+# F and chi-squared quantiles
+# ---------------------------------------------------------------------------------------
+
+F_DFS = [(0.5, 3.0), (1.0, 1.0), (2.0, 7.3), (4.0, 0.5), (7.3, 30.0), (30.0, 1e5)]
+F_DFS += [(1e4, 2.0), (3.0, INF), (INF, 4.0), (1e6, 1e6)]
+QUANTILE_P = np.concatenate([10.0 ** -np.linspace(0.31, 300, 40), [0.2, 0.45, 0.5]])
+
+
+def test_f_and_chi2_quantiles_invert_the_tails() -> None:
+    # The survival functions are checked against mpmath above, and the quantiles
+    # against mpmath in the validation script; the round trips check that the root
+    # finder converges in both tails for every (p, df), including quantiles below
+    # the smallest double (0) and above the largest (inf).
+    log_p = np.log(QUANTILE_P)
+    for dfn, dfd in F_DFS:
+        upper = dist.f_isf(QUANTILE_P, dfn, dfd)
+        lower = dist.f_ppf(QUANTILE_P, dfn, dfd)
+        assert not np.isnan(upper).any() and not np.isnan(lower).any()
+        big = np.isinf(upper)
+        assert np.all(dist.f_sf(1.7976931348623157e308, dfn, dfd) > QUANTILE_P[big])
+        np.testing.assert_allclose(
+            dist.f_logsf(upper[~big], dfn, dfd), log_p[~big], rtol=CONTRACT, atol=0
+        )
+        normal = lower >= 2.2250738585072014e-308
+        assert np.all(dist.f_cdf(5e-324, dfn, dfd) >= QUANTILE_P[lower == 0.0])
+        np.testing.assert_allclose(
+            np.log(dist.f_cdf(lower[normal], dfn, dfd)),
+            log_p[normal],
+            rtol=CONTRACT,
+            atol=0,
+        )
+    for df in (0.5, 1.0, 4.0, 30.0, 1e5):
+        upper = dist.chi2_isf(QUANTILE_P, df)
+        lower = dist.chi2_ppf(QUANTILE_P, df)
+        np.testing.assert_allclose(
+            dist.chi2_logsf(upper, df), log_p, rtol=CONTRACT, atol=0
+        )
+        normal = lower >= 2.2250738585072014e-308
+        np.testing.assert_allclose(
+            np.log(dist.chi2_cdf(lower[normal], df)), log_p[normal], rtol=CONTRACT
+        )
+
+
+def test_f_and_chi2_quantile_closed_forms() -> None:
+    p = QUANTILE_P
+    # A quantile from a probability evaluated through its logarithm has a relative
+    # error of order eps |log p| times |d log x / d log P|, at most about 1e-12 here.
+    rtol = 1e-12
+    # F(2, d): P(F > x) = (1 + 2x / d)^(-d / 2)
+    for d in (2.0, 5.0, 40.0):
+        np.testing.assert_allclose(
+            dist.f_isf(p, 2.0, d), d / 2.0 * np.expm1(-2.0 / d * np.log(p)), rtol=rtol
+        )
+    # chi-squared(2): P(X > x) = exp(-x / 2)
+    np.testing.assert_allclose(dist.chi2_isf(p, 2.0), -2.0 * np.log(p), rtol=rtol)
+    np.testing.assert_allclose(dist.chi2_ppf(p, 2.0), -2.0 * np.log1p(-p), rtol=rtol)
+    # F(1, d) is the square of t(d); 1 / F(a, b) ~ F(b, a); the infinite limits
+    np.testing.assert_allclose(
+        dist.f_isf(p, 1.0, 7.5), dist.t_isf(p / 2.0, 7.5) ** 2, rtol=rtol
+    )
+    np.testing.assert_allclose(
+        dist.f_isf(p, 3.0, 11.0), 1.0 / dist.f_ppf(p, 11.0, 3.0), rtol=rtol
+    )
+    np.testing.assert_allclose(
+        dist.f_isf(p, 3.5, INF), dist.chi2_isf(p, 3.5) / 3.5, rtol=rtol
+    )
+    np.testing.assert_allclose(
+        dist.f_isf(p, INF, 4.0), 4.0 / dist.chi2_ppf(p, 4.0), rtol=rtol
+    )
+    # above 1/2 the other tail, 1 - p, is solved
+    upper = np.linspace(0.5, 0.999, 50)
+    np.testing.assert_allclose(
+        dist.f_sf(dist.f_isf(upper, 3.0, 7.0), 3.0, 7.0), upper, rtol=1e-13
+    )
+    np.testing.assert_allclose(
+        dist.f_cdf(dist.f_ppf(upper, 3.0, 7.0), 3.0, 7.0), upper, rtol=1e-13
+    )
+
+
+def test_f_and_chi2_quantiles_at_the_ends_and_outside_the_domain() -> None:
+    assert dist.f_isf(0.0, 2.0, 3.0) == INF and dist.f_isf(1.0, 2.0, 3.0) == 0.0
+    assert dist.f_ppf(0.0, 2.0, 3.0) == 0.0 and dist.f_ppf(1.0, 2.0, 3.0) == INF
+    assert dist.f_isf(0.3, INF, INF) == 1.0 and dist.f_ppf(0.3, INF, INF) == 1.0
+    # quantiles beyond the largest double: P(F > max) = 0.667 for F(0.02, 0.001)
+    largest = 1.7976931348623157e308
+    assert (
+        dist.f_sf(largest, 0.02, 0.001) > 0.53 and dist.f_isf(0.53, 0.02, 0.001) == INF
+    )
+    assert (
+        dist.f_cdf(largest, 0.35, 0.001) < 0.31 and dist.f_ppf(0.31, 0.35, 0.001) == INF
+    )
+    assert dist.chi2_isf(0.0, 3.0) == INF and dist.chi2_ppf(1.0, 3.0) == INF
+    for function, arguments in [
+        (dist.f_isf, (1.2, 3.0, 4.0)),
+        (dist.f_ppf, (-0.1, 3.0, 4.0)),
+        (dist.f_isf, (0.1, 0.0, 4.0)),
+        (dist.f_ppf, (0.1, 3.0, -1.0)),
+        (dist.chi2_isf, (0.5, 0.0)),
+        (dist.chi2_ppf, (0.5, INF)),
+    ]:
+        assert math.isnan(function(*arguments))
+    for function, arguments in [
+        (dist.f_isf, (0.3, 4.0, 5.0)),
+        (dist.f_ppf, (0.3, 4.0, 5.0)),
+        (dist.chi2_isf, (0.3, 4.0)),
+        (dist.chi2_ppf, (0.3, 4.0)),
+    ]:
+        for position in range(len(arguments)):
+            changed = list(arguments)
+            changed[position] = math.nan
+            assert math.isnan(function(*changed))
+    p = np.linspace(0.0, 1.0, 1001)
+    for dfn, dfd in [(1.0, 1.0), (3.0, 7.3), (30.0, 1e5), (2.0, INF)]:
+        assert np.all(np.diff(dist.f_isf(p, dfn, dfd)) < 0)
+        assert np.all(np.diff(dist.f_ppf(p, dfn, dfd)) > 0)
+    with pytest.raises(TypeError, match="p must contain real numbers"):
+        dist.f_isf("0.5", 2.0, 3.0)

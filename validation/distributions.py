@@ -2,7 +2,8 @@
 
 Checks every public function of ``cytepool.stats.special`` and
 ``cytepool.stats.distributions`` against mpmath evaluated at the exact binary values of
-the inputs, with 50 significant digits (70 for intermediate steps). The grids cover deep
+the inputs, with 50 significant digits (70 for intermediate steps); quantile references
+are roots of the 70-digit tail probabilities. The grids cover deep
 tails (probabilities down to 1e-300, and log probabilities far below), shapes from 1e-3
 to 1e6 (incomplete gamma shapes to 1e18 above the center), degrees of freedom from 0.5
 to 1e12 and infinity, hypergeometric populations up to 1e13, and the hard cases where
@@ -57,6 +58,9 @@ CONTRACT = 1e-12
 NEAR_MACHINE = 1e-15
 # Probabilities below this are checked through their logarithm.
 SMALLEST_CHECKED = 1e-300
+# The tests check these quantiles through the tails, which have fixtures, and closed
+# forms; their families get no fixtures of their own.
+UNFIXTURED = {"f_quantile", "chi2_quantile"}
 
 
 # ---------------------------------------------------------------------------------------
@@ -348,6 +352,39 @@ def build_inputs() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     inputs["f_genes__x"] = rng.f(2.0, 37.4, 2000) * (1.0 + effect**2)
     inputs["f_genes__dfn"] = np.full(2000, 2.0)
     inputs["f_genes__dfd"] = np.full(2000, 37.4)
+
+    # F and chi-squared quantiles, at probabilities whose quantiles are normal doubles:
+    # a tail holding p falls like p^(2 / df), so p is kept above 10^(-140 min(df, 2)).
+    ps_q = [1e-300, 1e-250, 1e-200, 1e-150, 1e-100, 1e-50, 1e-20, 1e-10, 1e-5, 1e-3]
+    ps_q += [0.01, 0.05, 0.1, 0.25, 0.4, 0.5, 0.6, 0.9, 0.99, 1.0 - 1e-10]
+    dfs_q = [0.5, 1.0, 3.0, 10.0, 100.0, 1e5, math.inf]
+
+    def representable(p: float, *dfs: float) -> bool:
+        return p >= 10.0 ** (-140.0 * min(*dfs, 2.0))
+
+    points = [
+        (p, d1, d2)
+        for d1 in dfs_q
+        for d2 in dfs_q
+        for p in ps_q
+        if not (math.isinf(d1) and math.isinf(d2)) and representable(p, d1, d2)
+    ]
+    random_p = 10.0 ** rng.uniform(-150, np.log10(0.5), 150)
+    random_dfs = 10.0 ** rng.uniform(0, 6, (150, 2))
+    points += [(p, d1, d2) for p, (d1, d2) in zip(random_p, random_dfs)]
+    keys = ("f_quantile__p", "f_quantile__dfn", "f_quantile__dfd")
+    for key, column in zip(keys, np.array(points).T):
+        inputs[key] = column
+    points = [
+        (p, df)
+        for df in [0.5, 1.0, 2.0, 3.7, 10.0, 100.0, 1e4, 1e6]
+        for p in ps_q
+        if representable(p, df)
+    ]
+    points += list(
+        zip(10.0 ** rng.uniform(-150, np.log10(0.5), 50), 10.0 ** rng.uniform(0, 6, 50))
+    )
+    inputs["chi2_quantile__p"], inputs["chi2_quantile__df"] = np.array(points).T
     return inputs, hard
 
 
@@ -507,8 +544,8 @@ def reference_main(directory: Path) -> None:
             return both / 2, (1 + inner) / 2
 
     def f_tails(x: float, dfn: float, dfd: float) -> tuple[Any, Any]:
-        F = mp.mpf(x)
         with mp.workdps(work):
+            F = mp.mpf(x)
             if F <= 0:
                 return mp.mpf(0), mp.mpf(1)
             if math.isinf(dfn) and math.isinf(dfd):
@@ -525,6 +562,68 @@ def reference_main(directory: Path) -> None:
             V = D1 * F / (D2 + D1 * F)
             sf, cdf = ibeta_pair(D2 / 2, D1 / 2, W, V)
             return cdf, sf
+
+    def gamma_mass(A: Any, X: Any) -> Any:
+        """X g(X) for the density g of the gamma distribution with shape A, scale 1."""
+        return mp.exp(A * mp.log(X) - X - mp.loggamma(A))
+
+    def f_mass(x: Any, dfn: float, dfd: float) -> Any:
+        """x f(x) for the density f of the F distribution."""
+        with mp.workdps(work):
+            if math.isinf(dfd):
+                return gamma_mass(mp.mpf(dfn) / 2, mp.mpf(dfn) / 2 * x)
+            if math.isinf(dfn):
+                return gamma_mass(mp.mpf(dfd) / 2, mp.mpf(dfd) / 2 / x)
+            A, B = mp.mpf(dfn) / 2, mp.mpf(dfd) / 2
+            log_beta = mp.loggamma(A) + mp.loggamma(B) - mp.loggamma(A + B)
+            V = A * x / (B + A * x)
+            return mp.exp(A * mp.log(V) + B * mp.log(B / (B + A * x)) - log_beta)
+
+    def tail_quantile(
+        tails: Callable[[Any], tuple[Any, Any, Any]], p: float, upper: bool
+    ) -> float:
+        """The x > 0 with P(X > x) = p if upper, else P(X <= x) = p.
+
+        tails(x) returns P(X <= x), P(X > x) and x f(x) for the density f. The tail
+        holding min(p, 1 - p) is solved for u = log x by Newton's method on its
+        logarithm, which is monotone in u, inside a bracket found by steps that double
+        from u = 0; a step that leaves the bracket is replaced by bisection.
+        """
+        with mp.workdps(work):
+            P = mp.mpf(p)
+            if P > mp.mpf(1) / 2:
+                P, upper = 1 - P, not upper
+            target = mp.log(P)
+
+            def h_and_slope(u: Any) -> tuple[Any, Any]:
+                lower_tail, upper_tail, mass = tails(mp.exp(u))
+                tail = upper_tail if upper else lower_tail
+                return mp.log(tail) - target, (-mass if upper else mass) / tail
+
+            # h decreases in u for the upper tail and increases for the lower one
+            a, ha = mp.mpf(0), h_and_slope(mp.mpf(0))[0]
+            direction = 1 if (ha > 0) == upper else -1
+            step = mp.mpf(1)
+            b, hb = a + direction * step, h_and_slope(a + direction * step)[0]
+            while (ha > 0) == (hb > 0):
+                a, ha = b, hb
+                step *= 2
+                b, hb = a + direction * step, h_and_slope(a + direction * step)[0]
+            low, high = min(a, b), max(a, b)
+            u = (low + high) / 2
+            for _ in range(500):
+                value, slope = h_and_slope(u)
+                if (value > 0) == upper:
+                    low = u
+                else:
+                    high = u
+                u_new = u - value / slope
+                if not (low < u_new < high):
+                    u_new = (low + high) / 2
+                if abs(u_new - u) < mp.mpf(10) ** -55 * max(1, abs(u)):
+                    return float(mp.exp(u_new))
+                u = u_new
+            raise RuntimeError(f"quantile reference did not converge for p={p}")
 
     def t_upper_quantile(p: float, df: float) -> float:
         """The t > 0 with P(T > t) = p < 1/2: Newton's method in u = log t, kept inside a
@@ -781,6 +880,36 @@ def reference_main(directory: Path) -> None:
             pairs.append(gamma_pair(mp.mpf(df) / 2, mp.mpf(x) / 2))
     store("chi2", ("cdf", "sf", "logcdf", "logsf"), two_tail_rows(pairs))
 
+    rows = []
+    for p, dfn, dfd in zip(
+        inputs["f_quantile__p"], inputs["f_quantile__dfn"], inputs["f_quantile__dfd"]
+    ):
+
+        def f_quantile_tails(x: Any, dfn: float = dfn, dfd: float = dfd) -> Any:
+            return (*f_tails(x, dfn, dfd), f_mass(x, dfn, dfd))
+
+        rows.append(
+            (
+                tail_quantile(f_quantile_tails, p, True),
+                tail_quantile(f_quantile_tails, p, False),
+            )
+        )
+    store("f_quantile", ("isf", "ppf"), rows)
+    rows = []
+    for p, df in zip(inputs["chi2_quantile__p"], inputs["chi2_quantile__df"]):
+
+        def chi2_quantile_tails(x: Any, df: float = df) -> Any:
+            A = mp.mpf(df) / 2
+            return (*gamma_pair(A, x / 2), gamma_mass(A, x / 2))
+
+        rows.append(
+            (
+                tail_quantile(chi2_quantile_tails, p, True),
+                tail_quantile(chi2_quantile_tails, p, False),
+            )
+        )
+    store("chi2_quantile", ("isf", "ppf"), rows)
+
     pairs = []
     for x, shape, scale in zip(
         inputs["gamma__x"], inputs["gamma__shape"], inputs["gamma__scale"]
@@ -836,6 +965,8 @@ def _scipy_values(inputs: dict[str, np.ndarray], directory: Path) -> str:
     hyper_logsf = np.full(hyper_evaluated.size, np.nan)
     hyper_sf[hyper_evaluated] = stats.hypergeom.sf(*hyper)
     hyper_logsf[hyper_evaluated] = stats.hypergeom.logsf(*hyper)
+    fq = (i["f_quantile__p"], i["f_quantile__dfn"], i["f_quantile__dfd"])
+    cq = (i["chi2_quantile__p"], i["chi2_quantile__df"])
     values = {
         "lgamma__value": special.gammaln(i["lgamma__x"]),
         "digamma__value": special.psi(i["digamma__x"]),
@@ -872,6 +1003,10 @@ def _scipy_values(inputs: dict[str, np.ndarray], directory: Path) -> str:
         "chi2__cdf": stats.chi2.cdf(i["chi2__x"], i["chi2__df"]),
         "chi2__sf": stats.chi2.sf(i["chi2__x"], i["chi2__df"]),
         "chi2__logsf": stats.chi2.logsf(i["chi2__x"], i["chi2__df"]),
+        "f_quantile__isf": stats.f.isf(*fq),
+        "f_quantile__ppf": stats.f.ppf(*fq),
+        "chi2_quantile__isf": stats.chi2.isf(*cq),
+        "chi2_quantile__ppf": stats.chi2.ppf(*cq),
         "gamma__cdf": stats.gamma.cdf(
             i["gamma__x"], i["gamma__shape"], scale=i["gamma__scale"]
         ),
@@ -913,6 +1048,8 @@ def cytepool_values(inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     g_args = (i["gamma__x"], i["gamma__shape"], i["gamma__scale"])
     b_args = (i["beta__x"], i["beta__a"], i["beta__b"])
     q_args = (i["t_quantile__p"], i["t_quantile__df"])
+    fq_args = (i["f_quantile__p"], i["f_quantile__dfn"], i["f_quantile__dfd"])
+    cq_args = (i["chi2_quantile__p"], i["chi2_quantile__df"])
     values: dict[str, Any] = {
         "lgamma__value": s.lgamma(i["lgamma__x"]),
         "digamma__value": s.digamma(i["digamma__x"]),
@@ -948,6 +1085,10 @@ def cytepool_values(inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "chi2__cdf": d.chi2_cdf(*c_args),
         "chi2__sf": d.chi2_sf(*c_args),
         "chi2__logsf": d.chi2_logsf(*c_args),
+        "f_quantile__isf": d.f_isf(*fq_args),
+        "f_quantile__ppf": d.f_ppf(*fq_args),
+        "chi2_quantile__isf": d.chi2_isf(*cq_args),
+        "chi2_quantile__ppf": d.chi2_ppf(*cq_args),
         "gamma__cdf": d.gamma_cdf(*g_args),
         "gamma__sf": d.gamma_sf(*g_args),
         "beta__cdf": d.beta_cdf(*b_args),
@@ -1076,6 +1217,19 @@ def checks() -> list[Check]:
                 "log",
                 CONTRACT,
             )
+        if distribution in ("f", "chi2"):
+            add(
+                f"{distribution}_isf",
+                f"{distribution}_quantile__isf",
+                "relative",
+                CONTRACT,
+            )
+            add(
+                f"{distribution}_ppf",
+                f"{distribution}_quantile__ppf",
+                "relative",
+                CONTRACT,
+            )
         if distribution == "t":
             add("t_isf", "t_quantile__isf", "relative", CONTRACT)
             add(
@@ -1193,7 +1347,7 @@ def write_fixtures(
     """Write a few hundred points per family: the hard cases, the worst and a random sample."""
     rng = np.random.default_rng(SEED + 1)
     FIXTURE_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    families = sorted({_family(k) for k in inputs})
+    families = sorted({_family(k) for k in inputs} - UNFIXTURED)
     for family in families:
         keys_in = [k for k in inputs if _family(k) == family]
         keys_ref = [k for k in reference if _family(k) == family]
