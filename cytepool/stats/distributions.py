@@ -30,7 +30,12 @@ Methods:
       tail, and kept inside a bisection bracket.
     - F: P(F > x) = I_w(dfd/2, dfn/2) with w = dfd / (dfd + dfn x); dfd = inf gives
       dfn F ~ chi-squared(dfn), and dfn = inf gives dfd / F ~ chi-squared(dfd).
-    - Chi-squared and gamma: the regularized incomplete gamma function.
+      Quantiles: Newton's method in log x on the logarithm of the tail that holds
+      min(p, 1 - p), started from the better of Paulson's normal approximation to
+      F^(1/3) and the power law of that tail, and kept inside a bisection bracket;
+      dfn = inf uses 1 / F ~ F(dfd, dfn).
+    - Chi-squared and gamma: the regularized incomplete gamma function; chi-squared
+      quantiles are those of X / df ~ F(df, inf).
     - Beta: the regularized incomplete beta function.
     - Hypergeometric: each probability from Loader's (2000) saddle-point form of the
       binomial probabilities, P(X = k) = b(k; n, p) b(N - k; M - n, p) / b(N; M, p) with
@@ -49,7 +54,11 @@ References:
       of Standards, sections 26.4, 26.6, 26.7.
     - Dekker TJ (1971). A floating-point technique for extending the available
       precision. Numerische Mathematik 18:224-242.
+    - Johnson NL, Kotz S, Balakrishnan N (1995). Continuous Univariate Distributions,
+      volume 2, 2nd edition. Wiley, chapter 27.
     - Loader C (2000). Fast and accurate computation of binomial probabilities.
+    - Paulson E (1942). An approximate normalization of the analysis of variance
+      distribution. Annals of Mathematical Statistics 13:233-235.
     - Wichura MJ (1988). Algorithm AS 241: the percentage points of the normal
       distribution. Journal of the Royal Statistical Society C 37:477-484.
 """
@@ -64,8 +73,11 @@ from cytepool.stats.special import (
     _compile,
     _deviance_term,
     _log1mexp,
+    _log_beta_positive,
+    _log_beta_prefactor,
     _log_betainc_pair,
     _log_betainc_pair_at,
+    _log_gamma_prefactor,
     _log_gamma_ratio,
     _log_gammainc_pair,
     _stirling_error,
@@ -76,10 +88,14 @@ __all__ = [
     "beta_cdf",
     "beta_sf",
     "chi2_cdf",
+    "chi2_isf",
     "chi2_logsf",
+    "chi2_ppf",
     "chi2_sf",
     "f_cdf",
+    "f_isf",
     "f_logsf",
+    "f_ppf",
     "f_sf",
     "gamma_cdf",
     "gamma_sf",
@@ -112,6 +128,8 @@ _SMALLEST_NORMAL = 2.2250738585072014e-308
 _LARGEST = 1.7976931348623157e308
 _LOG_LARGEST = 709.782712893384  # log of the largest double
 _EXACT_INTEGERS = 9007199254740992.0  # 2^53
+_SMALLEST_POSITIVE = 5e-324  # the smallest subnormal double
+_SUBNORMAL_SLACK = 2e-323  # four units of the smallest subnormal double
 _MAX_TERMS = 10_000_000  # step limit of the hypergeometric tail sums
 
 # Wichura (1988), algorithm AS 241 (PPND16): coefficients of the rational approximations,
@@ -577,6 +595,218 @@ def f_logsf_scalar(x: float, dfn: float, dfd: float) -> float:
     return _f_tails(x, dfn, dfd)[0]
 
 
+@_compile
+def _f_log_x_density(x: float, dfn: float, dfd: float) -> float:
+    """Return log(x f(x)) for the density f of F(dfn, dfd), x > 0 and finite dfn.
+
+    With a = dfn / 2, b = dfd / 2 and v = dfn x / (dfd + dfn x) = 1 - w,
+    x f(x) = v^a w^b / B(a, b), formed with Loader's deviance terms; for dfd = inf,
+    dfn F is chi-squared(dfn) and x f(x) = z^a exp(-z) / Gamma(a) with z = a x.
+    """
+    a = 0.5 * dfn
+    if dfd == _INF:
+        z = a * x
+        log_z = math.log(z) if z >= _SMALLEST_NORMAL else math.log(a) + math.log(x)
+        return math.log(a) + _log_gamma_prefactor(a, z, log_z, a * (1.0 - x))
+    r = dfn * x / dfd
+    if not (r < _INF):
+        r = x * (dfn / dfd)
+    if r == _INF:
+        return -_INF
+    w = 1.0 / (1.0 + r)
+    v = r / (1.0 + r)
+    log_w = -math.log1p(r)
+    if r >= 1.0:
+        log_v = -math.log1p(1.0 / r)
+    elif r >= _SMALLEST_NORMAL:
+        log_v = math.log(r) + log_w
+    else:  # a subnormal r has lost bits; its logarithm comes from the inputs
+        log_v = math.log(dfn) + math.log(x) - math.log(dfd) + log_w
+    lam = 0.5 * dfn * w * (1.0 - x)  # a w - b v
+    return _log_beta_prefactor(a, 0.5 * dfd, v, w, log_v, log_w, lam)
+
+
+@_compile
+def _f_quantile_residual(
+    x: float, dfn: float, dfd: float, upper: bool, target: float
+) -> tuple[float, float]:
+    """Return h = log G(x) - target and the Newton step for h in log x.
+
+    G(x) is P(F > x) when upper, else P(F <= x); d log G / d log x is -x f(x) / G(x)
+    and x f(x) / G(x) respectively.
+    """
+    log_sf, log_cdf = _f_tails(x, dfn, dfd)
+    log_tail = log_sf if upper else log_cdf
+    h = log_tail - target
+    ratio = math.exp(min(log_tail - _f_log_x_density(x, dfn, dfd), _LOG_LARGEST))
+    return h, (h * ratio if upper else -h * ratio)
+
+
+@_compile
+def _f_quantile_finish(
+    x: float, dfn: float, dfd: float, upper: bool, target: float, high: float
+) -> float:
+    """Return the converged x, or 0 or inf when the quantile is beyond the doubles.
+
+    A subnormal x becomes 0 if the quantile is below the smallest positive double. An
+    x near the largest double with no evaluated point above the quantile (``high``
+    still the largest double) becomes inf if the quantile exceeds the largest double.
+    """
+    if 0.0 < x < _SMALLEST_NORMAL:
+        h = _f_quantile_residual(_SMALLEST_POSITIVE, dfn, dfd, upper, target)[0]
+        if (h > 0.0) != upper:  # the smallest positive double is above the quantile
+            return 0.0
+    elif high == _LARGEST and x >= 0.5 * _LARGEST:
+        h = _f_quantile_residual(_LARGEST, dfn, dfd, upper, target)[0]
+        if (h > 0.0) == upper:  # the largest double is below the quantile
+            return _INF
+    return x
+
+
+@_compile
+def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float:
+    """Return the x > 0 with log P(F > x) = log_p if upper, else log P(F <= x) = log_p.
+
+    For log_p <= log(1/2), 0 < dfn < inf and 0 < dfd <= inf; the probability may be
+    below the smallest double. Returns +inf when the quantile exceeds the largest
+    double, 0 when it is below the smallest, and NaN if the iteration does not
+    converge.
+    """
+    target = log_p
+    a = 0.5 * dfn
+    # Start from the better of Paulson's normal approximation to F^(1/3) and the power
+    # law of the tail that holds p (Johnson, Kotz and Balakrishnan 1995, 27.5).
+    z = norm_isf_scalar(math.exp(log_p))
+    if not upper:
+        z = -z
+    c1 = 2.0 / (9.0 * dfn)
+    c2 = 0.0 if dfd == _INF else 2.0 / (9.0 * dfd)
+    quad_a = (1.0 - c2) * (1.0 - c2) - z * z * c2
+    quad_b = -2.0 * (1.0 - c1) * (1.0 - c2)
+    quad_c = (1.0 - c1) * (1.0 - c1) - z * z * c1
+    discriminant = quad_b * quad_b - 4.0 * quad_a * quad_c
+    x = 1.0
+    if quad_a > 0.0 and discriminant >= 0.0:
+        root = math.sqrt(discriminant)
+        # the root with (1 - c2) y - (1 - c1) of the sign of z
+        y = (
+            (-quad_b + root) / (2.0 * quad_a)
+            if z >= 0.0
+            else (-quad_b - root) / (2.0 * quad_a)
+        )
+        if y > 0.0:
+            x = y * y * y
+    if not (0.0 < x <= _LARGEST):
+        x = 1.0
+    h, step = _f_quantile_residual(x, dfn, dfd, upper, target)
+    if dfd == _INF:
+        if upper:
+            log_tail_start = _NAN
+        else:  # P(X <= x) ~ (a x)^a / Gamma(a + 1) as x -> 0
+            log_tail_start = (target + math.lgamma(a + 1.0)) / a - math.log(a)
+    else:
+        b = 0.5 * dfd
+        log_beta = _log_beta_positive(a, b)
+        if upper:  # P(F > x) ~ (dfd / (dfn x))^b / (b B(a, b)) as x -> inf
+            log_tail_start = math.log(dfd / dfn) - (target + math.log(b) + log_beta) / b
+        else:  # P(F <= x) ~ (dfn x / dfd)^a / (a B(a, b)) as x -> 0
+            log_tail_start = math.log(dfd / dfn) + (target + math.log(a) + log_beta) / a
+    if not math.isnan(log_tail_start):
+        x_tail = (
+            _LARGEST if log_tail_start >= _LOG_LARGEST else math.exp(log_tail_start)
+        )
+        if x_tail > 0.0:
+            h_tail, step_tail = _f_quantile_residual(x_tail, dfn, dfd, upper, target)
+            if abs(h_tail) < abs(h):
+                x, h, step = x_tail, h_tail, step_tail
+
+    # Newton's method in log x, where log G is close to linear in the tails, inside a
+    # bracket [low, high]; a step that leaves the bracket is replaced by geometric
+    # bisection (as for the t quantile).
+    low = 0.0
+    high = _LARGEST
+    previous = _INF
+    for _ in range(300):
+        if h == 0.0:
+            return x
+        if (h > 0.0) == upper:  # G(x) is above its target on the side of small x
+            if x >= _LARGEST:
+                return _INF
+            low = x
+        else:
+            high = x
+        # Near and below the smallest normal double the spacing of the doubles is
+        # absolute, so the tests allow a few units of the smallest subnormal.
+        if high - low <= 4.0 * _EPS * high + _SUBNORMAL_SLACK:
+            return _f_quantile_finish(x, dfn, dfd, upper, target, high)
+        x_new = x * math.exp(min(max(step, -20.0), 20.0))
+        change = abs(x_new - x)
+        if change <= 4.0 * _EPS * x + _SUBNORMAL_SLACK:
+            return _f_quantile_finish(x_new, dfn, dfd, upper, target, high)
+        if low < x_new < high:
+            # A Newton step that has stopped shrinking has reached the rounding noise
+            # of log G(x).
+            if change <= 1e-10 * x and change >= 0.5 * previous:
+                return _f_quantile_finish(x_new, dfn, dfd, upper, target, high)
+            previous = change
+        else:
+            x_new = math.sqrt(low) * math.sqrt(high) if low > 0.0 else 0.5 * high
+            previous = _INF
+            if x_new == 0.0:
+                return 0.0  # the quantile is below the smallest positive double
+        x = x_new
+        h, step = _f_quantile_residual(x, dfn, dfd, upper, target)
+    return _NAN
+
+
+@_compile
+def _f_quantile(p: float, upper: bool, dfn: float, dfd: float) -> float:
+    """Return the x with P(F > x) = p if upper, else P(F <= x) = p, for 0 < p < 1.
+
+    The tail that holds min(p, 1 - p) is solved; 1 - p is exact for p >= 1/2.
+    """
+    if dfn == _INF:
+        if dfd == _INF:  # point mass at 1
+            return 1.0
+        # 1 / F ~ F(dfd, dfn): P(F > x) = P(1 / F < 1 / x)
+        dfn, dfd = dfd, dfn
+        upper = not upper
+        if p <= 0.5:
+            return 1.0 / _f_tail_quantile(math.log(p), upper, dfn, dfd)
+        return 1.0 / _f_tail_quantile(math.log1p(-p), not upper, dfn, dfd)
+    if p <= 0.5:
+        return _f_tail_quantile(math.log(p), upper, dfn, dfd)
+    return _f_tail_quantile(math.log1p(-p), not upper, dfn, dfd)
+
+
+@_compile
+def f_isf_scalar(p: float, dfn: float, dfd: float) -> float:
+    """Return the x with P(F > x) = p for F ~ F(dfn, dfd); dfn or dfd may be inf."""
+    if math.isnan(p) or math.isnan(dfn) or math.isnan(dfd):
+        return _NAN
+    if p < 0.0 or p > 1.0 or dfn <= 0.0 or dfd <= 0.0:
+        return _NAN
+    if p == 0.0:
+        return _INF
+    if p == 1.0:
+        return 0.0
+    return _f_quantile(p, True, dfn, dfd)
+
+
+@_compile
+def f_ppf_scalar(p: float, dfn: float, dfd: float) -> float:
+    """Return the x with P(F <= x) = p for F ~ F(dfn, dfd); dfn or dfd may be inf."""
+    if math.isnan(p) or math.isnan(dfn) or math.isnan(dfd):
+        return _NAN
+    if p < 0.0 or p > 1.0 or dfn <= 0.0 or dfd <= 0.0:
+        return _NAN
+    if p == 0.0:
+        return 0.0
+    if p == 1.0:
+        return _INF
+    return _f_quantile(p, False, dfn, dfd)
+
+
 # ---------------------------------------------------------------------------------------
 # Chi-squared and gamma distributions
 # ---------------------------------------------------------------------------------------
@@ -610,6 +840,23 @@ def chi2_sf_scalar(x: float, df: float) -> float:
 def chi2_logsf_scalar(x: float, df: float) -> float:
     """Return log P(X > x) for X ~ chi-squared(df)."""
     return _chi2_tails(x, df)[1]
+
+
+@_compile
+def chi2_isf_scalar(p: float, df: float) -> float:
+    """Return the x with P(X > x) = p for X ~ chi-squared(df), 0 < df < inf."""
+    if math.isnan(df) or not (0.0 < df < _INF):
+        return _NAN
+    # X / df ~ F(df, inf)
+    return df * f_isf_scalar(p, df, _INF)
+
+
+@_compile
+def chi2_ppf_scalar(p: float, df: float) -> float:
+    """Return the x with P(X <= x) = p for X ~ chi-squared(df), 0 < df < inf."""
+    if math.isnan(df) or not (0.0 < df < _INF):
+        return _NAN
+    return df * f_ppf_scalar(p, df, _INF)
 
 
 @_compile
@@ -868,13 +1115,18 @@ def _f_array(
 ) -> NDArray[np.float64]:
     out = np.empty(x.size)
     for i in range(x.size):
-        log_sf, log_cdf = _f_tails(x[i], dfn[i], dfd[i])
-        if kind == _CDF:
-            out[i] = math.exp(log_cdf)
-        elif kind == _SF:
-            out[i] = math.exp(log_sf)
+        if kind == _PPF:
+            out[i] = f_ppf_scalar(x[i], dfn[i], dfd[i])
+        elif kind == _ISF:
+            out[i] = f_isf_scalar(x[i], dfn[i], dfd[i])
         else:
-            out[i] = log_sf
+            log_sf, log_cdf = _f_tails(x[i], dfn[i], dfd[i])
+            if kind == _CDF:
+                out[i] = math.exp(log_cdf)
+            elif kind == _SF:
+                out[i] = math.exp(log_sf)
+            else:
+                out[i] = log_sf
     return out
 
 
@@ -884,13 +1136,18 @@ def _chi2_array(
 ) -> NDArray[np.float64]:
     out = np.empty(x.size)
     for i in range(x.size):
-        log_cdf, log_sf = _chi2_tails(x[i], df[i])
-        if kind == _CDF:
-            out[i] = math.exp(log_cdf)
-        elif kind == _SF:
-            out[i] = math.exp(log_sf)
+        if kind == _PPF:
+            out[i] = chi2_ppf_scalar(x[i], df[i])
+        elif kind == _ISF:
+            out[i] = chi2_isf_scalar(x[i], df[i])
         else:
-            out[i] = log_sf
+            log_cdf, log_sf = _chi2_tails(x[i], df[i])
+            if kind == _CDF:
+                out[i] = math.exp(log_cdf)
+            elif kind == _SF:
+                out[i] = math.exp(log_sf)
+            else:
+                out[i] = log_sf
     return out
 
 
@@ -1178,6 +1435,48 @@ def f_logsf(
     return _apply(_f_array, _LOGSF, x=x, dfn=dfn, dfd=dfd)
 
 
+def f_ppf(p: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.float64]:
+    """Quantile function of the F distribution: the x with P(F <= x) = p.
+
+    Accurate in both tails: for p above 1/2 the upper tail 1 - p, which is exact, is
+    solved instead.
+
+    Args:
+        p: Probability in [0, 1]; 0 gives 0, 1 gives +inf, values outside give NaN.
+        dfn: Numerator degrees of freedom, dfn > 0; inf gives dfd / F ~ chi-squared(dfd).
+        dfd: Denominator degrees of freedom, dfd > 0; inf gives dfn F ~ chi-squared(dfn).
+
+    Returns:
+        The quantile, as a float or a float64 array of the broadcast shape. Degrees of
+        freedom <= 0 give NaN; a quantile beyond the largest double gives +inf.
+
+    Raises:
+        TypeError: If an argument is not real-valued.
+    """
+    return _apply(_f_array, _PPF, p=p, dfn=dfn, dfd=dfd)
+
+
+def f_isf(p: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.float64]:
+    """Inverse survival function of the F distribution: the x with P(F > x) = p.
+
+    Accurate for p down to the smallest doubles; use this rather than
+    ``f_ppf(1 - p)`` for upper-tail quantiles.
+
+    Args:
+        p: Probability in [0, 1]; 0 gives +inf, 1 gives 0, values outside give NaN.
+        dfn: Numerator degrees of freedom, dfn > 0; inf gives dfd / F ~ chi-squared(dfd).
+        dfd: Denominator degrees of freedom, dfd > 0; inf gives dfn F ~ chi-squared(dfn).
+
+    Returns:
+        The quantile, as a float or a float64 array of the broadcast shape. Degrees of
+        freedom <= 0 give NaN; a quantile beyond the largest double gives +inf.
+
+    Raises:
+        TypeError: If an argument is not real-valued.
+    """
+    return _apply(_f_array, _ISF, p=p, dfn=dfn, dfd=dfd)
+
+
 def chi2_cdf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     """Cumulative distribution function of the chi-squared distribution, P(X <= x).
 
@@ -1227,6 +1526,42 @@ def chi2_logsf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
         TypeError: If an argument is not real-valued.
     """
     return _apply(_chi2_array, _LOGSF, x=x, df=df)
+
+
+def chi2_ppf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
+    """Quantile function of the chi-squared distribution: the x with P(X <= x) = p.
+
+    Args:
+        p: Probability in [0, 1]; 0 gives 0, 1 gives +inf, values outside give NaN.
+        df: Degrees of freedom, 0 < df < inf, not necessarily an integer.
+
+    Returns:
+        The quantile, as a float or a float64 array of the broadcast shape. df outside
+        (0, inf) gives NaN.
+
+    Raises:
+        TypeError: If an argument is not real-valued.
+    """
+    return _apply(_chi2_array, _PPF, p=p, df=df)
+
+
+def chi2_isf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
+    """Inverse survival function of the chi-squared distribution: P(X > x) = p.
+
+    Accurate for p down to the smallest doubles.
+
+    Args:
+        p: Probability in [0, 1]; 0 gives +inf, 1 gives 0, values outside give NaN.
+        df: Degrees of freedom, 0 < df < inf, not necessarily an integer.
+
+    Returns:
+        The quantile, as a float or a float64 array of the broadcast shape. df outside
+        (0, inf) gives NaN.
+
+    Raises:
+        TypeError: If an argument is not real-valued.
+    """
+    return _apply(_chi2_array, _ISF, p=p, df=df)
 
 
 def gamma_cdf(
