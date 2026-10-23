@@ -1,0 +1,172 @@
+{
+ "attributes": {
+  "format": "cytepool.cube",
+  "format_version": 1,
+  "axes": [
+   "groups",
+   "samples",
+   "features"
+  ],
+  "layers": [
+   "counts",
+   "detected",
+   "log_sum",
+   "log_sum_sq",
+   "linear_sum"
+  ],
+  "has_n_cells": true,
+  "normalization": {
+   "method": "library_size",
+   "target_sum": 10000.0,
+   "log": "natural"
+  },
+  "provenance": {
+   "source": "validation/cube_files.py",
+   "seed": 20261023,
+   "note": "ünï"
+  }
+ },
+ "n_cells:dims": [
+  "samples",
+  "groups"
+ ],
+ "layer:counts:dims": [
+  "groups",
+  "samples",
+  "features"
+ ],
+ "layer:detected:dims": [
+  "groups",
+  "samples",
+  "features"
+ ],
+ "layer:log_sum:dims": [
+  "groups",
+  "samples",
+  "features"
+ ],
+ "layer:log_sum_sq:dims": [
+  "groups",
+  "samples",
+  "features"
+ ],
+ "layer:linear_sum:dims": [
+  "groups",
+  "samples",
+  "features"
+ ],
+ "samples": [
+  "sample_id",
+  "donor",
+  "age",
+  "batch",
+  "visit",
+  "Treated?",
+  "CD4/CD8 ratio",
+  "Größe"
+ ],
+ "samples:0:dims": [
+  "samples"
+ ],
+ "samples:0": [
+  "S00",
+  "S01",
+  "S02",
+  "S03"
+ ],
+ "samples:1:dims": [
+  "samples"
+ ],
+ "samples:1": [
+  "D0",
+  "D0",
+  "D1",
+  null
+ ],
+ "samples:2:dims": [
+  "samples"
+ ],
+ "samples:3:dims": [
+  "samples"
+ ],
+ "samples:4:dims": [
+  "samples"
+ ],
+ "samples:5:dims": [
+  "samples"
+ ],
+ "samples:6:dims": [
+  "samples"
+ ],
+ "samples:7:dims": [
+  "samples"
+ ],
+ "groups": [
+  "group_id",
+  "cell_ontology_id",
+  "score",
+  "lifetime"
+ ],
+ "groups:0:dims": [
+  "groups"
+ ],
+ "groups:0": [
+  "type 0",
+  "type 1",
+  "type 2"
+ ],
+ "groups:1:dims": [
+  "groups"
+ ],
+ "groups:1": [
+  "CL:0000000",
+  null,
+  "CL:0000002"
+ ],
+ "groups:2:dims": [
+  "groups"
+ ],
+ "groups:3:dims": [
+  "groups"
+ ],
+ "features": [
+  "feature_id",
+  "symbol",
+  "measured",
+  "gc",
+  "length"
+ ],
+ "features:0:dims": [
+  "features"
+ ],
+ "features:0": [
+  "ENSG00000000000",
+  "ENSG00000000001",
+  "ENSG00000000002",
+  "ENSG00000000003",
+  "ENSG00000000004",
+  "ENSG00000000005",
+  "ENSG00000000006"
+ ],
+ "features:1:dims": [
+  "features"
+ ],
+ "features:1": [
+  "GENE0",
+  "GENE1",
+  "GENE2",
+  "GENE3",
+  "GENE4",
+  "GENE5",
+  "GENE6"
+ ],
+ "features:2:dims": [
+  "features"
+ ],
+ "features:3:dims": [
+  "features"
+ ],
+ "features:4:dims": [
+  "features"
+ ]
+}
