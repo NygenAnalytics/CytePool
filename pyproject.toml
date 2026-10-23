@@ -37,6 +37,7 @@ dependencies = [
 test = [
     "pandas>=2.2",
     "pytest>=8",
+    "scipy>=1.13",
 ]
 
 [project.urls]

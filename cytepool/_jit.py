@@ -10,13 +10,18 @@ it calls, defined in another file, has changed.
 Caching never fails a computation: when no cache directory is writable, or the
 installed numba no longer provides the interfaces used here, routines are
 compiled in every process instead.
+
+Parallel routines use numba's threads; ``thread_limit`` caps how many of them one
+call uses.
 """
 
 import hashlib
 import logging
+import operator
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -51,6 +56,55 @@ def jit(function: Callable[..., Any] | None = None, /, **options: Any) -> Any:
         return dispatcher
 
     return decorate if function is None else decorate(function)
+
+
+@contextmanager
+def thread_limit(n_threads: int | None) -> Iterator[int]:
+    """Cap the threads that parallel routines use, then restore the previous cap.
+
+    numba keeps the thread count per calling thread, so the cap applies to
+    parallel routines called from this thread inside the block, and other threads
+    are not affected. The previous value is restored on exit, also when the block
+    raises.
+
+    Args:
+        n_threads: The most threads to use, at least 1. numba starts
+            ``numba.config.NUMBA_NUM_THREADS`` threads (set by the environment
+            variable of that name) and cannot use more, so a larger value uses all
+            of them. ``None`` keeps the current setting.
+
+    Yields:
+        The number of threads parallel routines use inside the block.
+
+    Raises:
+        TypeError: If ``n_threads`` is not an integer or None.
+        ValueError: If ``n_threads`` is below 1.
+
+    Example:
+        >>> with thread_limit(1) as used:
+        ...     used
+        1
+    """
+    if n_threads is None:
+        yield numba.get_num_threads()
+        return
+    if isinstance(n_threads, bool):
+        raise TypeError("n_threads must be a positive integer or None, not bool")
+    try:
+        limit = operator.index(n_threads)
+    except TypeError:
+        raise TypeError(
+            "n_threads must be a positive integer or None, got "
+            f"{type(n_threads).__name__}"
+        ) from None
+    if limit < 1:
+        raise ValueError(f"n_threads must be at least 1, got {limit}")
+    previous = numba.get_num_threads()
+    numba.set_num_threads(min(limit, numba.config.NUMBA_NUM_THREADS))
+    try:
+        yield numba.get_num_threads()
+    finally:
+        numba.set_num_threads(previous)
 
 
 @cache
