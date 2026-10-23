@@ -1,0 +1,18 @@
+{
+  "attributes": {
+    "columns": [
+      "group_id",
+      "cell_ontology_id",
+      "score",
+      "lifetime"
+    ],
+    "arrays": [
+      "group_id",
+      "cell_ontology_id",
+      "score",
+      "lifetime"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

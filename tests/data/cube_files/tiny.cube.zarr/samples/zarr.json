@@ -1,0 +1,26 @@
+{
+  "attributes": {
+    "columns": [
+      "sample_id",
+      "donor",
+      "age",
+      "batch",
+      "visit",
+      "Treated?",
+      "CD4/CD8 ratio",
+      "Gr\u00f6\u00dfe"
+    ],
+    "arrays": [
+      "sample_id",
+      "donor",
+      "age",
+      "batch",
+      "visit",
+      "column_5",
+      "column_6",
+      "column_7"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

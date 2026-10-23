@@ -1,0 +1,31 @@
+{
+  "attributes": {
+    "format": "cytepool.cube",
+    "format_version": 1,
+    "axes": [
+      "groups",
+      "samples",
+      "features"
+    ],
+    "layers": [
+      "counts",
+      "detected",
+      "log_sum",
+      "log_sum_sq",
+      "linear_sum"
+    ],
+    "has_n_cells": true,
+    "normalization": {
+      "method": "library_size",
+      "target_sum": 10000.0,
+      "log": "natural"
+    },
+    "provenance": {
+      "source": "validation/cube_files.py",
+      "seed": 20261023,
+      "note": "\u00fcn\u00ef"
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}
