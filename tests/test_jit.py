@@ -2,6 +2,7 @@ import importlib.util
 import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import ModuleType
 
@@ -128,3 +129,81 @@ def test_without_a_writable_directory_routines_compile_uncached(
 def test_cache_option_is_rejected() -> None:
     with pytest.raises(TypeError, match="cache"):
         _jit.jit(cache=True)
+
+
+@pytest.mark.skipif(
+    numba.config.NUMBA_NUM_THREADS < 2, reason="needs two threads to tell caps apart"
+)
+def test_thread_limit_caps_threads_and_restores_them() -> None:
+    launched = numba.config.NUMBA_NUM_THREADS
+    before = numba.get_num_threads()
+    with _jit.thread_limit(1) as used:
+        assert used == 1
+        assert numba.get_num_threads() == 1
+        with _jit.thread_limit(launched) as inner:
+            assert inner == numba.get_num_threads() == launched
+        assert numba.get_num_threads() == 1
+    assert numba.get_num_threads() == before
+    # numba cannot use more threads than it launched, so a larger cap uses them all.
+    with _jit.thread_limit(launched + 5) as used:
+        assert used == numba.get_num_threads() == launched
+    with _jit.thread_limit(None) as used:
+        assert used == numba.get_num_threads() == before
+    assert numba.get_num_threads() == before
+
+
+@pytest.mark.skipif(
+    numba.config.NUMBA_NUM_THREADS < 2, reason="needs two threads to tell caps apart"
+)
+def test_thread_limit_applies_to_the_calling_thread_only() -> None:
+    before = numba.get_num_threads()
+    entered, release = threading.Event(), threading.Event()
+    seen: dict[str, int] = {}
+
+    def capped() -> None:
+        with _jit.thread_limit(1):
+            seen["inside"] = numba.get_num_threads()
+            entered.set()
+            release.wait(timeout=10)
+
+    worker = threading.Thread(target=capped)
+    worker.start()
+    try:
+        assert entered.wait(timeout=10)
+        assert seen["inside"] == 1
+        assert numba.get_num_threads() == before
+    finally:
+        release.set()
+        worker.join(timeout=10)
+
+
+@pytest.mark.skipif(
+    numba.config.NUMBA_NUM_THREADS < 2, reason="needs two threads to tell caps apart"
+)
+def test_thread_limit_restores_threads_after_an_exception() -> None:
+    before = numba.get_num_threads()
+    with pytest.raises(RuntimeError, match="inside the block"):
+        with _jit.thread_limit(1):
+            assert numba.get_num_threads() == 1
+            raise RuntimeError("inside the block")
+    assert numba.get_num_threads() == before
+
+
+@pytest.mark.parametrize(
+    ("n_threads", "error", "message"),
+    [
+        (0, ValueError, "n_threads must be at least 1, got 0"),
+        (-2, ValueError, "at least 1, got -2"),
+        (1.5, TypeError, "positive integer or None, got float"),
+        ("2", TypeError, "got str"),
+        (True, TypeError, "not bool"),
+    ],
+)
+def test_thread_limit_rejects_invalid_counts(
+    n_threads: object, error: type, message: str
+) -> None:
+    before = numba.get_num_threads()
+    with pytest.raises(error, match=message):
+        with _jit.thread_limit(n_threads):  # type: ignore[arg-type]
+            pass
+    assert numba.get_num_threads() == before
