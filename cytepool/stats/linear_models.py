@@ -38,8 +38,14 @@ from cytepool.design.contrasts import (
     _weights_on_columns,
 )
 from cytepool.design.design import _design_columns, _refuse_dropped_random_effects
+from cytepool._summation import rounded_quotient, two_sum
 
 __all__ = ["LinearModelFit", "contrasts_fit", "fit_linear_model"]
+
+# Below this magnitude the splitting in the exactly rounded division cannot
+# overflow; above it, and for a sum that overflowed (NaN after two-sums), a mean
+# is a plain division.
+_EXACT_DIVISION_LIMIT = 2.0**995
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
@@ -74,7 +80,9 @@ class LinearModelFit:
             ``contrasts_fit(method="limma")`` takes its correlations from.
         mean_expression: ``(n_features,)`` unweighted mean of the observed
             values of each feature (limma's ``Amean``), including values whose
-            weight is zero.
+            weight is zero. The sums are accumulated with error compensation and
+            divided with one rounding, which gives R's ``rowMeans`` to the last bit
+            on log-expression data.
         coefficient_names: Names of the coefficients or contrasts.
         design: ``(n_samples, n_design_coefficients)`` design matrix.
         cov_coefficients_per_feature: ``(n_features, n_coefficients,
@@ -295,7 +303,7 @@ def fit_linear_model(
             )
 
     complete = bool(observed.all())
-    mean_expression = _observed_means(values, observed, complete)
+    mean_expression = _observed_means(values)
     # Only in this case does limma report the covariance matrix of the
     # weighted design; otherwise it reports that of the design without
     # weights (found by probing).
@@ -849,14 +857,53 @@ def _correlation_matrix(covariance: FloatArray) -> FloatArray:
     return correlations
 
 
-def _observed_means(
-    values: FloatArray, observed: npt.NDArray[np.bool_], complete: bool
-) -> FloatArray:
-    if complete:
-        return values.mean(axis=0)
-    totals = np.where(observed, values, 0.0).sum(axis=0)
-    with np.errstate(invalid="ignore"):
-        return totals / observed.sum(axis=0)
+def _observed_means(values: FloatArray) -> FloatArray:
+    """Mean of the observed (non-NaN) values of each column; NaN for none.
+
+    limma's ``Amean`` is R's ``rowMeans``, which accumulates in extended
+    precision. Sums with error compensation, divided with a single rounding, give
+    the exactly rounded mean, which is rowMeans' value to the last bit on
+    log-expression data (found by probing; R rounds its extended sum, so values
+    spanning many decades can differ in the last bit). voom needs them exactly:
+    LOWESS treats tied means differently from means a rounding error apart.
+    """
+    means: FloatArray = _compensated_means(_writable_c_array(values, np.float64))
+    return means
+
+
+@jit
+def _compensated_means(values: FloatArray) -> FloatArray:
+    """Column means of the non-NaN values, each rounded once (NaN for none).
+
+    Near the largest doubles, where the exact division would overflow, the mean is
+    the plain sum divided by the count, infinite when the sum overflows.
+    """
+    n_rows, n_columns = values.shape
+    high = np.zeros(n_columns)
+    low = np.zeros(n_columns)
+    plain = np.zeros(n_columns)
+    counts = np.zeros(n_columns)
+    for i in range(n_rows):
+        for j in range(n_columns):
+            value = values[i, j]
+            if math.isnan(value):
+                continue
+            total, error = two_sum(high[j], value)
+            high[j] = total
+            low[j] += error
+            plain[j] += value
+            counts[j] += 1.0
+    means = np.empty(n_columns)
+    for j in range(n_columns):
+        if counts[j] == 0.0:
+            means[j] = np.nan
+            continue
+        total, remainder = two_sum(high[j], low[j])
+        if abs(total) < _EXACT_DIVISION_LIMIT:
+            means[j] = rounded_quotient(total, remainder, counts[j])
+        else:
+            means[j] = plain[j] / counts[j]
+    return means
 
 
 def _design_matrix(

@@ -6,6 +6,7 @@ and ``contrasts.fit``, written by ``validation/linear_models.py``.
 
 import pickle
 import re
+from fractions import Fraction
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -522,6 +523,38 @@ def test_features_without_residual_degrees_of_freedom() -> None:
     assert fit.df_residual[4] == 0 and np.isnan(fit.sigma[4])
     assert np.isnan(fit.coefficients[4]).all() and np.isnan(fit.mean_expression[4])
     np.testing.assert_allclose(fit.mean_expression[3], np.nanmean(y[:, 3]), rtol=1e-15)
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_mean_expression_is_the_exact_mean_rounded_once(missing: bool) -> None:
+    """As R's rowMeans, which accumulates in extended precision, gives limma's Amean.
+
+    The reference is exact rational arithmetic, rounded once to the nearest double.
+    voom depends on it: the ties of its trend are limma's only when these means are
+    R's to the last bit.
+    """
+    rng = np.random.default_rng(17)
+    y = rng.normal(0.0, 1.0, (7, 400)) * 10.0 ** rng.uniform(-3.0, 3.0, 400)
+    if missing:
+        y[rng.random(y.shape) < 0.2] = np.nan
+        y[:, 0] = np.nan
+    fit = fit_linear_model(y, np.ones((7, 1)))
+    exact = np.full(y.shape[1], np.nan)
+    for j, column in enumerate(y.T):
+        observed = column[~np.isnan(column)]
+        if observed.size:
+            exact[j] = float(sum(map(Fraction, observed)) / observed.size)
+    np.testing.assert_array_equal(fit.mean_expression, exact)
+
+
+def test_mean_expression_near_the_largest_doubles() -> None:
+    y = np.array([[2e300, 1e308], [2.18e300, 1e308], [2.09e300, 1e308]])
+    with np.errstate(over="ignore", invalid="ignore"):
+        fit = fit_linear_model(y, np.ones((3, 1)))
+    exact = float(sum(map(Fraction, y[:, 0])) / 3)
+    np.testing.assert_allclose(fit.mean_expression[0], exact, rtol=1e-15)
+    # The sum overflows: the mean is infinite, as numpy's is.
+    assert fit.mean_expression[1] == np.inf
 
 
 def test_zero_weights_leave_values_out_of_the_fit_but_not_the_mean(
