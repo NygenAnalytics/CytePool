@@ -185,7 +185,12 @@ class Design:
 
     @property
     def contrasts(self) -> Contrasts:
-        """The named contrasts; index by name for one contrast's weights."""
+        """The named contrasts; index by name for one contrast's weights.
+
+        Pass them, or ``contrasts.select(...)``, to ``contrasts_fit``, which
+        matches them to the fit's coefficients by name; the vectors that indexing
+        returns carry no names and are read in order.
+        """
         return self._contrasts
 
     def with_contrasts(

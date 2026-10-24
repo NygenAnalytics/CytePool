@@ -16,7 +16,7 @@ what is planned.
 | Cube files | `write_cube`, `read_cube` (a subset of Zarr v3; gzip, and zstd on Python 3.14 or newer) | zarr-python |
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
-| Linear models | Ordinary, weighted and generalised least squares for every gene, contrasts | limma |
+| Linear models | Ordinary, weighted and generalised least squares for every gene, contrasts (named contrasts are matched to the coefficients by name) | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Distributions and smoothers | Tails and quantiles of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions; LOWESS; natural spline bases | mpmath, R |

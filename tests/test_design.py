@@ -200,8 +200,17 @@ def test_contrasts_of_one_design_serve_another_with_the_same_columns(
     second = Design(dict(samples, age=samples["age"][::-1]), "~ condition")
     assert second.with_contrasts(first.contrasts).contrasts.names == ("stim",)
     assert dict(first.contrasts).keys() == {"stim"}
+    # The same columns in another order: the weights follow their columns by name.
+    adjusted = Design(samples, "~ condition + age", contrasts={"aged": "age"})
+    reordered = Design(samples, "~ age + condition").with_contrasts(adjusted.contrasts)
+    assert reordered.columns == ("(Intercept)", "age", "conditionstim")
+    assert_array_equal(reordered.contrasts["aged"], [0, 1, 0])
     other = Design(samples, "~ condition + age")
-    with pytest.raises(ValueError, match="these contrasts weigh the columns"):
+    with pytest.raises(
+        ValueError,
+        match=r"must weigh exactly the columns \('\(Intercept\)', 'conditionstim' "
+        r"and 'age'\), in any order, but 'age' is missing",
+    ):
         other.with_contrasts(first.contrasts)
 
 
