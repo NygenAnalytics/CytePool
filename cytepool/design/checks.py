@@ -697,6 +697,8 @@ def _listing(items: list[str]) -> str:
 def _contrast_checks(
     design: "Design", model: ModelMatrix, aliasing: _Aliasing, errors: list[DesignIssue]
 ) -> None:
+    # The design's contrasts weigh its own columns in order: make_contrasts
+    # matched them to the model's columns by name.
     contrasts = design.contrasts
     if not len(contrasts) or not aliasing.aliased:
         return
