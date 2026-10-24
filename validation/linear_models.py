@@ -15,11 +15,14 @@ of their absolute value and their standard error, and covariance matrices
 relative to the product of standard deviations. Contrasts are checked in both
 modes: ``method="limma"`` against ``contrasts.fit``, and ``method="exact"``
 against limma refitted on a reparametrised design whose first coefficient is
-the contrast. For genes that lose rank, coefficients that cannot be estimated
-are NaN in CytePool; the script confirms that those are exactly the
-coefficients whose limma value changes when the columns of the design are
-reversed. With ``--benchmark`` it times both packages on 20,000 genes x 200
-samples instead.
+the contrast. The same contrasts are also written as expressions and made into
+a ``Contrasts`` over the coefficients in reverse order, which ``contrasts_fit``
+matches to the fit by name; they must reproduce ``contrasts.fit`` given the
+matrix that ``makeContrasts`` builds in limma's own order. For genes that lose
+rank, coefficients that cannot be estimated are NaN in CytePool; the script
+confirms that those are exactly the coefficients whose limma value changes when
+the columns of the design are reversed. With ``--benchmark`` it times both
+packages on 20,000 genes x 200 samples instead.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root so that
@@ -44,6 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
+from cytepool.design import make_contrasts
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 
 FIXTURE_DIRECTORY = (
@@ -68,6 +72,7 @@ for (case in readLines(file.path(root, "cases.txt"))) {
   n <- meta$n_samples; G <- meta$n_genes; p <- meta$n_coefficients; k <- meta$n_contrasts
   y <- matrix(read_doubles(dir, "y.bin", G * n), G, n)
   X <- matrix(read_doubles(dir, "design.bin", n * p), n, p)
+  colnames(X) <- readLines(file.path(dir, "coefficient_names.txt"))
   w <- NULL
   if (meta$weights == "sample") w <- read_doubles(dir, "weights.bin", n)
   if (meta$weights == "observation") w <- matrix(read_doubles(dir, "weights.bin", G * n), G, n)
@@ -100,6 +105,10 @@ for (case in readLines(file.path(root, "cases.txt"))) {
     write_doubles(contrasted$coefficients, dir, "limma_contrast_coefficients.bin")
     write_doubles(contrasted$stdev.unscaled, dir, "limma_contrast_stdev_unscaled.bin")
     write_doubles(contrasted$cov.coefficients, dir, "limma_contrast_cov_coefficients.bin")
+    expressions <- readLines(file.path(dir, "expressions.txt"))
+    named <- contrasts.fit(fit, makeContrasts(contrasts = expressions, levels = colnames(X)))
+    write_doubles(named$coefficients, dir, "limma_named_contrast_coefficients.bin")
+    write_doubles(named$stdev.unscaled, dir, "limma_named_contrast_stdev_unscaled.bin")
     exact_coefficients <- matrix(NA_real_, G, k)
     exact_stdev <- matrix(NA_real_, G, k)
     reversed_exact <- matrix(NA_real_, G, k)
@@ -441,6 +450,19 @@ def with_missing_values_in_blocks(
     return y
 
 
+def expressions(case: Case) -> list[str]:
+    """Each contrast as an expression in the coefficient names, such as
+    ``-1.0*groupB + 1.0*groupC``, which both makeContrasts and make_contrasts read."""
+    return [
+        " + ".join(
+            f"{float(weight)!r}*{name}"
+            for weight, name in zip(contrast, case.coefficient_names)
+            if weight != 0.0
+        )
+        for contrast in case.contrasts.T
+    ]
+
+
 def reparametrised_design(design: np.ndarray, contrast: np.ndarray) -> np.ndarray:
     """A design whose first coefficient is the contrast of the original ones."""
     pivot = int(np.argmax(np.abs(contrast)))
@@ -460,6 +482,10 @@ def write_case(case: Case, directory: Path) -> None:
     (directory / "y.bin").write_bytes(case.y.T.tobytes(order="F"))
     (directory / "design.bin").write_bytes(case.design.tobytes(order="F"))
     (directory / "contrasts.bin").write_bytes(case.contrasts.tobytes(order="F"))
+    (directory / "coefficient_names.txt").write_text(
+        "\n".join(case.coefficient_names) + "\n"
+    )
+    (directory / "expressions.txt").write_text("\n".join(expressions(case)) + "\n")
     for j in range(case.contrasts.shape[1]):
         design = reparametrised_design(case.design, case.contrasts[:, j])
         (directory / f"reparametrised_{j + 1}.bin").write_bytes(
@@ -511,6 +537,12 @@ def read_reference(case: Case, directory: Path) -> dict[str, np.ndarray]:
         ),
         "contrast_cov_coefficients": read_matrix(
             directory / "limma_contrast_cov_coefficients.bin", k, k
+        ),
+        "named_contrast_coefficients": read_matrix(
+            directory / "limma_named_contrast_coefficients.bin", n_genes, k
+        ),
+        "named_contrast_stdev_unscaled": read_matrix(
+            directory / "limma_named_contrast_stdev_unscaled.bin", n_genes, k
         ),
         "refit_coefficients": read_matrix(
             directory / "limma_refit_coefficients.bin", n_genes, k
@@ -781,6 +813,41 @@ def _compare(case: Case, reference: dict[str, np.ndarray], table: Table) -> None
         ),
         EXACT,
     )
+    # The contrasts as expressions over the coefficients in reverse order: matched
+    # by name, they must give contrasts.fit of makeContrasts in limma's own order.
+    written = dict(zip(case.contrast_names, expressions(case)))
+    reversed_rows = make_contrasts(written, case.coefficient_names[::-1])
+    # A reversal that left every weight in place would test nothing: it fails.
+    moved = not np.array_equal(reversed_rows.matrix, case.contrasts)
+    by_name = contrasts_fit(fit, reversed_rows, method="limma")
+    named = "contrasts.fit, makeContrasts in limma's order"
+    named_se = (
+        reference["named_contrast_stdev_unscaled"] * reference["sigma"][:, np.newaxis]
+    )
+    difference = coefficient_difference(
+        by_name.coefficients,
+        reference["named_contrast_coefficients"],
+        named_se,
+        expected_contrast_nan,
+    )
+    table.check(
+        f"{name}: named contrasts, rows reversed: coefficients",
+        named,
+        COEFFICIENT,
+        difference if moved else np.inf,
+        EXACT,
+    )
+    table.check(
+        f"{name}: named contrasts, rows reversed: stdev_unscaled",
+        named,
+        RELATIVE,
+        relative_difference(
+            by_name.stdev_unscaled,
+            reference["named_contrast_stdev_unscaled"],
+            expected_contrast_nan,
+        ),
+        EXACT,
+    )
     exact_mode = contrasts_fit(
         fit, case.contrasts, names=case.contrast_names, method="exact"
     )
@@ -847,7 +914,12 @@ def write_fixtures(cases: list[Case], references: list[dict[str, np.ndarray]]) -
             "coefficient_names": np.array(case.coefficient_names),
             "contrasts": case.contrasts,
             "contrast_names": np.array(case.contrast_names),
-            **{key: value for key, value in reference.items() if key != "seconds"},
+            # The named contrasts equal those of contrasts.fit, which are saved.
+            **{
+                key: value
+                for key, value in reference.items()
+                if key != "seconds" and not key.startswith("named_")
+            },
         }
         if case.weights is not None:
             arrays["weights"] = case.weights

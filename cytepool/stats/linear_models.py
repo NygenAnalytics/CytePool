@@ -32,6 +32,11 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
+from cytepool.design.contrasts import (
+    _is_named_contrasts,
+    _is_pandas,
+    _weights_on_columns,
+)
 
 __all__ = ["LinearModelFit", "contrasts_fit", "fit_linear_model"]
 
@@ -232,8 +237,10 @@ def fit_linear_model(
             ``(-1, 1)``. With blocks of up to m samples it must exceed
             ``-1 / (m - 1)``, so that the correlation matrix is positive
             definite.
-        coefficient_names: Names of the design columns. Defaults to the
-            design's column names when it has them, else ``x1, x2, ...``.
+        coefficient_names: Names of the design columns, in order. Defaults to
+            the design's column names when it has them, else ``x1, x2, ...``.
+            They may rename the design's columns, but not give a column the name
+            of another: contrasts are matched to coefficients by name.
 
     Returns:
         The fit. Without missing values, and with no weights or positive
@@ -246,7 +253,8 @@ def fit_linear_model(
         ValueError: If shapes disagree, ``y`` has infinite values, ``design``
             is not finite or not of full column rank (the message names the
             aliased columns), a weight is negative or not finite where ``y`` is
-            observed, or ``block`` and ``correlation`` are invalid.
+            observed, ``block`` and ``correlation`` are invalid, or
+            ``coefficient_names`` move a design column's name to another column.
     """
     x, names = _design_matrix(design, coefficient_names)
     values = _expression_matrix(y, x.shape[0])
@@ -326,15 +334,31 @@ def contrasts_fit(
     are not estimable, such as group C minus group B when the reference group
     is missing; fit the group means without an intercept to obtain those.
 
+    Contrasts that name the coefficients they weigh are matched to
+    ``fit.coefficient_names`` by name, whatever their order: a
+    :class:`~cytepool.design.Contrasts` (from ``make_contrasts`` or
+    ``Design.contrasts``) by its ``columns``, and a pandas DataFrame or Series
+    by its index. They must name every coefficient of the fit exactly once.
+    Weights without such names (numpy arrays, lists, the vectors that indexing
+    a ``Contrasts`` returns, and pandas objects with the default index 0, 1,
+    ..., n - 1) are taken in the order of ``fit.coefficient_names``; a pandas
+    index of other labels that are not strings is an error. limma's
+    ``contrasts.fit`` always takes the rows in order, and only warns when their
+    names differ from the coefficient names (found by probing).
+
     Args:
         fit: A fit from :func:`fit_linear_model` or from this function.
-        contrasts: ``(n_coefficients, n_contrasts)`` matrix with one contrast
-            per column, a single ``(n_coefficients,)`` contrast, a mapping of
-            contrast name to ``(n_coefficients,)`` vector, or an object with
-            ``matrix`` and ``columns`` attributes.
-        names: Contrast names, when ``contrasts`` is not a mapping. Defaults to
-            the column names of ``contrasts`` when it has them, else
-            ``contrast1, contrast2, ...``.
+        contrasts: The contrasts, one per column of a ``(n_coefficients,
+            n_contrasts)`` matrix: a ``Contrasts``, or any object with
+            ``matrix``, ``names`` and ``columns`` attributes laid out the same
+            way; a pandas DataFrame with one contrast per column; a mapping of
+            contrast name to vector or pandas Series; a matrix; or a single
+            vector or Series.
+        names: Contrast names, when ``contrasts`` is not a mapping or a
+            ``Contrasts``. Defaults to the column names of a DataFrame or the
+            name of a Series, else ``contrast1, contrast2, ...``. Names rename
+            the DataFrame's columns in order, so none may be the name of another
+            column.
         method: ``"exact"`` or ``"limma"``.
 
     Returns:
@@ -346,11 +370,12 @@ def contrasts_fit(
         approximate unless one covariance matrix served every feature.
 
     Raises:
-        TypeError: If ``fit`` is not a LinearModelFit or ``contrasts`` is not
-            real-valued.
+        TypeError: If ``fit`` is not a LinearModelFit, ``contrasts`` is not
+            real-valued, or it is a design rather than contrasts.
         ValueError: If ``contrasts`` is not finite or has the wrong number of
-            rows, the names are invalid, ``method`` is unknown, or the exact
-            method is asked of a fit whose standard errors are approximate.
+            rows, names coefficients that are not exactly the fit's, the names
+            are invalid, ``method`` is unknown, or the exact method is asked of
+            a fit whose standard errors are approximate.
     """
     if not isinstance(fit, LinearModelFit):
         raise TypeError(f"fit must be a LinearModelFit, got {type(fit).__name__}")
@@ -362,9 +387,7 @@ def contrasts_fit(
             "contrasts_fit with method='limma'), so its contrasts cannot be exact; "
             "contrast the original fit, or use method='limma'"
         )
-    matrix, contrast_names = _contrast_matrix(
-        contrasts, names, fit.coefficients.shape[1]
-    )
+    matrix, contrast_names = _contrast_matrix(contrasts, names, fit.coefficient_names)
     n_features = fit.coefficients.shape[0]
     n_contrasts = matrix.shape[1]
 
@@ -844,6 +867,10 @@ def _design_matrix(
         raise ValueError("design must be finite; it contains NaN or infinite values")
     if coefficient_names is not None:
         names = _checked_names(coefficient_names, x.shape[1], "coefficient_names")
+        if columns is not None:
+            _check_renaming(
+                names, [str(c) for c in columns], "coefficient_names", "the design"
+            )
     elif columns is not None:
         names = _checked_names([str(c) for c in columns], x.shape[1], "design columns")
     else:
@@ -942,19 +969,49 @@ def _block_structure(
 
 
 def _contrast_matrix(
-    contrasts: Any, names: Sequence[str] | None, n_coefficients: int
+    contrasts: Any, names: Sequence[str] | None, coefficient_names: tuple[str, ...]
 ) -> tuple[FloatArray, tuple[str, ...]]:
-    if isinstance(contrasts, Mapping):
-        if names is not None:
-            raise ValueError(
-                "names must not be given when contrasts is a mapping; "
-                "its keys are the names"
-            )
+    """The contrast matrix, rows in the order of the coefficients, and its names.
+
+    Weights that name their coefficients are matched to them by name, by the
+    rule of :func:`cytepool.design.contrasts._weights_on_columns`; the others
+    are taken in order.
+    """
+    n_coefficients = len(coefficient_names)
+    remedy = _contrasts_remedy(coefficient_names)
+    named = _is_named_contrasts(contrasts)
+    if (named or isinstance(contrasts, Mapping)) and names is not None:
+        raise ValueError(
+            "names must not be given when contrasts is a mapping or a Contrasts, "
+            "which carry their own names"
+        )
+    if named:
+        weights = _weights_on_columns(
+            contrasts,
+            coefficient_names,
+            label="the contrasts",
+            target="the fit's coefficients",
+            remedy=remedy,
+        )
+        matrix = _real_array(weights, "contrasts")
+        if matrix.shape[1] == 0:
+            raise ValueError("contrasts must hold at least one contrast")
+        contrast_names = _checked_names(
+            contrasts.names, matrix.shape[1], "contrast names"
+        )
+    elif isinstance(contrasts, Mapping):
         if not contrasts:
             raise ValueError("contrasts must hold at least one contrast")
         vectors = []
         for key, vector in contrasts.items():
-            values = _real_array(vector, f"contrast {key!r}")
+            weights = _weights_on_columns(
+                vector,
+                coefficient_names,
+                label=f"contrast {key!r}",
+                target="the fit's coefficients",
+                remedy=remedy,
+            )
+            values = _real_array(weights, f"contrast {key!r}")
             if values.shape != (n_coefficients,):
                 raise ValueError(
                     f"contrast {key!r} must have one value per coefficient "
@@ -966,8 +1023,20 @@ def _contrast_matrix(
             list(contrasts.keys()), matrix.shape[1], "contrast names"
         )
     else:
-        values, columns = _matrix_and_columns(contrasts)
-        matrix = _real_array(values, "contrasts")
+        # The columns of a DataFrame, or the name of a Series, name its contrasts;
+        # the index names its rows.
+        columns = getattr(contrasts, "columns", None)
+        if _is_pandas(contrasts) and columns is None:
+            name = getattr(contrasts, "name", None)
+            columns = [name] if isinstance(name, str) else None
+        weights = _weights_on_columns(
+            contrasts,
+            coefficient_names,
+            label="the contrasts",
+            target="the fit's coefficients",
+            remedy=remedy,
+        )
+        matrix = _real_array(weights, "contrasts")
         if matrix.ndim == 1:
             matrix = matrix[:, np.newaxis]
         if matrix.ndim != 2 or matrix.shape[0] != n_coefficients:
@@ -979,6 +1048,10 @@ def _contrast_matrix(
             raise ValueError("contrasts must hold at least one contrast")
         if names is not None:
             contrast_names = _checked_names(names, matrix.shape[1], "names")
+            if columns is not None:
+                _check_renaming(
+                    contrast_names, [str(c) for c in columns], "names", "the contrasts"
+                )
         elif columns is not None:
             contrast_names = _checked_names(
                 [str(c) for c in columns], matrix.shape[1], "contrast columns"
@@ -988,6 +1061,38 @@ def _contrast_matrix(
     if not np.isfinite(matrix).all():
         raise ValueError("contrasts must be finite")
     return np.array(matrix, dtype=np.float64, order="C"), contrast_names
+
+
+def _contrasts_remedy(coefficient_names: tuple[str, ...]) -> str:
+    """How to make contrasts that match a fit, for error messages."""
+    remedy = "make them with make_contrasts(..., fit.coefficient_names)"
+    if coefficient_names == tuple(f"x{j + 1}" for j in range(len(coefficient_names))):
+        remedy += (
+            "; the fit has the default names x1, x2, ..., so fit the Design itself, "
+            "not its matrix, to keep the names of its columns"
+        )
+    return remedy
+
+
+def _check_renaming(
+    given: tuple[str, ...], existing: Sequence[str], label: str, owner: str
+) -> None:
+    """Refuse new names that give a column the name another column already has.
+
+    Names given by position rename the columns in order. Coefficients and
+    contrasts are matched by name downstream, so moving a name to another
+    column would silently swap what it refers to.
+    """
+    existing = list(existing)
+    for position, name in enumerate(given):
+        own = position < len(existing) and existing[position] == name
+        if name in existing and not own:
+            raise ValueError(
+                f"{label} give column {position + 1} the name {name!r}, the name of "
+                f"column {existing.index(name) + 1} of {owner}; {label} rename "
+                f"the columns in order ({', '.join(map(repr, existing))}), so a name "
+                "already in use may only label its own column"
+            )
 
 
 def _matrix_and_columns(values: Any) -> tuple[Any, Any]:
