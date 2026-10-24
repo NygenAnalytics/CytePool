@@ -1,0 +1,56 @@
+name: Docs
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "docs/**"
+      - "cytepool/**"
+      - "validation/**"
+      - "tests/test_documentation.py"
+      - "README.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        python-version: "3.13"
+    - uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+    - name: Install dependencies
+      run: uv sync --locked --extra test --group docs
+    - name: Documentation tests
+      run: uv run pytest tests/test_documentation.py
+    - name: Lint and check formatting of the documentation scripts
+      run: |
+        uv run ruff check docs
+        uv run ruff format --check docs
+    - name: Build the API reference and the site
+      # Notebooks are executed locally and committed with their outputs; the
+      # build checks that they are current and runs no code.
+      run: make -C docs html
+    - name: Check that saved notebook outputs still match the package
+      # Runs pages that need no downloaded data, without saving them, and fails
+      # when what they print has changed. Add such pages to PAGES.
+      run: make -C docs check-outputs PAGES="quickstart"
+    - name: Store the site
+      uses: actions/upload-artifact@v7
+      with:
+        name: documentation
+        path: docs/build/site/_build/html/
+        if-no-files-found: error
