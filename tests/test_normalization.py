@@ -8,7 +8,6 @@ derived by hand and invariants that any correct implementation keeps.
 import json
 import math
 import platform
-from fractions import Fraction
 from pathlib import Path
 
 import numba
@@ -17,6 +16,7 @@ import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
 import cytepool.normalization as nz
+from cytepool._summation import accurate_sums
 
 DATA = Path(__file__).parent / "data" / "normalization"
 # R's values are reproduced bit for bit with the GNU C library. The tolerance
@@ -420,17 +420,6 @@ def test_library_sizes_are_rounded_once(counts: np.ndarray) -> None:
         assert_array_equal(nz.library_sizes(values), [math.fsum(v) for v in values])
 
 
-def test_accurate_mean_is_the_correctly_rounded_mean() -> None:
-    rng = np.random.default_rng(6)
-    for values in (
-        rng.normal(size=7),
-        rng.uniform(0, 1, 1000) * 10.0 ** rng.integers(-5, 5, 1000),
-        np.array([1e16, 1.0, -1e16, 3.0, 0.1]),
-    ):
-        exact = sum(Fraction(v) for v in values) / len(values)
-        assert nz._accurate_mean(values) == float(exact)
-
-
 def test_scaling_a_sample_keeps_its_normalized_counts(counts: np.ndarray) -> None:
     positive = counts + 1
     scaled = positive.copy()
@@ -511,7 +500,7 @@ def test_inputs_are_not_modified(counts: np.ndarray) -> None:
 
 def test_memory_layout_changes_nothing_and_compiles_nothing(counts: np.ndarray) -> None:
     expected = nz.tmm_factors(counts), nz.log_cpm(counts), nz.rle_factors(counts + 1)
-    kernels = (nz._tmm_log2_factors, nz._log2_cpm, nz._rle_median_ratios, nz._sums)
+    kernels = (nz._tmm_log2_factors, nz._log2_cpm, nz._rle_median_ratios, accurate_sums)
     compiled = [len(kernel.signatures) for kernel in kernels]
     read_only = counts.copy()
     read_only.flags.writeable = False
