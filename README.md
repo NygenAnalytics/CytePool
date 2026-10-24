@@ -20,7 +20,7 @@ what is planned.
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, for a weighted linear model (limma-voom) | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
-| Distributions and smoothers | Tails and quantiles of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions; LOWESS; natural spline bases | mpmath, R |
+| Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS; natural spline bases | mpmath, R |
 
 ## Planned
 
@@ -79,6 +79,17 @@ These are not implemented yet:
 - **Implemented from the literature.** Methods whose reference packages carry
   copyleft licenses are written from their papers and documentation, never from their
   source code, so CytePool can stay BSD-licensed.
+
+## Documentation
+
+The documentation in [`docs/`](docs/) has a quick start, an API reference and a
+[Validation](docs/source/validation.md) page that reports, for every validation
+script, the reference, the measured differences, the tolerances and the outcome.
+The site is not published yet; build it with
+`uv sync --extra test --group dev --group docs` and `make -C docs html` (Node.js 18,
+20, or 22 and newer), as
+[the installation page](docs/source/installation.md#build-this-documentation)
+describes.
 
 ## Development
 

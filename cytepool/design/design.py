@@ -181,7 +181,7 @@ class Design:
 
     @property
     def assign(self) -> tuple[int, ...]:
-        """For each column, its term: 0 for the intercept, ``i`` for ``terms[i-1]``."""
+        """The term of each column, 0 for the intercept, ``i`` for ``terms[i-1]``."""
         return self._model.assign
 
     @property

@@ -1,0 +1,484 @@
+"""Checks on the documentation sources in docs/: pages, notebooks, links, API, validation.
+
+The checks read the sources and do not build the site. Reading the table of contents
+needs PyYAML, a documentation dependency (``uv sync --group docs``); that test is
+skipped without it.
+"""
+
+import copy
+import importlib
+import importlib.util
+import inspect
+import json
+import pkgutil
+import re
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+import cytepool
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "docs" / "source"
+API_SOURCE = SOURCE / "reference" / "api"
+REPOSITORY = "https://github.com/NygenAnalytics/CytePool/"
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+DIRECTIVE = re.compile(r"^\.\. (automodule|autofunction|autoclass|py:data)::\s+(\S+)")
+OPTION = re.compile(r"^\s+:([\w-]+):\s*(.*)$")
+LABEL = re.compile(r"^\((\S+)\)=$", re.M)
+
+
+def _load_build_docs() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "build_docs", ROOT / "docs" / "build_docs.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+build_docs = _load_build_docs()
+
+
+def _site_pages() -> list[Path]:
+    """The MyST pages: Markdown and notebooks outside the Sphinx API sources."""
+    return sorted(
+        path
+        for path in SOURCE.rglob("*")
+        if path.suffix in {".md", ".ipynb"}
+        and not path.is_relative_to(API_SOURCE)
+        and not {"_build", ".ipynb_checkpoints"} & set(path.relative_to(SOURCE).parts)
+    )
+
+
+def _notebooks() -> list[Path]:
+    return [path for path in _site_pages() if path.suffix == ".ipynb"]
+
+
+def _text(path: Path) -> str:
+    """The prose of a page: a Markdown file, or the Markdown cells of a notebook."""
+    if path.suffix != ".ipynb":
+        return path.read_text()
+    cells = json.loads(path.read_text())["cells"]
+    return "\n".join(
+        "".join(cell["source"]) for cell in cells if cell["cell_type"] == "markdown"
+    )
+
+
+def _toc_files(entries: list[dict[str, Any]]) -> Iterator[str]:
+    for entry in entries:
+        if "file" in entry:
+            yield entry["file"]
+        yield from _toc_files(entry.get("children", []))
+
+
+# What the API reference must document.
+
+
+def _public_names(module: ModuleType) -> list[str]:
+    """``__all__``, or else the public functions and classes a module defines."""
+    if hasattr(module, "__all__"):
+        return list(module.__all__)
+    return [
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_")
+        and (inspect.isfunction(value) or inspect.isclass(value))
+        and value.__module__ == module.__name__
+    ]
+
+
+def _modules() -> Iterator[tuple[ModuleType, ModuleType]]:
+    """Every module whose name has no private component, with its package."""
+    for info in pkgutil.walk_packages(cytepool.__path__, "cytepool."):
+        if not any(part.startswith("_") for part in info.name.split(".")):
+            module = importlib.import_module(info.name)
+            yield module, importlib.import_module(info.name.rpartition(".")[0])
+
+
+def _is_implementation(module: ModuleType, package: ModuleType) -> bool:
+    """Whether a package re-exports names of a module, which implements it."""
+    exported = set(getattr(package, "__all__", ()))
+    return package is not cytepool and bool(set(_public_names(module)) & exported)
+
+
+def _public_modules() -> set[str]:
+    """The modules users import from: modules with public names that do not just
+    implement their package. The top level holds only ``__version__``."""
+    return {
+        module.__name__
+        for module, package in _modules()
+        if _public_names(module) and not _is_implementation(module, package)
+    }
+
+
+def _required_objects() -> set[str]:
+    """Every public name, as the API reference must name it: the names of the public
+    modules, and names an implementation module exports but its package does not."""
+    public = _public_modules()
+    required = set()
+    for module, package in _modules():
+        exported = set(getattr(package, "__all__", ()))
+        implementation = _is_implementation(module, package)
+        for name in _public_names(module):
+            if module.__name__ in public or (implementation and name not in exported):
+                required.add(f"{module.__name__}.{name}")
+    return required
+
+
+# What the API reference documents, named as Sphinx names it.
+
+
+def _directives(page: Path) -> Iterator[tuple[str, str, dict[str, str]]]:
+    """The autodoc and Python directives of an API page, with their options."""
+    lines = page.read_text().splitlines()
+    for number, line in enumerate(lines):
+        if match := DIRECTIVE.match(line):
+            options = {}
+            for following in lines[number + 1 :]:
+                if not (option := OPTION.match(following)):
+                    break
+                options[option[1]] = option[2]
+            yield match[1], match[2], options
+
+
+def _members(name: str, value: Any) -> set[str]:
+    """What autodoc documents of a function or class: the object, if it has a
+    docstring, and the methods and properties of a class that have one, other
+    than the field aliases of named tuples, which docs/source/reference/api/conf.py
+    leaves out."""
+    if not (inspect.isfunction(value) or inspect.isclass(value)):
+        return set()
+    found = {name} if inspect.getdoc(value) else set()
+    if inspect.isclass(value):
+        for attribute, member in vars(value).items():
+            routine = inspect.isfunction(member) or isinstance(
+                member, property | classmethod | staticmethod
+            )
+            doc = inspect.getdoc(member) if routine else None
+            alias = (doc or "").startswith("Alias for field number")
+            if not attribute.startswith("_") and doc and not alias:
+                found.add(f"{name}.{attribute}")
+    return found
+
+
+def _documented_objects() -> dict[str, set[str]]:
+    """The full names of the objects each API page documents.
+
+    ``automodule`` documents the module's public names that have docstrings and the
+    methods and properties of its classes. ``autofunction`` and ``autoclass`` take
+    full names. ``py:data`` names an object in the module that the page documents
+    last, or in its ``:module:`` option.
+    """
+    pages = {}
+    for page in API_SOURCE.glob("*.md"):
+        documented: set[str] = set()
+        current = None
+        for kind, name, options in _directives(page):
+            if kind == "automodule":
+                current = name
+                module = importlib.import_module(name)
+                documented.add(name)
+                for member in _public_names(module):
+                    documented |= _members(f"{name}.{member}", getattr(module, member))
+            elif kind.startswith("auto"):
+                module_name, _, attribute = name.rpartition(".")
+                value = getattr(importlib.import_module(module_name), attribute)
+                documented |= _members(name, value)
+            else:
+                prefix = options.get("module", current)
+                documented.add(f"{prefix}.{name}" if prefix else name)
+        pages[page.name] = documented
+    return pages
+
+
+def test_every_page_in_the_table_of_contents_exists() -> None:
+    yaml = pytest.importorskip("yaml")
+    project = yaml.safe_load((SOURCE / "myst.yml").read_text())["project"]
+    listed = list(_toc_files(project["toc"]))
+
+    assert len(listed) == len(set(listed)), "a page is listed twice"
+    assert [page for page in listed if not (SOURCE / page).is_file()] == []
+    # Every page is reachable: none is left out of the table of contents.
+    pages = {path.relative_to(SOURCE).as_posix() for path in _site_pages()}
+    assert pages == set(listed)
+    assert {"index.md", "quickstart.ipynb", "validation.md"} <= set(listed)
+
+
+@pytest.mark.parametrize("path", _notebooks(), ids=lambda path: path.name)
+def test_every_notebook_is_executed_unchanged_and_without_errors(path: Path) -> None:
+    notebook = json.loads(path.read_text())
+
+    build_docs.check_execution(notebook, path.name)
+    build_docs.check_figures(notebook, path.name)
+    seconds = notebook["metadata"]["execution_seconds"]
+    assert isinstance(seconds, int | float) and seconds >= 0
+    # A cell need not print anything, but a page whose outputs were all stripped
+    # shows no results.
+    code = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
+    assert any(cell["outputs"] for cell in code)
+
+
+def _executed_notebook() -> dict[str, Any]:
+    """A small notebook as execution saves it: a figure, and printed output."""
+    figure = {"image/png": "iVBORw0KGgo=", "text/plain": "<Figure size 1x1>"}
+    notebook = {
+        "cells": [
+            {"cell_type": "markdown", "metadata": {}, "source": "# Example"},
+            {
+                "cell_type": "code",
+                "execution_count": 1,
+                "metadata": {"figure_descriptions": ["A rising line."]},
+                "source": "plt.plot([0, 1])",
+                "outputs": [{"output_type": "display_data", "data": figure}],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": 2,
+                "metadata": {},
+                "source": ["x = 1\n", "print(x)"],
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": "1\n"}],
+            },
+        ],
+        "metadata": {"executed_at": "2026-10-24T16:47:14+00:00"},
+    }
+    notebook["metadata"]["executed_code_sha256"] = build_docs.code_fingerprint(notebook)
+    return notebook
+
+
+def _code_cell(notebook: dict[str, Any], index: int) -> dict[str, Any]:
+    return [cell for cell in notebook["cells"] if cell["cell_type"] == "code"][index]
+
+
+def _change_code(notebook: dict[str, Any]) -> None:
+    _code_cell(notebook, 1)["source"].append("\nprint(2)")
+
+
+def _add_error(notebook: dict[str, Any]) -> None:
+    error = {"output_type": "error", "ename": "E", "evalue": "", "traceback": []}
+    _code_cell(notebook, 1)["outputs"].append(error)
+
+
+def _unexecute_cell(notebook: dict[str, Any]) -> None:
+    _code_cell(notebook, 1)["execution_count"] = None
+
+
+def _drop_timestamp(notebook: dict[str, Any]) -> None:
+    del notebook["metadata"]["executed_at"]
+
+
+def _drop_fingerprint(notebook: dict[str, Any]) -> None:
+    del notebook["metadata"]["executed_code_sha256"]
+
+
+def _drop_description(notebook: dict[str, Any]) -> None:
+    _code_cell(notebook, 0)["metadata"]["figure_descriptions"] = []
+
+
+def _blank_description(notebook: dict[str, Any]) -> None:
+    _code_cell(notebook, 0)["metadata"]["figure_descriptions"] = [" "]
+
+
+def _description_not_a_list(notebook: dict[str, Any]) -> None:
+    # A string of one character has the length of a list of one description.
+    _code_cell(notebook, 0)["metadata"]["figure_descriptions"] = "A"
+
+
+EXECUTION = "check_execution"
+FIGURES = "check_figures"
+
+
+@pytest.mark.parametrize(
+    ("change", "check", "message"),
+    [
+        (_change_code, EXECUTION, "changed after it was executed"),
+        (_add_error, EXECUTION, "failed when it was executed"),
+        (_unexecute_cell, EXECUTION, "has not been executed"),
+        (_drop_timestamp, EXECUTION, "has never been executed"),
+        (_drop_fingerprint, EXECUTION, "records no fingerprint"),
+        (_drop_description, FIGURES, "figure_descriptions"),
+        (_blank_description, FIGURES, "figure_descriptions"),
+        (_description_not_a_list, FIGURES, "figure_descriptions"),
+    ],
+)
+def test_notebook_checks_reject_stale_failed_partial_or_undescribed_notebooks(
+    change: Callable[[dict[str, Any]], None], check: str, message: str
+) -> None:
+    notebook = _executed_notebook()
+    build_docs.check_execution(copy.deepcopy(notebook), "example.ipynb")
+    build_docs.check_figures(copy.deepcopy(notebook), "example.ipynb")
+    change(notebook)
+
+    with pytest.raises(ValueError, match=message):
+        getattr(build_docs, check)(notebook, "example.ipynb")
+
+
+def test_prose_can_change_without_executing_again() -> None:
+    notebook = _executed_notebook()
+    fingerprint = build_docs.code_fingerprint(notebook)
+    notebook["cells"][0]["source"] = "# Rewritten prose"
+
+    assert build_docs.code_fingerprint(notebook) == fingerprint
+    build_docs.check_execution(notebook, "example.ipynb")
+    # Code stored as one string fingerprints as the same code stored as a list of
+    # lines, the form in which notebook files keep it.
+    _code_cell(notebook, 1)["source"] = "x = 1\nprint(x)"
+    assert build_docs.code_fingerprint(notebook) == fingerprint
+    _code_cell(notebook, 1)["source"] = "x = 1\nprint(x) "
+    assert build_docs.code_fingerprint(notebook) != fingerprint
+
+
+def test_every_public_module_is_in_the_api_reference() -> None:
+    documented = {
+        name
+        for page in API_SOURCE.glob("*.md")
+        for kind, name, _ in _directives(page)
+        if kind == "automodule"
+    }
+    public = _public_modules()
+
+    assert public == documented
+    # The definition finds what a user imports from, and not the files that
+    # implement a package.
+    assert {
+        "cytepool.cube",
+        "cytepool.design",
+        "cytepool.io.zarr",
+        "cytepool.stats.voom",
+        "cytepool.table",
+    } <= public
+    assert (
+        not {"cytepool.cube.cube", "cytepool.design.formula", "cytepool.stats"} & public
+    )
+
+
+def test_every_public_name_is_documented_under_its_own_name() -> None:
+    documented = set().union(*_documented_objects().values())
+
+    assert sorted(_required_objects() - documented) == []
+    # Constants and names that a package does not re-export need directives of
+    # their own; these are the ones that exist today.
+    assert {"cytepool.design.INTERCEPT", "cytepool.design.formula.quote_name"} <= (
+        _required_objects()
+    )
+
+
+def test_every_api_page_is_in_the_api_index() -> None:
+    index = (API_SOURCE / "index.md").read_text()
+    toctree = re.search(r"```\{toctree\}\n(.*?)```", index, re.S)
+    assert toctree is not None
+    listed = [
+        line.strip()
+        for line in toctree[1].splitlines()
+        if line.strip() and not line.startswith(":")
+    ]
+
+    assert sorted(listed) == sorted(
+        path.stem for path in API_SOURCE.glob("*.md") if path.stem != "index"
+    )
+
+
+def test_every_validation_script_is_listed_on_the_validation_page() -> None:
+    page = (SOURCE / "validation.md").read_text()
+    linked = re.findall(
+        re.escape(REPOSITORY) + r"blob/master/validation/(\w+\.py)\)", page
+    )
+    scripts = {path.name for path in (ROOT / "validation").glob("*.py")}
+
+    assert set(linked) == scripts
+    # Each script has a row in the summary table and a section of its own.
+    for script in scripts:
+        assert linked.count(script) >= 2, script
+
+
+def _anchors(page: Path) -> set[str]:
+    """The labels of a page and the identifiers of its headings."""
+    text = _text(page)
+    headings = re.findall(r"^#+\s+(.+)$", text, re.M)
+    slugs = {
+        re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-") for heading in headings
+    }
+    return set(LABEL.findall(text)) | slugs
+
+
+def _link_problem(
+    page: Path, target: str, labels: set[str], api: dict[str, set[str]]
+) -> str | None:
+    """Why a link of a page does not resolve, or None when it does."""
+    if target.startswith("mailto:"):
+        return None
+    if target.startswith(REPOSITORY):
+        path = re.split(r"[#?]", target.removeprefix(REPOSITORY))[0]
+        branch = re.match(r"(?:blob|tree)/([^/]+)/(.*)", path)
+        if branch and branch[1] != "master":
+            return f"links to branch {branch[1]}; link to master"
+        if branch and not (ROOT / branch[2]).exists():
+            return f"no {branch[2]} in the repository"
+        return None
+    if target.startswith(("http://", "https://")):
+        return None
+    if target.startswith("/api/"):
+        file, _, anchor = target.removeprefix("/api/").partition("#")
+        api_page = file.removesuffix(".html") + ".md"
+        if not file.endswith(".html") or api_page not in api:
+            return f"no API page {file}"
+        if anchor and anchor not in api[api_page]:
+            return f"{anchor} is not documented on {file}"
+        return None
+    if target.startswith("#"):
+        return None if target[1:] in labels else f"no label {target[1:]}"
+    file, _, anchor = target.partition("#")
+    if not (page.parent / file).is_file():
+        return f"no page {file}"
+    if anchor and anchor not in _anchors(page.parent / file):
+        return f"no label or heading {anchor} in {file}"
+    return None
+
+
+def test_links_between_pages_resolve() -> None:
+    # The site build ignores unresolved links (docs/source/myst.yml), since it cannot
+    # see the API reference and should not depend on websites.
+    pages = {path: _text(path) for path in _site_pages()}
+    labels = {label for text in pages.values() for label in LABEL.findall(text)}
+    api = _documented_objects()
+    problems = [
+        f"{page.name}: {target}: {problem}"
+        for page, text in pages.items()
+        for target in MARKDOWN_LINK.findall(text)
+        if (problem := _link_problem(page, target, labels, api))
+    ]
+
+    assert problems == []
+    assert {"validation", "reproduce-validation", "quickstart"} <= labels
+
+
+def test_link_check_finds_broken_links() -> None:
+    page = SOURCE / "index.md"
+    api = _documented_objects()
+    broken = [
+        "missing.md",
+        "installation.md#no-such-heading",
+        "#no-such-label",
+        "/api/missing.html",
+        "/api/voom.html#cytepool.stats.voom.missing_function",
+        # Reachable from a documented module, but not documented under that name.
+        "/api/voom.html#cytepool.stats.voom.np",
+        "/api/cubes.html#cytepool.cube.cube.Cube",
+        "/api/designs.html#cytepool.design.cytepool.design.INTERCEPT",
+        REPOSITORY + "blob/master/validation/missing.py",
+        REPOSITORY + "blob/main/validation/voom.py",
+    ]
+    working = [
+        "installation.md#build-this-documentation",
+        "/api/voom.html#cytepool.stats.voom.voom",
+        "/api/designs.html#cytepool.design.Design.check",
+        "/api/designs.html#cytepool.design.INTERCEPT",
+        REPOSITORY + "blob/master/validation/cube.py#L10",
+    ]
+
+    assert [t for t in broken if not _link_problem(page, t, {"validation"}, api)] == []
+    assert [t for t in working if _link_problem(page, t, set(), api)] == []

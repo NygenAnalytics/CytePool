@@ -1,0 +1,42 @@
+version: 1
+project:
+  title: CytePool
+  description: Statistics on pseudobulk and bulk omics data, built on numpy and numba.
+  github: https://github.com/NygenAnalytics/CytePool
+  # Sphinx builds the API reference from these sources; build_docs.py copies it
+  # into the site under api/.
+  exclude:
+  - reference/api/**
+  # A strict build checks every link over the network, and cannot resolve links to
+  # the API reference, which is copied in afterwards. tests/test_documentation.py
+  # checks links to pages, labels, the API reference and files of the repository
+  # instead, so that a build depends on no website.
+  error_rules:
+  - rule: link-resolves
+    severity: ignore
+  # To add a page, add its file here. A notebook page also needs a saved
+  # execution: make -C docs execute PAGES="<page>".
+  toc:
+  - file: index.md
+  - title: Getting started
+    children:
+    - file: installation.md
+      title: Installation
+    - file: quickstart.ipynb
+      title: Quick start
+  - title: Reference
+    children:
+    - title: API reference
+      url: /api/index.html
+      open_in_same_tab: true
+    - file: validation.md
+      title: Validation
+    - url: https://github.com/NygenAnalytics/CytePool/issues
+      title: Report a bug
+site:
+  # The book theme as released at v1.4.1, which runs with mystmd 1.8.1; without a
+  # pinned archive MyST downloads the theme's latest version.
+  template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip
+  options:
+    folders: true
+    logo_text: CytePool

@@ -18,7 +18,8 @@ it runs in seconds and needs neither R nor the reference Python packages.
 | close | iterative fits | relative difference at most 1e-6 |
 | calibrated | Monte Carlo methods | within simulation error, with the same calls |
 
-Each script states the tier of every check.
+Each script prints the tolerance of every check; some checks are stricter than their
+tier, and a few use a bound derived for their case.
 
 ## Requirements
 

@@ -190,7 +190,7 @@ def natural_spline_basis(
     (first at the lower boundary, then at the upper one).
 
     NaN in x gives a row of NaN, as R's ``NA`` does; knots and boundary knots
-    are computed from the other values. Where R's ``ns`` warns and raises a
+    are computed from the other values. Where R's ``ns`` warns and increases a
     ``df`` below ``1 + intercept``, or accepts a knot on the lower boundary
     knot (returning a basis with a degenerate column), this function raises
     an error.

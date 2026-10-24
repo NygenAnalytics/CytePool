@@ -115,7 +115,8 @@ def quote_name(name: str) -> str:
 
     Syntactic R names (letters, digits, ``.`` and ``_``, not starting with a digit,
     ``_`` or ``.`` followed by a digit, and not a reserved word) are returned as they
-    are; other names are quoted with backticks, as in ```` `cell type` ````.
+    are; other names are quoted with backticks: ``quote_name("cell type")`` returns
+    ``"`cell type`"``.
     """
     return name if _is_syntactic(name) else f"`{name}`"
 
