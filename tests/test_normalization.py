@@ -357,6 +357,27 @@ def test_filter_by_expression_design_rank_and_matrix_attribute() -> None:
     assert_array_equal(nz.filter_by_expression(counts, design=Design()), expected)
 
 
+def test_filter_by_expression_reads_only_the_fixed_effects_of_a_design() -> None:
+    # As documented, only the fixed effects set n: a Design with a random donor
+    # intercept filters as edgeR's filterByExpr does with the model matrix of its
+    # fixed effects. Read as fixed, the donor columns would give every sample
+    # leverage 1, and so n = 1, a laxer filter.
+    from cytepool.design import Design
+
+    case = CASES["ties"]
+    (call,) = [
+        c for c in CALLS if c["case"] == "ties" and c["kwargs"] == {"design": "$X"}
+    ]
+    labels = np.array(["a", "b", "c"])[case["g"].astype(int)]
+    samples = {"g": labels, "x": case["X"][:, 3], "donor": ["d1", "d2", "d3"] * 2}
+    design = Design(samples, "~ g + x", random="(1 | donor)")
+    assert_array_equal(design.matrix, case["X"])
+    kept = nz.filter_by_expression(case["Y"], design=design)
+    assert_array_equal(kept, call["expected"].astype(bool))
+    as_fixed = Design(samples, "~ g + x + donor")
+    assert not np.array_equal(nz.filter_by_expression(case["Y"], design=as_fixed), kept)
+
+
 def test_filter_by_expression_adds_an_intercept_to_the_design() -> None:
     # With the intercept that edgeR adds, x = (1, 1, 1, 1, 1, 2) gives the last
     # sample leverage 1/6 + (5/6)^2 / (5/6) = 1, so one sample suffices. Without

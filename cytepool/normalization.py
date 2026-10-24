@@ -395,8 +395,14 @@ def filter_by_expression(
         counts: Counts, samples x features.
         group: Group label of each sample; labels must not be missing.
         design: Design matrix, samples x coefficients, or any object with a
-            ``matrix`` attribute holding one. With the intercept column added,
-            its rank is decided as R's ``qr()`` decides it.
+            ``matrix`` attribute holding one, such as a ``Design``. With the
+            intercept column added, its rank is decided as R's ``qr()`` decides
+            it. Only the fixed effects set n: the random effects of a ``Design``
+            are ignored, as edgeR defines n for the model matrix of the fixed
+            effects. Leaving them out can only raise n, and so keep fewer
+            features. When a random effect separates groups whose expression may
+            differ, such as the tissues of a variance partition, pass those
+            groups as ``group`` instead.
         library_sizes: Library size of each sample; defaults to the total
             counts. Must be positive.
         norm_factors: Normalization factor of each sample, multiplied into the
