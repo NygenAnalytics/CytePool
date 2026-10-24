@@ -6,9 +6,15 @@ from typing import Any
 import numpy as np
 
 from ..table import Table, _missing_mask
-from .checks import DesignReport, check_design
-from .contrasts import Contrasts, make_contrasts
-from .formula import RandomEffect, _close_matches, parse_formula, parse_random_effects
+from .checks import DesignReport, _same_partition, check_design
+from .contrasts import Contrasts, _is_pandas, make_contrasts
+from .formula import (
+    RandomEffect,
+    _close_matches,
+    parse_formula,
+    parse_random_effects,
+    quote_name,
+)
 from .model_matrix import (
     ModelMatrix,
     _build_model_matrix,
@@ -28,7 +34,11 @@ class Design:
     Every model in the package takes a design: ``matrix`` and ``columns`` are what a
     linear model is fitted to, ``random`` describes the random effects of a mixed
     model, and ``contrasts`` holds the comparisons to test. ``check()`` looks for the
-    problems that silently ruin an analysis before anything is fitted.
+    problems that silently ruin an analysis before anything is fitted. No function
+    estimates random effects yet: ``fit_linear_model`` fits one random intercept
+    with a known correlation, given ``block=`` that groups the samples as the
+    intercept does, and refuses a design whose random effects it would otherwise
+    drop.
 
     Args:
         samples: The sample table: a ``Table``, a mapping of column name to 1-D
@@ -38,7 +48,8 @@ class Design:
         formula: The fixed effects as an R formula, such as
             ``"~ condition + batch"`` or ``"~ 0 + group"``; see ``model_matrix``.
         random: Random-effect terms in lme4 notation, such as ``"(1 | donor)"`` or
-            ``"(1 | donor) + (1 | plate)"``, or a list of such strings.
+            ``"(1 | donor) + (1 | plate)"``, or a list of such strings. ``check()``
+            examines them, but no function estimates them yet.
         contrasts: Named contrasts over the design columns, as accepted by
             ``make_contrasts``: for example ``{"stim_vs_ctrl": "conditionstim"}``.
         levels: Level order of factors, such as ``{"condition": ["ctrl", "stim"]}``;
@@ -180,7 +191,7 @@ class Design:
 
     @property
     def random(self) -> tuple[RandomEffect, ...]:
-        """The random-effect terms, in the order given."""
+        """The random-effect terms, in the order given; none is estimated yet."""
         return self._random
 
     @property
@@ -249,6 +260,130 @@ def _restore(*state: Any) -> Design:
     for name, value in zip(Design.__slots__, state, strict=True):
         object.__setattr__(design, name, value)
     return design
+
+
+def _design_columns(design: Any) -> tuple[Any, Any]:
+    """The matrix and column names of a design, as given.
+
+    A design is a ``Design``, a ``ModelMatrix`` or another object with ``matrix``
+    and ``columns`` attributes, a table with ``columns`` such as a pandas
+    DataFrame, or a matrix. A function that fits a model also passes the design
+    to :func:`_refuse_dropped_random_effects`.
+
+    Returns:
+        The matrix, not yet checked or converted, and the column names, or None
+        when the design has none.
+    """
+    if _is_pandas(design):
+        # Its columns, which pandas also shows as attributes, are the design's.
+        return design, design.columns
+    if hasattr(design, "matrix") and hasattr(design, "columns"):
+        return design.matrix, design.columns
+    return design, getattr(design, "columns", None)
+
+
+def _refuse_dropped_random_effects(
+    design: Any, function: str, block: Any, correlation: float
+) -> None:
+    """Refuse a fit that would drop the random effects of a ``Design``.
+
+    Every function that fits a model calls this. Such a fit takes fixed effects
+    and, through a correlation within blocks, at most one random intercept: a
+    ``Design`` with random effects is accepted only when they are one random
+    intercept, such as ``(1 | donor)``, whose grouping splits the samples as the
+    blocks do, with a correlation of at least zero. Only a ``Design`` carries
+    random effects; any other design is a matrix.
+
+    Args:
+        design: The design given to the fit.
+        function: The name of the fitting function, for the message.
+        block: The block index of each sample, already checked, or None.
+        correlation: The correlation within blocks, already checked.
+
+    Raises:
+        ValueError: If the fit would drop a random effect.
+    """
+    if not isinstance(design, Design) or not design.random:
+        return
+    effects = design.random
+    if block is None:
+        reason = ""
+    elif len(effects) != 1 or not _is_random_intercept(effects[0]):
+        reason = "; block= can stand only for a single random intercept"
+    elif not _same_partition(np.asarray(block), design._random_parts[0][1]):
+        reason = f"; block= does not group the samples as {effects[0]} does"
+    elif correlation < 0.0:
+        reason = (
+            "; a random intercept gives the samples of a group a correlation of at "
+            f"least zero, so correlation={correlation:g} does not stand for "
+            f"{effects[0]}"
+        )
+    else:
+        return
+    raise ValueError(_random_effects_refusal(design, function, reason))
+
+
+def _is_random_intercept(effect: RandomEffect) -> bool:
+    return effect.effects.intercept and not effect.effects.terms
+
+
+def _random_effects_refusal(design: Design, function: str, reason: str) -> str:
+    """Why a fit refuses the random effects of a design, and what it can fit now."""
+    effects = design.random
+    listed = " + ".join(str(effect) for effect in effects)
+    noun = "random effect" if len(effects) == 1 else "random effects"
+    shared = len({effect.grouping for effect in effects}) == 1
+    group = effects[0].group if shared else None
+    single = shared and len(effects[0].grouping) == 1
+    # In a formula a name such as "cell type" needs backticks; lme4 names a
+    # combination of variables with them already.
+    term = quote_name(effects[0].grouping[0]) if single else group
+    intercept = len(effects) == 1 and _is_random_intercept(effects[0])
+    if group is None:
+        options = [
+            "a fixed-effects analysis, with the Design built without random= and the "
+            "grouping variables in the formula when the conditions compared vary "
+            "within their groups (left out, the samples of a group count as "
+            "independent)"
+        ]
+    else:
+        options = [
+            "a fixed-effects analysis, with the Design built without random= and "
+            f"{term} in the formula when the conditions compared vary within each "
+            f"{group} (left out, the samples of a {group} count as independent)"
+        ]
+        if intercept:
+            labels = (
+                f"block=design.samples[{group!r}]"
+                if single
+                else f"block= (the {group} of each sample)"
+            )
+            options.append(
+                "this random intercept with a known correlation between the samples "
+                f"of each {group}, given {labels} and correlation= (CytePool does not "
+                "estimate the correlation)"
+            )
+        by = (
+            f"({group!r})"
+            if single
+            else f", by a column holding the {group} of each sample"
+        )
+        options.append(
+            f"when the conditions compared differ between levels of {group}, not "
+            f"within them, a fit of one profile per {group}, pooled first with "
+            f"Cube.collapse_samples{by}"
+        )
+    fitted = (
+        options[0]
+        if len(options) == 1
+        else ("; ".join(options[:-1]) + "; or, " + options[-1])
+    )
+    return (
+        f"{function} fits fixed effects and, through block= and correlation=, one "
+        "random intercept with a known correlation, so it would drop the "
+        f"{noun} {listed} of this design{reason}. Fitting random effects (mixed "
+        f"models) is planned but not available yet. What it can fit now: {fitted}."
+    )
 
 
 def _parse_random(random: str | Sequence[str] | None) -> tuple[RandomEffect, ...]:

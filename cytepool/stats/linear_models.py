@@ -37,6 +37,7 @@ from cytepool.design.contrasts import (
     _is_pandas,
     _weights_on_columns,
 )
+from cytepool.design.design import _design_columns, _refuse_dropped_random_effects
 
 __all__ = ["LinearModelFit", "contrasts_fit", "fit_linear_model"]
 
@@ -225,14 +226,21 @@ def fit_linear_model(
         y: ``(n_samples, n_features)`` log-scale expression values. NaN marks
             a missing value; infinite values are rejected.
         design: ``(n_samples, n_coefficients)`` design matrix of full column
-            rank, an object with ``matrix`` and ``columns`` attributes, or a
-            table with ``columns``; column names name the coefficients.
+            rank, an object with ``matrix`` and ``columns`` attributes such as a
+            ``Design``, or a table with ``columns``; column names name the
+            coefficients. A ``Design`` with random effects is refused, as they
+            would be dropped, unless its only random effect is a random
+            intercept, such as ``(1 | donor)``, ``block`` groups the samples
+            as it does and ``correlation`` is at least zero; the message says
+            what can be fitted instead.
         weights: Precision weights, ``(n_samples,)`` for sample weights or
             ``(n_samples, n_features)`` for observation weights (as from
             voom). They must be finite and non-negative wherever ``y`` is
             observed.
         block: One label per sample; samples with the same label are
-            correlated. Give together with ``correlation``.
+            correlated. Give together with ``correlation``. With a correlation
+            of at least zero this is a random intercept for each block, with the
+            correlation known.
         correlation: Correlation between samples of the same block, in
             ``(-1, 1)``. With blocks of up to m samples it must exceed
             ``-1 / (m - 1)``, so that the correlation matrix is positive
@@ -251,16 +259,18 @@ def fit_linear_model(
     Raises:
         TypeError: If an input is not real-valued or a label is not comparable.
         ValueError: If shapes disagree, ``y`` has infinite values, ``design``
-            is not finite or not of full column rank (the message names the
-            aliased columns), a weight is negative or not finite where ``y`` is
-            observed, ``block`` and ``correlation`` are invalid, or
-            ``coefficient_names`` move a design column's name to another column.
+            has random effects that the fit would drop, is not finite or is not
+            of full column rank (the message names the aliased columns), a
+            weight is negative or not finite where ``y`` is observed, ``block``
+            and ``correlation`` are invalid, or ``coefficient_names`` move a
+            design column's name to another column.
     """
     x, names = _design_matrix(design, coefficient_names)
+    codes, counts, rho = _block_structure(block, correlation, x.shape[0])
+    _refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
     values = _expression_matrix(y, x.shape[0])
     observed = ~np.isnan(values)
     precision = _precision_weights(weights, values.shape, observed)
-    codes, counts, rho = _block_structure(block, correlation, x.shape[0])
 
     aliased = _aliased_columns(x)
     if aliased:
@@ -852,7 +862,7 @@ def _observed_means(
 def _design_matrix(
     design: Any, coefficient_names: Sequence[str] | None
 ) -> tuple[FloatArray, tuple[str, ...]]:
-    matrix, columns = _matrix_and_columns(design)
+    matrix, columns = _design_columns(design)
     x = _real_array(matrix, "design")
     if x.ndim != 2:
         raise ValueError(
@@ -1093,13 +1103,6 @@ def _check_renaming(
                 f"the columns in order ({', '.join(map(repr, existing))}), so a name "
                 "already in use may only label its own column"
             )
-
-
-def _matrix_and_columns(values: Any) -> tuple[Any, Any]:
-    """Split a design-like object into its matrix and its column names."""
-    if hasattr(values, "matrix") and hasattr(values, "columns"):
-        return values.matrix, values.columns
-    return values, getattr(values, "columns", None)
 
 
 def _checked_names(names: Any, count: int, label: str) -> tuple[str, ...]:

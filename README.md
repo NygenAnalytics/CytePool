@@ -29,7 +29,11 @@ These are not implemented yet:
 - Negative binomial models (edgeR quasi-likelihood, DESeq2-style tests) and dispersion
   estimation
 - Mixed models (dream-style fits, variance partitioning). A design can describe random
-  effects, but no function fits them yet.
+  effects, and its checks examine them, but no function estimates them yet.
+  `fit_linear_model` fits one random intercept with a known correlation, given `block=`
+  that groups the samples as the intercept does and `correlation=` (which CytePool does
+  not estimate), and refuses a design whose random effects it would otherwise drop; its
+  message says what can be fitted instead.
 - Gene-set tests and pathway or transcription-factor activity
 - Composition tests
 - Ligand-receptor scoring and differential interactions
