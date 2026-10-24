@@ -174,7 +174,8 @@ def make_contrasts(
             re-expressed on these columns by name, so they must weigh the same
             columns, in any order.
         columns: The design column names, or an object with a ``columns``
-            attribute such as a ``ModelMatrix`` or ``Design``.
+            attribute such as a ``ModelMatrix`` or ``Design``. Contrasts weigh the
+            fixed effects, so the random effects of a ``Design`` play no part.
 
     Returns:
         The contrasts, with a ``(n_columns, n_contrasts)`` weight matrix.

@@ -443,8 +443,10 @@ def _variable_checks(
                     f"{name} has a different level for every sample, so it explains "
                     "each sample on its own and leaves nothing to estimate the other "
                     "effects or the residual variance with; remove it from the "
-                    "formula (to account for repeated samples of a donor or batch, "
-                    "use a random effect instead)",
+                    "formula. To account for repeated samples of a donor or batch, "
+                    "the right model has that grouping as a random effect, such as "
+                    "random='(1 | g)' for a grouping column g; "
+                    + _random_intercept_alternatives(None),
                 )
             )
             continue
@@ -560,7 +562,26 @@ def _confounded_factors(
         f"every level of {first} holds a single level of {second} ({listing}), so "
         f"the effect of {second} cannot be separated from the {first} effects. Remove "
         f"{first} from the formula; if {first} groups repeated samples (donors, "
-        f"batches), model it as a random effect, random='(1 | {first})'",
+        f"batches), the right model has it as a random effect, random='(1 | {first})'; "
+        + _random_intercept_alternatives(first),
+    )
+
+
+def _random_intercept_alternatives(group: str | None) -> str:
+    """What can be fitted now for a random intercept, which no function estimates."""
+    if group is None:
+        return (
+            "no function estimates random effects yet, but fit_linear_model fits a "
+            "random intercept whose correlation is known, given block= (the group "
+            "of each sample) and correlation=; and, when the conditions compared "
+            "differ between groups, not within them, Cube.collapse_samples pools the "
+            "repeated samples of each group into one"
+        )
+    return (
+        "no function estimates random effects yet, but fit_linear_model fits this "
+        f"random intercept with a known correlation, given block= (the {group} of "
+        f"each sample) and correlation=; or pool the samples of each {group} with "
+        f"Cube.collapse_samples({group!r})"
     )
 
 

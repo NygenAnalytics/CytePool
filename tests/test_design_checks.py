@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from cytepool.design import Design, DesignIssue, DesignReport
+from cytepool.stats.linear_models import fit_linear_model
 
 DATA = Path(__file__).parent / "data" / "design"
 IDS = [f"S{i}" for i in range(1, 9)]
@@ -101,10 +102,33 @@ def test_batch_nested_in_condition(nested_batches: dict[str, Any]) -> None:
     confounded = _issue(report, "confounded").message
     assert "every level of batch holds a single level of condition" in confounded
     assert "condition 'ctrl': batch 'b1' and 'b2'" in confounded
-    assert "random='(1 | batch)'" in confounded
+    assert (
+        "the right model has it as a random effect, random='(1 | batch)'" in confounded
+    )
+    # No function estimates that model yet: the message says what can be fitted.
+    assert confounded.endswith(
+        "no function estimates random effects yet, but fit_linear_model fits this "
+        "random intercept with a known correlation, given block= (the batch of each "
+        "sample) and correlation=; or pool the samples of each batch with "
+        "Cube.collapse_samples('batch')"
+    )
     # b2 vs b1 lies within ctrl and stays estimable; stim vs ctrl does not.
     assert "'stim_vs_ctrl' is not estimable" in str(report)
     assert "b2_vs_b1" not in str(report)
+
+
+def test_the_advice_for_repeated_samples_can_be_followed(
+    nested_batches: dict[str, Any],
+) -> None:
+    # The confounded message advises random='(1 | batch)' and, to fit it today,
+    # block= and a known correlation; both together are fitted, not refused.
+    design = Design(nested_batches, "~ condition", random="(1 | batch)")
+    assert design.check().ok
+    y = np.random.default_rng(47).normal(5.0, 1.0, (8, 3))
+    fit = fit_linear_model(y, design, block=design.samples["batch"], correlation=0.3)
+    assert fit.coefficient_names == ("(Intercept)", "conditionstim")
+    with pytest.raises(ValueError, match=r"drop the random effect \(1 \| batch\)"):
+        fit_linear_model(y, design)
 
 
 def test_identical_groupings(nested_batches: dict[str, Any]) -> None:
@@ -159,6 +183,16 @@ def test_a_factor_with_a_level_per_sample() -> None:
     samples = {"sample_id": IDS[:4], "condition": ["a", "a", "b", "b"]}
     report = Design(samples | {"id": IDS[:4]}, "~ condition + id").check()
     assert "id has a different level for every sample" in str(report)
+    message = _issue(report, "one_sample_per_level").message
+    # No column of this design groups repeated samples, so none is named.
+    assert message.endswith(
+        "the right model has that grouping as a random effect, such as "
+        "random='(1 | g)' for a grouping column g; no function estimates random "
+        "effects yet, but fit_linear_model fits a random intercept whose correlation "
+        "is known, given block= (the group of each sample) and correlation=; and, "
+        "when the conditions compared differ between groups, not within them, "
+        "Cube.collapse_samples pools the repeated samples of each group into one"
+    )
     assert set(report.kinds()) == {
         "rank_deficient",
         "no_residual_df",

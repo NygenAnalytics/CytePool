@@ -4,6 +4,8 @@ Reference values in ``tests/data/linear_models`` come from limma's ``lmFit``
 and ``contrasts.fit``, written by ``validation/linear_models.py``.
 """
 
+import pickle
+import re
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +14,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from cytepool.cube import from_bulk
+from cytepool.design import Design
 from cytepool.stats import linear_models
 from cytepool.stats.linear_models import LinearModelFit, contrasts_fit, fit_linear_model
 
@@ -649,6 +653,297 @@ def test_tables_with_mixed_column_types_are_accepted(one_way: SimpleNamespace) -
     words = np.full((12, 3), "one", dtype=object)
     with pytest.raises(TypeError, match="design must hold real numbers"):
         fit_linear_model(one_way.y, Table(words, ["a", "b", "c"]))
+
+
+def assert_fits_like_limma(fit: LinearModelFit, data: dict[str, np.ndarray]) -> None:
+    standard_error = data["stdev_unscaled"] * data["sigma"][:, np.newaxis]
+    assert_matches(fit.coefficients, data["coefficients"], floor=standard_error)
+    assert_matches(fit.stdev_unscaled, data["stdev_unscaled"])
+    assert_matches(fit.sigma, data["sigma"])
+    np.testing.assert_array_equal(fit.df_residual, data["df_residual"])
+    assert_same_covariance(fit.cov_coefficients, data["cov_coefficients"])
+
+
+def groups_and_covariate_samples() -> dict[str, Any]:
+    """The samples of that fixture, with four donors who each give one per group."""
+    design = reference("groups_and_covariate")["design"]
+    group = np.where(design[:, 1] == 1, "B", np.where(design[:, 2] == 1, "C", "A"))
+    donor = np.tile(["D1", "D2", "D3", "D4"], 3)
+    return {"group": group, "age": design[:, 3], "donor": donor}
+
+
+def test_a_design_fits_as_limma_does_and_one_with_random_effects_is_refused() -> None:
+    data = reference("groups_and_covariate")
+    samples = groups_and_covariate_samples()
+    design = Design(samples, "~ group + age")
+    np.testing.assert_array_equal(design.matrix, data["design"])
+    fit = fit_linear_model(data["y"], design)
+    assert fit.coefficient_names == ("(Intercept)", "groupB", "groupC", "age")
+    assert_fits_like_limma(fit, data)
+
+    # A random donor intercept would be dropped by a fit of the fixed effects.
+    mixed = Design(samples, "~ group + age", random="(1 | donor)")
+    with pytest.raises(
+        ValueError,
+        match=r"^fit_linear_model fits fixed effects and, through block= and "
+        r"correlation=, one random intercept with a known correlation, so it would "
+        r"drop the random effect \(1 \| donor\) of this design\. Fitting random "
+        r"effects \(mixed models\) is planned but not available yet\. What it can "
+        r"fit now: a fixed-effects analysis, with the Design built without random= "
+        r"and donor in the formula when the conditions compared vary within each "
+        r"donor \(left out, the samples of a donor count as independent\); ",
+    ):
+        fit_linear_model(data["y"], mixed)
+    # Copies and derived designs keep the random effect, and are refused too.
+    for derived in (
+        pickle.loads(pickle.dumps(mixed)),
+        mixed.with_contrasts({"b": "groupB"}),
+    ):
+        with pytest.raises(ValueError, match=r"drop the random effect \(1 \| donor\)"):
+            fit_linear_model(data["y"], derived)
+    # Its fixed effects alone are a design without random effects.
+    fixed_only = fit_linear_model(data["y"], mixed.model_matrix)
+    assert fixed_only.coefficient_names == fit.coefficient_names
+    assert_fits_like_limma(fixed_only, data)
+
+
+def test_a_random_intercept_with_a_known_correlation_fits_as_limma_does() -> None:
+    # limma's lmFit with block and correlation fits a random intercept for each
+    # block with the correlation known. A design whose only random effect is that
+    # intercept is fitted when block groups the samples as the term does, whatever
+    # the labels, and refused when it groups them otherwise.
+    data = reference("block_correlation")
+    donors = [f"D{int(label)}" for label in data["block"]]
+    samples = {
+        "treated": data["design"][:, 1],
+        "donor_age": data["design"][:, 2],
+        "donor": donors,
+    }
+    design = Design(samples, "~ treated + donor_age", random="(1 | donor)")
+    np.testing.assert_array_equal(design.matrix, data["design"])
+    correlation = float(data["correlation"])
+    # The donor labels, the fixture's integers, and other names for the same pairs.
+    for block in (design.samples["donor"], data["block"], donors[::-1]):
+        fit = fit_linear_model(data["y"], design, block=block, correlation=correlation)
+        assert fit.coefficient_names == ("(Intercept)", "treated", "donor_age")
+        assert_fits_like_limma(fit, data)
+    pairs = data["block"] // 2  # two donors to a block: another grouping
+    with pytest.raises(
+        ValueError,
+        match=r"; block= does not group the samples as \(1 \| donor\) does\.",
+    ):
+        fit_linear_model(data["y"], design, block=pairs, correlation=correlation)
+    with pytest.raises(ValueError, match=r"given block=design\.samples\['donor'\] and"):
+        fit_linear_model(data["y"], design)
+
+
+@pytest.mark.parametrize(
+    ("random", "block", "present", "absent"),
+    [
+        (
+            "(1 | donor)",
+            None,
+            [
+                r"the random effect \(1 \| donor\) of this design\.",
+                r"; this random intercept with a known correlation between the samples "
+                r"of each donor, given block=design\.samples\['donor'\] and "
+                r"correlation= \(CytePool does not estimate the correlation\);",
+                r"; or, when the conditions compared differ between levels of donor, "
+                r"not within them, a fit of one profile per donor, pooled first with "
+                r"Cube\.collapse_samples\('donor'\)\.$",
+            ],
+            [],
+        ),
+        (
+            "(1 || donor)",
+            None,
+            [r"effect \(1 \|\| donor\)", r"given block=design\.samples\['donor'\]"],
+            [],
+        ),
+        (
+            "(age | donor)",
+            None,
+            [r"effect \(age \| donor\)", r"Cube\.collapse_samples\('donor'\)\.$"],
+            ["given block="],
+        ),
+        (
+            "(age | donor)",
+            "donor",
+            [r"; block= can stand only for a single random intercept\."],
+            ["given block="],
+        ),
+        (
+            "(1 | donor) + (0 + age | donor)",
+            None,
+            [
+                r"effects \(1 \| donor\) \+ \(0 \+ age \| donor\)",
+                r"donor in the formula",
+            ],
+            ["given block="],
+        ),
+        (
+            "(1 | donor) + (1 | plate)",
+            None,
+            [r"effects \(1 \| donor\) \+ \(1 \| plate\)", r"the grouping variables in"],
+            ["given block=", "collapse_samples"],
+        ),
+        (
+            ["(1 | donor)", "(1 | plate)"],
+            None,
+            [r"effects \(1 \| donor\) \+ \(1 \| plate\)"],
+            ["given block=", "collapse_samples"],
+        ),
+        (
+            "(1 | donor/plate)",
+            None,
+            [r"effects \(1 \| donor\) \+ \(1 \| plate:donor\)"],
+            ["given block=", "collapse_samples"],
+        ),
+        (
+            "(1 | donor:plate)",
+            None,
+            [
+                r"given block= \(the donor:plate of each sample\)",
+                r"Cube\.collapse_samples, by a column holding the donor:plate of each "
+                r"sample\.$",
+            ],
+            [],
+        ),
+        (
+            "(1 | donor)",
+            "plate",
+            [r"; block= does not group the samples as \(1 \| donor\) does\."],
+            [],
+        ),
+        (
+            "(1 | `cell type`)",
+            None,
+            [
+                r"and `cell type` in the formula when",
+                r"given block=design\.samples\[.cell type.\] and",
+                r"Cube\.collapse_samples\(.cell type.\)\.$",
+            ],
+            [],
+        ),
+    ],
+    ids=[
+        "intercept",
+        "uncorrelated",
+        "slope",
+        "slope_with_block",
+        "two_by_donor",
+        "two_groupings",
+        "list",
+        "nested",
+        "combined",
+        "other_block",
+        "quoted_name",
+    ],
+)
+def test_the_refusal_names_the_random_effects_and_what_can_be_fitted(
+    random: str | list[str], block: str | None, present: list[str], absent: list[str]
+) -> None:
+    samples = groups_and_covariate_samples()
+    samples["plate"] = np.repeat(["P1", "P2"], 6)
+    samples["cell type"] = samples["donor"]
+    design = Design(samples, "~ group + age", random=random)
+    keywords: dict[str, Any] = {}
+    if block is not None:
+        keywords = {"block": design.samples[block], "correlation": 0.3}
+    with pytest.raises(ValueError) as raised:
+        fit_linear_model(reference("groups_and_covariate")["y"], design, **keywords)
+    message = str(raised.value)
+    assert message.startswith("fit_linear_model fits fixed effects and")
+    assert "planned but not available yet" in message
+    assert "What it can fit now: a fixed-effects analysis" in message
+    for pattern in present:
+        assert re.search(pattern, message), (pattern, message)
+    for text in absent:
+        assert text not in message, (text, message)
+
+
+def test_a_block_that_would_drop_a_random_effect_is_refused() -> None:
+    # block= stands for one random intercept that groups the samples as it does,
+    # with a correlation of at least zero; anything else would drop a random
+    # effect, and an invalid block is reported as such.
+    samples = groups_and_covariate_samples()
+    samples["plate"] = np.repeat(["P1", "P2"], 6)
+    data = reference("groups_and_covariate")
+    intercept = Design(samples, "~ group + age", random="(1 | donor)")
+    two = Design(samples, "~ group + age", random="(1 | donor) + (1 | plate)")
+    donors = intercept.samples["donor"]
+    for design, block, correlation, reason in (
+        (two, donors, 0.3, r"; block= can stand only for a single random intercept\."),
+        (
+            intercept,
+            np.arange(12),  # one block per sample: finer than the donors
+            0.3,
+            r"; block= does not group the samples as \(1 \| donor\) does\.",
+        ),
+        (
+            intercept,
+            donors,
+            -0.3,
+            r"; a random intercept gives the samples of a group a correlation of at "
+            r"least zero, so correlation=-0\.3 does not stand for \(1 \| donor\)\.",
+        ),
+    ):
+        with pytest.raises(ValueError, match=reason):
+            fit_linear_model(data["y"], design, block=block, correlation=correlation)
+    # A correlation of zero is a random intercept without variance: limma's fit.
+    zero = fit_linear_model(data["y"], intercept, block=donors, correlation=0.0)
+    assert_fits_like_limma(zero, data)
+    with pytest.raises(
+        ValueError, match=r"one label per sample \(12\), got shape \(\)"
+    ):
+        fit_linear_model(data["y"], intercept, block="donor", correlation=0.3)
+
+
+def test_pooling_the_samples_of_each_donor_gives_a_fit_between_donors() -> None:
+    # The pooling the refusal names, end to end: when the conditions differ between
+    # donors, one profile per donor is the unit of replication. The reference is
+    # the per-donor sums and the group means of a one-way layout, by hand.
+    counts = np.random.default_rng(43).poisson(50.0, (12, 5)).astype(float)
+    samples = {
+        "sample_id": [f"S{i}" for i in range(12)],
+        "donor": np.repeat([f"D{i}" for i in range(6)], 2),
+        "condition": np.repeat(["ctrl", "stim"], 6),
+    }
+    mixed = Design(samples, "~ condition", random="(1 | donor)")
+    with pytest.raises(ValueError, match=r"Cube\.collapse_samples\('donor'\)\.$"):
+        fit_linear_model(np.log2(counts + 1.0), mixed)
+    pooled = from_bulk(counts, samples=samples).collapse_samples("donor")
+    y = np.log2(pooled.layer("counts", "bulk") + 1.0)
+    fit = fit_linear_model(y, Design(pooled.samples, "~ condition"))
+    by_hand = np.log2(counts.reshape(6, 2, 5).sum(axis=1) + 1.0)
+    np.testing.assert_array_equal(y, by_hand)
+    ctrl, stim = by_hand[:3].mean(axis=0), by_hand[3:].mean(axis=0)
+    np.testing.assert_allclose(fit.coefficients[:, 0], ctrl, rtol=1e-13)
+    # A difference of means near zero has absolute, not relative, precision.
+    np.testing.assert_allclose(fit.coefficients[:, 1], stim - ctrl, rtol=0, atol=1e-12)
+    np.testing.assert_array_equal(fit.df_residual, 4.0)
+
+
+def test_only_a_design_carries_random_effects() -> None:
+    # An object with a matrix and columns is a matrix with names; an attribute that
+    # happens to be called random is not a random effect.
+    data = reference("groups_and_covariate")
+    names = list(data["coefficient_names"])
+    for random in ("seed", [0.1, 0.2], ""):
+        laid_out = SimpleNamespace(matrix=data["design"], columns=names, random=random)
+        assert_fits_like_limma(fit_linear_model(data["y"], laid_out), data)
+
+
+def test_dataframe_designs_are_read_as_tables_whatever_their_column_names() -> None:
+    # pandas shows columns as attributes; columns named random or matrix must not
+    # be taken for a design's random effects or its matrix.
+    pandas = pytest.importorskip("pandas")
+    data = reference("groups_and_covariate")
+    names = ["random", "matrix", "columns", "age"]
+    frame = pandas.DataFrame(data["design"], columns=names)
+    fit = fit_linear_model(data["y"], frame)
+    assert fit.coefficient_names == tuple(names)
+    assert_fits_like_limma(fit, data)
 
 
 def test_fit_does_not_share_memory_with_its_inputs(one_way: SimpleNamespace) -> None:
