@@ -1,6 +1,8 @@
 import copy
 import json
 import pickle
+import re
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -47,6 +49,7 @@ NORMALIZATION = {
 }
 INTEGER_LAYERS = ("counts", "detected")
 FLOAT_LAYERS = ("log_sum", "log_sum_sq", "linear_sum")
+LARGEST = 2**63 - 1  # the largest int64, and so the largest value of an integer layer
 
 
 def simulate_cells(seed: int = 20261022) -> dict[str, np.ndarray]:
@@ -796,6 +799,18 @@ def test_pandas_n_cells_with_nullable_integers(layers: dict[str, np.ndarray]) ->
     fractions = pd.DataFrame(CELLS + 0.5, index=SAMPLES, columns=GROUPS).astype(object)
     with pytest.raises(TypeError, match="n_cells must be an integer array"):
         make_cube(layers, n_cells=fractions)
+    # pandas converts a UInt64 count of 2**63 to int64 as -2**63; it is read as
+    # uint64, so the error says what the value is.
+    unsigned = pd.DataFrame(CELLS, index=SAMPLES, columns=GROUPS).astype("UInt64")
+    unsigned.loc["S3", "T8"] = 2**63
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "n_cells is above 2**63 - 1 (9223372036854775808) for sample 'S3' and "
+            "group 'T8'"
+        ),
+    ):
+        make_cube(layers, n_cells=unsigned)
 
 
 def test_copy_false_adopts_arrays_after_the_checks_pass(
@@ -839,6 +854,287 @@ def test_n_pooled_samples_keeps_its_place_or_comes_last(
     floats = dict(samples, n_pooled_samples=[1.0, 2.0, 3.0, 1.0])
     with pytest.raises(ValueError, match="'n_pooled_samples' counts pooled samples"):
         make_cube(layers, samples=floats).collapse_samples("donor")
+
+
+# The integer range: values up to 2**63 - 1, and sums that are exact or raise.
+
+
+def tiny_cube(
+    counts: np.ndarray, donors: list[str] | None = None, lazy: bool = False
+) -> Cube:
+    """A cube of counts alone, (groups, samples, features), with ids g0, s0 and f0 on.
+
+    The sample column ``donor`` is ``donors``, by default the same for all samples.
+    """
+    n_groups, n_samples, n_features = counts.shape
+    return Cube(
+        {"counts": LazyArray(counts) if lazy else counts},
+        samples={
+            "sample_id": [f"s{i}" for i in range(n_samples)],
+            "donor": donors or ["D"] * n_samples,
+        },
+        groups={"group_id": [f"g{i}" for i in range(n_groups)]},
+        features={"feature_id": [f"f{i}" for i in range(n_features)]},
+    )
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+def test_integer_layers_hold_values_up_to_the_largest_int64(lazy: bool) -> None:
+    cube = tiny_cube(np.array([[[LARGEST, 0]]], dtype=np.uint64), lazy=lazy)
+    assert cube.layer("counts", 0).tolist() == [[LARGEST, 0]]
+    # A rename converts to int64, where 2**63 - 1 is the largest value.
+    renamed = cube.regroup({"h": ["g0"]})
+    assert renamed.layer("counts", "h").dtype == np.int64
+    assert renamed.layer("counts", "h").tolist() == [[LARGEST, 0]]
+    too_large = np.array([[[0, LARGEST + 1]]], dtype=np.uint64)
+    message = re.escape(
+        "layer 'counts' has a value above 2**63 - 1 (9223372036854775808) at group "
+        "'g0', sample 's0', feature 'f1'"
+    )
+    with pytest.raises(ValueError, match=message):
+        tiny_cube(too_large, lazy=lazy).layer("counts", 0)  # lazy: on the read
+    cells = Cube(
+        {"counts": np.zeros((1, 1, 1), dtype=np.int64)},
+        samples={"sample_id": ["s0"]},
+        groups={"group_id": ["g0"]},
+        features={"feature_id": ["f0"]},
+        n_cells=np.array([[LARGEST]], dtype=np.uint64),
+    ).n_cells
+    assert cells is not None and cells.dtype == np.int64 and cells[0, 0] == LARGEST
+
+
+# Each case sums to 2**63, one beyond the largest int64, or to 3 * (2**63 - 1), which
+# int64 and uint64 arithmetic both wrap around 2**64 to 2**63 - 3, a value that fits.
+TOO_LARGE = [
+    pytest.param([2**62, 2**62], 2**63, id="2**63"),
+    pytest.param([LARGEST] * 3, 3 * LARGEST, id="3 x (2**63 - 1)"),
+]
+
+
+def assert_overflows(
+    cube: Cube, derive: Callable[[Cube], Cube], group: str, lazy: bool, message: str
+) -> None:
+    """Assert that deriving an in-memory cube, or reading a group of a lazy one, raises.
+
+    In memory, ``derive`` computes the sums; a lazy cube computes them on the read.
+    """
+    if lazy:
+        derived = derive(cube)  # reads nothing
+        with pytest.raises(OverflowError, match=message):
+            derived.layer("counts", group)
+    else:
+        with pytest.raises(OverflowError, match=message):
+            derive(cube)
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+def test_integer_sums_are_exact_up_to_the_largest_int64(
+    lazy: bool, dtype: type
+) -> None:
+    # The sums at the boundary are exactly 2**63 - 1, which float64 would round to
+    # 2**63; the others are small.
+    by_feature = np.array([[[2**62, 2**62 - 1, 0], [1, 2, 3]]], dtype=dtype)
+    sizes = tiny_cube(by_feature, lazy=lazy).library_sizes()
+    assert sizes.dtype == np.int64 and sizes[:, 0].tolist() == [LARGEST, 6]
+    by_group = np.array([[[2**62, 5]], [[2**62 - 1, 7]], [[LARGEST, 0]]], dtype=dtype)
+    merged = tiny_cube(by_group, lazy=lazy).regroup({"g01": ["g0", "g1"]})
+    assert merged.layer("counts").tolist() == [[[LARGEST, 12]], [[LARGEST, 0]]]
+    by_sample = np.array([[[2**62, 5], [2**62 - 1, 7], [LARGEST, 0]]], dtype=dtype)
+    pooled = tiny_cube(by_sample, ["D1", "D1", "D2"], lazy).collapse_samples("donor")
+    assert pooled.layer("counts").tolist() == [[[LARGEST, 12], [LARGEST, 0]]]
+    assert pooled.layer("counts").dtype == np.int64
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+@pytest.mark.parametrize(("values", "total"), TOO_LARGE)
+def test_library_sizes_beyond_the_largest_int64_raise(
+    lazy: bool, dtype: type, values: list[int], total: int
+) -> None:
+    counts = np.array([[[1] * len(values), values]], dtype=dtype)
+    cube = tiny_cube(counts, lazy=lazy)
+    message = re.escape(
+        f"layer 'counts' over the features of group 'g0', sample 's1' sums to {total}, "
+        "beyond 2**63 - 1, the largest int64"
+    )
+    with pytest.raises(OverflowError, match=message):
+        cube.library_sizes()
+    with pytest.raises(OverflowError, match=message):
+        cube.library_sizes("g0")
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+@pytest.mark.parametrize(("values", "total"), TOO_LARGE)
+def test_merged_groups_beyond_the_largest_int64_raise(
+    lazy: bool, dtype: type, values: list[int], total: int
+) -> None:
+    counts = np.array([[[1, value]] for value in values], dtype=dtype)
+    mapping = {"all": [f"g{i}" for i in range(len(values))]}
+    message = re.escape(
+        f"layer 'counts' of the merged group 'all' at sample 's0', feature 'f1' sums to "
+        f"{total}, beyond 2**63 - 1, the largest int64"
+    )
+    assert_overflows(
+        tiny_cube(counts, lazy=lazy), lambda c: c.regroup(mapping), "all", lazy, message
+    )
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+@pytest.mark.parametrize(("values", "total"), TOO_LARGE)
+def test_pooled_samples_beyond_the_largest_int64_raise(
+    lazy: bool, dtype: type, values: list[int], total: int
+) -> None:
+    counts = np.array([[[1, value] for value in values]], dtype=dtype)
+    message = re.escape(
+        f"layer 'counts' of the pooled sample 'D' at group 'g0', feature 'f1' sums to "
+        f"{total}, beyond 2**63 - 1, the largest int64"
+    )
+    assert_overflows(
+        tiny_cube(counts, lazy=lazy),
+        lambda c: c.collapse_samples("donor"),
+        "g0",
+        lazy,
+        message,
+    )
+
+
+def regroup_then_collapse(cube: Cube) -> Cube:
+    return cube.regroup({"all": ["g0", "g1"]}).collapse_samples("donor")
+
+
+def collapse_then_regroup(cube: Cube) -> Cube:
+    return cube.collapse_samples("donor").regroup({"all": ["g0", "g1"]})
+
+
+def select_then_regroup_then_collapse(cube: Cube) -> Cube:
+    return regroup_then_collapse(cube.select(features=["f1"]))
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+@pytest.mark.parametrize(
+    "derive",
+    [regroup_then_collapse, collapse_then_regroup, select_then_regroup_then_collapse],
+    ids=lambda derive: derive.__name__,
+)
+def test_chained_sums_are_exact_up_to_the_largest_int64_and_raise_beyond(
+    lazy: bool, derive: Callable[[Cube], Cube]
+) -> None:
+    # Feature f1 of the two groups x two samples sums to 3 * 2**61 + (2**61 - 1),
+    # which is 2**63 - 1; one more makes the second sum of each chain overflow.
+    fits = np.array([[[1, 2**61], [1, 2**61]], [[1, 2**61], [1, 2**61 - 1]]], np.uint64)
+    assert derive(tiny_cube(fits, lazy=lazy)).layer("counts")[0, 0, -1] == LARGEST
+    beyond = fits.copy()
+    beyond[1, 1, 1] += np.uint64(1)
+    with pytest.raises(OverflowError, match="'f1' sums to 9223372036854775808, beyond"):
+        derive(tiny_cube(beyond, lazy=lazy)).layer("counts", "all")
+
+
+def test_merged_and_pooled_cell_numbers_are_exact_or_raise() -> None:
+    def cells_cube(n_cells: list[list[int]], **samples: Any) -> Cube:
+        n_samples, n_groups = len(n_cells), len(n_cells[0])
+        return Cube(
+            {"counts": np.zeros((n_groups, n_samples, 1), dtype=np.int64)},
+            samples={"sample_id": [f"s{i}" for i in range(n_samples)], **samples},
+            groups={"group_id": [f"g{i}" for i in range(n_groups)]},
+            features={"feature_id": ["f0"]},
+            n_cells=np.array(n_cells),
+        )
+
+    donor = {"donor": ["D", "D"]}
+    fits = cells_cube([[2**62, 2**62 - 1], [2**62 - 1, 0]], **donor)
+    merged_cells = fits.regroup({"all": ["g0", "g1"]}).n_cells
+    pooled_cells = fits.collapse_samples("donor").n_cells
+    assert merged_cells is not None and pooled_cells is not None
+    assert merged_cells.tolist() == [[LARGEST], [2**62 - 1]]
+    assert pooled_cells.tolist() == [[LARGEST, 2**62 - 1]]
+    too_many = cells_cube([[2**62, 2**62], [2**62, 0]], **donor)
+    with pytest.raises(
+        OverflowError,
+        match=re.escape(
+            "n_cells of the merged group 'all' at sample 's0' sums to "
+            "9223372036854775808, beyond 2**63 - 1"
+        ),
+    ):
+        too_many.regroup({"all": ["g0", "g1"]})
+    with pytest.raises(
+        OverflowError,
+        match=re.escape(
+            "n_cells of the pooled sample 'D' at group 'g0' sums to "
+            "9223372036854775808, beyond 2**63 - 1"
+        ),
+    ):
+        too_many.collapse_samples("donor")
+    # The counts of pooled samples are sums too, and are checked like n_cells.
+    pooled = np.array([2**62, 2**62 - 1], dtype=np.uint64)
+    fits = cells_cube([[1], [1]], **donor, n_pooled_samples=pooled)
+    pooled_column = fits.collapse_samples("donor").samples["n_pooled_samples"]
+    assert pooled_column.tolist() == [LARGEST]
+    beyond = cells_cube(
+        [[1], [1]], **donor, n_pooled_samples=np.array([2**62] * 2, dtype=np.uint64)
+    )
+    with pytest.raises(
+        OverflowError,
+        match=re.escape(
+            "the sample column 'n_pooled_samples' of the pooled sample 'D' sums to "
+            "9223372036854775808, beyond 2**63 - 1"
+        ),
+    ):
+        beyond.collapse_samples("donor")
+    negative = cells_cube([[1], [1]], **donor, n_pooled_samples=[3, -1])
+    with pytest.raises(
+        ValueError, match="'n_pooled_samples' counts pooled samples and must be non-"
+    ):
+        negative.collapse_samples("donor")
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+def test_float_sums_beyond_the_float64_range_raise(lazy: bool) -> None:
+    def raises(subject: str) -> Any:
+        message = f"{subject} sums beyond the float64 range"
+        return pytest.raises(OverflowError, match=message)
+
+    largest = np.finfo(np.float64).max
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # the value checks of large floats must not warn
+        # Two halves of the largest float64 sum to it exactly; 1e308 twice does not.
+        halves = tiny_cube(np.array([[[largest / 2]], [[largest / 2]]]), lazy=lazy)
+        merged = halves.regroup({"all": ["g0", "g1"]})
+        assert merged.layer("counts", "all")[0, 0] == largest
+        by_group = tiny_cube(np.array([[[1.0, 1e308]], [[2.0, 1e308]]]), lazy=lazy)
+        with raises("'counts' of the merged group 'all' at sample 's0', feature 'f1'"):
+            by_group.regroup({"all": ["g0", "g1"]}).layer("counts", "all")
+        by_sample = tiny_cube(np.array([[[1.0, 1e308], [2.0, 1e308]]]), lazy=lazy)
+        with raises("'counts' of the pooled sample 'D' at group 'g0', feature 'f1'"):
+            by_sample.collapse_samples("donor").layer("counts", "g0")
+        by_feature = tiny_cube(np.array([[[1.0, 2.0]], [[1e308, 1e308]]]), lazy=lazy)
+        with raises("'counts' over the features of group 'g1', sample 's0'"):
+            by_feature.library_sizes()
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["in memory", "lazy"])
+def test_finite_values_that_sum_to_infinity_minus_infinity_pass_the_checks(
+    lazy: bool,
+) -> None:
+    # log_sum may be negative. numpy sums these 16 values in eight running sums,
+    # four of them reaching +inf and four -inf, and then adds those: inf - inf.
+    log_sum = np.array([[[1e308, -1e308] * 8]])
+    with warnings.catch_warnings(), np.errstate(invalid="raise"):
+        warnings.simplefilter("error")
+        cube = Cube(
+            {
+                "counts": np.ones((1, 1, 16), dtype=np.int64),
+                "log_sum": LazyArray(log_sum) if lazy else log_sum,
+            },
+            samples={"sample_id": ["s0"]},
+            groups={"group_id": ["g0"]},
+            features={"feature_id": [f"f{i}" for i in range(16)]},
+            n_cells=np.array([[1]]),
+            normalization=NORMALIZATION,
+        )
+        assert_array_equal(cube.layer("log_sum", "g0"), log_sum[0])
 
 
 # Validation of the constructor.
@@ -904,6 +1200,30 @@ INVALID_CUBES = [
         r"'counts' has a negative value \(-1\) at group 'T8', sample 'S4', feature 'G07'",
     ),
     (
+        "counts beyond int64",
+        replace_layer(
+            "counts",
+            lambda layers: with_value(
+                layers["counts"].astype(np.uint64), (2, 3, 7), LARGEST + 1
+            ),
+        ),
+        ValueError,
+        r"'counts' has a value above 2\*\*63 - 1 \(9223372036854775808\) at group "
+        r"'T8', sample 'S4', feature 'G07'; integer layers must be at most 2\*\*63 - 1",
+    ),
+    (
+        "detected beyond int64",
+        replace_layer(
+            "detected",
+            lambda layers: with_value(
+                layers["detected"].astype(np.uint64), (0, 0, 0), 2**64 - 1
+            ),
+        ),
+        ValueError,
+        r"'detected' has a value above 2\*\*63 - 1 \(18446744073709551615\) at group "
+        r"'B', sample 'S1', feature 'G00'",
+    ),
+    (
         "nan moment",
         replace_layer(
             "log_sum", lambda layers: with_value(layers["log_sum"], (0, 0, 1), np.nan)
@@ -964,6 +1284,24 @@ INVALID_CUBES = [
         lambda a: a.update(n_cells=with_value(CELLS, (0, 1), -3)),
         ValueError,
         r"n_cells is negative \(-3\) for sample 'S1' and group 'T4'",
+    ),
+    (
+        "n_cells beyond int64",
+        # Cast to int64, 2**63 would wrap around to a negative number.
+        lambda a: a.update(n_cells=with_value(CELLS.astype(">u8"), (0, 1), 2**63)),
+        ValueError,
+        r"n_cells is above 2\*\*63 - 1 \(9223372036854775808\) for sample 'S1' and "
+        r"group 'T4'; cell numbers must be at most 2\*\*63 - 1",
+    ),
+    (
+        "n_cells beyond int64 in a DataFrame",
+        lambda a: a.update(
+            n_cells=LabelledMatrix(
+                with_value(CELLS.astype(object), (0, 1), 2**64), SAMPLES, GROUPS
+            )
+        ),
+        ValueError,
+        r"n_cells DataFrame holds a number of cells outside the int64 range",
     ),
     (
         "no sample ids",

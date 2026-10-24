@@ -164,7 +164,10 @@ def write_cube(
 
     Raises:
         TypeError: If ``cube`` is not a Cube, or an argument has the wrong type.
-        ValueError: If ``compression`` or ``level`` is invalid, or ``path`` is a URL.
+        ValueError: If ``compression`` or ``level`` is invalid, ``path`` is a URL,
+            or a lazy layer gives a value that breaks a constraint.
+        OverflowError: If a sum of a derived lazy layer does not fit (see "Sums" in
+            ``Cube``).
         FileExistsError: If ``path`` exists and ``overwrite`` is False, or it is not
             something ``overwrite`` replaces.
         FileNotFoundError: If the parent directory of ``path`` does not exist.

@@ -29,6 +29,11 @@ _NORMALIZED_LAYERS = ("log_sum", "log_sum_sq", "linear_sum")
 # counts below it are exact; larger counts are rejected.
 _COUNT_LIMIT = 2.0**53
 _UINT32_MAX = np.uint64(2**32 - 1)
+# The largest value of a cube's integer layers, the largest int64. It is a uint64,
+# like the sums it bounds: numba compares uint64 with an int64 through float64,
+# which rounds 2**63 - 1 up to 2**63.
+_INT64_MAX = np.uint64(2**63 - 1)
+_MOST_DETECTED = 2**32 - 1  # the most cells the uint32 layer detected counts
 
 # The compiled routine takes the counts in one of four arrays, by dtype, so that a
 # single compiled version reads each of these dtypes without a copy.
@@ -50,7 +55,7 @@ _LAYER_BITS = {
 # What stopped the pooling of a segment. The first two mean that the counts layer
 # needs a wider dtype, the others that the input is invalid.
 _NOT_WHOLE = 1  # a count that is not a whole number, while counting in integers
-_OVERFLOW = 2  # an integer sum beyond the dtype of the counts layer
+_OVERFLOW = 2  # an integer sum beyond 2**32 - 1 (uint32) or 2**63 - 1 (uint64)
 _BAD_VALUE = 4  # a negative, NaN, infinite or too large count
 _BAD_COLUMN = 8  # a column index outside the matrix
 _NO_LIBRARY = 16  # a library size of 0 where normalized values are needed
@@ -127,17 +132,21 @@ def from_cells(
         TypeError: If ``counts`` is neither a numeric array nor a CSR matrix (a CSC
             or masked matrix, for example), or an argument has the wrong type.
         ValueError: If a count is negative, not finite or at least 2**53 (alone or
-            summed over repeated entries), a sum of counts exceeds 2**64 - 1,
-            labels are missing or absent from a table, lengths disagree, a layer
-            name is unknown, or the normalized values of a cell are undefined (a
-            library size of 0) or beyond the float64 range.
+            summed over repeated entries), labels are missing or absent from a
+            table, lengths disagree, a layer name is unknown, or the normalized
+            values of a cell are undefined (a library size of 0) or beyond the
+            float64 range.
+        OverflowError: If, over the cells of an entry, the whole-number counts of
+            a feature sum to more than 2**63 - 1 (the most a cube's integer layers
+            hold) or its normalized values sum beyond the float64 range, or if
+            ``detected`` is computed for an entry with more than 2**32 - 1 cells.
 
     Dtypes:
         ``counts`` is uint32 when every count is a whole number and every sum is
-        at most 2**32 - 1, uint64 when a sum is larger, and float64 when a count is
-        not a whole number. Float input that holds whole numbers, as most h5ad
-        files do, gives integer counts. ``detected`` is uint32, and the other
-        layers are float64.
+        at most 2**32 - 1, uint64 when a sum is larger (up to 2**63 - 1), and
+        float64 when a count is not a whole number. Float input that holds whole
+        numbers, as most h5ad files do, gives integer counts. ``detected`` is
+        uint32, and the other layers are float64.
 
     Cells without counts:
         A cell with a library size of 0 adds nothing to ``counts`` and
@@ -184,10 +193,17 @@ def from_cells(
         sizes = _library_sizes(library_sizes, n_rows)
 
         n_samples, n_groups = len(sample_axis), len(group_axis)
+        ids = (
+            group_axis["group_id"],
+            sample_axis["sample_id"],
+            feature_axis["feature_id"],
+        )
         n_segments = n_groups * n_samples
         # Segment g * n_samples + s is row s of group g in every layer.
         segment_of_cell = group_codes * n_samples + sample_codes
         cells_per_segment = np.bincount(segment_of_cell, minlength=n_segments)
+        if "detected" in names:
+            _check_detected_fits(cells_per_segment, ids)
         segment_starts = np.zeros(n_segments + 1, dtype=np.int64)
         np.cumsum(cells_per_segment, out=segment_starts[1:])
         cell_order = np.argsort(segment_of_cell, kind="stable").astype(np.int64)
@@ -209,7 +225,10 @@ def from_cells(
             target,
             sum(_LAYER_BITS[name] for name in names if name != "counts"),
             (n_segments, n_features),
+            ids,
         )
+    if "linear_sum" in names:
+        _check_linear_sums(pooled["linear_sum"], ids)
 
     shape = (n_groups, n_samples, n_features)
     normalization = None
@@ -254,14 +273,15 @@ def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube
     Returns:
         A cube with the single group ``"bulk"``, only the ``counts`` layer, and
         ``n_cells`` None. Counts are uint32 when every count is a whole number up
-        to 2**32 - 1, uint64 for larger whole numbers, and float64 when a count is
-        not a whole number (or, for float input, is at least 2**53). Its provenance
-        is ``{"source": "from_bulk"}``.
+        to 2**32 - 1, uint64 for larger whole numbers (up to 2**63 - 1), and
+        float64 when a count is not a whole number (or, for float input, is at
+        least 2**53). Its provenance is ``{"source": "from_bulk"}``.
 
     Raises:
         TypeError: If ``counts`` is not numeric, or is a masked array.
-        ValueError: If ``counts`` is not 2-D, has a negative or non-finite value,
-            or its shape disagrees with ``samples`` or ``features``.
+        ValueError: If ``counts`` is not 2-D, has a negative or non-finite value
+            or an integer above 2**63 - 1, the largest a cube holds, or its shape
+            disagrees with ``samples`` or ``features``.
 
     Example:
         >>> cube = from_bulk(np.array([[5, 0, 12], [7, 1, 9]]))
@@ -298,6 +318,13 @@ def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube
             f"column {column}; counts must be non-negative"
         )
     largest = array.max() if array.size else 0
+    if array.dtype.kind == "u" and largest > _INT64_MAX:
+        row, column = np.argwhere(array > _INT64_MAX)[0]
+        raise ValueError(
+            f"counts has a value above 2**63 - 1 ({array[row, column]}) in row {row}, "
+            f"column {column}; integer counts must be at most 2**63 - 1, the largest "
+            "int64"
+        )
     whole = array.dtype.kind in "iu" or bool(
         largest < _COUNT_LIMIT and np.all(array == np.floor(array))
     )
@@ -478,9 +505,9 @@ def _pool_segment(
                     return _OVERFLOW, cell, column
                 counts_u32[segment, column] = np.uint32(narrow)
             elif counts_kind == _COUNTS_UINT64:
-                before = counts_u64[segment, column]
-                wide = before + np.uint64(count)
-                if wide < before:  # wrapped around 2**64
+                # At most 2**63 - 1 plus a count below 2**53: uint64 holds it.
+                wide = counts_u64[segment, column] + np.uint64(count)
+                if wide > _INT64_MAX:
                     return _OVERFLOW, cell, column
                 counts_u64[segment, column] = wide
             else:
@@ -606,12 +633,14 @@ def _pool(
     target_sum: float,
     layer_bits: int,
     shape: tuple[int, int],
+    ids: tuple[np.ndarray, np.ndarray, np.ndarray],
 ) -> dict[str, np.ndarray]:
     """Run the pooling routine and return every layer, of shape ``shape``.
 
     Counts are first summed as uint32. A count that is not a whole number, or a
     sum above 2**32 - 1, stops the segment where it occurs, and the pooling runs
-    again with float64 or uint64 counts.
+    again with float64 or uint64 counts. A uint64 sum above 2**63 - 1 raises
+    OverflowError, naming its entry by the group, sample and feature ``ids``.
     """
 
     def layer(bit: int, dtype: type) -> np.ndarray:
@@ -659,12 +688,14 @@ def _pool(
         if counts_kind != _COUNTS_FLOAT64 and (flags & _NOT_WHOLE).any():
             counts_kind = _COUNTS_FLOAT64
         elif (flags & _OVERFLOW).any():
-            if counts_kind != _COUNTS_UINT32:
-                raise ValueError(
-                    "a sum of counts exceeds 2**64 - 1, the largest uint64; counts "
-                    "this large are not supported"
-                )
-            counts_kind = _COUNTS_UINT64
+            if counts_kind == _COUNTS_UINT32:
+                counts_kind = _COUNTS_UINT64
+            elif _has_fractions(matrix):
+                # A segment stopped at the overflow before it reached a count that
+                # is not a whole number, which makes the counts float64.
+                counts_kind = _COUNTS_FLOAT64
+            else:
+                raise _sum_too_large(status, ids)
         else:
             return {
                 "counts": counts[counts_kind],
@@ -677,6 +708,69 @@ def _pool(
         del counts
         for array in (detected, log_sum, log_sum_sq, linear_sum):
             array.fill(0)
+
+
+def _has_fractions(matrix: _Counts) -> bool:
+    """Return whether a stored count is not a whole number (or is NaN)."""
+    if matrix.value_kind not in (_FLOAT64, _FLOAT32):
+        return False
+    stored = matrix.values[matrix.value_kind][: int(matrix.row_starts[-1])]
+    return bool(np.any(stored != np.floor(stored)))
+
+
+def _sum_too_large(
+    status: np.ndarray, ids: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> OverflowError:
+    """Describe the uint64 sum above 2**63 - 1 that stopped at the earliest cell."""
+    stopped = np.flatnonzero(status[:, 0] & _OVERFLOW)
+    segment = int(stopped[np.argmin(status[stopped, 1])])
+    group, sample = divmod(segment, ids[1].size)
+    feature = int(status[segment, 2])
+    return OverflowError(
+        f"layer 'counts' at group {ids[0][group]!r}, sample {ids[1][sample]!r}, "
+        f"feature {ids[2][feature]!r} sums over its cells to more than 2**63 - 1, "
+        "the largest int64"
+    )
+
+
+def _check_detected_fits(
+    cells_per_segment: np.ndarray, ids: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> None:
+    """Raise if an entry has more cells than the uint32 ``detected`` layer counts."""
+    if cells_per_segment.size == 0:
+        return
+    segment = int(np.argmax(cells_per_segment))
+    n_cells = int(cells_per_segment[segment])
+    if n_cells > _MOST_DETECTED:
+        group, sample = divmod(segment, ids[1].size)
+        raise OverflowError(
+            f"group {ids[0][group]!r}, sample {ids[1][sample]!r} has {n_cells:,} "
+            f"cells, more than the {_MOST_DETECTED:,} that the uint32 layer "
+            "'detected' counts; leave 'detected' out of layers"
+        )
+
+
+def _check_linear_sums(
+    linear_sum: np.ndarray, ids: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> None:
+    """Raise if the normalized values of an entry sum beyond the float64 range.
+
+    Only ``linear_sum`` can: a log1p value is below 710.
+    """
+    with np.errstate(over="ignore"):
+        total = linear_sum.sum()  # not finite if an entry is not, or if they add up
+    if np.isfinite(total):
+        return
+    beyond = ~np.isfinite(linear_sum)
+    if beyond.any():
+        segment, feature = (int(i) for i in np.argwhere(beyond)[0])
+        group, sample = divmod(segment, ids[1].size)
+        raise OverflowError(
+            f"layer 'linear_sum' at group {ids[0][group]!r}, sample "
+            f"{ids[1][sample]!r}, feature {ids[2][feature]!r} sums over its cells "
+            "beyond the float64 range (about 1.8e308); lower target_sum, or check "
+            "library_sizes"
+        )
 
 
 def _invalid_input(matrix: _Counts, flag: int, cell: int, column: int) -> ValueError:

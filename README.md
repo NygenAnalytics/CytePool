@@ -50,6 +50,10 @@ These are not implemented yet:
   matrix for every gene: 8 x genes x coefficients² bytes, so 16 MB for 20,000 genes and
   10 coefficients, and 1.6 GB at 100 coefficients.
 - Selecting some features of a saved cube reads each requested group in full.
+- Integer layers and cell numbers hold whole numbers up to 2**63 - 1, the largest int64.
+  A library size, merged group or pooled sample whose sum would exceed it raises
+  `OverflowError` instead of wrapping around. Normalization works in float64, which is
+  exact for counts up to 2**53.
 - Empirical Bayes moderation uses limma's moment estimator of the prior (limma's
   `legacy=TRUE`). Since limma 3.61.8, limma uses a different estimator by default when the
   residual degrees of freedom differ between genes.
