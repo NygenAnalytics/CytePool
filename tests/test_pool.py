@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any
 
@@ -605,6 +606,9 @@ def test_from_bulk() -> None:
     large = from_bulk(np.array([[2**32, 1]], dtype=np.int64))
     assert large.layer("counts").dtype == np.uint64
     assert large.layer("counts")[0, 0, 0] == 2**32
+    largest = from_bulk(np.array([[2**63 - 1, 0]], dtype=np.uint64))
+    assert largest.layer("counts")[0].tolist() == [[2**63 - 1, 0]]
+    assert largest.library_sizes()[:, 0].tolist() == [2**63 - 1]
     tables = from_bulk(
         counts,
         samples=Table({"sample_id": ["A", "B"], "donor": ["D1", "D1"]}),
@@ -641,6 +645,13 @@ def test_text_labels_of_a_data_frame_give_the_ids() -> None:
             r"negative value \(-2\) in row 0, column 1",
         ),
         (np.array([[1.0, np.nan]]), {}, ValueError, r"non-finite value \(nan\)"),
+        (
+            np.array([[0, 2**63]], dtype=np.uint64),
+            {},
+            ValueError,
+            r"counts has a value above 2\*\*63 - 1 \(9223372036854775808\) in row 0, "
+            r"column 1; integer counts must be at most 2\*\*63 - 1",
+        ),
         (np.array([1, 2]), {}, ValueError, r"must be 2-D.*got shape \(2,\)"),
         (np.array([[True]]), {}, TypeError, "must hold numbers"),
         (np.ma.masked_array([[1, 2]], mask=[[0, 1]]), {}, TypeError, "masked array"),
@@ -939,11 +950,82 @@ def test_invalid_calls_are_rejected(
         from_cells(**arguments)
 
 
-def test_sums_beyond_the_largest_uint64_are_rejected() -> None:
-    # 2,100 cells of 2**53 - 1 sum to 1.9e19, above 2**64 - 1 = 1.8e19.
-    counts = np.full((2100, 1), 2**53 - 1, dtype=np.int64)
-    with pytest.raises(ValueError, match=r"a sum of counts exceeds 2\*\*64 - 1"):
-        from_cells(counts, samples=["a"] * 2100, groups=["g"] * 2100, layers="counts")
+def test_sums_up_to_the_largest_int64_are_exact_and_beyond_it_raise() -> None:
+    # 1,024 cells of 2**53 - 1, the largest count, and one of 1,023 sum to 2**63 - 1,
+    # the largest int64; float64 would round that sum to 2**63.
+    counts = np.append(np.full(1024, 2**53 - 1), 1023).reshape(-1, 1)
+    labels = {"samples": ["a"] * counts.shape[0], "groups": ["g"] * counts.shape[0]}
+    cube = from_cells(counts, **labels)
+    assert cube.layer("counts").dtype == np.uint64
+    assert cube.layer("counts")[0, 0, 0] == 2**63 - 1
+    assert cube.library_sizes()[0, 0] == 2**63 - 1
+    # Pooled again in uint64 after the uint32 sum stopped, every cell counts once:
+    # each normalized value is count * (target_sum / count), target_sum to rounding,
+    # and a cell counted twice would double the sum.
+    assert cube.layer("detected")[0, 0, 0] == 1025
+    assert cube.layer("linear_sum")[0, 0, 0] == pytest.approx(1025 * TARGET_SUM, 1e-12)
+    message = re.escape(
+        "layer 'counts' at group 'g', sample 'a', feature 'feature_0' sums over its "
+        "cells to more than 2**63 - 1, the largest int64"
+    )
+    for beyond in (1024, 2**53 - 1):  # sums of exactly 2**63, and 2**63 + 2**53 - 1025
+        counts[-1, 0] = beyond
+        with pytest.raises(OverflowError, match=message):
+            from_cells(counts, **labels)
+    # One count that is not a whole number makes the counts float64, which have no
+    # such limit, wherever that cell comes: here after the sum passes 2**63 - 1.
+    labels = {"samples": ["a"] * 1026, "groups": ["g"] * 1026}
+    expected = sum(counts[:, 0].tolist()) + 0.5  # Python integers, exact
+    for fractional in (np.vstack([counts, [[0.5]]]), np.vstack([[[0.5]], counts])):
+        cube = from_cells(fractional, **labels, layers="counts")
+        assert cube.layer("counts").dtype == np.float64
+        # 1,025 float64 additions, each rounding by at most 2**-53 relative; a cell
+        # counted twice would be off by 1e-3.
+        assert cube.layer("counts")[0, 0, 0] == pytest.approx(expected, rel=1e-12)
+
+
+def test_an_entry_with_more_cells_than_detected_counts_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 2**32 cells would take gigabytes, so the limit is checked on cell numbers...
+    groups, samples = np.array(["g"], dtype=object), np.array(["a", "b"], dtype=object)
+    ids = (groups, samples, np.array(["f"], dtype=object))
+    pool_module._check_detected_fits(np.array([7, 2**32 - 1]), ids)
+    with pytest.raises(
+        OverflowError,
+        match=re.escape(
+            "group 'g', sample 'b' has 4,294,967,296 cells, more than the "
+            "4,294,967,295 that the uint32 layer 'detected' counts"
+        ),
+    ):
+        pool_module._check_detected_fits(np.array([7, 2**32]), ids)
+    # ... and from_cells is run with the limit lowered to two cells.
+    monkeypatch.setattr(pool_module, "_MOST_DETECTED", 2)
+    labels = {"samples": ["a", "b", "a", "a", "b"], "groups": ["g"] * 5}
+    with pytest.raises(OverflowError, match="sample 'a' has 3 cells, more than the 2"):
+        from_cells(np.ones((5, 1)), **labels)
+    counts_only = from_cells(np.ones((5, 1)), **labels, layers="counts")
+    assert counts_only.layer("counts", "g").tolist() == [[3], [2]]
+    at_limit = from_cells(np.ones((4, 1)), samples=["a", "b"] * 2, groups=["g"] * 4)
+    assert at_limit.layer("detected", "g").tolist() == [[2], [2]]
+
+
+def test_normalized_values_that_sum_beyond_float64_are_rejected() -> None:
+    # One cell's normalized values sum to target_sum, 1e308, which float64 holds;
+    # two such cells in an entry do not fit.
+    one = from_cells(np.array([[1]]), samples=["a"], groups=["g"], target_sum=1e308)
+    assert one.layer("linear_sum")[0, 0, 0] == 1e308
+    with pytest.raises(
+        OverflowError,
+        match="layer 'linear_sum' at group 'g', sample 'a', feature 'feature_0' sums "
+        "over its cells beyond the float64 range",
+    ):
+        from_cells(
+            np.array([[1], [1]]),
+            samples=["a", "a"],
+            groups=["g", "g"],
+            target_sum=1e308,
+        )
 
 
 def test_normalized_values_beyond_float64_are_rejected() -> None:
