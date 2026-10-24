@@ -137,7 +137,7 @@ class DesignReport:
 
     @property
     def residual_df(self) -> int:
-        """Residual degrees of freedom: samples minus rank."""
+        """Residual degrees of freedom, the number of samples minus the rank."""
         return self.n_samples - self.rank
 
     @property

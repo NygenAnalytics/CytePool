@@ -7,8 +7,9 @@ freedom. The hierarchical model of Smyth (2004) assumes
     1 / sigma_g^2 ~ chi^2(d0) / (d0 s0^2),
 
 so that s_g^2 ~ s0^2 F(d_g, d0) marginally. The prior (s0^2, d0) is estimated from all
-features, and each variance is replaced by its posterior mean
-s~_g^2 = (d0 s0^2 + d_g s_g^2) / (d0 + d_g). A moderated t-statistic, which uses s~_g in
+features, and each variance is replaced by its posterior value
+s~_g^2 = (d0 s0^2 + d_g s_g^2) / (d0 + d_g), the inverse of the posterior mean of
+1 / sigma_g^2 (Smyth 2004). A moderated t-statistic, which uses s~_g in
 place of s_g, follows a t distribution on d0 + d_g degrees of freedom under the null
 hypothesis; an infinite d0 gives every feature the prior variance.
 
@@ -182,7 +183,8 @@ class SqueezedVariances(NamedTuple):
     """Posterior variances and the prior they were shrunk towards.
 
     Attributes:
-        posterior_variance: ``(n,)`` posterior means of the variances.
+        posterior_variance: ``(n,)`` posterior values of the variances: the
+            inverses of the posterior means of their reciprocals.
         prior_variance: The prior variance: a float, or one value per feature with a
             covariate or with at most two variances.
         prior_df: The prior degrees of freedom: a float, or one value per feature
@@ -432,8 +434,9 @@ def squeeze_variances(
 
     Matches limma's ``squeezeVar``. The prior is estimated by
     :func:`fit_f_distribution`, or :func:`fit_f_distribution_robust` when
-    ``robust``, and each variance is replaced by its posterior mean
-    (d0 s0^2 + d_g s_g^2) / (d0 + d_g). A feature with zero df, or an infinite
+    ``robust``, and each variance is replaced by its posterior value
+    (d0 s0^2 + d_g s_g^2) / (d0 + d_g), the inverse of the posterior mean of its
+    reciprocal (Smyth 2004). A feature with zero df, or an infinite
     prior df, gets the prior variance; a NaN variance with positive df stays NaN.
     With at most two variances there is no moderation: the prior df is 0 and each
     variance is its own prior, as in limma 3.61.12 and later.

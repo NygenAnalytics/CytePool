@@ -45,9 +45,9 @@ class Cube:
         ``library_sizes()``, have shape ``(n_samples, n_groups)``, like a table of
         cell type composition.
 
-    Layers (``counts`` is required, the others are optional):
-        counts: Sum of raw counts. An integer dtype, or float64 for non-integer
-            counts such as transcript-level estimates.
+    Layers:
+        counts: Sum of raw counts, the one required layer. An integer dtype, or
+            float64 for non-integer counts such as transcript-level estimates.
         detected: Number of cells with a positive count. An integer dtype.
         log_sum: Sum over cells of the log-transformed normalized value, ``log1p``
             for the usual natural log with pseudocount 1 (``normalization`` records
