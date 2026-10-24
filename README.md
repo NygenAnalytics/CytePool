@@ -17,6 +17,7 @@ what is planned.
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene, contrasts (named contrasts are matched to the coefficients by name) | limma |
+| Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, for a weighted linear model (limma-voom) | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Distributions and smoothers | Tails and quantiles of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions; LOWESS; natural spline bases | mpmath, R |
@@ -25,7 +26,7 @@ what is planned.
 
 These are not implemented yet:
 
-- voom and a complete differential-expression workflow that runs on a cube
+- A complete differential-expression workflow that runs on a cube
 - Negative binomial models (edgeR quasi-likelihood, DESeq2-style tests) and dispersion
   estimation
 - Mixed models (dream-style fits, variance partitioning). A design can describe random
@@ -60,6 +61,12 @@ These are not implemented yet:
 - Contrast standard errors and moderated F statistics are exact by default. limma's
   approximations are available as an option and can differ when weights vary between
   genes.
+- `voom` normalizes by library-size factors only, fits its trend without prior weights
+  or a block correlation, and has no adaptive span; `voomWithQualityWeights` and
+  `voomLmFit` are not implemented. It needs a design of full column rank (limma drops
+  aliased columns), and it raises an error where limma returns values without meaning:
+  for a sample whose library size is zero, or a trend that is not positive where
+  weights are read.
 
 ## Principles
 

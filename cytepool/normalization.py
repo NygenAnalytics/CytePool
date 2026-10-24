@@ -46,6 +46,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._jit import jit
+from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
 from ._linear_algebra import column_space
 
 __all__ = [
@@ -635,8 +636,8 @@ def _design_matrix(design: object, n_samples: int) -> FloatArray:
 
 
 def _sums_in_range(counts: FloatArray, axis: int) -> FloatArray:
-    """Return ``_sums(counts, axis)``; a sum beyond float64 raises OverflowError."""
-    sums: FloatArray = _sums(counts, axis)
+    """Return ``accurate_sums(counts, axis)``; a sum beyond float64 raises OverflowError."""
+    sums: FloatArray = accurate_sums(counts, axis)
     beyond = np.flatnonzero(~np.isfinite(sums))
     if beyond.size:
         unit = "sample" if axis == 1 else "feature"
@@ -660,7 +661,7 @@ def _cpm(counts: FloatArray, sizes: FloatArray) -> FloatArray:
 
 def _to_geometric_mean_one(factors: FloatArray) -> FloatArray:
     logs = np.array([math.log(f) for f in factors])
-    result: FloatArray = factors / math.exp(_accurate_mean(logs))
+    result: FloatArray = factors / math.exp(accurate_mean(logs))
     return result
 
 
@@ -690,8 +691,8 @@ def _tmm_reference(counts: FloatArray, sizes: FloatArray) -> int:
     # between samples at equal distance from the mean).
     quartiles = _row_quantiles(counts, 0.75) / sizes
     if np.median(quartiles) < _TINY_UPPER_QUARTILE:
-        return int(np.argmax(_sums(np.sqrt(counts), 1)))
-    return int(np.argmin(np.abs(quartiles - _accurate_mean(quartiles))))
+        return int(np.argmax(accurate_sums(np.sqrt(counts), 1)))
+    return int(np.argmin(np.abs(quartiles - accurate_mean(quartiles))))
 
 
 def _leverages(design: FloatArray) -> FloatArray:
@@ -700,81 +701,6 @@ def _leverages(design: FloatArray) -> FloatArray:
 
 
 # Compiled routines
-
-
-@jit
-def _two_sum(a: float, b: float) -> tuple[float, float]:
-    """a + b as the rounded sum and its exact rounding error (Knuth)."""
-    s = a + b
-    t = s - a
-    return s, (a - (s - t)) + (b - t)
-
-
-@jit
-def _accurate_sum(values: FloatArray) -> tuple[float, float]:
-    """Sum accurate to twice the working precision, as rounded value and remainder.
-
-    This is the cascaded summation of Ogita, Rump and Oishi (2005, SIAM J Sci
-    Comput 26:1955); the rounded value is the sum rounded once.
-    """
-    high = 0.0
-    low = 0.0
-    for x in values:
-        high, error = _two_sum(high, x)
-        low += error
-    total, remainder = _two_sum(high, low)
-    return total, remainder
-
-
-@jit
-def _accurate_mean(values: FloatArray) -> float:
-    """Mean of a non-empty array, rounded once, as R's mean() gives it."""
-    total, remainder = _accurate_sum(values)
-    mean: float = _divide(total, remainder, float(values.size))
-    return mean
-
-
-@jit
-def _divide(total: float, remainder: float, n: float) -> float:
-    """(total + remainder) / n, rounded once."""
-    quotient = total / n
-    # The exact product quotient * n as a rounded value and error (Dekker
-    # 1971), so that the remainder of the division can correct the quotient.
-    product = quotient * n
-    q_high, q_low = _split(quotient)
-    n_high, n_low = _split(n)
-    error = (
-        (q_high * n_high - product) + q_high * n_low + q_low * n_high
-    ) + q_low * n_low
-    result: float = quotient + (((total - product) - error) + remainder) / n
-    return result
-
-
-@jit
-def _split(a: float) -> tuple[float, float]:
-    """Split a into two halves of 26 bits each, a = high + low (Veltkamp)."""
-    c = 134217729.0 * a
-    high = c - (c - a)
-    return high, a - high
-
-
-@jit
-def _sums(matrix: FloatArray, axis: int) -> FloatArray:
-    """Sums over axis 0 (per column) or axis 1 (per row), each rounded once."""
-    n_rows, n_columns = matrix.shape
-    if axis == 1:
-        out = np.empty(n_rows)
-        for i in range(n_rows):
-            out[i] = _accurate_sum(matrix[i])[0]
-        return out
-    high = np.zeros(n_columns)
-    low = np.zeros(n_columns)
-    for i in range(n_rows):
-        for j in range(n_columns):
-            s, error = _two_sum(high[j], matrix[i, j])
-            high[j] = s
-            low[j] += error
-    return high + low
 
 
 @jit
@@ -866,10 +792,10 @@ def _tmm_log2_factors(
             if weighted:
                 # sum(M / v) / sum(1 / v), each sum rounded once, reproduces
                 # edgeR's last bit (found by probing).
-                s, error = _two_sum(top_high, m[i] / v[i])
+                s, error = two_sum(top_high, m[i] / v[i])
                 top_high = s
                 top_low += error
-                s, error = _two_sum(bottom_high, 1.0 / v[i])
+                s, error = two_sum(bottom_high, 1.0 / v[i])
                 bottom_high = s
                 bottom_low += error
         if kept == 0:
@@ -877,7 +803,7 @@ def _tmm_log2_factors(
         if weighted:
             value = (top_high + top_low) / (bottom_high + bottom_low)
         else:
-            value = _accurate_mean(kept_m[:kept])
+            value = accurate_mean(kept_m[:kept])
         if np.isfinite(value):
             out[k] = value
     return out
@@ -910,12 +836,12 @@ def _log_count_sums(
         for g in range(n_features):
             y = counts[k, g]
             if y > 0.0:
-                s, error = _two_sum(high[g], np.log(y))
+                s, error = two_sum(high[g], np.log(y))
                 high[g] = s
                 low[g] += error
                 n_positive[g] += 1
     for g in range(n_features):
-        s, error = _two_sum(high[g], low[g])
+        s, error = two_sum(high[g], low[g])
         high[g] = s
         low[g] = error
     return high, low, n_positive
@@ -934,7 +860,9 @@ def _rle_median_ratios(counts: FloatArray) -> FloatArray:
     n_complete = 0
     for g in range(n_features):
         if n_positive[g] == n_samples:
-            geometric_means[g] = np.exp(_divide(high[g], low[g], float(n_samples)))
+            geometric_means[g] = np.exp(
+                rounded_quotient(high[g], low[g], float(n_samples))
+            )
             n_complete += 1
     out = np.full(n_samples, np.nan)
     if n_complete == 0:
@@ -968,7 +896,7 @@ def _median_log_ratios(counts: FloatArray, positive_only: bool) -> FloatArray:
         if positive_only and n_positive[g] > 0:
             log_means[g] = np.log(np.exp(high[g] / n_samples))
         elif n_positive[g] == n_samples:
-            log_means[g] = _divide(high[g], low[g], float(n_samples))
+            log_means[g] = rounded_quotient(high[g], low[g], float(n_samples))
     out = np.full(n_samples, np.nan)
     values = np.empty(n_features)
     for k in range(n_samples):
