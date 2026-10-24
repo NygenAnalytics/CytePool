@@ -532,6 +532,49 @@ def test_integer_and_float_counts_agree(counts: np.ndarray) -> None:
     assert_array_equal(nz.cpm(as_int), nz.cpm(counts))
 
 
+def test_integers_beyond_int64_become_float64_without_wrapping_around() -> None:
+    # 2**64 - 2048, 2048 and their total 2**64 are all float64 values. Through
+    # int64, 2**64 - 2048 would wrap around to -2048.
+    counts = np.array([[2**64 - 2048, 2048], [1, 3]], dtype=np.uint64)
+    assert nz.library_sizes(counts).tolist() == [2.0**64, 4.0]
+    assert nz.cpm(counts)[0].tolist() == [1e6 * (1 - 2.0**-53), 1e6 * 2.0**-53]
+    # Above 2**53, float64 rounds to the nearest whole number it holds.
+    rounded = np.array([[2**53 + 1]], dtype=np.int64)
+    assert nz.library_sizes(rounded).tolist() == [2.0**53]
+
+
+def test_sums_beyond_the_float64_range_raise() -> None:
+    largest = np.finfo(np.float64).max
+    # Two halves of the largest float64 sum to it exactly.
+    halves = np.array([[largest / 2, largest / 2]])
+    assert nz.library_sizes(halves).tolist() == [largest]
+    # Sample 0 sums to 2e308; its library size would be NaN, and its factors too.
+    huge = np.array([[1e308, 1e308, 1.0], [1.0, 2.0, 3.0]])
+    for compute in (
+        nz.library_sizes,
+        nz.tmm_factors,
+        nz.upper_quartile_factors,
+        nz.rle_factors,
+        nz.cpm,
+        nz.log_cpm,
+        lambda y: nz.filter_by_expression(y, group=[0, 1]),
+    ):
+        with pytest.raises(OverflowError, match="counts of sample 0 sum beyond"):
+            compute(huge)
+    # Each sample sums to 1e308 at most, but feature 0 sums to 2e308 over them.
+    tall = np.array([[1e308, 1.0], [1e308, 1.0], [1.0, 1.0]])
+    with pytest.raises(OverflowError, match="the counts of feature 0 sum beyond"):
+        nz.filter_by_expression(tall, group=[0, 0, 1])
+    # edgeR forms 1e6 * count before dividing by the library size: 1e309 here.
+    with pytest.raises(
+        OverflowError, match="count per million of sample 0, feature 0 exceeds"
+    ):
+        nz.cpm(np.array([[1e303, 1.0], [1.0, 1.0]]))
+    # log-CPM scales the prior count by the mean library size, here 2e308 / 2.
+    with pytest.raises(OverflowError, match="the library sizes sum beyond the float64"):
+        nz.log_cpm(np.ones((2, 2)), library_sizes=[1e308, 1e308])
+
+
 # Errors
 
 

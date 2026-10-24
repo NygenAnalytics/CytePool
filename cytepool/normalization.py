@@ -1,7 +1,13 @@
 """Library-size normalization and expression filtering for count data.
 
 Counts are samples x features (rows are samples, columns are genes): finite,
-non-negative, integer or not. The functions reproduce edgeR and DESeq2:
+non-negative, integer or not. They are converted to float64, which holds every
+whole number up to 2**53 (about 9.0e15) exactly; a larger integer count is
+rounded to the nearest float64, a relative change below 1.2e-16, and never wraps
+around. R, whose integers have 32 bits, holds counts that large as doubles too.
+A library size, a total of a feature's counts or a count per million beyond the
+float64 range (about 1.8e308) raises OverflowError instead of becoming infinite
+or NaN. The functions reproduce edgeR and DESeq2:
 
 - normalization factors as edgeR's ``normLibSizes`` (``calcNormFactors``)
   computes them: :func:`tmm_factors`, :func:`upper_quartile_factors` and
@@ -70,7 +76,8 @@ def library_sizes(counts: npt.ArrayLike) -> FloatArray:
     """Return the library size of each sample: its total count over all features.
 
     The sums are accumulated with error compensation and rounded once, like R's
-    ``colSums``, so they are exact for integer counts.
+    ``colSums``, so they are exact for whole-number counts whose total is at most
+    2**53.
 
     Args:
         counts: Counts, samples x features.
@@ -82,9 +89,9 @@ def library_sizes(counts: npt.ArrayLike) -> FloatArray:
         TypeError: If counts are not numeric.
         ValueError: If counts are not a non-empty 2-D array of finite,
             non-negative values.
+        OverflowError: If a library size exceeds the float64 range.
     """
-    result: FloatArray = _sums(_as_counts(counts), 1)
-    return result
+    return _sums_in_range(_as_counts(counts), 1)
 
 
 def tmm_factors(
@@ -144,6 +151,7 @@ def tmm_factors(
         TypeError: If an argument has the wrong type.
         ValueError: If an argument is out of range, or a sample has library
             size zero.
+        OverflowError: If a library size exceeds the float64 range.
     """
     y = _as_counts(counts)
     sizes = _library_sizes_of(y, library_sizes)
@@ -193,6 +201,7 @@ def upper_quartile_factors(
         ValueError: If an argument is out of range, a sample has library size
             zero, or the quantile is zero in some sample (edgeR then returns
             NaN factors).
+        OverflowError: If a library size exceeds the float64 range.
     """
     y = _as_counts(counts)
     sizes = _library_sizes_of(y, library_sizes)
@@ -237,6 +246,7 @@ def rle_factors(
         TypeError: If an argument has the wrong type.
         ValueError: If a sample has library size zero, or no feature has
             positive counts in every sample (edgeR then returns NaN factors).
+        OverflowError: If a library size exceeds the float64 range.
     """
     y = _as_counts(counts)
     sizes = _library_sizes_of(y, library_sizes)
@@ -323,9 +333,21 @@ def cpm(
         TypeError: If an argument has the wrong type.
         ValueError: If an argument is out of range, or a sample has library
             size zero.
+        OverflowError: If a library size, or a count per million as edgeR forms
+            it, exceeds the float64 range.
     """
     y = _as_counts(counts)
-    return _cpm(y, _effective_library_sizes(y, library_sizes, norm_factors))
+    sizes = _effective_library_sizes(y, library_sizes, norm_factors)
+    try:
+        with np.errstate(over="raise"):
+            return _cpm(y, sizes)
+    except FloatingPointError:
+        with np.errstate(over="ignore"):
+            sample, feature = np.argwhere(~np.isfinite(_cpm(y, sizes)))[0]
+        raise OverflowError(
+            f"the count per million of sample {sample}, feature {feature} exceeds the "
+            "float64 range when formed as edgeR forms it, 1e6 * count / library size"
+        ) from None
 
 
 def log_cpm(
@@ -358,6 +380,8 @@ def log_cpm(
         TypeError: If an argument has the wrong type.
         ValueError: If an argument is out of range, or a sample has library
             size zero.
+        OverflowError: If a library size, or the sum of the library sizes,
+            exceeds the float64 range.
     """
     y = _as_counts(counts)
     sizes = _effective_library_sizes(y, library_sizes, norm_factors)
@@ -422,6 +446,8 @@ def filter_by_expression(
         ValueError: If an argument is out of range, both group and design are
             given (edgeR silently ignores the design then), or a sample has
             library size zero.
+        OverflowError: If a library size, or the total count of a feature,
+            exceeds the float64 range.
     """
     y = _as_counts(counts)
     n_samples = y.shape[0]
@@ -452,8 +478,9 @@ def filter_by_expression(
     # The cutoff and the CPM are formed as edgeR forms them: a count exactly at
     # the cutoff is kept or dropped by the last bit (found by probing).
     cutoff = min_count / float(np.median(sizes)) * 1e6
-    n_expressed = np.count_nonzero(_cpm(y, sizes) >= cutoff, axis=0)
-    totals: FloatArray = _sums(y, 0)
+    with np.errstate(over="ignore"):  # an infinite CPM still reaches the cutoff
+        n_expressed = np.count_nonzero(_cpm(y, sizes) >= cutoff, axis=0)
+    totals = _sums_in_range(y, 0)
     keep: npt.NDArray[np.bool_] = n_expressed >= min_samples - _FILTER_SLACK
     return keep & (totals >= min_total_count - _FILTER_SLACK)
 
@@ -512,7 +539,7 @@ def _library_sizes_of(
 ) -> FloatArray:
     if library_sizes is not None:
         return _positive_vector(library_sizes, "library_sizes", counts.shape[0])
-    sizes: FloatArray = _sums(counts, 1)
+    sizes = _sums_in_range(counts, 1)
     empty = np.flatnonzero(sizes == 0)
     if empty.size:
         raise ValueError(
@@ -605,6 +632,19 @@ def _design_matrix(design: object, n_samples: int) -> FloatArray:
 
 
 # Shared pieces
+
+
+def _sums_in_range(counts: FloatArray, axis: int) -> FloatArray:
+    """Return ``_sums(counts, axis)``; a sum beyond float64 raises OverflowError."""
+    sums: FloatArray = _sums(counts, axis)
+    beyond = np.flatnonzero(~np.isfinite(sums))
+    if beyond.size:
+        unit = "sample" if axis == 1 else "feature"
+        raise OverflowError(
+            f"the counts of {unit} {beyond[0]} sum beyond the float64 range (about "
+            "1.8e308)"
+        )
+    return sums
 
 
 def _expressed(counts: FloatArray) -> FloatArray:
@@ -962,6 +1002,8 @@ def _log2_cpm(
     for k in range(n_samples):
         total += sizes[k]
     mean_size = total / n_samples
+    if not np.isfinite(mean_size):
+        raise OverflowError("the library sizes sum beyond the float64 range")
     out = np.empty((n_samples, n_features))
     for k in range(n_samples):
         prior = prior_count * sizes[k] / mean_size

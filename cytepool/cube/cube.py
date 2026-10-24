@@ -17,6 +17,9 @@ POOLED_SAMPLES_COLUMN = "n_pooled_samples"
 """The sample column that ``Cube.collapse_samples`` fills with pooled sample counts."""
 
 _MOMENT_TOLERANCE = 1e-6  # relative slack of the Cauchy-Schwarz check on the moments
+# The largest int64. Integer layers and n_cells hold values from 0 to it, so every
+# value converts to int64 exactly, and a sum is exact in int64 whenever it fits.
+_INT64_MAX = 2**63 - 1
 _CELL_LAYERS = ("detected", "log_sum", "log_sum_sq", "linear_sum")
 _NORMALIZED_LAYERS = ("log_sum", "log_sum_sq", "linear_sum")
 _NON_NEGATIVE_LAYERS = frozenset({"counts", "detected", "log_sum_sq", "linear_sum"})
@@ -86,12 +89,20 @@ class Cube:
 
     Constraints:
         ``counts``, ``detected``, ``log_sum_sq`` and ``linear_sum`` are
-        non-negative; float layers are finite; ``detected`` is at most ``n_cells``;
-        every layer is zero in entries where ``n_cells`` is zero; and, because both
-        moments sum over the same cells, ``log_sum**2`` is at most
-        ``n_cells * log_sum_sq`` (Cauchy-Schwarz), up to a relative 1e-6 for
-        rounding. ``log_sum`` may be negative, which happens with a pseudocount
+        non-negative; integer layers and ``n_cells`` are at most 2**63 - 1, the
+        largest int64, whatever their dtype; float layers are finite; ``detected``
+        is at most ``n_cells``; every layer is zero in entries where ``n_cells`` is
+        zero; and, because both moments sum over the same cells, ``log_sum**2`` is
+        at most ``n_cells * log_sum_sq`` (Cauchy-Schwarz), up to a relative 1e-6
+        for rounding. ``log_sum`` may be negative, which happens with a pseudocount
         below 1. Arrays are stored read-only.
+
+    Sums:
+        Library sizes, merged groups and pooled samples are sums. Integer layers
+        and ``n_cells`` are summed in int64, and every sum is exact: one that would
+        exceed 2**63 - 1 raises OverflowError, naming the layer, the entry and the
+        exact sum, instead of wrapping around. Float layers are summed in float64,
+        and a sum beyond the float64 range raises OverflowError too.
 
     Lazy layers:
         A layer may be any object with ``shape``, ``dtype`` and a ``__getitem__``
@@ -101,7 +112,8 @@ class Cube:
         memory and checks it against the constraints, so a bad value raises when it
         is first used; the moment constraint is checked when ``variance()`` or
         ``to_memory()`` reads both moments. Selecting, regrouping and collapsing a
-        lazy cube give a lazy cube; ``to_memory()`` reads every layer.
+        lazy cube give a lazy cube, which computes its sums, and raises any
+        OverflowError, when a group is read; ``to_memory()`` reads every layer.
     """
 
     __slots__ = (
@@ -305,6 +317,8 @@ class Cube:
             IndexError: If ``group`` is a position out of range.
             TypeError: If ``group`` is neither a string nor an integer.
             ValueError: If a lazy layer gives a value that breaks a constraint.
+            OverflowError: If a lazy layer that ``regroup()`` or
+                ``collapse_samples()`` derived has a sum that does not fit.
         """
         self._check_layer_name(name)
         if group is None:
@@ -327,6 +341,7 @@ class Cube:
             ValueError: If ``scale`` is unknown or the cube lacks the layer it needs.
             KeyError, IndexError, TypeError: For an invalid ``group``, as in
                 ``layer()``.
+            OverflowError: As in ``layer()``, for a derived lazy layer.
         """
         if scale == "log":
             name = "log_sum"
@@ -365,6 +380,7 @@ class Cube:
                 cells).
             KeyError, IndexError, TypeError: For an invalid ``group``, as in
                 ``layer()``.
+            OverflowError: As in ``layer()``, for a derived lazy layer.
         """
         self._require("variance()", ("log_sum", "log_sum_sq"))
         return self._per_group(group, self._variance_of_group)
@@ -383,6 +399,7 @@ class Cube:
             ValueError: If the cube lacks the ``detected`` layer.
             KeyError, IndexError, TypeError: For an invalid ``group``, as in
                 ``layer()``.
+            OverflowError: As in ``layer()``, for a derived lazy layer.
         """
         self._require("fraction_detected()", ("detected",))
         return self._per_group(group, lambda g: self._per_cell("detected", g))
@@ -395,19 +412,21 @@ class Cube:
 
         Returns:
             Shape ``(n_samples,)`` for one group, or ``(n_samples, n_groups)``;
-            int64 for integer counts and float64 otherwise.
+            int64, and exact, for integer counts and float64 otherwise.
 
         Raises:
+            OverflowError: If a library size exceeds 2**63 - 1 (integer counts) or
+                the float64 range (float counts), or as in ``layer()`` for a
+                derived lazy layer.
             KeyError, IndexError, TypeError: For an invalid ``group``, as in
                 ``layer()``.
         """
-        dtype = np.int64 if self._layers["counts"].dtype.kind in "iu" else np.float64
         if group is not None:
-            block = self._read("counts", self._group_position(group))
-            return block.sum(axis=1, dtype=dtype)
+            return self._group_library_sizes(self._group_position(group))
+        dtype = np.int64 if self._layers["counts"].dtype.kind in "iu" else np.float64
         result = np.empty((self.n_samples, self.n_groups), dtype=dtype)
         for g in range(self.n_groups):
-            result[:, g] = self._read("counts", g).sum(axis=1, dtype=dtype)
+            result[:, g] = self._group_library_sizes(g)
         return result
 
     def to_memory(self) -> "Cube":
@@ -418,6 +437,7 @@ class Cube:
 
         Raises:
             ValueError: If a value breaks a constraint.
+            OverflowError: If a sum of a derived lazy layer does not fit.
         """
         if all(isinstance(stored, np.ndarray) for stored in self._layers.values()):
             return self
@@ -476,11 +496,6 @@ class Cube:
         kept_groups = (
             np.arange(self.n_groups) if group_positions is None else group_positions
         )
-        plan = _Plan(
-            group_sets=[kept_groups[i : i + 1] for i in range(kept_groups.size)],
-            sample_order=sample_positions,
-            feature_positions=feature_positions,
-        )
         sample_table = _take_rows(self._samples, sample_positions)
         group_table = _take_rows(self._groups, group_positions)
         feature_table = _take_rows(self._features, feature_positions)
@@ -497,7 +512,15 @@ class Cube:
             "n_features": None if feature_positions is None else len(feature_table),
         }
         return self._derive(
-            plan, sample_table, group_table, feature_table, n_cells, record, sums=False
+            sample_table,
+            group_table,
+            feature_table,
+            n_cells,
+            record,
+            group_sets=[kept_groups[i : i + 1] for i in range(kept_groups.size)],
+            sample_order=sample_positions,
+            feature_positions=feature_positions,
+            sums=False,
         )
 
     def regroup(self, mapping: Mapping[str, Sequence[str] | str]) -> "Cube":
@@ -520,6 +543,9 @@ class Cube:
             TypeError: If ``mapping`` is not a mapping of strings to strings.
             ValueError: If a new id is empty, a merge is empty, a group is listed
                 twice or a new id collides with a kept group.
+            OverflowError: If a merged ``n_cells`` or a merged value of an
+                in-memory layer does not fit (see "Sums" in ``Cube``). A lazy
+                layer raises it when the merged group is read.
         """
         if not isinstance(mapping, Mapping):
             raise TypeError(
@@ -595,15 +621,25 @@ class Cube:
         )
         n_cells = None
         if self._n_cells is not None:
-            n_cells = _sum_runs(self._n_cells, order, starts, axis=1)
+            sample_ids = self._samples["sample_id"]
+            n_cells = _sum_runs(
+                self._n_cells,
+                order,
+                starts,
+                1,
+                lambda index: (
+                    f"n_cells of the merged group {new_ids[index[1]]!r} at sample "
+                    f"{sample_ids[index[0]]!r}"
+                ),
+            )
         record = {"operation": "regroup", "mapping": record_mapping}
         return self._derive(
-            _Plan(group_sets=group_sets),
             self._samples,
             group_table,
             self._features,
             n_cells,
             record,
+            group_sets=group_sets,
             sums=True,
         )
 
@@ -625,7 +661,10 @@ class Cube:
             KeyError: If there is no such sample column.
             TypeError: If the column is not text or integer.
             ValueError: If the column has a missing or empty value, or an existing
-                ``n_pooled_samples`` column does not hold integers.
+                ``n_pooled_samples`` column does not hold non-negative integers.
+            OverflowError: If a pooled ``n_cells``, ``n_pooled_samples`` or value
+                of an in-memory layer does not fit (see "Sums" in ``Cube``). A lazy
+                layer raises it when the group is read.
         """
         if not isinstance(by, str):
             raise TypeError(f"by must be a sample column name, got {type(by).__name__}")
@@ -660,6 +699,7 @@ class Cube:
             np.array(positions, dtype=np.intp) for positions in members.values()
         ]
         order, starts = _runs(sample_sets)
+        new_ids = list(members)
         others = self._samples
         if POOLED_SAMPLES_COLUMN in self._samples:
             pooled = self._samples[POOLED_SAMPLES_COLUMN]
@@ -668,14 +708,30 @@ class Cube:
                     f"the sample column {POOLED_SAMPLES_COLUMN!r} counts pooled samples "
                     f"and must hold integers, got dtype {pooled.dtype}"
                 )
-            counts = _sum_runs(pooled.astype(np.int64), order, starts, axis=0)
+            if pooled.size and pooled.min() < 0:
+                position = int(np.argmax(pooled < 0))
+                raise ValueError(
+                    f"the sample column {POOLED_SAMPLES_COLUMN!r} counts pooled samples "
+                    f"and must be non-negative, but sample "
+                    f"{self._samples['sample_id'][position]!r} has {pooled[position]}"
+                )
+            counts = _sum_runs(
+                pooled,
+                order,
+                starts,
+                0,
+                lambda index: (
+                    f"the sample column {POOLED_SAMPLES_COLUMN!r} of the pooled sample "
+                    f"{new_ids[index[0]]!r}"
+                ),
+            ).astype(np.int64, copy=False)  # a column without rows may be float64
             others = others.select(
                 [name for name in others.columns if name != POOLED_SAMPLES_COLUMN]
             )
         else:
             counts = np.array([positions.size for positions in sample_sets], np.int64)
         kept = _pool_rows(
-            others, "sample_id", list(members), order, starts, keep_varying=False
+            others, "sample_id", new_ids, order, starts, keep_varying=False
         )
         names = [
             name
@@ -692,30 +748,55 @@ class Cube:
         )
         n_cells = None
         if self._n_cells is not None:
-            n_cells = _sum_runs(self._n_cells, order, starts, axis=0)
-        plan = _Plan(
+            group_ids = self._groups["group_id"]
+            n_cells = _sum_runs(
+                self._n_cells,
+                order,
+                starts,
+                0,
+                lambda index: (
+                    f"n_cells of the pooled sample {new_ids[index[0]]!r} at group "
+                    f"{group_ids[index[1]]!r}"
+                ),
+            )
+        record = {"operation": "collapse_samples", "by": by}
+        return self._derive(
+            sample_table,
+            self._groups,
+            self._features,
+            n_cells,
+            record,
             group_sets=[np.array([g], dtype=np.intp) for g in range(self.n_groups)],
             sample_order=order,
             sample_starts=starts,
-        )
-        record = {"operation": "collapse_samples", "by": by}
-        return self._derive(
-            plan, sample_table, self._groups, self._features, n_cells, record, sums=True
+            sums=True,
         )
 
     # Internals.
 
     def _derive(
         self,
-        plan: "_Plan",
         samples: Table,
         groups: Table,
         features: Table,
         n_cells: np.ndarray | None,
         record: dict[str, Any],
         *,
+        group_sets: list[np.ndarray],
+        sample_order: np.ndarray | None = None,
+        sample_starts: np.ndarray | None = None,
+        feature_positions: np.ndarray | None = None,
         sums: bool,
     ) -> "Cube":
+        """Return the cube that a ``_Plan`` of these parts derives from this one."""
+        plan = _Plan(
+            group_sets,
+            sample_order,
+            sample_starts,
+            feature_positions,
+            source=self._ids(),
+            target=(groups["group_id"], samples["sample_id"], features["feature_id"]),
+        )
         shape = (len(groups), len(samples), len(features))
         layers: dict[str, np.ndarray | _LazyLayer] = {}
         for name, stored in self._layers.items():
@@ -723,9 +804,9 @@ class Cube:
             if sums and dtype.kind in "iu":
                 dtype = np.dtype(np.int64)
             if isinstance(stored, np.ndarray):
-                layers[name] = plan.apply(stored, shape, dtype)
+                layers[name] = plan.apply(name, stored, shape, dtype)
             else:
-                layers[name] = _DerivedLayer(stored, plan, dtype, shape)
+                layers[name] = _DerivedLayer(stored, plan, name, dtype, shape)
         if n_cells is not None:
             n_cells.flags.writeable = False
         return _assemble(
@@ -758,6 +839,20 @@ class Cube:
                 f"{statistic} needs the {named} layer{plural}, which this cube does not "
                 f"have; it has: {', '.join(self._layers)}"
             )
+
+    def _group_library_sizes(self, group: int) -> np.ndarray:
+        block = self._read("counts", group)
+        group_id = self._groups["group_id"][group]
+        sample_ids = self._samples["sample_id"]
+        return _checked_sum(
+            block,
+            block.shape[1],
+            lambda values, dtype: values.sum(axis=1, dtype=dtype),
+            lambda index: (
+                f"layer 'counts' over the features of group {group_id!r}, sample "
+                f"{sample_ids[index[0]]!r}"
+            ),
+        )
 
     def _cells(self) -> np.ndarray:
         if self._n_cells is None:  # every layer that needs cells requires n_cells
@@ -916,29 +1011,33 @@ class _StoredLayer(_LazyLayer):
 class _DerivedLayer(_LazyLayer):
     """A lazy layer computed group by group from the layer of another cube."""
 
-    __slots__ = ("parent", "plan")
+    __slots__ = ("parent", "plan", "name")
 
     def __init__(
         self,
         parent: _LazyLayer,
         plan: "_Plan",
+        name: str,
         dtype: np.dtype,
         shape: tuple[int, int, int],
     ) -> None:
         self.parent = parent
         self.plan = plan
+        self.name = name
         self.dtype = dtype
         self.shape = shape
 
     def read(self, group: int) -> np.ndarray:
-        block = self.plan.block(self.parent.read, group, self.dtype)
+        block = self.plan.block(self.name, self.parent.read, group, self.dtype)
         block.flags.writeable = False
         return block
 
     def read_all(self) -> np.ndarray:
         result = np.empty(self.shape, dtype=self.dtype)
         for group in range(self.shape[0]):
-            result[group] = self.plan.block(self.parent.read, group, self.dtype)
+            result[group] = self.plan.block(
+                self.name, self.parent.read, group, self.dtype
+            )
         result.flags.writeable = False
         return result
 
@@ -950,51 +1049,128 @@ class _Plan:
     are then taken at ``sample_order`` (when ``sample_starts`` is None) or pooled by
     summing the runs of ``sample_order`` that begin at ``sample_starts``, and its
     features are taken at ``feature_positions``. ``None`` keeps an axis as it is.
+    ``source`` and ``target`` hold the group, sample and feature ids of the source
+    and of the result, for error messages. Integer sums are exact or raise
+    OverflowError, and so do float sums beyond the float64 range: ``_merge`` sums
+    groups, and ``_checked_sum`` the runs of samples.
     """
 
-    __slots__ = ("group_sets", "sample_order", "sample_starts", "feature_positions")
+    __slots__ = (
+        "group_sets",
+        "sample_order",
+        "sample_starts",
+        "feature_positions",
+        "source",
+        "target",
+    )
 
     def __init__(
         self,
         group_sets: list[np.ndarray],
-        sample_order: np.ndarray | None = None,
-        sample_starts: np.ndarray | None = None,
-        feature_positions: np.ndarray | None = None,
+        sample_order: np.ndarray | None,
+        sample_starts: np.ndarray | None,
+        feature_positions: np.ndarray | None,
+        *,
+        source: tuple[np.ndarray, np.ndarray, np.ndarray],
+        target: tuple[np.ndarray, np.ndarray, np.ndarray],
     ) -> None:
         self.group_sets = group_sets
         self.sample_order = sample_order
         self.sample_starts = sample_starts
         self.feature_positions = feature_positions
+        self.source = source
+        self.target = target
 
     def block(
-        self, read: Callable[[int], np.ndarray], group: int, dtype: np.dtype
+        self,
+        name: str,
+        read: Callable[[int], np.ndarray],
+        group: int,
+        dtype: np.dtype,
     ) -> np.ndarray:
-        """Compute one output group from a function that reads source groups."""
-        members = self.group_sets[group]
-        block = read(int(members[0]))
-        if members.size > 1:
-            block = block.astype(dtype)  # a new array to accumulate into
-            for member in members[1:]:
-                # Cast first: numpy refuses to add uint64 into int64 in place.
-                block += read(int(member)).astype(dtype, copy=False)
+        """Compute one output group of layer ``name``; ``read`` reads a source group."""
+        block = self._merge(name, read, group)
         if self.sample_order is not None:
             if self.sample_starts is None:
                 block = block[self.sample_order]
             else:
-                block = _sum_runs(block, self.sample_order, self.sample_starts, axis=0)
+                group_id, pooled_ids = self.target[0][group], self.target[1]
+                feature_ids = self.source[2]  # features are taken last
+                block = _sum_runs(
+                    block,
+                    self.sample_order,
+                    self.sample_starts,
+                    0,
+                    lambda index: (
+                        f"layer {name!r} of the pooled sample {pooled_ids[index[0]]!r} "
+                        f"at group {group_id!r}, feature {feature_ids[index[1]]!r}"
+                    ),
+                )
         if self.feature_positions is not None:
             block = block[:, self.feature_positions]
         return block.astype(dtype, copy=False)
 
     def apply(
-        self, array: np.ndarray, shape: tuple[int, int, int], dtype: np.dtype
+        self, name: str, array: np.ndarray, shape: tuple[int, int, int], dtype: np.dtype
     ) -> np.ndarray:
         """Compute every output group of an in-memory layer."""
         result = np.empty(shape, dtype=dtype)
         for group in range(shape[0]):
-            result[group] = self.block(array.__getitem__, group, dtype)
+            result[group] = self.block(name, array.__getitem__, group, dtype)
         result.flags.writeable = False
         return result
+
+    def _merge(
+        self, name: str, read: Callable[[int], np.ndarray], group: int
+    ) -> np.ndarray:
+        """Sum the source groups of output group ``group``, one at a time.
+
+        Integers accumulate in int64 while the sum of the members' largest possible
+        values fits, which proves that every sum does, and as Python integers once
+        it does not. Every member is read once, and only one is held at a time.
+        """
+        members = self.group_sets[group]
+        first = read(int(members[0]))
+        if members.size == 1:
+            return first
+        merged_id = self.target[0][group]
+        sample_ids, feature_ids = self.source[1], self.source[2]
+
+        def subject(index: tuple[int, ...]) -> str:
+            return (
+                f"layer {name!r} of the merged group {merged_id!r} at sample "
+                f"{sample_ids[index[0]]!r}, feature {feature_ids[index[1]]!r}"
+            )
+
+        if first.dtype.kind == "f":
+            total = first.astype(np.float64)  # a new array to accumulate into
+            for member in members[1:]:
+                term = read(int(member))
+                try:
+                    with np.errstate(over="raise"):
+                        total += term
+                except FloatingPointError:
+                    # numpy writes the sums before it raises.
+                    index = _first(~np.isfinite(total))
+                    raise _float_overflow(subject(index)) from None
+            return total
+        total = first.astype(np.int64)  # values are at most 2**63 - 1: exact
+        bound = _largest_possible(first)
+        for member in members[1:]:
+            term = read(int(member))
+            bound += _largest_possible(term)
+            if bound > _INT64_MAX and total.dtype != object:
+                total = total.astype(object)
+            # Cast first: numpy refuses to add uint64 into int64 in place, and a
+            # Python integer plus a numpy integer is a numpy integer, which wraps.
+            total += term.astype(total.dtype, copy=False)
+        if total.dtype == object:
+            too_large = total > _INT64_MAX
+            if too_large.any():
+                index = _first(too_large)
+                raise _integer_overflow(subject(index), total[index])
+            total = total.astype(np.int64)
+        return total
 
 
 def _set_state(
@@ -1140,6 +1316,16 @@ def _as_n_cells(
             f"n_cells must have shape (n_samples, n_groups) = {expected}, got "
             f"{array.shape}"
         )
+    # Only uint64 (in either byte order) holds values above 2**63 - 1.
+    if array.dtype.kind == "u" and array.dtype.itemsize == 8 and array.size:
+        too_large = array > _INT64_MAX
+        if too_large.any():
+            sample, group = _first(too_large)
+            raise ValueError(
+                f"n_cells is above 2**63 - 1 ({array[sample, group]}) for sample "
+                f"{sample_ids[sample]!r} and group {group_ids[group]!r}; cell numbers "
+                "must be at most 2**63 - 1, the largest int64"
+            )
     cells = array.astype(np.int64)
     negative = np.argwhere(cells < 0)
     if negative.size:
@@ -1180,14 +1366,27 @@ def _aligned_by_labels(
                 "an n_cells DataFrame has missing values; every entry needs a number "
                 "of cells"
             )
-        try:
-            integers = np.asarray(frame.to_numpy(dtype=np.int64))
-        except (TypeError, ValueError):
-            integers = None
-        # Keep the conversion only when it is exact (1.5 would become 1); otherwise
-        # the caller reports the dtype.
-        if integers is not None and bool(np.all(integers == values)):
-            values = integers
+        # Keep a conversion only when it is exact: 1.5 would become 1, and pandas
+        # turns a UInt64 count of 2**63 into -2**63 in int64. uint64 keeps such a
+        # count for the caller to report; otherwise the caller reports the dtype.
+        overflowed = False
+        for dtype in (np.int64, np.uint64):
+            try:
+                integers = np.asarray(frame.to_numpy(dtype=dtype))
+            except OverflowError:
+                overflowed = True
+                continue
+            except (TypeError, ValueError):
+                continue
+            if bool(np.all(integers == values)):
+                values = integers
+                break
+        else:
+            if overflowed:
+                raise ValueError(
+                    "an n_cells DataFrame holds a number of cells outside the int64 "
+                    "range; cell numbers must be from 0 to 2**63 - 1"
+                )
     aligned: np.ndarray = values[np.ix_(*positions)]
     return aligned
 
@@ -1319,15 +1518,28 @@ def _check_values(
     """
     if block.size == 0:
         return
-    if block.dtype.kind == "f" and not np.isfinite(block.sum()):
-        bad = ~np.isfinite(block)  # the sum may also overflow with finite values
-        if bad.any():
-            sample, feature = _first(bad)
+    if block.dtype.kind == "f":
+        # Finite values can sum to infinity, or to infinity minus infinity.
+        with np.errstate(over="ignore", invalid="ignore"):
+            total = block.sum()
+        if not np.isfinite(total):
+            bad = ~np.isfinite(block)  # the sum may also overflow with finite values
+            if bad.any():
+                sample, feature = _first(bad)
+                raise ValueError(
+                    f"layer {name!r} has a non-finite value ({block[sample, feature]}) "
+                    f"at {_where(ids, group, sample, feature)}"
+                )
+    # Only uint64 holds values above 2**63 - 1, and no unsigned value is negative.
+    if block.dtype.kind == "u" and block.dtype.itemsize == 8:
+        if block.max() > _INT64_MAX:
+            sample, feature = _first(block > _INT64_MAX)
             raise ValueError(
-                f"layer {name!r} has a non-finite value ({block[sample, feature]}) at "
-                f"{_where(ids, group, sample, feature)}"
+                f"layer {name!r} has a value above 2**63 - 1 ({block[sample, feature]}) "
+                f"at {_where(ids, group, sample, feature)}; integer layers must be at "
+                "most 2**63 - 1, the largest int64"
             )
-    if name in _NON_NEGATIVE_LAYERS and block.min() < 0:
+    elif name in _NON_NEGATIVE_LAYERS and block.dtype.kind != "u" and block.min() < 0:
         sample, feature = _first(block < 0)
         raise ValueError(
             f"layer {name!r} has a negative value ({block[sample, feature]}) at "
@@ -1357,10 +1569,9 @@ def _check_values(
         )
 
 
-def _first(mask: np.ndarray) -> tuple[int, int]:
-    """Return the first (row, column) where a 2-D mask is true."""
-    row, column = np.argwhere(mask)[0]
-    return int(row), int(column)
+def _first(mask: np.ndarray) -> tuple[int, ...]:
+    """Return the index of the first entry, in C order, where a mask is true."""
+    return tuple(int(position) for position in np.argwhere(mask)[0])
 
 
 def _where(
@@ -1509,17 +1720,84 @@ def _runs(sets: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _sum_runs(
-    array: np.ndarray, order: np.ndarray, starts: np.ndarray, axis: int
+    array: np.ndarray,
+    order: np.ndarray,
+    starts: np.ndarray,
+    axis: int,
+    subject: Callable[[tuple[int, ...]], str],
 ) -> np.ndarray:
     """Sum the runs of ``order`` that begin at ``starts`` along an axis.
 
-    Integers are summed in int64 and floats in float64.
+    Integers, which must be non-negative, are summed in int64 and floats in float64,
+    as ``_checked_sum`` describes; ``subject`` names an entry of the result.
     """
     taken = np.take(array, order, axis=axis)
     if starts.size == 0:
         return taken
-    dtype = np.int64 if array.dtype.kind in "iu" else np.float64
-    return np.add.reduceat(taken, starts, axis=axis, dtype=dtype)
+    longest = int(np.diff(np.append(starts, order.size)).max())
+    return _checked_sum(
+        taken,
+        longest,
+        lambda values, dtype: np.add.reduceat(values, starts, axis=axis, dtype=dtype),
+        subject,
+    )
+
+
+def _checked_sum(
+    values: np.ndarray,
+    n_terms: int,
+    reduce: Callable[[np.ndarray, Any], np.ndarray],
+    subject: Callable[[tuple[int, ...]], str],
+) -> np.ndarray:
+    """Return ``reduce(values, dtype)``: sums of at most ``n_terms`` values each.
+
+    Floats are summed in float64. Integers, which must be non-negative, are summed
+    in int64, exactly: directly when their largest possible value times
+    ``n_terms`` is at most 2**63 - 1, which proves that every sum fits, and
+    otherwise as Python integers, which do not overflow. A sum beyond 2**63 - 1, or
+    beyond the float64 range, raises OverflowError for the first such entry of the
+    result, described by ``subject(index)``.
+    """
+    if values.dtype.kind == "f":
+        try:
+            with np.errstate(over="raise"):
+                return reduce(values, np.float64)
+        except FloatingPointError:
+            with np.errstate(over="ignore", invalid="ignore"):
+                sums = reduce(values, np.float64)
+            raise _float_overflow(subject(_first(~np.isfinite(sums)))) from None
+    if _largest_possible(values) * n_terms <= _INT64_MAX:
+        return reduce(values, np.int64)
+    sums = reduce(values.astype(object), object)
+    too_large = sums > _INT64_MAX
+    if too_large.any():
+        index = _first(too_large)
+        raise _integer_overflow(subject(index), sums[index])
+    return sums.astype(np.int64)
+
+
+def _largest_possible(values: np.ndarray) -> int:
+    """Return an upper bound on non-negative integers.
+
+    For a dtype narrower than 64 bits it is the dtype's largest value, which needs no
+    pass over the data and proves that a sum of up to 2**31 terms fits in int64. For
+    64-bit dtypes it is the bitwise OR of the values, which holds every bit set in
+    any of them and so is at least the largest; numpy computes it faster than the
+    largest value itself.
+    """
+    if values.dtype.itemsize < 8:
+        return int(np.iinfo(values.dtype).max)
+    return int(np.bitwise_or.reduce(values, axis=None))
+
+
+def _integer_overflow(subject: str, total: int) -> OverflowError:
+    return OverflowError(
+        f"{subject} sums to {total}, beyond 2**63 - 1, the largest int64"
+    )
+
+
+def _float_overflow(subject: str) -> OverflowError:
+    return OverflowError(f"{subject} sums beyond the float64 range (about 1.8e308)")
 
 
 def _pool_rows(

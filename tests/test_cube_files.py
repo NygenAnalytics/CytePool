@@ -224,6 +224,60 @@ def test_n_cells_beyond_int32_are_stored_as_int64(tmp_path: Path) -> None:
     assert_same_cube(read_cube(tmp_path / "c"), original)
 
 
+def test_the_largest_int64_round_trips_and_sums_beyond_it_raise(tmp_path: Path) -> None:
+    largest = 2**63 - 1
+    original = Cube(
+        {"counts": np.array([[[largest, 0]], [[2**62, 2]], [[2**62, 0]]], np.uint64)},
+        samples={"sample_id": ["s"]},
+        groups={"group_id": ["a", "b", "c"]},
+        features={"feature_id": ["x", "y"]},
+    )
+    write_cube(original, tmp_path / "c.cube.zarr")
+    back = read_cube(tmp_path / "c.cube.zarr")
+    assert_same_cube(back, original)
+    assert back.library_sizes()[0].tolist() == [largest, 2**62 + 2, 2**62]
+    merged = back.regroup({"bc": ["b", "c"]})  # 2**62 + 2**62 is 2**63, beyond int64
+    assert merged.layer("counts", "a").tolist() == [[largest, 0]]
+    with pytest.raises(OverflowError, match="merged group 'bc' at sample 's', feature"):
+        merged.layer("counts", "bc")
+    with pytest.raises(OverflowError, match="sums to 9223372036854775808, beyond 2"):
+        write_cube(merged, tmp_path / "merged.cube.zarr")
+    assert [p.name for p in tmp_path.iterdir()] == ["c.cube.zarr"]
+
+
+def test_values_beyond_int64_in_a_file_written_elsewhere_raise(
+    tmp_path: Path,
+) -> None:
+    original = Cube(
+        {"counts": np.array([[[3, 2**63 - 1]]], dtype=np.uint64)},
+        samples={"sample_id": ["s"]},
+        groups={"group_id": ["g"]},
+        features={"feature_id": ["x", "y"]},
+        n_cells=np.array([[5]]),
+    )
+    path = tmp_path / "c.cube.zarr"
+    write_cube(original, path, compression=None)
+    chunk = path / "layers" / "counts" / "c" / "0" / "0" / "0"
+    chunk.write_bytes(np.array([3, 2**63], dtype="<u8").tobytes())
+    back = read_cube(path)  # layers are read when they are used
+    with pytest.raises(
+        ValueError,
+        match=r"'counts' has a value above 2\*\*63 - 1 \(9223372036854775808\) at "
+        r"group 'g', sample 's', feature 'y'",
+    ):
+        back.layer("counts", "g")
+    shutil.rmtree(path / "n_cells")
+    write_array(
+        path / "n_cells",
+        np.array([[2**63]], dtype=np.uint64),
+        chunks=(1, 1),
+        dimension_names=["samples", "groups"],
+    )
+    with pytest.raises(ValueError, match=r"n_cells is above 2\*\*63 - 1") as raised:
+        read_cube(path)
+    assert raised.value.__notes__ == [f"(while reading the cube file {path})"]
+
+
 def test_a_lazy_cube_can_be_written_back_over_its_own_file(
     cube: Cube, tmp_path: Path
 ) -> None:
