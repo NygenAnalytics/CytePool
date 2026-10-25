@@ -35,6 +35,7 @@ Nothing is released yet, and the interface may still change.
 | Precision weights for counts | [`voom`](/api/voom.html) | limma |
 | dream | [`voom_with_dream_weights`, `moderated_fixed_effect_tests`](/api/dream.html) | variancePartition |
 | Negative binomial models | [`fit_negative_binomial_model` (edgeR's `glmFit`), deviances](/api/negative_binomial_models.html) | edgeR, mpmath |
+| DESeq2 | [`fit_deseq2`, `deseq2_wald_test`, `deseq2_likelihood_ratio_test`, `deseq2_dispersions`](/api/deseq2.html) | DESeq2, PyDESeq2 |
 | Empirical Bayes moderation | [Moderated t and F statistics, B-statistics, TREAT](/api/empirical_bayes.html) | limma |
 | Multiple testing | [Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli](/api/multiple_testing.html) | R |
 | Differential expression | [`limma_voom`, `limma_trend`, `dream_voom` on every cell type of a cube](/api/differential_expression.html) | limma, edgeR, variancePartition |

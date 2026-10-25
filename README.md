@@ -25,6 +25,7 @@ what is planned.
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
 | Quasi-likelihood F-tests | `fit_quasi_likelihood` and `quasi_likelihood_f_test`: edgeR 4's `glmQLFit` and `glmQLFTest` with their defaults: the common negative binomial dispersion of the most highly expressed genes by Cox-Reid adjusted profile likelihood (`common_dispersion`), deviances adjusted for small counts with exact moments of the unit deviance (`negative_binomial_unit_deviance_moments`), the average quasi-dispersion, limma's prior for unequal degrees of freedom with a trend in the average log CPM (`average_log_cpm`) or robust, prior weights and offsets, and F-tests of coefficients and named contrasts with edgeR's columns (logFC, logCPM, F, PValue, FDR) | edgeR, limma, mpmath |
+| DESeq2 | `fit_deseq2`, `deseq2_wald_test`, `deseq2_likelihood_ratio_test` and `deseq2_dispersions`: DESeq2's analysis with its defaults, from gene-wise dispersions (Cox-Reid adjusted profile likelihood), the parametric trend and the maximum a posteriori dispersions to its fits of every gene, Wald tests of coefficients and contrasts, and likelihood ratio tests of a reduced design (all the levels of a factor at once, a time course), with the columns of `results()`, its independent filtering and its Cook's distance flags | DESeq2, PyDESeq2 |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
@@ -38,8 +39,10 @@ what is planned.
 These are not implemented yet:
 
 - Likelihood ratio tests and gene-wise dispersions for negative binomial models
-  (edgeR's `glmLRT` and `estimateDisp`), DESeq2-style tests, edgeR's quasi-likelihood
-  F-tests on every group of a cube, and their `legacy = TRUE` methods
+  (edgeR's `glmLRT` and `estimateDisp`), edgeR's quasi-likelihood F-tests on every
+  group of a cube, and their `legacy = TRUE` methods
+- DESeq2's shrunken log fold changes (`lfcShrink` with apeglm, ashr or normal priors),
+  its replacement of outlier counts, and its local and glmGamPoi dispersion trends
 - The rest of dream (variancePartition): Kenward-Roger degrees of freedom (dream's
   default for 20 samples or fewer), F-tests of several contrasts at once, random
   slopes, and variance partitioning. dream with random intercepts and Satterthwaite's
@@ -188,6 +191,35 @@ These are not implemented yet:
   residual degrees of freedom out of the outlier tests, where limma counts them as
   zero variances. With offsets per observation, edgeR's `aveLogCPM` ignores the
   offsets of the first gene, and so differs from CytePool's there.
+- `fit_negative_binomial_model` takes the dispersions as given; CytePool does not
+  estimate them yet. Where a gene's maximum likelihood estimate is infinite, as when
+  every count of a group is zero, its fitted values tend to zero and its coefficients
+  are large but finite: -1e8 for such a group of a one-way layout, as in edgeR. Its
+  deviances are exact, and differ from edgeR's, which adds 1e-8 to counts and means
+  and approximates the deviance for dispersions below 1e-4 and where the dispersion
+  times the mean reaches 1e6. Where weights differ between samples by a factor of more
+  than about 1e10, the coefficients that only the samples of small weight determine
+  lose accuracy (about 1e-16 times that factor), and beyond about 1e14 they are not
+  determined.
+- The DESeq2 functions give the results of `DESeq(..., minReplicatesForReplace =
+  Inf)`: outlier counts are not replaced, which DESeq2 does by default for samples
+  whose design row occurs seven or more times. Each dispersion is the maximum of its
+  objective, where DESeq2's line searches stop when an iteration gains less than 1e-6
+  and can stall where they start, but for genes whose rough dispersion is at the lower
+  bound, which keep it as in DESeq2; and the fits converge, where DESeq2's stop when
+  the deviance changes by less than 1e-8 of it. On the validation's data DESeq2's
+  final dispersions differ by medians of 1e-3 to 4e-2 on the log scale, and its
+  p-values by medians of 3e-4 to 8e-3, relative, with 7 of 1,297 genes called
+  differently at a false discovery rate of 0.1. Where DESeq2's parametric trend fails
+  it substitutes a local regression; CytePool uses the mean of the gene-wise
+  estimates, with a warning. With three or fewer residual degrees of freedom the
+  prior's variance is the maximum likelihood estimate, where DESeq2 compares densities
+  of simulated residuals: 10% apart in the validation. For Cook's distance a design
+  matrix given without its `Design` compares two groups when its rows take two
+  distinct values of zeros and ones, as a factor does in DESeq2 and a numeric
+  covariate does not. Observation weights, normalization factors that differ between
+  genes, thresholds on the fold change (`lfcThreshold`) and t-distributed Wald tests
+  (`useT`) are not implemented.
 - `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
   is refused (`dream_voom` fits random intercepts), and there is no
   `duplicateCorrelation`. Normalization factors are TMM or

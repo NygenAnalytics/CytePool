@@ -25,6 +25,7 @@ standard message, which the tests build from its parts.
 """
 
 import dataclasses
+import functools
 import importlib
 import inspect
 import itertools
@@ -51,6 +52,7 @@ from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
 from cytepool.stats import distributions, special
+from cytepool.stats.deseq2 import fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
@@ -327,6 +329,14 @@ _SCVERSE_KEYS = {
     "normalization": "target_sum",
     "source": "values",
 }
+
+
+@functools.cache
+def _deseq2_fit() -> Any:
+    """A DESeq2 fit of COUNTS on DESIGN at given dispersions and unit size factors."""
+    return fit_deseq2(
+        COUNTS, DESIGN, size_factors=np.ones(4), dispersion=np.full(8, 0.1)
+    )
 
 
 def _gene_set_arguments() -> dict[str, Any]:
@@ -890,6 +900,74 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.stats.negative_binomial_models.negative_binomial_unit_deviance": Entry(
         lambda c: {"counts": COUNTS, "means": COUNTS + 1.0, "dispersion": 0.1},
         {"counts": None, "means": None, "dispersion": None},
+    ),
+    # DESeq2: dispersions with every stage given or estimated, fits, and tests.
+    "cytepool.stats.deseq2.deseq2_dispersions": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": DESIGN,
+            "size_factors": np.ones(4),
+            "trend": "mean",
+            "genewise_dispersions": np.full(8, 0.1),
+            "trended_dispersions": np.full(8, 0.1),
+            "prior_variance": 1.0,
+            "min_mean": 0.5,
+            "n_threads": 1,
+        },
+        {
+            "counts": None,
+            "design": None,
+            "size_factors": None,
+            "genewise_dispersions": "NaN",
+            "trended_dispersions": "NaN",
+            "n_threads": None,
+        },
+        options=("trend", "prior_variance", "min_mean"),
+    ),
+    "cytepool.stats.deseq2.fit_deseq2": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": DESIGN,
+            "size_factors": np.ones(4),
+            "dispersion": np.full(8, 0.1),
+            "trend": "mean",
+            "min_mean": 0.5,
+            "n_threads": 1,
+        },
+        {
+            "counts": None,
+            "design": None,
+            "size_factors": None,
+            "dispersion": "NaN",
+            "n_threads": None,
+        },
+        options=("trend", "min_mean"),
+    ),
+    "cytepool.stats.deseq2.deseq2_wald_test": Entry(
+        lambda c: {
+            "fit": _deseq2_fit(),
+            "contrast": [0.0, 1.0],
+            "alpha": 0.1,
+            "independent_filtering": True,
+            "cooks_cutoff": 10.0,
+        },
+        {"contrast": None},
+        options=("alpha", "independent_filtering", "cooks_cutoff"),
+        objects=("fit",),
+    ),
+    "cytepool.stats.deseq2.deseq2_likelihood_ratio_test": Entry(
+        lambda c: {
+            "fit": _deseq2_fit(),
+            "reduced": DESIGN[:, :1],
+            "coefficient": "x2",
+            "alpha": 0.1,
+            "independent_filtering": True,
+            "cooks_cutoff": 10.0,
+            "n_threads": 1,
+        },
+        {"reduced": None, "n_threads": None},
+        options=("coefficient", "alpha", "independent_filtering", "cooks_cutoff"),
+        objects=("fit",),
     ),
     # Quasi-likelihood fits and tests (edgeR's glmQLFit and glmQLFTest).
     "cytepool.stats.quasi_likelihood.average_log_cpm": Entry(
@@ -1466,6 +1544,9 @@ RECORDS = {
     "cytepool.stats.empirical_bayes.ModeratedFit",
     "cytepool.stats.empirical_bayes.TreatFit",
     "cytepool.stats.negative_binomial_models.NegativeBinomialFit",
+    "cytepool.stats.deseq2.DESeq2Dispersions",
+    "cytepool.stats.deseq2.DESeq2Fit",
+    "cytepool.stats.deseq2.DESeq2Results",
     "cytepool.stats.mixed_models.FixedEffectTests",
     "cytepool.stats.mixed_models.MixedModelFit",
     "cytepool.meta_analysis.MetaAnalysisFit",
