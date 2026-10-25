@@ -12,9 +12,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numba
 import numpy as np
 import pytest
 
+from cytepool._jit import thread_limit
 from cytepool.cube import from_bulk
 from cytepool.design import Design
 from cytepool.stats import linear_models
@@ -991,20 +993,85 @@ def test_fit_does_not_share_memory_with_its_inputs(one_way: SimpleNamespace) -> 
 
 
 def test_per_feature_fits_compile_one_signature(one_way: SimpleNamespace) -> None:
-    routine = linear_models._least_squares_per_feature
-    if not hasattr(routine, "signatures"):
+    # In parallel, or on the calling thread alone with one thread.
+    routines = (
+        linear_models._least_squares_per_feature,
+        linear_models._least_squares_in_order,
+    )
+    if not all(hasattr(routine, "signatures") for routine in routines):
         pytest.skip("compilation is disabled")
     y = one_way.y.copy()
     y[0, 0] = np.nan
-    fit = fit_linear_model(y, one_way.design)
     read_only = np.asfortranarray(y)
     read_only.flags.writeable = False
     weights = np.asfortranarray(np.ones(y.shape, dtype=np.float32))
-    fit_linear_model(read_only, fit.design, weights=weights)
-    fit_linear_model(
-        read_only[:, ::2], fit.design, block=one_way.blocks, correlation=0.3
+    for threads in (1, numba.config.NUMBA_NUM_THREADS):
+        with thread_limit(threads):
+            fit = fit_linear_model(y, one_way.design)
+            fit_linear_model(read_only, fit.design, weights=weights)
+            fit_linear_model(
+                read_only[:, ::2], fit.design, block=one_way.blocks, correlation=0.3
+            )
+    parallel, serial = (len(routine.signatures) for routine in routines)
+    assert serial == 1
+    # With a single thread available, only other tests call the parallel routine.
+    assert parallel == 1 or (parallel == 0 and numba.config.NUMBA_NUM_THREADS == 1)
+
+
+def test_per_feature_fits_do_not_depend_on_threads_or_chunks() -> None:
+    # Each feature is fitted by the same operations in whichever run of features,
+    # and on whichever thread, it falls: the results are identical, not just close.
+    rng = np.random.default_rng(11)
+    design = np.column_stack([np.ones(12), rng.normal(size=12), np.tile([0, 1], 6)])
+    y = rng.normal(size=(12, 37))
+    y[rng.random(y.shape) < 0.1] = np.nan
+    weights = rng.uniform(0.2, 2.0, y.shape)
+    blocks = np.repeat(np.arange(4), 3)
+    arguments = (
+        np.ascontiguousarray(y.T),
+        np.ascontiguousarray(weights.T),
+        design,
+        blocks.astype(np.int64),
+        4,
+        0.3,
+        1e-7,
     )
-    assert len(routine.signatures) == 1
+    serial = linear_models._least_squares_in_order(*arguments)
+    for n_chunks in (1, 2, 5, 37):
+        chunked = linear_models._least_squares_per_feature(*arguments, n_chunks)
+        for first, second in zip(serial, chunked, strict=True):
+            assert np.array_equal(first, second, equal_nan=True)
+    fits = [
+        fit_linear_model(
+            y, design, weights=weights, block=blocks, correlation=0.3, n_threads=threads
+        )
+        for threads in (1, numba.config.NUMBA_NUM_THREADS)
+    ]
+    for name in (
+        "coefficients",
+        "stdev_unscaled",
+        "sigma",
+        "cov_coefficients_per_feature",
+    ):
+        assert np.array_equal(
+            getattr(fits[0], name), getattr(fits[1], name), equal_nan=True
+        )
+
+
+@pytest.mark.parametrize(
+    ("n_threads", "error", "message"),
+    [
+        (0, ValueError, "n_threads must be at least 1, got 0"),
+        (1.5, TypeError, "n_threads must be a positive integer or None, got float"),
+        (True, TypeError, "n_threads must be a positive integer or None, not bool"),
+    ],
+)
+def test_thread_numbers_are_checked_before_any_fit(
+    one_way: SimpleNamespace, n_threads: Any, error: type[Exception], message: str
+) -> None:
+    # Also where one factorisation serves every feature and no thread would run.
+    with pytest.raises(error, match=message):
+        fit_linear_model(one_way.y, one_way.design, n_threads=n_threads)
 
 
 def test_contrast_forms_names_and_composition(one_way: SimpleNamespace) -> None:
