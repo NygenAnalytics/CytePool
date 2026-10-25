@@ -17,7 +17,8 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-25** for the four scripts on
 cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py` and
-`cube_reads.py`) and for `linear_models.py`, and on **2026-10-24** for the others, with
+`cube_reads.py`) and for `linear_models.py` and `voom.py`, and on **2026-10-24** for
+the others, with
 the reference versions given in each section. Every script exited without a failure. Each
 row below is a family of checks: it gives the number of printed checks it covers and
 the largest difference among them. Run a script to see every check.
@@ -33,12 +34,12 @@ the largest difference among them. Run a script to see every check.
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
-| [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 80 | 75 pass, 5 deliberate differences | 8.3 s | 289 MiB |
+| [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **658** | **626 pass, none failed; 21 information, 10 deliberate differences, 1 control** | | |
+| **All** | | | **696** | **662 pass, none failed; 21 information, 12 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -300,34 +301,49 @@ With `--benchmark`, the script times both packages on 20,000 genes x 200 samples
 
 [`validation/voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py)
 compares `voom` with limma's `voom` on negative binomial counts from fixed seeds, 2 to
-20,000 genes and 4 to 40 samples, in 19 cases: two groups, four groups with a
+20,000 genes and 4 to 40 samples, in 26 cases: two groups, four groups with a
 covariate, group means, a covariate without an intercept, one residual degree of
 freedom, normalization factors (edgeR's `calcNormFactors` in R, `tmm_factors` here)
 with and without given library sizes, two very small libraries, libraries from 1e3 to
 1e8 reads, an intercept-only design, genes with the same counts and blocks of genes
 with a single read (ties in the trend), rarefied counts, non-integer counts, spans of
-0.3 and 1, a design without replication and two genes. Designs come from the same
-sample table through R's `model.matrix` and `Design`, contrasts through
-`makeContrasts` and named contrasts. Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
+0.3 and 1, a design without replication and two genes. These 19 cases fix the span
+(0.5 unless named), as limma's `adaptive.span = FALSE` does. In the other 7, both
+programs choose it from the number of genes, as `adaptive.span = TRUE` does (limma's
+default since 3.66, and CytePool's): 2, 30, 51 and 120 genes, about a fifth of the
+last three without counts, the group means and four-group cases (10,000 and 20,000
+genes), and the design without replication. Designs come from the same sample table through R's
+`model.matrix` and `Design`, contrasts through `makeContrasts` and named contrasts.
+The span rule, `choose_lowess_span`, is compared with limma's `chooseLowessSpan` at
+466 settings: limma's own (`small.n = 50`, `min.span = 0.3`, `power = 1/3`) for 0 to
+1e9 points, and 216 others with `small.n` of 0, 1 and 10, `min.span` from 0.05 to 1
+and `power` from 0 to 1. Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
-| log2 CPM `E`, and library sizes times normalization factors | `voom` | 0 | 1e-10 | 19 pass |
-| Weights | `voom` | 5.2e-13 | 1e-10 | 18 pass |
-| Trend: the points and LOWESS line saved with `save.plot = TRUE` | `voom` | 3.7e-14 | 1e-10 | 17 pass |
-| Moderated t and p after `lmFit` with the weights, `contrasts.fit` and `eBayes` | limma | 5.0e-13 | 1e-10 | 17 pass |
+| log2 CPM `E`, and library sizes times normalization factors | `voom` | 0 | 1e-10 | 26 pass |
+| Span chosen from the number of genes, which limma returns with `adaptive.span = TRUE` | `voom` | 0 | 1e-10 | 7 pass |
+| Weights | `voom` | 5.2e-13 | 1e-10 | 25 pass |
+| Trend: the points and LOWESS line saved with `save.plot = TRUE` | `voom` | 3.7e-14 | 1e-10 | 23 pass |
+| Moderated t and p after `lmFit` with the weights, `contrasts.fit` and `eBayes` | limma | 5.0e-13 | 1e-10 | 23 pass |
 | Rarefied counts: weights, trend, moderated t and p | limma | 2.2e-8, 8.5e-8, 8.9e-9 | 1e-6 | 3 pass |
-| A design without replication: the warning, its weights being compared above | `voom` | both warn | n/a | 1 pass |
-| Deliberate differences, listed below | `voom` | 4 where limma returns values and CytePool raises, 1 where limma fails and CytePool returns values | n/a | 5 deliberate differences |
+| Designs without replication: the warning, their weights being compared above | `voom` | both warn | n/a | 2 pass |
+| Span rule: limma's settings for 0 to 1e9 points, and the other settings | `chooseLowessSpan` | 0 | 1e-10 | 2 pass |
+| Deliberate differences, listed below | `voom`, `chooseLowessSpan` | 4 where limma returns values and CytePool raises, 1 where limma fails and CytePool returns values; 2 for the span rule | n/a | 7 deliberate differences |
 
 Differences are relative, except for E, the trend's x and t, which are scaled by
 max(\|reference\|, 1); the trend's y, scaled by max(\|reference\|, median of the
 reference), because near zero both are rounding noise; and p-values, scaled by
-max(p, 1e-300) max(1, \|log p\|). E was identical to limma's to the last bit in 19 of
-19 cases, and so was the trend's x in 18 of 18. Rarefied counts have equal library
-sizes, so a gene with the same count in every sample has a residual standard
-deviation that is pure rounding noise in either program; those points of the trend,
-and through them the weights, differ in the close tier. Deliberate differences:
+max(p, 1e-300) max(1, \|log p\|). E was identical to limma's to the last bit in 26 of
+26 cases, and so were the trend's x in 24 of 24, the chosen span in the 6 cases where
+limma returns one (without replication it returns none, and CytePool's is NaN), and
+the span rule at all 466 settings. limma's `voom` chooses the span from every gene,
+those without counts included (`nrow(counts)` on its help page): in the case of 51
+genes, of which 38 enter the trend, both choose 0.9954, where 38 genes would give 1.
+Rarefied counts have equal library sizes, so a gene with the same count in every
+sample has a residual standard deviation that is pure rounding noise in either
+program; those points of the trend, and through them the weights, differ in the close
+tier. Deliberate differences:
 
 - A sample without counts: limma gives it the log2 CPM of a count of 0.5 in a library
   of one read; CytePool raises.
@@ -339,6 +355,15 @@ and through them the weights, differ in the close tier. Deliberate differences:
   `fit_linear_model` needs a design of full column rank.
 - A span above 1: limma accepts it; CytePool requires a span in (0, 1], as limma
   documents.
+- The span rule for 0 points with a `min.span` of 1 or a `small.n` of 0: limma's
+  formula takes 0 times infinity or 0 / 0 and returns NaN; `choose_lowess_span`
+  returns 1, the span limma's help page gives for up to `small.n` points.
+- The span rule with arguments outside the ranges `choose_lowess_span` accepts (n of
+  -1, `min.span` of 0 or 1.5, `power` of -1 or 2): limma computes its formula, capped
+  at 1, which gives NaN for a negative n, and spans below 1 for fewer than `small.n`
+  points for a `min.span` above 1 or a negative `power`; CytePool raises. limma
+  documents a `power` between 0 and 1, and `min.span` is the span for many points, a
+  fraction in (0, 1].
 
 ## Empirical Bayes moderation
 

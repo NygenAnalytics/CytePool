@@ -21,16 +21,25 @@ predicted variance, w_gi = lo(lambda_gi)^(-4), where
 is its fitted log2 count. A weighted least squares fit of the log2 counts per million
 with these weights, followed by empirical Bayes moderation, is limma-voom.
 
-Results match limma 3.62.1. Conventions that the paper leaves open were settled from
-limma's documentation (its help page and NEWS) or by running limma as a black box;
-comments mark the latter "found by probing":
+Results match limma 3.62.1, called with ``adaptive.span = TRUE`` where the span is
+chosen. Conventions that the paper leaves open were settled from limma's
+documentation (its help page and NEWS) or by running limma as a black box; comments
+mark the latter "found by probing":
 
 - Features with no counts in any sample are left out of the trend (found by probing);
   their weights are read from it at their fitted log2 counts, as for any other
   feature.
-- The LOWESS is R's ``lowess`` with span ``span`` and its defaults otherwise: three
+- The LOWESS is R's ``lowess`` with its defaults other than the span: three
   robustness iterations, and interpolation within 1% of the range of x (found by
   probing).
+- By default the span is chosen from the number of features n by limma's rule,
+  :func:`~cytepool.stats.smoothing.choose_lowess_span`: 1 up to 50 features, and
+  0.3 + 0.7 (50 / n)^(1/3) beyond. limma's voom chooses it so with
+  ``adaptive.span = TRUE``, an option since limma 3.60 and the default since 3.66
+  (limma's NEWS); its default span was 0.5 before. n counts every feature, also those
+  without counts that the trend leaves out, as limma's ``nrow(counts)`` does (its help
+  page; confirmed by probing). A span given as a number is used as it is, as with
+  ``adaptive.span = FALSE``.
 - The interpolation averages the curve over tied values of x (limma's NEWS); LOWESS
   gives tied points the same value, so each distinct x is one point of the curve.
   The x are computed as R computes them, to the last bit, so that their ties are
@@ -70,7 +79,7 @@ from cytepool._masked_arrays import reject_masked
 from cytepool._summation import accurate_mean
 from cytepool.normalization import _as_counts, _effective_library_sizes
 from cytepool.stats.linear_models import _design_matrix, fit_linear_model
-from cytepool.stats.smoothing import lowess
+from cytepool.stats.smoothing import choose_lowess_span, lowess
 
 __all__ = ["VoomResult", "voom"]
 
@@ -108,10 +117,16 @@ class VoomResult:
         sqrt_sd_trend: ``(n_features,)`` the LOWESS trend of ``sqrt_sd`` at
             ``mean_log_count``; NaN where ``sqrt_sd`` is. Sort by
             ``mean_log_count`` to draw it as a curve.
+        span: The span of the LOWESS trend, the fraction of the features in
+            the trend that each local fit uses, as chosen or given. NaN when
+            the design leaves no residual degrees of freedom, so that no trend
+            is fitted.
 
     Raises:
-        TypeError: If an array is a numpy masked array.
-        ValueError: If the shapes of the arrays disagree.
+        TypeError: If an array is a numpy masked array, or ``span`` is not a
+            real number.
+        ValueError: If the shapes of the arrays disagree, or ``span`` is
+            neither in (0, 1] nor NaN.
     """
 
     log_cpm: FloatArray
@@ -120,6 +135,7 @@ class VoomResult:
     mean_log_count: FloatArray
     sqrt_sd: FloatArray
     sqrt_sd_trend: FloatArray
+    span: float
 
     def __post_init__(self) -> None:
         for name in ("log_cpm", "weights", "effective_library_sizes"):
@@ -127,6 +143,14 @@ class VoomResult:
         # NaN marks the features that the trend leaves out.
         for name in ("mean_log_count", "sqrt_sd", "sqrt_sd_trend"):
             reject_masked(getattr(self, name), name, missing="NaN")
+        span = self.span
+        if isinstance(span, (bool, np.bool_)) or not isinstance(span, numbers.Real):
+            raise TypeError(f"span must be a real number, got {type(span).__name__}")
+        if not (math.isnan(span) or 0.0 < span <= 1.0):
+            raise ValueError(
+                f"span must be in (0, 1], or NaN when no trend is fitted, got {span}"
+            )
+        object.__setattr__(self, "span", float(span))
         log_cpm = np.asarray(self.log_cpm, dtype=np.float64)
         if log_cpm.ndim != 2:
             raise ValueError(
@@ -155,7 +179,7 @@ class VoomResult:
         in_trend = int(np.count_nonzero(~np.isnan(self.sqrt_sd)))
         return (
             f"VoomResult(n_samples={n_samples}, n_features={n_features}, "
-            f"features_in_trend={in_trend})"
+            f"features_in_trend={in_trend}, span={self.span:.3g})"
         )
 
 
@@ -165,7 +189,7 @@ def voom(
     *,
     library_sizes: npt.ArrayLike | None = None,
     norm_factors: npt.ArrayLike | None = None,
-    span: float = 0.5,
+    span: float | None = None,
 ) -> VoomResult:
     """Log2 counts per million with precision weights from the mean-variance trend.
 
@@ -194,11 +218,18 @@ def voom(
             :func:`~cytepool.normalization.tmm_factors`, multiplied into the
             library sizes; defaults to ones. Must be positive.
         span: Fraction of the features in the trend (those with counts) that each
-            local fit of the LOWESS uses, in (0, 1].
+            local fit of the LOWESS uses, in (0, 1]. By default it is chosen
+            from the number of features, those without counts included, by
+            :func:`~cytepool.stats.smoothing.choose_lowess_span`: 1 up to 50
+            features, 0.65 at 400 and 0.395 at 20,000, as limma's
+            ``voom`` chooses it by default since limma 3.66
+            (``adaptive.span = TRUE``). A number fixes it, as
+            ``adaptive.span = FALSE, span = <number>`` does in limma, whose
+            default before 3.66 was 0.5.
 
     Returns:
         The log2 counts per million, their weights (positive and finite), the
-        effective library sizes and the mean-variance trend.
+        effective library sizes, and the mean-variance trend with its span.
 
     Warns:
         RuntimeWarning: If the design leaves no residual degrees of freedom, so
@@ -228,7 +259,7 @@ def voom(
         )
     # A copy, so that the result does not change with the caller's array.
     sizes = np.array(_effective_library_sizes(y, library_sizes, norm_factors))
-    fraction = _span(span)
+    fraction = _trend_span(span, n_features)
 
     # The operations of limma, which give its values to the last bit (found by
     # probing).
@@ -252,6 +283,7 @@ def voom(
             RuntimeWarning,
             stacklevel=2,
         )
+        # limma returns no span then (found by probing).
         return VoomResult(
             log_cpm=log_cpm,
             weights=np.ones_like(log_cpm),
@@ -259,6 +291,7 @@ def voom(
             mean_log_count=mean_log_count,
             sqrt_sd=sqrt_sd,
             sqrt_sd_trend=sqrt_sd_trend,
+            span=math.nan,
         )
     n_in_trend = int(np.count_nonzero(in_trend))
     if n_in_trend < 2:
@@ -303,6 +336,7 @@ def voom(
         mean_log_count=mean_log_count,
         sqrt_sd=sqrt_sd,
         sqrt_sd_trend=sqrt_sd_trend,
+        span=fraction,
     )
 
 
@@ -327,9 +361,17 @@ def _interpolate(
     return values
 
 
-def _span(span: Any) -> float:
+def _trend_span(span: Any, n_features: int) -> float:
+    """The span of the trend: as given, or chosen from the number of features."""
+    if span is None:
+        # limma's voom passes nrow(counts), which counts the features that the
+        # trend leaves out too (its help page; confirmed by probing).
+        return choose_lowess_span(n_features)
     if isinstance(span, (bool, np.bool_)) or not isinstance(span, numbers.Real):
-        raise TypeError(f"span must be a real number, got {type(span).__name__}")
+        raise TypeError(
+            "span must be a real number, or None to choose it from the number of "
+            f"features, got {type(span).__name__}"
+        )
     fraction = float(span)
     if not 0.0 < fraction <= 1.0:
         raise ValueError(

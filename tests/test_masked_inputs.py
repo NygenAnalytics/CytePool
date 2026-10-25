@@ -523,12 +523,14 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("method",),
         objects=("fit",),
     ),
+    # A span given as a number; None, the default, chooses it.
     "cytepool.stats.voom.voom": Entry(
         lambda c: {
             "counts": COUNTS,
             "design": DESIGN,
             "library_sizes": LIBRARY_SIZES,
             "norm_factors": NORM_FACTORS,
+            "span": 0.6,
         },
         {"counts": None, "design": None, "library_sizes": None, "norm_factors": None},
         options=("span",),
@@ -544,6 +546,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "sqrt_sd": "NaN",
             "sqrt_sd_trend": "NaN",
         },
+        options=("span",),
     ),
     "cytepool.stats.empirical_bayes.fit_f_distribution": Entry(
         lambda c: {
@@ -605,6 +608,12 @@ ENTRY_POINTS: dict[str, Entry] = {
         lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
         {"p": "NaN", "n": None, "axis": None},
         options=("method",),
+    ),
+    # Numbers of points and the settings of the rule, each a number.
+    "cytepool.stats.smoothing.choose_lowess_span": Entry(
+        lambda c: {"n": 400, "small_n": 10, "min_span": 0.2, "power": 0.5},
+        {},
+        options=("n", "small_n", "min_span", "power"),
     ),
     "cytepool.stats.smoothing.lowess": Entry(
         lambda c: {

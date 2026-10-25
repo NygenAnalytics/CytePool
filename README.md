@@ -17,10 +17,10 @@ what is planned.
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
-| Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, for a weighted linear model (limma-voom) | limma |
+| Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, for a weighted linear model (limma-voom) | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
-| Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS; natural spline bases | mpmath, R |
+| Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
 
 ## Planned
 
@@ -75,12 +75,15 @@ These are not implemented yet:
 - Contrast standard errors and moderated F statistics are exact by default. limma's
   approximations are available as an option and can differ when weights vary between
   genes.
-- `voom` normalizes by library-size factors only, fits its trend without prior weights
-  or a block correlation, and has no adaptive span; `voomWithQualityWeights` and
-  `voomLmFit` are not implemented. It needs a design of full column rank (limma drops
-  aliased columns), and it raises an error where limma returns values without meaning:
-  for a sample whose library size is zero, or a trend that is not positive where
-  weights are read.
+- `voom` normalizes by library-size factors only, and fits its trend without prior
+  weights or a block correlation; `voomWithQualityWeights` and `voomLmFit` are not
+  implemented. It needs a design of full column rank (limma drops aliased columns), and
+  it raises an error where limma returns values without meaning: for a sample whose
+  library size is zero, or a trend that is not positive where weights are read.
+- `voom` chooses the span of its trend from the number of genes, as limma does by
+  default since limma 3.66, and limma 3.60 to 3.65 do with `adaptive.span = TRUE`.
+  Their default, and that of earlier versions, is a span of 0.5: pass `span=0.5` to
+  reproduce it.
 - numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
   are refused with a `TypeError` that names the argument, because numpy drops the
   mask when it converts one and the masked entries would be read as data. Where an

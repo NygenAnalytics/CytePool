@@ -8,24 +8,31 @@ R, CytePool's ``tmm_factors`` here) with and without given library sizes, genes 
 zero counts, two very small libraries, libraries from 1e3 to 1e8 reads, an
 intercept-only design, genes with the same counts and blocks of genes with a single
 read (ties in the trend), rarefied counts, estimated (non-integer) counts, spans of 0.3
-and 1, a design without replication and two genes. Each design is built from the same
-sample table by R's ``model.matrix`` and by CytePool's ``Design``, and its contrasts by
-``makeContrasts`` and by the design's named contrasts.
+and 1, a design without replication and two genes, each with a fixed span (0.5 unless
+named; limma's ``adaptive.span = FALSE``). Seven more choose the span from the number
+of genes (``adaptive.span = TRUE``, limma's default since 3.66 and CytePool's): 2, 30,
+51 and 120 genes, about a fifth of the last three without counts, the group means and
+four-group cases, and the design without replication. Each design is built from the
+same sample table by R's ``model.matrix`` and by CytePool's ``Design``, and its
+contrasts by ``makeContrasts`` and by the design's named contrasts.
+``choose_lowess_span`` is compared with ``chooseLowessSpan`` over 0 to 1e9 points with
+limma's settings, and over other settings.
 
 For each case the table reports the largest difference in: the log2 CPM ``E`` and the
-library sizes (with the normalization factors); the weights; the trend (the points and
-LOWESS line voom saves with ``save.plot=TRUE``); and the moderated t-statistics and
-p-values after ``lmFit`` with the voom weights, ``contrasts.fit`` and ``eBayes``,
-against ``fit_linear_model``, ``contrasts_fit(method="limma")`` and
-``moderated_statistics``. Differences are relative, except for: E, the trend's x and t,
-scaled by max(|reference|, 1); the trend's y, scaled by max(|reference|, median of the
-reference), because near zero both are rounding noise; and p-values, scaled by
-max(p, 1e-300) max(1, |log p|) as in ``empirical_bayes.py``. The case without
-replication checks that both warn. Deliberate deviations, where limma returns values
-without meaning or fails, are listed as such, with what each program does.
+library sizes (with the normalization factors); the span, where it is chosen; the
+weights; the trend (the points and LOWESS line voom saves with ``save.plot=TRUE``); and
+the moderated t-statistics and p-values after ``lmFit`` with the voom weights,
+``contrasts.fit`` and ``eBayes``, against ``fit_linear_model``,
+``contrasts_fit(method="limma")`` and ``moderated_statistics``. Differences are
+relative, except for: E, the trend's x and t, scaled by max(|reference|, 1); the
+trend's y, scaled by max(|reference|, median of the reference), because near zero both
+are rounding noise; and p-values, scaled by max(p, 1e-300) max(1, |log p|) as in
+``empirical_bayes.py``. The cases without replication check that both warn.
+Deliberate deviations, where limma returns values without meaning or fails, are listed
+as such, with what each program does.
 
-Tiers: exact (1e-10), except rarefied counts (close, 1e-6). E is a closed form and
-agrees to the last bit, and so does the trend's x. The weights depend on lmFit's
+Tiers: exact (1e-10), except rarefied counts (close, 1e-6). E and the spans are closed
+forms and agree to the last bit, and so does the trend's x. The weights depend on lmFit's
 residual standard deviations, which a different QR reproduces up to rounding: about
 1e-16 times |E| over the residual standard deviation, relative. LOWESS and the
 interpolation are continuous in them, so the weights agree to about 1e-13, and to
@@ -48,6 +55,7 @@ Usage:
 """
 
 import argparse
+import itertools
 import os
 import subprocess
 import sys
@@ -61,6 +69,7 @@ from cytepool.design import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
+from cytepool.stats.smoothing import choose_lowess_span
 from cytepool.stats.voom import voom
 
 FIXTURE_DIRECTORY = Path(__file__).resolve().parents[1] / "tests" / "data" / "voom"
@@ -70,9 +79,16 @@ CLOSE = 1e-6
 TREND = {"xy.x": 1.0, "xy.y": "median", "line.x": 1.0, "line.y": "median"}
 GROUPS = {
     "E, library sizes": {"E": 1.0, "lib.size": 0.0, "norm.factors": 0.0},
+    "chosen span": {"span": 0.0},
     "weights": {"weights": 0.0},
     "trend points, LOWESS line": TREND,
     "moderated t, p": {"t": 1.0, "p.value": 1e-300},
+}
+# Families of the span rule where CytePool deliberately differs from limma, with
+# what CytePool returns for each setting (None: it raises an error).
+RULE_DEVIATIONS = {
+    "0 points, where limma's formula gives NaN": 1.0,
+    "outside the accepted ranges": None,
 }
 # Counts of 8 genes in 4 samples (two groups of two) whose LOWESS trend is negative
 # at its upper end.
@@ -98,6 +114,7 @@ for (case in readLines(file.path(root, "cases.txt"))) {
   X <- model.matrix(as.formula(readLines(file.path(dir, "formula.txt"))), samples)
   counts <- matrix(rd(dir, "counts"), ncol = nrow(X))
   lib <- if (has(dir, "lib.bin")) rd(dir, "lib") else NULL
+  # NA: choose the span from the number of genes, which ignores span.
   span <- scan(file.path(dir, "span.txt"), quiet = TRUE)
   caught <- character(0)
   keep <- function(w) { caught <<- c(caught, conditionMessage(w)); invokeRestart("muffleWarning") }
@@ -107,13 +124,15 @@ for (case in readLines(file.path(root, "cases.txt"))) {
     if (has(dir, "tmm.txt")) {
       y <- calcNormFactors(DGEList(counts, lib.size = lib))
       wr(dir, "norm.factors", y$samples$norm.factors)
-      voom(y, X, span = span, save.plot = TRUE)
+      voom(y, X, span = span, adaptive.span = is.na(span), save.plot = TRUE)
     } else {
-      voom(counts, X, lib.size = lib, span = span, save.plot = TRUE)
+      voom(counts, X, lib.size = lib, span = span, adaptive.span = is.na(span),
+           save.plot = TRUE)
     }, warning = keep)), error = failed))
   writeLines(caught, file.path(dir, "out_warnings.txt"))
   if (is.null(v) || has(dir, "deviation.txt")) next
   wr(dir, "E", v$E); wr(dir, "weights", v$weights); wr(dir, "lib.size", v$targets$lib.size)
+  if (!is.null(v$span)) wr(dir, "span", v$span)
   if (!is.null(v$voom.xy)) {
     wr(dir, "xy.x", v$voom.xy$x); wr(dir, "xy.y", v$voom.xy$y)
     wr(dir, "line.x", v$voom.line$x); wr(dir, "line.y", v$voom.line$y)
@@ -131,6 +150,10 @@ for (case in readLines(file.path(root, "cases.txt"))) {
     wr(dir, "t", eb$t); wr(dir, "p.value", eb$p.value)
   }
 }
+# The span rule on rows of n, small.n, min.span and power.
+rule <- matrix(rd(root, "rule"), ncol = 4)
+spans <- mapply(chooseLowessSpan, rule[, 1], rule[, 2], rule[, 3], rule[, 4])
+writeBin(as.double(spans), file.path(root, "out_rule.bin"), size = 8)
 writeLines(c(paste("R", getRversion()), paste("limma", packageVersion("limma")),
              paste("edgeR", packageVersion("edgeR"))), file.path(root, "versions.txt"))
 """
@@ -240,7 +263,35 @@ def make_cases(rng, small):
     add("no_replication", saturated, "~ sample", counts)
     counts = simulate(rng, 2, two["group"], np.full(6, 1e3)) + 5.0
     add("two_genes", two, "~ group", counts)
+    # Spans chosen from the number of genes (span None). limma counts the genes
+    # without counts, which the trend leaves out: with 51 genes, each without counts
+    # with probability 0.2, the span is below 1 although at most 50 enter the trend.
+    for n_genes in (30, 51, 120):
+        sizes = rng.uniform(1e6, 3e6, 6)
+        counts = simulate(rng, n_genes, two["group"], sizes, zero=0.2)
+        add(f"adaptive_{n_genes}_genes", two, "~ group", counts, span=None)
+    for name in "two_genes group_means_tmm groups_covariate_tmm no_replication".split():
+        cases[f"adaptive_{name}"] = cases[name] | {"span": None}
     return cases
+
+
+def span_rule_settings():
+    """Rows of n, small.n, min.span and power for the span rule, by family."""
+    cubes = 50 * np.arange(2, 11) ** 3  # 50 / n is a perfect cube
+    n = np.unique(np.r_[np.arange(201), cubes, np.geomspace(200, 1e9, 41).round()])
+    sizes = (1, 2, 9, 10, 11, 100, 1e4, 1e7)
+    other = itertools.product(sizes, (0, 1, 10), (0.05, 0.5, 1), (0, 0.5, 1))
+    # 0 points: limma's formula takes 0 times infinity (min.span 1) or 0 / 0
+    # (small.n 0), NaN, where its help page gives 1, the span up to small.n points.
+    nan = [(0, 1, 1, 0.5), (0, 10, 1, 1), (0, 0, 0.3, 1 / 3), (0, 0, 0.5, 1)]
+    outside = [(-1, 50, 0.3, 1 / 3), (100, 50, 0, 1 / 3), (10, 50, 1.5, 1 / 3)]
+    outside += [(10, 50, 0.3, -1), (100, 50, 0.3, 2)]
+    return {
+        "limma's settings, 0 to 1e9 points": [(k, 50, 0.3, 1 / 3) for k in n],
+        "small.n of 0 to 10, min.span of 0.05 to 1, power of 0 to 1": list(other),
+        "0 points, where limma's formula gives NaN": nan,
+        "outside the accepted ranges": outside,
+    }
 
 
 def deviation_cases(rng):
@@ -268,7 +319,9 @@ def deviation_cases(rng):
     }
 
 
-def run_limma(cases):
+def run_limma(cases, rule):
+    """limma's outputs for each case, its spans for the rows of the span rule, and
+    the versions of R, limma and edgeR."""
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         names = {name: f"case{i}" for i, name in enumerate(cases)}
@@ -280,7 +333,8 @@ def run_limma(cases):
             lines = ["\t".join(columns)] + ["\t".join(map(str, row)) for row in rows]
             (directory / "samples.tsv").write_text("\n".join(lines) + "\n")
             (directory / "formula.txt").write_text(case["formula"] + "\n")
-            (directory / "span.txt").write_text(f"{case['span']!r}\n")
+            span = "NA" if case["span"] is None else repr(case["span"])
+            (directory / "span.txt").write_text(span + "\n")
             (directory / "counts.bin").write_bytes(case["counts"].tobytes())
             if "lib" in case:
                 (directory / "lib.bin").write_bytes(case["lib"].tobytes())
@@ -293,6 +347,7 @@ def run_limma(cases):
                 text = "\n".join(["name\texpression", *pairs]) + "\n"
                 (directory / "contrasts.tsv").write_text(text)
         (root / "cases.txt").write_text("\n".join(names.values()) + "\n")
+        (root / "rule.bin").write_bytes(np.asarray(rule, dtype=float).tobytes("F"))
         (root / "compare.R").write_text(R_SCRIPT)
         rscript = os.environ.get("RSCRIPT", "Rscript")
         subprocess.run(
@@ -307,7 +362,8 @@ def run_limma(cases):
             text = (directory / "out_warnings.txt").read_text().strip()
             case["limma warnings"] = text.splitlines()
             case["limma failed"] = (directory / "out_error.txt").exists()
-        return (root / "versions.txt").read_text().split("\n")[:3]
+        spans = np.fromfile(root / "out_rule.bin", dtype="<f8")
+        return spans, (root / "versions.txt").read_text().split("\n")[:3]
 
 
 def run_voom(case):
@@ -328,6 +384,8 @@ def cytepool_results(case):
     design, factors, result, warned = run_voom(case)
     out = {"warned": warned, "E": result.log_cpm, "weights": result.weights}
     out["lib.size"] = result.effective_library_sizes
+    if case["span"] is None:
+        out["span"] = result.span  # NaN where limma returns no span
     if factors is not None:
         out["norm.factors"] = factors
     in_trend = ~np.isnan(result.sqrt_sd)
@@ -372,8 +430,8 @@ def difference(ours, reference, floor=0.0, log_scaled=False):
 
 def compare(cases, table):
     """Rows of (check, reference, metric, value, tolerance, result); counts bitwise
-    agreement of E and of the trend's x."""
-    identical = {"E": 0, "xy.x": 0, "with trend": 0}
+    agreement of E, the trend's x and the chosen span."""
+    identical = dict.fromkeys(("E", "xy.x", "with trend", "span", "with span"), 0)
     for name, case in cases.items():
         if "deviation" in case:
             table.append(deviation_row(name, case))
@@ -383,9 +441,13 @@ def compare(cases, table):
         if "xy.x" in limma:
             identical["with trend"] += 1
             identical["xy.x"] += np.array_equal(ours.get("xy.x"), limma["xy.x"])
+        if "span" in limma:
+            identical["with span"] += 1
+            identical["span"] += np.array_equal(ours["span"], limma["span"][0])
         for group, keys in GROUPS.items():
-            # E and the library sizes are closed forms: exact in every case.
-            tolerance = EXACT if group.startswith("E") else case.get("tolerance", EXACT)
+            # E, the library sizes and the span are closed forms: exact in every case.
+            closed = group.startswith(("E", "chosen"))
+            tolerance = EXACT if closed else case.get("tolerance", EXACT)
             values = [
                 difference(ours.get(k), limma.get(k, [np.nan]), floor, k == "p.value")
                 for k, floor in keys.items()
@@ -396,7 +458,7 @@ def compare(cases, table):
                 cells = (f"{name}: {group}", "voom" + _source(group))
                 cells += ("max scaled difference", f"{max(values):.1e}")
                 table.append((*cells, f"{tolerance:.0e}", result))
-        if name.removesuffix("_fixture") == "no_replication":
+        if name.removesuffix("_fixture").endswith("no_replication"):
             agree = ours["warned"] and any(
                 "no replication" in w for w in case["limma warnings"]
             )
@@ -404,6 +466,43 @@ def compare(cases, table):
             cells = (f"{name}: warning", "voom", "behaviour", outcome[0], "n/a")
             table.append((*cells, outcome[1]))
     return identical
+
+
+def cytepool_span(n, small_n, min_span, power):
+    """choose_lowess_span, or None where it refuses the arguments."""
+    try:
+        return choose_lowess_span(
+            int(n), small_n=int(small_n), min_span=min_span, power=power
+        )
+    except ValueError:
+        return None
+
+
+def compare_span_rule(rule, spans, table):
+    """Rows for the span rule. Returns the settings where CytePool agrees with
+    limma, each followed by limma's span, and how many spans are limma's to the
+    last bit."""
+    agree, identical, start = [], 0, 0
+    for family, rows in rule.items():
+        reference, start = spans[start : start + len(rows)], start + len(rows)
+        ours = [cytepool_span(*row) for row in rows]
+        cells = (f"span rule: {family}", "chooseLowessSpan")
+        if family in RULE_DEVIATIONS:
+            expected, nan = RULE_DEVIATIONS[family], int(np.isnan(reference).sum())
+            value = f"limma: {len(rows) - nan} spans, {nan} NaN; CytePool: "
+            value += "errors" if expected is None else f"{expected:g}"
+            deviates = expected is None or nan == len(rows)  # limma: NaN, not 1
+            same = ours == [expected] * len(rows)
+            result = "deviation" if same and deviates else "FAIL"
+            table.append((*cells, "behaviour", value, "n/a", result))
+            continue
+        agree += [(*row, span) for row, span in zip(rows, reference, strict=True)]
+        identical += int(np.sum(np.asarray(ours, dtype=float) == reference))
+        value = difference(ours, reference)
+        result = "pass" if value <= EXACT else "FAIL"
+        cells += ("max relative difference", f"{value:.1e}", f"{EXACT:.0e}", result)
+        table.append(cells)
+    return np.asarray(agree, dtype=float), identical
 
 
 def deviation_row(name, case):
@@ -428,12 +527,14 @@ def _source(group):
     return ", lmFit, contrasts.fit, eBayes" if group.startswith("moderated") else ""
 
 
-def write_fixtures(cases):
+def write_fixtures(cases, rule):
     FIXTURE_DIRECTORY.mkdir(parents=True, exist_ok=True)
     for name, case in cases.items():
         arrays = {"counts": case["counts"], "formula": np.array(case["formula"])}
         arrays |= {f"samples {k}": np.asarray(v) for k, v in case["samples"].items()}
-        arrays |= {"span": np.array(case["span"]), "tmm": np.array(case["tmm"])}
+        if case["span"] is not None:  # otherwise chosen from the number of genes
+            arrays["span"] = np.array(case["span"])
+        arrays["tmm"] = np.array(case["tmm"])
         arrays["tolerance"] = np.array(case.get("tolerance", EXACT))
         if "lib" in case:
             arrays["lib"] = case["lib"]
@@ -443,7 +544,10 @@ def write_fixtures(cases):
         arrays |= {f"limma {k}": v for k, v in case["limma"].items()}
         arrays["limma warnings"] = np.array(case["limma warnings"], dtype=str)
         np.savez_compressed(FIXTURE_DIRECTORY / f"{name}.npz", **arrays)
-    print(f"wrote {len(cases)} fixtures to {FIXTURE_DIRECTORY}")
+    # The settings of the span rule where CytePool agrees with limma, and its spans.
+    path = FIXTURE_DIRECTORY / "span_rule.npz"
+    np.savez_compressed(path, settings=rule[:, :4], limma=rule[:, 4])
+    print(f"wrote {len(cases) + 1} fixtures to {FIXTURE_DIRECTORY}")
 
 
 def main():
@@ -457,10 +561,13 @@ def main():
     if arguments.write_fixtures:
         small = make_cases(np.random.default_rng(2), small=True)
         cases |= {f"{name}_fixture": case for name, case in small.items()}
-    versions = run_limma(cases)
+    rule = span_rule_settings()
+    rows = [row for rows in rule.values() for row in rows]
+    spans, versions = run_limma(cases, rows)
     print("Reference: " + ", ".join(versions))
     table = []
     identical = compare(cases, table)
+    rule_agree, rule_identical = compare_span_rule(rule, spans, table)
     print("| check | reference | metric | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- | --- |")
     for row in table:
@@ -470,7 +577,9 @@ def main():
     compared = sum("deviation" not in case for case in cases.values())
     print(
         f"identical to limma's to the last bit: E in {identical['E']} of {compared} "
-        f"cases, the trend's x in {identical['xy.x']} of {identical['with trend']}"
+        f"cases, the trend's x in {identical['xy.x']} of {identical['with trend']}, "
+        f"the chosen span in {identical['span']} of {identical['with span']}, and "
+        f"the span rule in {rule_identical} of {len(rule_agree)} settings"
     )
     if arguments.write_fixtures and failures:
         print("not writing fixtures: some checks failed")
@@ -478,7 +587,7 @@ def main():
         small = {
             n.removesuffix("_fixture"): c for n, c in cases.items() if "_fixture" in n
         }
-        write_fixtures(small)
+        write_fixtures(small, rule_agree)
     return 1 if failures else 0
 
 

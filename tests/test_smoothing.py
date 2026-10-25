@@ -1,7 +1,9 @@
-"""Tests for LOWESS and natural cubic spline bases.
+"""Tests for LOWESS, its span rule and natural cubic spline bases.
 
 Reference values in ``tests/data/smoothing`` come from R's ``stats::lowess``
-and ``splines::ns``, written by ``validation/smoothing.py``.
+and ``splines::ns``, written by ``validation/smoothing.py``. The span rule is
+checked here against values derived by hand, and in ``tests/test_voom.py``
+against limma's ``chooseLowessSpan``.
 """
 
 from pathlib import Path
@@ -10,7 +12,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.stats.smoothing import lowess, natural_spline_basis
+from cytepool.stats.smoothing import choose_lowess_span, lowess, natural_spline_basis
 
 DATA = Path(__file__).parent / "data" / "smoothing"
 LOWESS_CASES = (
@@ -311,6 +313,66 @@ def test_lowess_rejects_invalid_input(
 ) -> None:
     with pytest.raises(error, match=message):
         lowess(x, y, **keywords)
+
+
+@pytest.mark.parametrize(
+    ("n", "settings", "expected"),
+    [
+        # 50 / n is a perfect cube: the span is 0.3 + 0.7 times its cube root.
+        (400, {}, 0.65),
+        (1350, {}, 8 / 15),
+        (3200, {}, 0.475),
+        (6250, {}, 0.44),
+        (50_000, {}, 0.37),
+        # A square root, and the linear rule: 10 / 40 and 25 / 100 are 1/4.
+        (40, {"small_n": 10, "min_span": 0.2, "power": 0.5}, 0.6),
+        (100, {"small_n": 25, "power": 1.0}, 0.475),
+        # Up to small_n points, and for a power of 0, the span is 1; with a small_n
+        # of 0, it is min_span from 1 point on.
+        (1, {"small_n": 1, "min_span": 0.05}, 1.0),
+        (10**6, {"power": 0.0}, 1.0),
+        (0, {"small_n": 0}, 1.0),
+        (7, {"small_n": 0, "min_span": 0.25}, 0.25),
+    ],
+)
+def test_lowess_span_rule_gives_the_values_of_its_formula(
+    n: int, settings: dict[str, Any], expected: float
+) -> None:
+    # Within a few units in the last place: 1/3 and 0.7 are not exact in binary.
+    np.testing.assert_allclose(choose_lowess_span(n, **settings), expected, rtol=1e-15)
+
+
+def test_lowess_span_rule_falls_from_one_toward_its_minimum() -> None:
+    spans = np.array([choose_lowess_span(n) for n in range(5001)])
+    np.testing.assert_array_equal(spans[:51], 1.0)
+    assert np.all(np.diff(spans[50:]) < 0.0)
+    # Above the minimum by 0.7 (50 / n)^(1/3): 2.6e-5 at 1e15 points.
+    assert 0.3 < choose_lowess_span(10**15) < 0.3 + 3e-5
+    assert choose_lowess_span(np.int64(400)) == choose_lowess_span(400)
+
+
+@pytest.mark.parametrize(
+    ("n", "settings", "error", "message"),
+    [
+        (-1, {}, ValueError, "n must be non-negative, got -1"),
+        (400.0, {}, TypeError, "n must be an integer, got float"),
+        (True, {}, TypeError, "n must be an integer, got bool"),
+        (400, {"small_n": -1}, ValueError, "small_n must be non-negative, got -1"),
+        (400, {"small_n": 50.5}, TypeError, "small_n must be an integer, got float"),
+        (400, {"min_span": 0.0}, ValueError, r"min_span must be in \(0, 1\], got 0.0"),
+        (400, {"min_span": 1.5}, ValueError, r"min_span must be in \(0, 1\], got 1.5"),
+        (400, {"min_span": np.nan}, ValueError, r"min_span must be in \(0, 1\]"),
+        (400, {"min_span": "0.3"}, TypeError, "min_span must be a real number"),
+        (400, {"power": -0.5}, ValueError, r"power must be in \[0, 1\], got -0.5"),
+        (400, {"power": 2.0}, ValueError, r"power must be in \[0, 1\], got 2.0"),
+        (400, {"power": None}, TypeError, "power must be a real number"),
+    ],
+)
+def test_lowess_span_rule_rejects_invalid_input(
+    n: Any, settings: dict[str, Any], error: type[Exception], message: str
+) -> None:
+    with pytest.raises(error, match=message):
+        choose_lowess_span(n, **settings)
 
 
 @pytest.mark.parametrize("case", SPLINE_CASES)

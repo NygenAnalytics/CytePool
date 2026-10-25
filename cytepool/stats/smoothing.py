@@ -19,6 +19,14 @@ To save time, points within ``delta`` of the last fitted point are not
 fitted but interpolated linearly, and points tied with a fitted point share
 its value.
 
+:func:`choose_lowess_span` is limma's rule for the span of a LOWESS trend
+through n points (limma's ``chooseLowessSpan``): 1 for n up to ``small_n``
+points, and min_span + (1 - min_span) (small_n / n)^power for larger n. With
+limma's settings (``small_n`` = 50, ``min_span`` = 0.3, ``power`` = 1/3), the
+part of the span above 0.3 falls in proportion to n^(-1/3), as the width of a
+histogram's bins does in the rules of Scott (1979) and Freedman and Diaconis
+(1981): the span is 1 at 50 points, 0.65 at 400 and 0.395 at 20,000.
+
 :func:`natural_spline_basis` returns a basis of the natural cubic splines
 with given interior and boundary knots: cubic between the knots, twice
 continuously differentiable at simple knots, and linear beyond the boundary
@@ -37,8 +45,15 @@ References:
 
     de Boor C (1978). A Practical Guide to Splines. Springer, New York.
 
+    Freedman D, Diaconis P (1981). On the histogram as a density estimator: L2
+    theory. Zeitschrift fuer Wahrscheinlichkeitstheorie und verwandte Gebiete
+    57, 453-476.
+
     Hastie TJ (1992). Generalized additive models. Chapter 7 of Statistical
     Models in S, eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole.
+
+    Scott DW (1979). On optimal and data-based histograms. Biometrika 66,
+    605-610.
 """
 
 import math
@@ -51,7 +66,7 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._masked_arrays import Missing, reject_masked, unmasked_array
 
-__all__ = ["lowess", "natural_spline_basis"]
+__all__ = ["choose_lowess_span", "lowess", "natural_spline_basis"]
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -131,14 +146,7 @@ def lowess(
     fraction = _real_scalar(span, "span")
     if not (math.isfinite(fraction) and fraction > 0.0):
         raise ValueError(f"span must be positive and finite, got {fraction}")
-    if isinstance(iterations, (bool, np.bool_)) or not isinstance(
-        iterations, numbers.Integral
-    ):
-        raise TypeError(
-            f"iterations must be an integer, got {type(iterations).__name__}"
-        )
-    if iterations < 0:
-        raise ValueError(f"iterations must be non-negative, got {iterations}")
+    robustness_iterations = _whole_number(iterations, "iterations")
 
     order = np.argsort(x_values, kind="stable")
     x_sorted = np.ascontiguousarray(x_values[order], dtype=np.float64)
@@ -159,11 +167,70 @@ def lowess(
     else:
         neighbours = max(2, min(n, math.floor(fraction * n + _SPAN_FUZZ)))
     fitted_sorted = _robust_lowess_sorted(
-        x_sorted, y_sorted, int(neighbours), int(iterations), float(skip), x_range
+        x_sorted, y_sorted, int(neighbours), robustness_iterations, float(skip), x_range
     )
     fitted = np.empty(n)
     fitted[order] = fitted_sorted
     return fitted
+
+
+def choose_lowess_span(
+    n: int, *, small_n: int = 50, min_span: float = 0.3, power: float = 1 / 3
+) -> float:
+    """The span of a LOWESS trend through n points, by limma's rule.
+
+    limma's ``chooseLowessSpan(n, small.n, min.span, power)``: the span is 1 for
+    n up to ``small_n``, and
+
+        min_span + (1 - min_span) (small_n / n)^power
+
+    for larger n, which falls toward ``min_span`` as n grows and stays above it.
+    With the defaults, limma's, the span is 1 up to 50 points, 0.65 at 400 and
+    0.395 at 20,000. limma tunes the rule for mean-variance trends, which are
+    usually monotonic and so suit large spans;
+    :func:`~cytepool.stats.voom.voom` chooses its span with it from the number
+    of features, as limma's ``voom`` does.
+
+    limma computes its formula, capped at 1, for any arguments. This function
+    refuses arguments outside the ranges below, where limma gives NaN for a
+    negative n, and spans below 1 for fewer than ``small_n`` points for a
+    negative ``power`` or a ``min_span`` above 1. At 0 points with a
+    ``min_span`` of 1 or a ``small_n`` of 0, limma's formula gives NaN, and
+    this function gives 1, as limma's documentation does.
+
+    Args:
+        n: Number of points to smooth, a non-negative integer.
+        small_n: Number of points up to which the span is 1, a non-negative
+            integer.
+        min_span: Span that the rule approaches as n grows, in (0, 1].
+        power: Rate at which the span falls with n, in [0, 1]; 0 gives a span
+            of 1 for every n.
+
+    Returns:
+        The span, the fraction of the points in each local fit of
+        :func:`lowess`: in [``min_span``, 1].
+
+    Raises:
+        TypeError: If ``n`` or ``small_n`` is not an integer, or ``min_span``
+            or ``power`` is not a real number.
+        ValueError: If ``n`` or ``small_n`` is negative, ``min_span`` is not in
+            (0, 1], or ``power`` is not in [0, 1].
+    """
+    points = _whole_number(n, "n")
+    full = _whole_number(small_n, "small_n")
+    lower = _real_scalar(min_span, "min_span")
+    rate = _real_scalar(power, "power")
+    if not 0.0 < lower <= 1.0:
+        raise ValueError(f"min_span must be in (0, 1], got {lower}")
+    if not 0.0 <= rate <= 1.0:
+        raise ValueError(f"power must be in [0, 1], got {rate}")
+    if points <= full:
+        return 1.0
+    # limma's operations in its order, which give its values to the last bit
+    # (found by probing). limma also caps the span at 1 (found by probing); within
+    # the ranges above, the formula stays at most 1 beyond small_n.
+    shrink: float = (full / points) ** rate
+    return lower + (1.0 - lower) * shrink
 
 
 def natural_spline_basis(
@@ -611,3 +678,11 @@ def _real_scalar(value: Any, name: str) -> float:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
         raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
     return float(value)
+
+
+def _whole_number(value: Any, name: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
+        raise TypeError(f"{name} must be an integer, got {type(value).__name__}")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative, got {value}")
+    return int(value)
