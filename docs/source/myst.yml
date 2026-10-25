@@ -24,6 +24,8 @@ project:
       title: Installation
     - file: quickstart.ipynb
       title: Quick start
+    - file: differential_expression.ipynb
+      title: Differential expression per cell type
   - title: Reference
     children:
     - title: API reference

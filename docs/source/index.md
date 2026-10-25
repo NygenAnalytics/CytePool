@@ -13,8 +13,9 @@ are numpy and numba. Every method is compared with an independent reference, usu
 the package that defined it, and the [Validation](validation.md) page reports how
 closely they agree.
 
-[Quick start](quickstart.ipynb) · [Installation](installation.md) ·
-[Validation](validation.md) · [API reference](/api/index.html)
+[Quick start](quickstart.ipynb) · [Differential expression per cell type](differential_expression.ipynb) ·
+[Installation](installation.md) · [Validation](validation.md) ·
+[API reference](/api/index.html)
 
 :::{note} Early development
 Nothing is released yet, and the interface may still change.
@@ -32,11 +33,12 @@ Nothing is released yet, and the interface may still change.
 | Precision weights for counts | [`voom`](/api/voom.html) | limma |
 | Empirical Bayes moderation | [Moderated t and F statistics, B-statistics, TREAT](/api/empirical_bayes.html) | limma |
 | Multiple testing | [Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli](/api/multiple_testing.html) | R |
+| Differential expression | [`limma_voom`, `limma_trend` on every cell type of a cube](/api/differential_expression.html) | limma, edgeR |
 | Distributions and smoothers | [Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, quantiles of the first four](/api/distributions.html); [LOWESS, natural spline bases](/api/smoothing.html) | mpmath, R |
 
 The [README](https://github.com/NygenAnalytics/CytePool#planned) lists what is planned
-(a differential-expression workflow on cubes, negative binomial and mixed models,
-gene-set and composition tests, and more) and the known limits of what exists.
+(negative binomial and mixed models, gene-set and composition tests, and more) and the
+known limits of what exists.
 
 ## Principles
 

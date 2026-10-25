@@ -42,14 +42,14 @@ temporary directory. Any change to the installed CytePool source starts a new ca
 
 Parallel routines use numba's threads: `from_cells`, and the fits of linear models in
 which each gene needs its own fit (with observation weights, as from voom, or missing
-values). Set `NUMBA_NUM_THREADS` before Python starts to cap them, for example on a
-shared machine, or pass `n_threads` to a function that takes it; results do not
-depend on the number of threads. With numba's OpenMP threading layer, a process that
-has run a parallel routine cannot fork worker processes that run one again: start
-workers with the "spawn" or "forkserver" method of `multiprocessing` instead. With
-one thread (`n_threads=1`, or `numba.set_num_threads(1)`), the fits of linear models
-run without a parallel region, so forked workers and several Python threads can run
-them at once; `from_cells` always starts one.
+values), which `limma_voom` runs. Set `NUMBA_NUM_THREADS` before Python starts to cap
+them, for example on a shared machine, or pass `n_threads` to a function that takes
+it; results do not depend on the number of threads. With numba's OpenMP threading
+layer, a process that has run a parallel routine cannot fork worker processes that run
+one again: start workers with the "spawn" or "forkserver" method of `multiprocessing`
+instead. With one thread (`n_threads=1`, or `numba.set_num_threads(1)`), the fits of
+linear models run without a parallel region, so forked workers and several Python
+threads can run them at once; `from_cells` always starts one.
 
 ## Development setup
 
@@ -94,7 +94,8 @@ make -C docs execute PAGES="quickstart"
 ```
 
 This runs the notebook in a fresh kernel and records in its metadata when it ran, how
-long it took and a fingerprint of its code cells. The build, and the tests in
+long it took, a fingerprint of its code cells and the version of CytePool that ran it.
+The build, and the tests in
 `tests/test_documentation.py`, fail when a notebook's code no longer matches its
 fingerprint or a saved cell has an error. Prose can change without executing again.
 Each figure a notebook shows needs a description, in the code cell's
@@ -102,9 +103,10 @@ Each figure a notebook shows needs a description, in the code cell's
 
 A change to the package can change what a notebook prints without changing its code.
 `make -C docs check-outputs PAGES="quickstart"` runs a notebook without saving it and
-fails when its printed text differs from the saved outputs; the documentation workflow
-runs it for the pages that need no downloaded data. Execute such a page again after
-changing the methods it uses.
+fails when its printed text differs from the saved outputs, other than in the version of
+CytePool, which changes with every commit; the documentation workflow runs it for the
+pages that need no downloaded data. Execute such a page again after changing the
+methods it uses.
 
 To add a page, put a Markdown file or a notebook under `docs/source/` and add it to the
 `toc` in `docs/source/myst.yml`; execute it if it is a notebook. To document a new

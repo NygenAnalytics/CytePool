@@ -17,11 +17,13 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-25** for the five scripts on
 cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`
-and `cube_fingerprints.py`) and for `linear_models.py` and `voom.py`, and on
+and `cube_fingerprints.py`), for `linear_models.py`, `voom.py` and
+`differential_expression.py`, and for `design.py` and `empirical_bayes.py`, which
+printed the same tables again after changes to the code they check; and on
 **2026-10-24** for the others, with the reference versions given in each section.
-Every script exited without a failure. Each
-row below is a family of checks: it gives the number of printed checks it covers and
-the largest difference among them. Run a script to see every check.
+Every script exited without a failure. Each row below is a family of checks: it
+gives the number of printed checks it covers and the largest difference among them.
+Run a script to see every check.
 
 ## Summary
 
@@ -38,9 +40,10 @@ the largest difference among them. Run a script to see every check.
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
+| [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **703** | **669 pass, none failed; 21 information, 12 deliberate differences, 1 control** | | |
+| **All** | | | **735** | **697 pass, none failed; 21 information, 16 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -463,6 +466,58 @@ R's `p.adjust`. Each check covers all seven methods. Reference: R 4.4.3,
 Of the 290,224 p-values each method adjusted, all but 5 Hommel values were identical
 to R's to the last bit.
 
+## Differential expression
+
+[`validation/differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py)
+simulates cells with a donor structure (seed 20261025), pools them into cubes with
+`from_cells`, and runs `limma_voom` and `limma_trend` on every cell type; R runs the
+workflow of the limma and edgeR User's Guides on the same pseudobulk counts, group by
+group: it leaves out the samples with fewer than 10 cells, keeps the rows of the
+remaining samples of a design built by `model.matrix` on the full sample table, and
+runs `filterByExpr`, `calcNormFactors`, `voom` (or `cpm(log = TRUE, prior.count = 3)`
+for limma-trend), `lmFit`, `contrasts.fit` one contrast at a time, `eBayes` and
+`topTable(sort.by = "none")`. voom chooses its span from the number of genes tested
+in each group, in both programs (`adaptive.span = TRUE` in R, limma's default since
+3.66), except in the case that fixes it at 0.5 (`span = 0.5, adaptive.span = FALSE`);
+limma's voom reports the span it chose (found by probing), and each group's span is
+compared. The cases are a paired design, `~ donor + condition` (6 donors x 2
+conditions, 4 cell types, 1,000 genes), by limma-voom and limma-trend, and an
+unpaired design with a covariate, `~ condition + age` (10 donors, 3 cell types), by
+limma-voom with robust moderation and a span of 0.5, and by limma-trend without
+filtering or normalization factors. The paired design tests the stimulation and
+three donor comparisons: `D2_vs_D1`, `D2_vs_D6` and `D3_vs_D2`. Some sample x cell
+type entries have fewer than 10 cells; in the NK cells both samples of donor D1, the
+reference level, are left out, which makes the column `donorD6` a combination of the
+others, and in the DC cells four samples remain, too few for any residual degrees of
+freedom.
+Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Samples used, features tested, coefficients that cannot be estimated, contrasts tested (other than the deliberate differences), voom's span, residual and prior df, in the 12 fitted groups | `filterByExpr`, `voom`, `lmFit`, `contrasts.fit`, `eBayes` | 0 mismatches | 0 | 12 pass |
+| logFC, AveExpr, t, P.Value, adj.P.Val and B of every contrast both programs compute | `topTable` | 6.3e-13 | 1e-10 | 9 pass |
+| The same with robust moderation | `topTable` | 1.0e-13 | 1e-6 | 3 pass |
+| `D2_vs_D6` in the NK cells, which limma refuses, against limma's values for `D2_vs_D1`, which there estimate the same difference | `topTable` | 2.8e-13 | 1e-10 | 2 pass |
+| DC cells, without residual degrees of freedom: both programs refuse every contrast | `eBayes` | both refuse | n/a | 2 pass |
+| Deliberate differences, listed below | `contrasts.fit` | 2 contrasts limma refuses and CytePool computes, 2 limma computes and CytePool reports as not estimable | n/a | 4 deliberate differences |
+
+Differences are scaled by max(\|reference\|, 1), and p-values by
+max(p, 1e-300) max(1, \|log p\|). limma-voom ran with
+`contrast_standard_errors="limma"`, except in the robust case, whose contrasts are
+single coefficients, for which the default exact standard errors are limma's. In
+the NK cells, `D3_vs_D2` combines two of the columns the group keeps, and agrees with
+limma's approximate standard errors too. The robust case keeps the close tier because
+limma solves the robust prior only to a tolerance; here it agreed to 1e-13.
+Deliberate differences, in the NK cells of both paired cases:
+
+- `D2_vs_D6` (`donorD2 - donorD6`) is estimable without donor D1, but it weighs the
+  aliased column `donorD6`, and limma's `contrasts.fit` stops with "trying to take
+  contrast of non-estimable coefficient". CytePool computes it.
+- `D2_vs_D1` (`donorD2`, donor D2 against D1) cannot be estimated without donor D1's
+  samples. limma computes it from the kept columns, where `donorD2` means donor D2
+  against donor D6, the values of the third row of the table; CytePool reports it as
+  not estimable.
+
 ## Distributions and special functions
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
@@ -613,6 +668,7 @@ python validation/linear_models.py
 python validation/linear_models.py --benchmark
 python validation/empirical_bayes.py
 python validation/voom.py
+python validation/differential_expression.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python \

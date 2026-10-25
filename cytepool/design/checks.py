@@ -60,6 +60,7 @@ import numpy as np
 
 from .._linear_algebra import RANK_TOLERANCE, column_space
 from ..table import Table
+from .contrasts import Contrasts
 from .formula import RandomEffect
 from .model_matrix import INTERCEPT, ModelMatrix, _Covariate, _Factor
 
@@ -721,32 +722,56 @@ def _contrast_checks(
     # The design's contrasts weigh its own columns in order: make_contrasts
     # matched them to the model's columns by name.
     contrasts = design.contrasts
+    for position, relations in _contrast_violations(model, aliasing, contrasts).items():
+        errors.append(
+            DesignIssue(
+                "contrast_not_estimable",
+                f"contrast {contrasts.names[position]!r} is not estimable: it depends "
+                "on effects that the design cannot separate ("
+                + "; ".join(relations)
+                + "). Fix the design first, or choose a contrast that does not "
+                "separate the columns of these relations",
+            )
+        )
+
+
+def _contrast_violations(
+    model: ModelMatrix, aliasing: _Aliasing, contrasts: Contrasts
+) -> dict[int, list[str]]:
+    """The contrasts that the rows of a model matrix cannot estimate.
+
+    A contrast c is estimable when it is orthogonal to the null space of the
+    matrix, which the relations of the aliased columns span: c must weigh each
+    aliased column as the kept columns it equals imply (see
+    ``ESTIMABILITY_TOLERANCE``).
+
+    Args:
+        model: The model matrix; its ``matrix`` may be some of a design's rows.
+        aliasing: The aliasing of ``model.matrix``, from ``_aliasing``.
+        contrasts: Contrasts over the columns of ``model``, in their order.
+
+    Returns:
+        The position of each contrast that is not estimable, with the relations it
+        violates as text (the first ``_LISTED`` of them).
+    """
     if not len(contrasts) or not aliasing.aliased:
-        return
+        return {}
     p = model.shape[1]
     nulls = [_null_vector(aliasing, j, p) for j in aliasing.aliased]
-    for position, name in enumerate(contrasts.names):
+    violations = {}
+    for position in range(len(contrasts)):
         weights = contrasts.matrix[:, position]
         violated = [
             index
             for index, null in enumerate(nulls)
             if _uncancelled(null, weights, aliasing.scales) > ESTIMABILITY_TOLERANCE
         ]
-        if not violated:
-            continue
-        relations = [
-            _relation(model, aliasing, aliasing.aliased[index])
-            for index in violated[:_LISTED]
-        ]
-        errors.append(
-            DesignIssue(
-                "contrast_not_estimable",
-                f"contrast {name!r} is not estimable: it depends on effects that the "
-                "design cannot separate (" + "; ".join(relations) + "). Fix the "
-                "design first, or choose a contrast that does not separate the "
-                "columns of these relations",
-            )
-        )
+        if violated:
+            violations[position] = [
+                _relation(model, aliasing, aliasing.aliased[index])
+                for index in violated[:_LISTED]
+            ]
+    return violations
 
 
 def _null_vector(aliasing: _Aliasing, j: int, p: int) -> np.ndarray:

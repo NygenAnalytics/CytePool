@@ -47,7 +47,7 @@ jobs:
     - name: Check that saved notebook outputs still match the package
       # Runs pages that need no downloaded data, without saving them, and fails
       # when what they print has changed. Add such pages to PAGES.
-      run: make -C docs check-outputs PAGES="quickstart"
+      run: make -C docs check-outputs PAGES="quickstart differential_expression"
     - name: Store the site
       uses: actions/upload-artifact@v7
       with:
