@@ -271,8 +271,8 @@ def parse_formula(formula: str) -> FormulaTerms:
             bar.end,
             "random-effect terms such as (1 | donor) are not part of the "
             "fixed-effects design; pass them separately, as in "
-            "Design(samples, '~ condition', random='(1 | donor)'), although no "
-            "function estimates random effects yet",
+            "Design(samples, '~ condition', random='(1 | donor)'), and fit random "
+            "intercepts with fit_mixed_model",
         )
     return _expand(parser, tree, parser.variables)
 

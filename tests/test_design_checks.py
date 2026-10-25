@@ -19,6 +19,7 @@ import pytest
 
 from cytepool.design import Design, DesignIssue, DesignReport
 from cytepool.stats.linear_models import fit_linear_model
+from cytepool.stats.mixed_models import fit_mixed_model
 
 DATA = Path(__file__).parent / "data" / "design"
 IDS = [f"S{i}" for i in range(1, 9)]
@@ -105,11 +106,11 @@ def test_batch_nested_in_condition(nested_batches: dict[str, Any]) -> None:
     assert (
         "the right model has it as a random effect, random='(1 | batch)'" in confounded
     )
-    # No function estimates that model yet: the message says what can be fitted.
+    # The message says how that model can be fitted.
     assert confounded.endswith(
-        "no function estimates random effects yet, but fit_linear_model fits this "
-        "random intercept with a known correlation, given block= (the batch of each "
-        "sample) and correlation=; or pool the samples of each batch with "
+        "fit_mixed_model estimates this random intercept by REML; fit_linear_model "
+        "fits it with a known correlation, given block= (the batch of each sample) "
+        "and correlation=; or pool the samples of each batch with "
         "Cube.collapse_samples('batch')"
     )
     # b2 vs b1 lies within ctrl and stays estimable; stim vs ctrl does not.
@@ -120,11 +121,14 @@ def test_batch_nested_in_condition(nested_batches: dict[str, Any]) -> None:
 def test_the_advice_for_repeated_samples_can_be_followed(
     nested_batches: dict[str, Any],
 ) -> None:
-    # The confounded message advises random='(1 | batch)' and, to fit it today,
-    # block= and a known correlation; both together are fitted, not refused.
+    # The confounded message advises random='(1 | batch)' and says how to fit it:
+    # by REML, or with block= and a known correlation. Both are fitted, not refused.
     design = Design(nested_batches, "~ condition", random="(1 | batch)")
     assert design.check().ok
     y = np.random.default_rng(47).normal(5.0, 1.0, (8, 3))
+    mixed = fit_mixed_model(y, design)
+    assert mixed.coefficient_names == ("(Intercept)", "conditionstim")
+    assert mixed.component_names == ("batch",) and mixed.converged.all()
     fit = fit_linear_model(y, design, block=design.samples["batch"], correlation=0.3)
     assert fit.coefficient_names == ("(Intercept)", "conditionstim")
     with pytest.raises(ValueError, match=r"drop the random effect \(1 \| batch\)"):
@@ -187,10 +191,10 @@ def test_a_factor_with_a_level_per_sample() -> None:
     # No column of this design groups repeated samples, so none is named.
     assert message.endswith(
         "the right model has that grouping as a random effect, such as "
-        "random='(1 | g)' for a grouping column g; no function estimates random "
-        "effects yet, but fit_linear_model fits a random intercept whose correlation "
-        "is known, given block= (the group of each sample) and correlation=; and, "
-        "when the conditions compared differ between groups, not within them, "
+        "random='(1 | g)' for a grouping column g; fit_mixed_model estimates such "
+        "a random intercept by REML; fit_linear_model fits one whose correlation is "
+        "known, given block= (the group of each sample) and correlation=; and, when "
+        "the conditions compared differ between groups, not within them, "
         "Cube.collapse_samples pools the repeated samples of each group into one"
     )
     assert set(report.kinds()) == {

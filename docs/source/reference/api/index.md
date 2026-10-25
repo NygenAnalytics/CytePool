@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: The CytePool Python API for pseudobulk cubes, their conversion to and from AnnData and MuData, designs, normalization, linear models, voom, sample quality weights, negative binomial models, empirical Bayes moderation, gene-set tests, multiple testing, differential expression, cell-type composition and distributions.
+    description: The CytePool Python API for pseudobulk cubes, their conversion to and from AnnData and MuData, designs, normalization, linear models, mixed models, voom, sample quality weights, negative binomial models, empirical Bayes moderation, gene-set tests, multiple testing, differential expression, cell-type composition and distributions.
 ---
 
 # CytePool API reference
@@ -26,6 +26,7 @@ anndata
 designs
 normalization
 linear_models
+mixed_models
 voom
 sample_weights
 negative_binomial_models

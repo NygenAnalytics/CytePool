@@ -722,11 +722,12 @@ def test_a_design_fits_as_limma_does_and_one_with_random_effects_is_refused() ->
         ValueError,
         match=r"^fit_linear_model fits fixed effects and, through block= and "
         r"correlation=, one random intercept with a known correlation, so it would "
-        r"drop the random effect \(1 \| donor\) of this design\. Fitting random "
-        r"effects \(mixed models\) is planned but not available yet\. What it can "
-        r"fit now: a fixed-effects analysis, with the Design built without random= "
-        r"and donor in the formula when the conditions compared vary within each "
-        r"donor \(left out, the samples of a donor count as independent\); ",
+        r"drop the random effect \(1 \| donor\) of this design\. fit_mixed_model "
+        r"estimates it by REML, and fixed_effect_tests tests contrasts of the fixed "
+        r"effects with Satterthwaite's degrees of freedom\. Other analyses: a "
+        r"fixed-effects analysis, with the Design built without random= and donor "
+        r"in the formula when the conditions compared vary within each donor "
+        r"\(left out, the samples of a donor count as independent\); ",
     ):
         fit_linear_model(data["y"], mixed)
     # Copies and derived designs keep the random effect, and are refused too.
@@ -782,7 +783,8 @@ def test_a_random_intercept_with_a_known_correlation_fits_as_limma_does() -> Non
                 r"the random effect \(1 \| donor\) of this design\.",
                 r"; this random intercept with a known correlation between the samples "
                 r"of each donor, given block=design\.samples\['donor'\] and "
-                r"correlation= \(CytePool does not estimate the correlation\);",
+                r"correlation= \(fit_linear_model does not estimate the "
+                r"correlation\);",
                 r"; or, when the conditions compared differ between levels of donor, "
                 r"not within them, a fit of one profile per donor, pooled first with "
                 r"Cube\.collapse_samples\('donor'\)\.$",
@@ -889,8 +891,15 @@ def test_the_refusal_names_the_random_effects_and_what_can_be_fitted(
         fit_linear_model(reference("groups_and_covariate")["y"], design, **keywords)
     message = str(raised.value)
     assert message.startswith("fit_linear_model fits fixed effects and")
-    assert "planned but not available yet" in message
-    assert "What it can fit now: a fixed-effects analysis" in message
+    # Random intercepts are estimated by fit_mixed_model; random slopes by nothing.
+    if any(effect.effects.terms for effect in design.random):
+        assert (
+            "Random slopes are not available yet: fit_mixed_model fits random "
+            "intercepts only. What can be fitted now: a fixed-effects analysis"
+        ) in message
+    else:
+        assert "fit_mixed_model estimates" in message
+        assert "Other analyses: a fixed-effects analysis" in message
     for pattern in present:
         assert re.search(pattern, message), (pattern, message)
     for text in absent:

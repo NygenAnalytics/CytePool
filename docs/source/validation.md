@@ -17,12 +17,13 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
-`cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
-`empirical_bayes.py`, `sample_quality_weights.py`, `negative_binomial_fits.py`,
-`differential_expression.py`, `differential_expression_options.py`,
-`interferon_stimulated_pbmcs.py`, `gene_set_tests.py` and `composition_tests.py`, and
-for `design.py`, which printed the same table again after changes to the code it
-checks; and on **2026-10-24** for the others, with the
+`cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
+`mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
+`negative_binomial_fits.py`, `differential_expression.py`,
+`differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
+`gene_set_tests.py` and `composition_tests.py`, and for `design.py`, which printed
+the same table again after changes to the code it checks; and on **2026-10-24** for
+the others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -40,6 +41,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
+| [`mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py) | Mixed models | R 4.4.3, lme4 2.0.6, lmerTest 3.2.1 | 135 | 102 pass, 29 information, 4 deliberate differences | 5 min 28 s | 330 MiB |
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
 | [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
@@ -52,7 +54,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,272** | **1,136 pass, none failed; 81 information, 54 deliberate differences, 1 control** | | |
+| **All** | | | **1,407** | **1,238 pass, none failed; 110 information, 58 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -388,6 +390,103 @@ Deliberate differences:
   0.56 to 2.55 times the exact ones. `method="limma"` reproduces it.
 
 With `--benchmark`, the script times both packages on 20,000 genes x 200 samples; see
+[](#validation-timings).
+
+## Mixed models
+
+[`validation/mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py)
+compares `fit_mixed_model` with lme4's `lmer` (REML) and `fixed_effect_tests` with
+lmerTest's Satterthwaite t-tests (`summary` for every coefficient, `contest1D` for a
+contrast), gene by gene, in 9 cases from fixed seeds: one random intercept (8 donors x
+3 samples, a condition within donors and an age per donor); unbalanced groups (12
+donors with 1 to 6 samples); two crossed random intercepts (10 donors x 4 samples over
+5 batches); two nested random intercepts (`(1 | donor/sample)`, 6 donors x 3 samples x
+2 replicates, with sample labels that repeat across donors); a design simulated
+without donor variance, so that most fits lie on the boundary; observation weights
+like voom's, with one and with two random intercepts; the crossed design with random
+intercepts up to 30 times the residual standard deviation; and 2,000 genes of 16
+donors x 4 samples with observation weights. The other cases have 100 genes each. The
+standard deviation of each random intercept is drawn per gene, and is zero for a fifth
+of the genes. Reference: R 4.4.3, lme4 2.0.6, lmerTest 3.2.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| REML criterion at the optimum | lme4 `REMLcrit` | 3.1e-13 | 1e-10 | 9 pass |
+| Genes whose criterion is above lme4's by more than 1e-10, relative | lme4 `REMLcrit` | 0 genes | 0 | 9 pass |
+| Coefficients, relative to the larger of their absolute value and standard error, and standard errors | lme4 `fixef`, `vcov` | 2.3e-7 | 1e-6 | 8 pass |
+| Variance components, relative to the larger of themselves and the residual variance, and the residual variance | lme4 `VarCorr`, `sigma` | 1.7e-7 | 1e-6 | 8 pass |
+| The same two families where the variance ratios are large | lme4 `fixef`, `vcov`, `VarCorr`, `sigma` | 1.1e-6 and 2.3e-6 | 1e-5 | 2 pass |
+| The theta of the gene with large ratios that differs most from lme4 | the optimum with 30 digits (mpmath) | 3.4e-13 | 1e-10 | 1 pass |
+| Genes where lme4 puts a variance at zero and CytePool does not | lme4 `getME(fit, "theta")` | 0 genes | 0 | 9 pass |
+| REML criterion at CytePool's estimates | lme4 `REMLcrit` | 3.6e-13 | 1e-10 | 9 pass |
+| Coefficients, standard errors and t-statistics (relative to max(\|t\|, 1)) at CytePool's estimates | lme4 `fixef`, `vcov`; lmerTest `summary` | 1.6e-11 | 1e-10 | 9 pass |
+| Satterthwaite df at CytePool's estimates | lmerTest `summary` | 1.3e-6 | 1e-5 | 9 pass |
+| p-values at CytePool's estimates | lmerTest `summary` | 7.3e-7 | 1e-5 | 9 pass |
+| A contrast: estimate, standard error and t-statistic | lmerTest `contest1D` | 1.6e-11 | 1e-10 | 9 pass |
+| A contrast: df and p-value | lmerTest `contest1D` | 6.6e-7 | 1e-5 | 9 pass |
+| df of the genes that differ most from lmerTest, with one and with two random intercepts | the definition with 30 digits (mpmath) | 9.7e-16 and 2.2e-11 | 1e-10 | 2 pass |
+| Fits with a variance at zero; Newton iterations; lme4's largest theta where CytePool's variance is zero | CytePool; lme4 `getME` | 12% to 54% of the genes of a case; 3.4 to 6.6 on average, at most 9; 4.4e-7 | n/a | 9 information |
+| Satterthwaite df at lme4's own optimum | lmerTest `summary` | 3.5e-6 | n/a | 9 information |
+| lme4 with its default tolerances: variance components; df | lme4 `VarCorr`; lmerTest `summary` | 1.0e-3; 8.5e-4 | n/a | 8 information |
+| lmerTest's df and lme4's theta at the genes checked with 30 digits | the definition with 30 digits (mpmath) | 1.3e-6 and 4.9e-7; 1.3e-6 | n/a | 3 information |
+| Deliberate differences, listed below | lme4 `lmer` | 3 inputs lme4 fits and CytePool refuses, 1 that lme4 fits with a warning and CytePool leaves unfitted | n/a | 4 deliberate differences |
+
+The script keeps two questions apart. The optimum is compared with lme4 fitted from its
+own start, with the tolerances of its default optimiser (BOBYQA from nloptr) tightened
+to `xtol_abs = xtol_rel = 1e-14` and `ftol_abs = ftol_rel = 1e-16`; with
+`xtol_abs = 1e-12` and `ftol_abs = 1e-14` alone, some of lme4's fits stopped with a
+criterion 3e-7 above the minimum. The computations at given estimates are compared
+with lme4 and lmerTest evaluated once at CytePool's estimates, which the script passes
+as lme4's starting values with a single evaluation allowed (`maxeval = 1`, and
+`restart_edge = FALSE` so that a variance of zero stays zero). There the criterion,
+the coefficients, their standard errors and the t-statistics are closed forms, while
+lmerTest computes Satterthwaite's degrees of freedom from numerical derivatives.
+p-values are compared scaled by max(p, 1e-300) max(1, \|log p\|), as for voom.
+
+Two bounds are looser than the tiers. The REML deviance computed with 30 significant
+digits (mpmath, from dense matrices) shows which program is exact in each:
+
+- Satterthwaite's degrees of freedom and the p-values that use them, 1e-5. lmerTest
+  differentiates the deviance numerically in theta, on which it depends only through
+  theta^2, so at an interior optimum its curvature in theta is about 4 theta^2 times
+  that in theta^2, and the numerical Hessian loses relative precision like 1 / theta^2
+  where a variance is small. At the genes whose df differ most from lmerTest's, with
+  one and with two random intercepts, CytePool's df agree with the definition to
+  9.7e-16 and 2.2e-11, and lmerTest's to 1.3e-6 and 4.9e-7. The second gene has large
+  variance ratios, where CytePool's factorisation of the second grouping factor loses
+  digits (see the module's documentation).
+- The estimates against lme4's own optimum where the variance ratios are large, 1e-5.
+  There the criterion is nearly flat in theta, and lme4's optimiser, which stops on
+  changes in the criterion, places theta to about 1e-6 only: at the gene that differs
+  most, CytePool's theta agree with the optimum computed with 30 digits to 3.4e-13,
+  and lme4's to 1.3e-6.
+
+The information rows count the fits with a variance at zero, which `fit_mixed_model`
+reports in `boundary` and lme4 approaches without always reaching (its theta there was
+at most 4.4e-7), and the Newton iterations per fit. They also give the df at lme4's
+own optimum, which inherit its precision where a variance is small, and the fits of
+lme4 with its default tolerances, whose variance components were up to 1.0e-3 of the
+residual variance from the optimum and whose df up to 8.5e-4 from those at the
+optimum.
+
+Deliberate differences:
+
+- A zero weight is refused, as is any weight that is negative or not finite. lme4
+  fits the data, and its REML criterion is then infinite.
+- A missing value is refused: this version fits complete data only. lme4 drops the
+  sample (its default `na.action`), here fitting 23 of 24 samples.
+- Values constant within every donor, which the fixed and random effects reproduce
+  exactly, have no REML optimum: the criterion decreases without bound as the
+  residual variance goes to zero. `fit_mixed_model` returns such a feature unfitted
+  (NaN, not converged). lme4 warns that the model failed to converge or is nearly
+  unidentifiable, and returns a residual standard deviation of 1.1e-5 times that of
+  the values.
+- A design whose fixed and random effects together span every sample (6 samples, 3
+  donors and 3 batches in a cycle, and a covariate) reproduces every feature
+  exactly, and `fit_mixed_model` refuses it. Its criterion can nonetheless have a
+  minimum, and lme4 fits it (REML criterion 14.62).
+
+With `--benchmark`, the script times both packages on 20,000 genes x 120 samples; see
 [](#validation-timings).
 
 ## Precision weights for counts
@@ -1197,6 +1296,19 @@ observation weights or missing values fit each gene on its own, on 2 threads her
 | Block correlation | 0.13 | 0.090 |
 | Block correlation and observation weights | 10.81 | 0.194 |
 
+`mixed_models.py --benchmark` on 20,000 genes x 120 samples with observation weights
+and the fixed effects `~ condition + age` (3 conditions): CytePool on one thread, the
+median of three runs after a first call that compiled it, and lmerTest's `lmer` and
+`summary` (Satterthwaite's df for every coefficient, with lme4's default tolerances)
+on 100 of the genes, after one fit that was not timed. The peak resident memory of
+the run was 424 MiB.
+
+| Random effects | `fit_mixed_model` (s) | `fixed_effect_tests` (s) | lmerTest, per gene (s) | lmerTest, 20,000 genes at that rate (min) |
+| --- | --- | --- | --- | --- |
+| One random intercept: 40 donors x 3 samples | 0.63 | 0.06 | 0.045 | 15.1 |
+| Two crossed: 40 donors, 6 batches | 1.50 | 0.06 | 0.052 | 17.5 |
+| Two nested: 20 donors x 3 samples x 2 replicates | 4.12 | 0.06 | 0.051 | 17.0 |
+
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
 `multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the
 references and CytePool 3.6 s to evaluate them, including compilation.
@@ -1240,6 +1352,9 @@ python validation/normalization.py
 python validation/design.py
 python validation/linear_models.py
 python validation/linear_models.py --benchmark
+# lme4 with lmerTest, in the R environment of its own described below.
+RSCRIPT=$REF/r-mixed/bin/Rscript python validation/mixed_models.py
+RSCRIPT=$REF/r-mixed/bin/Rscript python validation/mixed_models.py --benchmark
 python validation/empirical_bayes.py
 python validation/gene_set_tests.py
 python validation/voom.py
@@ -1284,6 +1399,15 @@ environment of its own, with R 4.4.3, limma 3.62.1 and jsonlite 2.0.0:
 ```bash
 conda create -p $REF/r-speckle -c conda-forge -c bioconda r-base=4.4.3 \
     bioconductor-limma=3.62.1 bioconductor-speckle=1.6.0 r-jsonlite=2.0.0
+```
+
+`mixed_models.py` needs lmerTest, which runs on the same lme4 2.0.6 in an R
+environment of its own: R 4.4.3, lme4 2.0.6, lmerTest 3.2.1, numDeriv 2016.8.1.1 and
+jsonlite 2.0.0, from conda-forge:
+
+```bash
+conda create -p $REF/r-mixed -c conda-forge r-base=4.4.3 r-lme4=2.0_6 \
+    r-lmertest=3.2_1 r-numderiv=2016.8_1.1 r-jsonlite=2.0.0
 ```
 
 The Python environments use Python 3.13.12. scanpy has its own environment, and
