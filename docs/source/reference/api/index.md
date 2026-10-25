@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: The CytePool Python API for pseudobulk cubes, designs, normalization, linear models, voom, empirical Bayes moderation, multiple testing, differential expression and distributions.
+    description: The CytePool Python API for pseudobulk cubes, designs, normalization, linear models, voom, sample quality weights, empirical Bayes moderation, multiple testing, differential expression and distributions.
 ---
 
 # CytePool API reference
@@ -26,6 +26,7 @@ designs
 normalization
 linear_models
 voom
+sample_weights
 empirical_bayes
 multiple_testing
 differential_expression

@@ -54,7 +54,7 @@ from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.smoothing import lowess
-from cytepool.stats.voom import voom
+from cytepool.stats.voom import voom_with_quality_weights
 from cytepool.table import Table
 
 # The standard message: what was found, why it is refused, and the remedy for how
@@ -554,13 +554,51 @@ ENTRY_POINTS: dict[str, Entry] = {
             "library_sizes": LIBRARY_SIZES,
             "norm_factors": NORM_FACTORS,
             "span": 0.6,
+            "weights": np.full(COUNTS.shape, 2.0),
         },
-        {"counts": None, "design": None, "library_sizes": None, "norm_factors": None},
+        {
+            "counts": None,
+            "design": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "weights": None,
+        },
         options=("span",),
+    ),
+    # A variance design, here; variance groups below, as the two cannot be combined.
+    "cytepool.stats.voom.voom_with_quality_weights": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": DESIGN,
+            "library_sizes": LIBRARY_SIZES,
+            "norm_factors": NORM_FACTORS,
+            "span": 0.6,
+            "variance_design": [[0.0], [0.0], [1.0], [1.0]],
+            "method": "reml",
+            "prior_n": 5.0,
+            "max_iterations": 20,
+            "tolerance": 1e-6,
+        },
+        {
+            "counts": None,
+            "design": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "variance_design": None,
+        },
+        options=("span", "method", "prior_n", "max_iterations", "tolerance"),
+    ),
+    "cytepool.stats.voom.voom_with_quality_weights[groups]": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": DESIGN,
+            "variance_groups": ["a", "a", "b", "b"],
+        },
+        {"variance_groups": None},
     ),
     # NaN marks the features that the trend leaves out.
     "cytepool.stats.voom.VoomResult": Entry(
-        lambda c: _fields(voom(COUNTS, DESIGN)),
+        lambda c: _fields(voom_with_quality_weights(COUNTS, DESIGN)),
         {
             "log_cpm": None,
             "weights": None,
@@ -568,8 +606,33 @@ ENTRY_POINTS: dict[str, Entry] = {
             "mean_log_count": "NaN",
             "sqrt_sd": "NaN",
             "sqrt_sd_trend": "NaN",
+            "sample_weights": None,
         },
         options=("span",),
+    ),
+    # Missing values of y marked with NaN; observation weights and a variance
+    # design here, and variance groups below.
+    "cytepool.stats.sample_weights.sample_quality_weights": Entry(
+        lambda c: {
+            "y": c.expression,
+            "design": DESIGN,
+            "weights": np.full(c.expression.shape, 2.0),
+            "variance_design": [[0.0], [0.0], [1.0], [1.0]],
+            "prior_n": 5.0,
+            "method": "gene_by_gene",
+            "max_iterations": 20,
+            "tolerance": 1e-6,
+        },
+        {"y": "NaN", "design": None, "weights": None, "variance_design": None},
+        options=("prior_n", "method", "max_iterations", "tolerance"),
+    ),
+    "cytepool.stats.sample_weights.sample_quality_weights[groups]": Entry(
+        lambda c: {
+            "y": c.expression,
+            "design": DESIGN,
+            "variance_groups": ["a", "a", "b", "b"],
+        },
+        {"variance_groups": None},
     ),
     "cytepool.stats.empirical_bayes.fit_f_distribution": Entry(
         lambda c: {
