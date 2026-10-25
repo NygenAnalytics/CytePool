@@ -19,11 +19,12 @@ package in this revision of the repository: on **2026-10-25** for the six script
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
-`negative_binomial_fits.py`, `quasi_likelihood.py`, `differential_expression.py`,
-`differential_expression_options.py`, `dream.py`, `interferon_stimulated_pbmcs.py`,
-`gene_set_tests.py`, `rotation_gene_set_tests.py`, `composition_tests.py` and
-`meta_analysis.py`, and for `design.py`, which printed the same table again after
-changes to the code it checks; and on **2026-10-24** for the others, with the
+`negative_binomial_fits.py`, `quasi_likelihood.py`, `deseq2_tests.py`,
+`differential_expression.py`, `differential_expression_options.py`, `dream.py`,
+`interferon_stimulated_pbmcs.py`, `gene_set_tests.py`, `rotation_gene_set_tests.py`,
+`composition_tests.py` and `meta_analysis.py`, and for `design.py`, which printed the
+same table again after changes to the code it checks; and on **2026-10-24** for the
+others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -46,6 +47,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
 | [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
 | [`quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py) | Quasi-likelihood F-tests | edgeR 4.4.0, limma 3.62.1, mpmath 1.3.0 | 223 | 210 pass, 13 deliberate differences | 5.1 s | 186 MiB |
+| [`deseq2_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/deseq2_tests.py) | DESeq2's dispersions and tests | DESeq2 1.46.0, PyDESeq2 0.5.4, mpmath 1.3.0 | 45 | 28 pass, 11 information, 6 deliberate differences | 2 min 16 s | 814 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 150 | 146 pass, 4 deliberate differences | 4.8 s | 195 MiB |
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
@@ -58,7 +60,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,871** | **1,634 pass, none failed; 137 information, 99 deliberate differences, 1 control** | | |
+| **All** | | | **1,916** | **1,662 pass, none failed; 148 information, 105 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -754,6 +756,103 @@ leverages of the limit for these. Deliberate differences:
   gives the first gene no counts, a dispersion and no trend, so that the value enters
   nothing else, and every other gene is compared.
 - The moments of the unit deviance, as above: CytePool's are exact.
+
+## DESeq2's dispersions and tests
+
+[`validation/deseq2_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/deseq2_tests.py)
+compares `deseq2_dispersions`, `fit_deseq2`, `deseq2_wald_test` and
+`deseq2_likelihood_ratio_test` with DESeq2's `estimateDispersions`, `nbinomWaldTest`,
+`nbinomLRT` and `results`, and with PyDESeq2, on negative binomial counts simulated
+from fixed seeds: 600 genes and 4 to 12 samples in 9 cases, with 2% of the genes
+without counts. The cases are two groups; four groups, tested by the likelihood ratio
+test of the factor and by a Wald test of two levels that 15 genes have no counts in;
+two groups and a covariate; a paired design of six donors; small counts; two samples
+per group, which leave two residual degrees of freedom; an outlier sample; dispersions
+that rise with the mean; and nearly Poisson counts, 69% of whose gene-wise estimates
+are at the lower bound. Counts with an outlier in most genes, at a dispersion of 0.05,
+test the rules by which Cook's distance removes p-values under four designs: two groups
+of four, and groups of two and five as a factor, as means without an intercept and as
+a numeric covariate. DESeq2 runs with its defaults, `DESeq(dds,
+minReplicatesForReplace = Inf)`, with `fitType = "mean"` where its parametric trend
+fails (the small counts and the rising dispersions), and each stage of CytePool is
+compared given DESeq2's own inputs to it: the dispersions with their maxima, found in R
+by the script from a grid of the Cox-Reid adjusted log-likelihood and the root of its
+derivative; the trend and the prior with DESeq2's; the fits with DESeq2's at
+`betaTol = 1e-14`, polished by Newton's method in R; and the tests with `results()` at
+those fits, with its defaults, with `cooksCutoff = 0.5` and without independent
+filtering. Each printed row pools the cases it applies to and names the worst.
+Reference: R 4.4.3, DESeq2 1.46.0, PyDESeq2 0.5.4, mpmath 1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Design matrices; size factors, means and variances of the normalized counts | `model.matrix`; DESeq2 | 0; 5.9e-16 | 0; 1e-10 | 2 pass |
+| Means of the likelihood | `estimateDispersionsGeneEst`; for the covariate and paired designs, DESeq2's fit at the rough dispersions, polished | 3.6e-14 | 1e-6 | 1 pass |
+| Gene-wise dispersions of at least 1e-6 | maxima in R | 3.8e-9 | 1e-6 | 1 pass |
+| Gene-wise dispersions below 1e-6 (49 genes), and genes whose rough dispersion is at the lower bound (1,935), which keep 1e-8 as in DESeq2 | maxima in R; DESeq2 | 0 genes differ | 0 | 2 pass |
+| The parametric trend from DESeq2's gene-wise estimates (7 cases); its failure where DESeq2's fails, and the mean trend there (2 cases) | DESeq2 | 1.4e-15; 0 cases differ; 0 | 1e-10; 0; 1e-10 | 3 pass |
+| Variance of the log residuals, and of the prior with more than three residual degrees of freedom | DESeq2 | 1.3e-16 | 1e-10 | 2 pass |
+| Variance of the prior with two residual degrees of freedom, maximum likelihood | integration on a grid | 2.3e-8 | 1e-6 | 1 pass |
+| Maximum a posteriori dispersions | maxima in R | 2.5e-12 | 1e-6 | 1 pass |
+| Dispersion outliers (33 genes), and the final dispersions they choose | DESeq2 | 0 genes differ | 0 | 1 pass |
+| Coefficients and standard errors | DESeq2 at `betaTol = 1e-14`, polished in R | 3.2e-15 | 1e-6 | 1 pass |
+| Deviances | DESeq2 at `betaTol = 1e-14` | 1.2e-11 | 1e-9 | 1 pass |
+| Fitted values, hat values, Cook's distances; the log2 fold changes and standard errors of every test | DESeq2 at `betaTol = 1e-14` | 2.2e-6; 1.4e-6 | 1e-5 | 2 pass |
+| Wald tests (9): statistics, p-values, adjusted p-values | `results()` at `betaTol = 1e-14` | 1.8e-6 | 1e-5 | 1 pass |
+| Likelihood ratio tests (3): statistics, p-values, adjusted p-values | `results()` at `betaTol = 1e-14` | 3.2e-11 | 1e-9 | 1 pass |
+| Genes flagged by Cook's distance (27 genes), filtered out, and the filter's quantile, in every test; genes flagged at `cooksCutoff = 0.5` (862), and the adjusted p-values there and without independent filtering | `results()` at `betaTol = 1e-14` | 0 differences; 1.9e-6 | 0; 1e-5 | 3 pass |
+| Independent filtering on 20 statistics, some of whose curves of rejections reach the fallbacks to 90% and 80% of their fitted maximum | `results(filter = ...)` | 0 | 0; 1e-10 | 2 pass |
+| Cook's distances at given dispersions under four designs: genes flagged (79 genes, 9 more above the cutoff but spared in a comparison of two groups), and the largest distances | DESeq2 at `betaTol = 1e-14` | 0 genes differ; 4.0e-14 | 0; 1e-5 | 2 pass |
+| Derivative in log(alpha) of a count's log-likelihood, 192 points | mpmath, 50 digits | 2.7e-15 | 1e-12 | 1 pass |
+| DESeq2's line searches, its fits at its defaults, its means of the likelihood for the covariate and paired designs, its trend where the parametric fit fails, and its prior with two residual degrees of freedom | DESeq2 defaults | listed below | bounds listed below | 6 deliberate differences |
+| Genes spared in a comparison of two groups; DESeq2's coefficients at `betaTol = 1e-14`, from the polished fits; the largest differences of DESeq2's gene-wise line searches | DESeq2 | 9 genes; up to 1.5e-6; up to 13 on the log scale | n/a | 3 information |
+| The analysis from the counts: final dispersions, p-values, statistics, genes called | DESeq2 defaults | medians 1.2e-3 to 3.8e-2 (dispersions, log scale) and 3.0e-4 to 7.6e-3 (p-values); 7 of 1,297 genes called differently at 0.1 | n/a | 4 information |
+| The analysis from the counts | PyDESeq2 | medians up to 5.8e-7 (gene-wise dispersions, log scale), 4.7e-5 to 0.21 (final dispersions) and 1.7e-5 to 4.2e-2 (p-values); 5 of 281 genes called differently | n/a | 4 information |
+
+Dispersions are compared relative to the reference, coefficients relative to
+max(\|reference\|, 1), and Cook's and hat values relative to the larger of the
+reference and 1, as only values near the cutoff matter; statistics are compared
+relative to max(\|reference\|, 1), and p-values on the log scale, relative to
+max(\|log p\|, 1), as an error e in a statistic z moves log p by about z^2 e. Below a
+gene-wise dispersion of 1e-6 the adjusted likelihood is flat in the log dispersion,
+whose derivative is proportional to the dispersion, so there the check is that both
+sides place the gene below 1e-6. DESeq2 stops its fits when the deviance changes by
+less than `betaTol` of it; for genes of large dispersion, where its Fisher scoring
+converges slowly, its coefficients are then up to 1.5e-6 from the fixed point even at
+`betaTol = 1e-14` (an information row), which bounds the tolerance of what is computed
+from them, but for the deviances and the likelihood ratio statistics, which are
+stationary there. Rows that count genes fail when they cover none. Deliberate
+differences, each within a bound that the script checks:
+
+- DESeq2 maximizes the dispersions by a line search that stops when an iteration gains
+  less than 1e-6, and that can stall where it starts, returning its starting value:
+  its gene-wise estimates are a median of up to 5.5e-5 from the maximum on the log
+  scale (bound 1e-3), and up to 13 in a few genes, and its maximum a posteriori
+  estimates up to 7.7e-3 from theirs, relative (bound 0.1). CytePool computes the
+  maxima. A gene whose rough dispersion is at the lower bound keeps it, as in DESeq2,
+  even where the maximum lies far above.
+- DESeq2's fits at its defaults stop up to 1.9e-3 from the fixed point (log2
+  coefficients, relative to max(\|reference\|, 1); bound 1e-2), and its means of the
+  likelihood for designs that are not one-way layouts, from such a fit at the rough
+  dispersions, up to 7.5e-4 (bound 1e-2). CytePool's fits converge.
+- Where DESeq2's parametric trend fails, for the small counts and the rising
+  dispersions, DESeq2 substitutes a local regression, which CytePool does not have;
+  CytePool uses the mean trend, with a warning. From DESeq2's gene-wise estimates,
+  CytePool's parametric trend fails where DESeq2's does and agrees with it to rounding
+  where it does not: each gamma fit is R's `glm()` iteration, and the genes fitted are
+  those whose gene-wise estimate is above 1e-6, as in DESeq2, which the nearly Poisson
+  counts test.
+- With two residual degrees of freedom DESeq2 matches densities of simulated
+  residuals over a grid, and CytePool maximizes the likelihood of the same model:
+  9.5% apart here (bound 0.2).
+
+From the counts, the final dispersions differ from DESeq2's by a median of 1.2e-3 to
+3.8e-2 on the log scale (the largest with two residual degrees of freedom, from the
+prior), p-values by a median of 3.0e-4 to 7.6e-3, relative, and statistics by up to
+3.4e-2 relative, 7 of 1,297 genes being called differently at a false discovery rate
+of 0.1. PyDESeq2's gene-wise dispersions agree with CytePool's to medians of up to
+5.8e-7 on the log scale; its final dispersions differ by medians of 4.7e-5 to 0.21, the
+largest for the small counts, where DESeq2's and CytePool's trend is the mean of the
+gene-wise estimates.
 
 ## Empirical Bayes moderation
 
@@ -1682,6 +1781,7 @@ python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py
 python validation/quasi_likelihood.py
+python validation/deseq2_tests.py
 python validation/differential_expression.py
 python validation/differential_expression_options.py
 # Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583
