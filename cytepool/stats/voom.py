@@ -145,7 +145,9 @@ class VoomResult:
     """Log2 counts per million and their precision weights, from :func:`voom`.
 
     Fit a linear model with ``fit_linear_model(result.log_cpm, design,
-    weights=result.weights)``. Arrays with a sample axis have one row per sample;
+    weights=result.weights)``, or, for the weights of
+    :func:`~cytepool.stats.dream.voom_with_dream_weights`, a mixed model with
+    ``fit_mixed_model``. Arrays with a sample axis have one row per sample;
     the others have one value per feature, in the order of the columns of the
     counts. The arrays are read-only views; the constructor does not copy them.
 
@@ -154,7 +156,8 @@ class VoomResult:
             ``log2((r + 0.5) / (R + 1) * 1e6)`` with R the effective library size.
         weights: ``(n_samples, n_features)`` precision weights: the inverse of each
             observation's variance predicted by the trend, times the prior weights
-            given to :func:`voom` or the ``sample_weights``.
+            given to :func:`voom` (each feature's divided by their mean, for
+            ``voom_with_dream_weights``) or the ``sample_weights``.
         effective_library_sizes: ``(n_samples,)`` library sizes times
             normalization factors. Pass them back as ``library_sizes`` without
             normalization factors to repeat the computation.
@@ -520,44 +523,103 @@ def _voom_trend(
         fraction: The span.
         prior: Prior weights from ``_prior_weights``, or None.
     """
-    n_features = y.shape[1]
-    # The operations of limma, which give its values to the last bit (found by
-    # probing).
-    log_cpm = np.log2((y + 0.5) / (sizes + 1.0)[:, np.newaxis] * 1e6)
+    log_cpm = _log_cpm(y, sizes)
     fit = fit_linear_model(log_cpm, design, weights=prior)
-    # fit.mean_expression is R's rowMeans to the last bit on log2 CPM, and the sum
-    # is formed in limma's order, so that x and its ties are limma's (found by
-    # probing).
-    log_size = np.log2(sizes + 1.0)
-    mean_log_count = (fit.mean_expression + accurate_mean(log_size)) - _LOG2_MILLION
-    # Features without counts are left out of the trend (found by probing).
-    with_counts = (y > 0.0).any(axis=0)
-    mean_log_count[~with_counts] = np.nan
-    sqrt_sd = np.full(n_features, np.nan)
-    sqrt_sd_trend = np.full(n_features, np.nan)
-
+    mean_log_count = _mean_log_count(fit.mean_expression, sizes, y)
     if not np.any(fit.df_residual > 0.0):
         # limma returns no span then (found by probing).
+        nan = np.full(y.shape[1], np.nan)
         unit = _Trend(
-            log_cpm,
-            np.ones_like(log_cpm),
-            mean_log_count,
-            sqrt_sd,
-            sqrt_sd_trend,
-            math.nan,
+            log_cpm, np.ones_like(log_cpm), mean_log_count, nan, nan.copy(), math.nan
         )
         return unit, False
-    in_trend = with_counts & (fit.df_residual > 0.0)
+    in_trend = (y > 0.0).any(axis=0) & (fit.df_residual > 0.0)
+    weighted = (
+        np.ones(y.shape, dtype=bool) if prior is None else _positive(prior, y.shape)
+    )
+    trend = _trend_weights(
+        log_cpm,
+        mean_log_count,
+        fit.sigma,
+        in_trend,
+        _fitted_values(fit, log_cpm, prior),
+        sizes,
+        fraction,
+        weighted,
+        "" if prior is None else " and residual degrees of freedom",
+    )
+    return trend, True
+
+
+def _log_cpm(y: FloatArray, sizes: FloatArray) -> FloatArray:
+    """voom's log2 counts per million, log2((r + 0.5) / (R + 1) * 1e6)."""
+    # The operations of limma, which give its values to the last bit (found by
+    # probing).
+    log_cpm: FloatArray = np.log2((y + 0.5) / (sizes + 1.0)[:, np.newaxis] * 1e6)
+    return log_cpm
+
+
+def _mean_log_count(
+    mean_expression: FloatArray, sizes: FloatArray, y: FloatArray
+) -> FloatArray:
+    """The x of the trend: average log2 counts, NaN for features without counts.
+
+    ``mean_expression`` is R's rowMeans to the last bit on log2 CPM, and the sum is
+    formed in limma's order, so that x and its ties are limma's (found by probing).
+    """
+    log_size = np.log2(sizes + 1.0)
+    mean_log_count: FloatArray = (
+        mean_expression + accurate_mean(log_size)
+    ) - _LOG2_MILLION
+    # Features without counts are left out of the trend (found by probing).
+    mean_log_count[~(y > 0.0).any(axis=0)] = np.nan
+    return mean_log_count
+
+
+def _trend_weights(
+    log_cpm: FloatArray,
+    mean_log_count: FloatArray,
+    sigma: FloatArray,
+    in_trend: npt.NDArray[np.bool_],
+    fitted: FloatArray,
+    sizes: FloatArray,
+    fraction: float,
+    weighted: npt.NDArray[np.bool_],
+    condition: str,
+) -> _Trend:
+    """The mean-variance trend of the features ``in_trend`` and its weights.
+
+    The square roots of the residual standard deviations ``sigma`` are smoothed by
+    LOWESS against ``mean_log_count``, and every observation is weighted by the
+    inverse fourth power of the trend at its fitted log2 count, from ``fitted``.
+
+    Args:
+        log_cpm: The log2 counts per million.
+        mean_log_count: The x of the trend.
+        sigma: The residual standard deviation of each feature.
+        in_trend: The features whose ``sigma`` enter the trend.
+        fitted: ``(n_samples, n_features)`` fitted log2 CPM.
+        sizes: The effective library sizes.
+        fraction: The span.
+        weighted: The observations whose weights must be usable.
+        condition: What the features in the trend need besides counts, for the
+            message when there are fewer than two.
+
+    Raises:
+        ValueError: If fewer than two features are in the trend, or the trend is not
+            positive where weights are read from it.
+    """
+    n_features = log_cpm.shape[1]
+    sqrt_sd = np.full(n_features, np.nan)
+    sqrt_sd_trend = np.full(n_features, np.nan)
     n_in_trend = int(np.count_nonzero(in_trend))
     if n_in_trend < 2:
-        condition = "" if prior is None else " and residual degrees of freedom"
         raise ValueError(
             f"a mean-variance trend needs at least two features with counts"
             f"{condition}, got {n_in_trend}"
         )
-
     trend_x = mean_log_count[in_trend]
-    trend_y = np.sqrt(fit.sigma[in_trend])
+    trend_y = np.sqrt(sigma[in_trend])
     # R's default delta, 1% of the range of x (found by probing).
     trend = lowess(trend_x, trend_y, span=fraction, iterations=_TREND_ITERATIONS)
     sqrt_sd[in_trend] = trend_y
@@ -567,7 +629,6 @@ def _voom_trend(
     knots_x, first = np.unique(trend_x, return_index=True)
     knots_y = trend[first]
 
-    fitted = _fitted_values(fit, log_cpm, prior)
     # The fitted log2 counts, formed on the count scale as limma forms them (found
     # by probing).
     fitted_log_count = np.log2(
@@ -576,9 +637,6 @@ def _voom_trend(
     predicted = _interpolate(knots_x, knots_y, fitted_log_count)
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         weights = 1.0 / np.power(predicted, 4.0)
-    weighted = (
-        np.ones(y.shape, dtype=bool) if prior is None else _positive(prior, y.shape)
-    )
     usable = (predicted > 0.0) & np.isfinite(weights)
     if not np.all(usable[weighted]):
         lowest = float(np.nanmin(np.where(weighted, predicted, np.inf)))
@@ -590,8 +648,7 @@ def _voom_trend(
             "exactly, can cause this: filter out features with low counts, or use "
             "more features"
         )
-    result = _Trend(log_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
-    return result, True
+    return _Trend(log_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
 
 
 def _fitted_values(

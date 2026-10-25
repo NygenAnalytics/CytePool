@@ -1,4 +1,4 @@
-"""Linear mixed models with random intercepts, fitted to many features at once by REML.
+"""Linear mixed models with random intercepts, fitted to many features by REML or ML.
 
 Every feature (gene) of a samples x features matrix is fitted with the same model,
 
@@ -10,11 +10,13 @@ grouping factor (one random intercept per level, as ``(1 | donor)`` in lme4), an
 holds the feature's precision weights (the identity without weights). The grouping
 factors may be nested, such as ``(1 | donor/sample)``, or crossed, such as
 ``(1 | donor) + (1 | batch)``. The variance parameters are estimated by restricted
-maximum likelihood (REML) and the fixed effects by generalised least squares given
-them, as lme4's ``lmer`` with ``REML = TRUE`` does (Bates et al. 2015). Tests of
-contrasts of the fixed effects use Satterthwaite's degrees of freedom, as lmerTest
-computes them (Kuznetsova et al. 2017), which variancePartition's ``dream`` uses for
-repeated measures in gene expression (Hoffman and Roussos 2021).
+maximum likelihood (REML), or by maximum likelihood (``method="ml"``), and the fixed
+effects by generalised least squares given them, as lme4's ``lmer`` with ``REML =
+TRUE`` (or ``FALSE``) does (Bates et al. 2015). Tests of contrasts of the fixed
+effects use Satterthwaite's degrees of freedom, as lmerTest computes them (Kuznetsova
+et al. 2017), which variancePartition's ``dream`` uses for repeated measures in gene
+expression (Hoffman and Roussos 2021); :mod:`cytepool.stats.dream` builds dream's
+precision weights and moderated tests on these fits.
 
 The REML criterion:
     With theta_k = sigma_k / sigma, the relative standard deviations that lme4
@@ -29,7 +31,9 @@ The REML criterion:
     whose value at the estimate is lme4's ``REMLcrit``. With weights, log det V
     includes -sum(log w), so the criterion, the fixed effects and the variance
     components do not change when every weight is multiplied by the same constant;
-    only sigma^2 scales with it.
+    only sigma^2 scales with it. Maximum likelihood minimises the profiled deviance
+    log det V + n (1 + log(2 pi r^2 / n)), lme4's ``deviance`` of a fit with ``REML =
+    FALSE``, and estimates sigma^2 by r^2 / n.
 
 Computation:
     The criterion, its gradient and its Hessian are computed from weighted cross-
@@ -45,15 +49,17 @@ Computation:
     conditioned as X itself, and the estimates are transformed back.
 
     The derivatives of the criterion with respect to gamma_k = theta_k^2 are the
-    classical ones of REML (Harville 1977): with P = V^-1 - V^-1 X (X' V^-1 X)^-1
-    X' V^-1, they need only Z_k' P Z_l and Z_k' P y. Newton's method minimises the
-    criterion over u_k = log(1 + c_k gamma_k), where c_k is the mean total weight of
-    a level of factor k: in a balanced one-way design the criterion is convex in u,
-    and the boundary gamma_k = 0 is u_k = 0. A component whose gradient points
-    outward at the boundary is held there (projected Newton method, Bertsekas 1982),
-    so variance components at zero are exactly zero. An indefinite Hessian is made
-    positive definite by taking the absolute values of its eigenvalues, a step
-    changes no u_k by more than 5, and a backtracking line search ensures descent.
+    classical ones of REML (Harville 1977): with P = V^-1 - V^-1 X (X' V^-1 X)^-1 X'
+    V^-1, they need only Z_k' P Z_l and Z_k' P y; those of maximum likelihood take the
+    traces and norms of Z_k' V^-1 Z_l in place of those of Z_k' P Z_l, which the same
+    factorisation gives before its fixed-effect pivots. Newton's method minimises the
+    criterion over u_k = log(1 + c_k gamma_k), where c_k is the mean total weight of a
+    level of factor k: in a balanced one-way design the criterion is convex in u, and
+    the boundary gamma_k = 0 is u_k = 0. A component whose gradient points outward at
+    the boundary is held there (projected Newton method, Bertsekas 1982), so variance
+    components at zero are exactly zero. An indefinite Hessian is made positive definite
+    by taking the absolute values of its eigenvalues, a step changes no u_k by more than
+    5, and a backtracking line search ensures descent.
     The fit converges when a step moves no u_k by more than 1e-10, as a full
     Newton step or where the full step promises no decrease beyond rounding; as
     Newton's method converges quadratically, the estimates are then as accurate as
@@ -70,13 +76,28 @@ Computation:
     has no minimum (it decreases without bound as sigma^2 goes to zero), so such a
     feature is left unfitted; see :class:`MixedModelFit`.
 
+Fitted values and residual degrees of freedom:
+    The random effects are predicted at the estimates by their best linear unbiased
+    predictors, b_k = gamma_k Z_k' P y (Henderson 1975), and the fitted values are
+    X beta + sum_k Z_k b_k, lme4's ``fitted``. Their hat matrix H, on the scale of the
+    weighted values, gives the approximate residual degrees of freedom tr((I - H)'
+    (I - H)), variancePartition's ``rdf.merMod``, which ``dream`` moderates on: with
+    I - H = W^-1/2 P W^-1/2 and P V P = P,
+
+        tr((I - H)' (I - H)) = n - p - 2 sum_k gamma_k tr(Z_k' P Z_k)
+                               + sum_kl gamma_k gamma_l |Z_k' P Z_l|^2,
+
+    which is n - p with every component at zero, and in a balanced one-way design
+    q (m - 1) + (q - 1) / (1 + m gamma)^2 for q groups of m samples.
+
 Satterthwaite's degrees of freedom:
     For a contrast c of the fixed effects with estimated variance v = c' C c, where
     C is the covariance matrix of the estimates, the degrees of freedom are
     2 v^2 / (g' A g) (Satterthwaite 1946; Giesbrecht and Burns 1985), where g holds
     the derivatives of v with respect to the variance parameters and A is their
     asymptotic covariance matrix: twice the inverse of the Hessian of the REML
-    deviance (the observed information, as lmerTest computes it). The degrees of
+    deviance (the observed information, as lmerTest computes it), or of the deviance
+    of maximum likelihood for such a fit. The degrees of
     freedom do not depend on how the variance parameters are parametrised; here
     they are the variances (sigma_1^2, ..., sigma_K^2, sigma^2). lmerTest
     parametrises them by (theta, sigma), in which the deviance is an even function
@@ -86,11 +107,10 @@ Satterthwaite's degrees of freedom:
     by probing lmerTest). lmerTest computes the derivatives numerically; here they
     are exact.
 
-Limits of this first step:
-    Random slopes, maximum likelihood fits (which variancePartition's variance
-    partitioning uses by default), Kenward-Roger degrees of freedom (dream's default
-    for 20 samples or fewer), F-tests of several contrasts at once, the empirical
-    Bayes moderation of dream and variance partitioning are not implemented yet.
+Limits of this version:
+    Random slopes, Kenward-Roger degrees of freedom (dream's default for 20 samples
+    or fewer), F-tests of several contrasts at once and variance partitioning are
+    not implemented yet.
     Every feature needs a value for every sample, with a positive weight. Designs
     whose fixed and random effects together span every sample, and so reproduce
     every feature exactly, are refused, although their criterion can have a minimum
@@ -111,6 +131,9 @@ References:
     estimation and to related problems. Journal of the American Statistical
     Association 72, 320-338.
 
+    Henderson CR (1975). Best linear unbiased estimation and prediction under a
+    selection model. Biometrics 31, 423-447.
+
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis
     for repeated measures designs. Bioinformatics 37, 192-201.
 
@@ -125,8 +148,8 @@ import math
 from collections import namedtuple
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, replace
+from typing import Any, Literal, NamedTuple, cast
 
 import numba
 import numpy as np
@@ -135,9 +158,10 @@ import numpy.typing as npt
 from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool.design.checks import _aliasing, _random_checks
 from cytepool.design.design import Design, _is_random_intercept
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.linear_models import _contrast_matrix, _real_array
+from cytepool.stats.linear_models import _contrast_matrix, _observed_means, _real_array
 
 __all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
 
@@ -167,11 +191,11 @@ _LOG_TWO_PI = math.log(2.0 * math.pi)
 
 @dataclass(frozen=True, eq=False, repr=False)
 class MixedModelFit:
-    """REML fits of one linear mixed model to many features.
+    """REML or maximum likelihood fits of one linear mixed model to many features.
 
     Rows of the per-feature arrays are features, in the order of the columns of
     ``y``. Variance components are in the order of the design's random effects. The
-    arrays are read-only. A feature whose REML criterion has no minimum is not
+    arrays are read-only. A feature whose criterion has no minimum is not
     fitted: its values are NaN and it is not converged. That is a feature the fixed
     effects fit exactly, such as a constant feature (to within 1e-12 of its
     values), or one the fixed and random effects together reproduce, such as a
@@ -187,9 +211,11 @@ class MixedModelFit:
         variance_components: ``(n_features, n_components)`` variance of each
             random intercept, sigma_k^2 (lme4's ``VarCorr``).
         residual_variance: ``(n_features,)`` residual variance sigma^2 of an
-            observation of weight one (``sigma(fit)^2``).
+            observation of weight one (``sigma(fit)^2``); the REML estimate r^2 /
+            (n - p), or for a maximum likelihood fit r^2 / n.
         reml_criterion: ``(n_features,)`` REML criterion at the estimates, minus
-            twice the restricted log-likelihood (lme4's ``REMLcrit``).
+            twice the restricted log-likelihood (lme4's ``REMLcrit``); NaN for a
+            maximum likelihood fit.
         boundary: ``(n_features, n_components)`` True where a variance component is
             estimated at zero, which lme4 reports as a singular fit.
         converged: ``(n_features,)`` False where Newton's method did not converge
@@ -199,7 +225,8 @@ class MixedModelFit:
         variance_parameter_covariance: ``(n_features, n_components + 1,
             n_components + 1)`` asymptotic covariance matrix of the estimates of the
             variance components and the residual variance, in that order: twice the
-            inverse of the Hessian of the REML deviance. Rows and columns of
+            inverse of the Hessian of the REML deviance, or of the deviance of a
+            maximum likelihood fit. Rows and columns of
             components at the boundary are zero; NaN where the Hessian is singular.
         cov_coefficients_derivatives: ``(n_features, n_components + 1,
             n_coefficients, n_coefficients)`` derivatives of ``cov_coefficients``
@@ -209,6 +236,23 @@ class MixedModelFit:
         component_names: Names of the grouping factors of the variance components,
             as lme4 names them, such as ``"donor"`` or ``"sample:donor"``.
         design: ``(n_samples, n_coefficients)`` fixed-effects design matrix.
+        method: ``"reml"`` or ``"ml"``, the likelihood the fit maximised.
+        log_likelihood: ``(n_features,)`` the maximised log-likelihood: the
+            restricted one, minus half the REML criterion, for a REML fit, and the
+            likelihood itself for a maximum likelihood fit (lme4's ``logLik``).
+        fitted_values: ``(n_samples, n_features)`` fitted values X beta + Z b, with
+            the random effects b at their best linear unbiased predictions,
+            gamma_k Z_k' P y (lme4's ``fitted``, which includes them).
+        residual_df: ``(n_features,)`` approximate residual degrees of freedom,
+            tr((I - H)' (I - H)) for the matrix H that maps the weighted values to
+            the weighted fitted values (variancePartition's ``rdf.merMod``). It is
+            n - p when every variance component is zero, and falls towards n minus
+            the rank of the fixed and random effects together as they grow.
+        mean_weights: ``(n_features,)`` mean of each feature's weights (one without
+            weights): ``residual_variance / mean_weights`` is the residual variance
+            of an observation of the feature's average weight.
+        mean_expression: ``(n_features,)`` unweighted mean of each feature's values
+            (limma's ``Amean``, R's ``rowMeans`` to the last bit).
     """
 
     coefficients: FloatArray
@@ -224,13 +268,19 @@ class MixedModelFit:
     coefficient_names: tuple[str, ...]
     component_names: tuple[str, ...]
     design: FloatArray
+    method: str
+    log_likelihood: FloatArray
+    fitted_values: FloatArray
+    residual_df: FloatArray
+    mean_weights: FloatArray
+    mean_expression: FloatArray
 
     def __repr__(self) -> str:
         return (
             f"MixedModelFit(n_features={self.coefficients.shape[0]}, "
             f"n_samples={self.design.shape[0]}, "
             f"coefficient_names={self.coefficient_names!r}, "
-            f"component_names={self.component_names!r})"
+            f"component_names={self.component_names!r}, method={self.method!r})"
         )
 
 
@@ -281,9 +331,10 @@ def fit_mixed_model(
     design: Design,
     *,
     weights: npt.ArrayLike | None = None,
+    method: Literal["reml", "ml"] = "reml",
     n_threads: int | None = None,
 ) -> MixedModelFit:
-    """Fit a linear mixed model with random intercepts to every feature by REML.
+    """Fit a linear mixed model with random intercepts to every feature by REML or ML.
 
     Each column of ``y`` is fitted with the fixed effects and the random intercepts
     of ``design``, as lme4's ``lmer(y ~ ... + (1 | donor), REML = TRUE, weights =
@@ -304,6 +355,10 @@ def fit_mixed_model(
             ``(n_samples, n_features)`` for observation weights (as from voom):
             the residual variance of an observation is sigma^2 / weight. They must
             be finite and positive.
+        method: ``"reml"`` for restricted maximum likelihood, lme4's default
+            (``REML = TRUE``), or ``"ml"`` for maximum likelihood (``REML = FALSE``),
+            which variancePartition's ``voomWithDreamWeights`` fits to find its
+            precision weights.
         n_threads: The most threads for fitting features, as for
             ``fit_linear_model``. ``None`` uses numba's setting for the calling
             thread (see ``numba.set_num_threads``). The result does not depend on
@@ -314,17 +369,19 @@ def fit_mixed_model(
     Returns:
         The fits. They store, for every feature, the derivatives of the covariance
         matrix of the coefficients with respect to each variance parameter:
-        ``n_features * (n_components + 1) * n_coefficients**2`` floats.
+        ``n_features * (n_components + 1) * n_coefficients**2`` floats, and the
+        fitted values, as many floats as ``y``.
 
     Raises:
         TypeError: If ``design`` is not a ``Design``, an input is not real-valued,
-            ``n_threads`` is not an integer, or an input is or holds a numpy masked
-            array.
+            ``method`` is not a string, ``n_threads`` is not an integer, or an input
+            is or holds a numpy masked array.
         ValueError: If shapes disagree, ``y`` is not finite, a weight is not finite
-            and positive, ``n_threads`` is below 1, the design has no random effects
-            or one that is not a random intercept, its fixed effects are not of full
-            column rank, a random effect fails the design checks, or the fixed and
-            random effects together span every sample.
+            and positive, ``method`` is unknown, ``n_threads`` is below 1, the
+            design has no random effects or one that is not a random intercept, its
+            fixed effects are not of full column rank, a random effect fails the
+            design checks, or the fixed and random effects together span every
+            sample.
 
     Example:
         >>> import numpy as np
@@ -337,61 +394,78 @@ def fit_mixed_model(
         >>> fit.component_names
         ('donor',)
     """
+    ml = _maximum_likelihood(method)
     with thread_limit(n_threads):
-        x, names, codes, n_levels, components = _mixed_design(design)
-        n_samples, n_coefficients = x.shape
-        values = _response_matrix(y, n_samples)
-        weight_rows = _positive_weights(weights, values.shape)
-        n_features = values.shape[1]
+        parts = _mixed_design(design)
+        return _fit(y, weights, ml, parts)
 
-        # The fixed effects in an orthonormal basis of the columns of x, x = q r: the
-        # cross-products of q are as well conditioned as x itself. Projecting each
-        # feature onto the columns of q first, and fitting what remains, changes no
-        # variance estimate (the REML criterion depends on y only through its part
-        # orthogonal to the columns of x) and shifts the coefficients by the
-        # projection, which is added back.
-        q, r = np.linalg.qr(x)
-        projection = q.T @ values
-        residuals = values - q @ projection
-        # A feature that the fixed effects fit exactly keeps residuals of rounding
-        # size; they are set to zero, which leaves it unfitted.
-        weight_columns = weight_rows.T
-        residual_norm = np.sum(weight_columns * residuals**2, axis=0)
-        value_norm = np.sum(weight_columns * values**2, axis=0)
-        residuals[:, residual_norm <= _EXACT_FIT**2 * value_norm] = 0.0
-        absorbed = int(np.argmax(n_levels))
-        offsets = np.full(n_levels.size, -1, dtype=np.int64)
-        others = [k for k in range(n_levels.size) if k != absorbed]
-        offsets[others] = np.cumsum([0, *n_levels[others]])[:-1]
-        outputs = _empty_outputs(n_features, n_coefficients, n_levels.size)
-        arguments = (
-            _writable_c_array(residuals.T, np.float64),
-            weight_rows,
-            _writable_c_array(q, np.float64),
-            _writable_c_array(codes, np.int64),
-            _writable_c_array(n_levels, np.int64),
-            offsets,
-            absorbed,
-            int(n_levels[others].sum()),
-        )
-        threads = min(numba.get_num_threads(), n_features)
-        if threads > 1:
-            # Runs of consecutive features on Python threads, several per thread to
-            # balance the work; the compiled fits release the GIL. Each feature is
-            # fitted by the same operations whatever its run, so the result does not
-            # depend on the number of threads.
-            n_runs = min(n_features, 4 * threads)
-            bounds = [
-                (run * n_features // n_runs, (run + 1) * n_features // n_runs)
-                for run in range(n_runs)
-            ]
-            with ThreadPoolExecutor(max_workers=threads) as pool:
-                for _ in pool.map(
-                    lambda run: _fit_features(*arguments, *run, *outputs), bounds
-                ):
-                    pass
-        else:
-            _fit_features(*arguments, 0, n_features, *outputs)
+
+def _fit(
+    y: npt.ArrayLike, weights: npt.ArrayLike | None, ml: bool, parts: "_MixedDesign"
+) -> MixedModelFit:
+    """Fit every feature of ``y`` with checked design parts, as fit_mixed_model does.
+
+    Call it within ``thread_limit``, which sets the threads it uses.
+    """
+    x, names, codes, n_levels, components = parts
+    n_samples, n_coefficients = x.shape
+    values = _response_matrix(y, n_samples)
+    weight_rows = _positive_weights(weights, values.shape)
+    n_features = values.shape[1]
+
+    # The fixed effects in an orthonormal basis of the columns of x, x = q r: the
+    # cross-products of q are as well conditioned as x itself. Projecting each
+    # feature onto the columns of q first, and fitting what remains, changes no
+    # variance estimate (the REML criterion depends on y only through its part
+    # orthogonal to the columns of x, and so does the profiled likelihood) and
+    # shifts the coefficients by the projection, which is added back.
+    q, r = np.linalg.qr(x)
+    projection = q.T @ values
+    residuals = values - q @ projection
+    # A feature that the fixed effects fit exactly keeps residuals of rounding
+    # size; they are set to zero, which leaves it unfitted.
+    weight_columns = weight_rows.T
+    residual_norm = np.sum(weight_columns * residuals**2, axis=0)
+    value_norm = np.sum(weight_columns * values**2, axis=0)
+    residuals[:, residual_norm <= _EXACT_FIT**2 * value_norm] = 0.0
+    absorbed = int(np.argmax(n_levels))
+    offsets = np.full(n_levels.size, -1, dtype=np.int64)
+    others = [k for k in range(n_levels.size) if k != absorbed]
+    offsets[others] = np.cumsum([0, *n_levels[others]])[:-1]
+    level_starts = np.cumsum([0, *n_levels])[:-1].astype(np.int64)
+    outputs = _empty_outputs(
+        n_features, n_coefficients, n_levels.size, int(n_levels.sum())
+    )
+    arguments = (
+        _writable_c_array(residuals.T, np.float64),
+        weight_rows,
+        _writable_c_array(q, np.float64),
+        _writable_c_array(codes, np.int64),
+        _writable_c_array(n_levels, np.int64),
+        offsets,
+        absorbed,
+        int(n_levels[others].sum()),
+        level_starts,
+        ml,
+    )
+    threads = min(numba.get_num_threads(), n_features)
+    if threads > 1:
+        # Runs of consecutive features on Python threads, several per thread to
+        # balance the work; the compiled fits release the GIL. Each feature is
+        # fitted by the same operations whatever its run, so the result does not
+        # depend on the number of threads.
+        n_runs = min(n_features, 4 * threads)
+        bounds = [
+            (run * n_features // n_runs, (run + 1) * n_features // n_runs)
+            for run in range(n_runs)
+        ]
+        with ThreadPoolExecutor(max_workers=threads) as pool:
+            for _ in pool.map(
+                lambda run: _fit_features(*arguments, *run, *outputs), bounds
+            ):
+                pass
+    else:
+        _fit_features(*arguments, 0, n_features, *outputs)
     (
         coefficients,
         unscaled_covariance,
@@ -402,6 +476,8 @@ def fit_mixed_model(
         parameter_covariance,
         converged,
         iterations,
+        random_effects,
+        residual_df,
     ) = outputs
 
     # Back to the coefficients of x: beta = r^-1 (beta_q + projection).
@@ -414,14 +490,20 @@ def fit_mixed_model(
     derivatives = np.einsum(
         "ij,gcjk,lk->gcil", inverse, derivatives, inverse, optimize=True
     )
-    # log det(x' V^-1 x) = log det(q' V^-1 q) + 2 log |det r|.
-    criterion = criterion + 2.0 * float(np.sum(np.log(np.abs(np.diag(r)))))
+    if not ml:
+        # log det(x' V^-1 x) = log det(q' V^-1 q) + 2 log |det r|.
+        criterion = criterion + 2.0 * float(np.sum(np.log(np.abs(np.diag(r)))))
+    # The fitted values X beta + sum_k Z_k b_k, with the predicted random effects.
+    fitted = x @ coefficients.T
+    for k in range(n_levels.size):
+        fitted += random_effects[:, level_starts[k] + codes[k]].T
+    mean_weights = np.broadcast_to(np.mean(weight_rows, axis=1), n_features)
     return MixedModelFit(
         coefficients=_frozen(coefficients),
         cov_coefficients=_frozen(_symmetric(covariance)),
         variance_components=_frozen(ratios * residual_variance[:, None]),
         residual_variance=_frozen(residual_variance),
-        reml_criterion=_frozen(criterion),
+        reml_criterion=_frozen(np.full(n_features, np.nan) if ml else criterion),
         boundary=_frozen(ratios == 0.0, np.bool_),
         converged=_frozen(converged, np.bool_),
         iterations=_frozen(iterations, np.int64),
@@ -430,6 +512,12 @@ def fit_mixed_model(
         coefficient_names=names,
         component_names=components,
         design=_frozen(x),
+        method="ml" if ml else "reml",
+        log_likelihood=_frozen(-0.5 * criterion),
+        fitted_values=_frozen(fitted),
+        residual_df=_frozen(residual_df),
+        mean_weights=_frozen(mean_weights),
+        mean_expression=_frozen(_observed_means(values)),
     )
 
 
@@ -521,9 +609,25 @@ def fixed_effect_tests(
 # Arguments.
 
 
-def _mixed_design(
-    design: Any,
-) -> tuple[FloatArray, tuple[str, ...], IntArray, IntArray, tuple[str, ...]]:
+class _MixedDesign(NamedTuple):
+    """The parts of a mixed model's design that the fits read."""
+
+    x: FloatArray  # (n_samples, n_coefficients) fixed effects, of full column rank
+    names: tuple[str, ...]  # the names of the fixed effects
+    codes: IntArray  # (n_components, n_samples) level of each sample, from 0
+    n_levels: IntArray  # the number of levels of each grouping factor
+    components: tuple[str, ...]  # the names of the grouping factors
+
+
+class _SomeSamples:
+    """What the random-effect checks of a design read, for some of its samples."""
+
+    def __init__(self, n_samples: int, random_parts: tuple[Any, ...]) -> None:
+        self.n_samples = n_samples
+        self._random_parts = random_parts
+
+
+def _mixed_design(design: Any) -> _MixedDesign:
     """The fixed-effects matrix, its column names, and the random intercepts.
 
     Returns:
@@ -531,6 +635,81 @@ def _mixed_design(
         grouping factor (``(n_components, n_samples)``, levels numbered from 0), the
         number of levels of each factor, and the factors' names.
     """
+    _random_intercepts(design)
+    report = design.check()
+    for issue in report.errors:
+        if issue.kind.startswith("random_"):
+            raise ValueError(f"the random effects cannot be estimated: {issue}")
+    if report.aliased:
+        raise ValueError(
+            "the fixed effects are not of full column rank: column(s) "
+            + ", ".join(repr(name) for name in report.aliased)
+            + " are linear combinations of the preceding columns; remove them or "
+            "reparametrise the design (see design.check())"
+        )
+    x = np.array(design.matrix, dtype=np.float64, order="C")
+    parts = design._random_parts
+    codes = np.array([part[1] for part in parts], dtype=np.int64).reshape(
+        len(parts), x.shape[0]
+    )
+    return _spanning_checked(x, tuple(design.columns), codes, design)
+
+
+def _mixed_design_of_samples(
+    design: Design, rows: npt.NDArray[np.intp], x: FloatArray, names: tuple[str, ...]
+) -> _MixedDesign:
+    """The design parts of some samples of a design, checked as for the design.
+
+    For a fit to a subset of a design's samples, such as those a workflow keeps in
+    one group of a cube: the fixed effects are ``x``, rows of the design's matrix
+    for those samples restricted to columns of full rank, and the random intercepts
+    are the design's, with the levels those samples have, numbered from 0 in order
+    of appearance. The random effects are checked on these samples as
+    ``design.check()`` checks them on all: a factor with one level left, levels with
+    one sample each, levels that the fixed effects separate, or two factors that
+    group the samples alike cannot be estimated.
+
+    Args:
+        design: A ``Design`` with random intercepts, as fit_mixed_model takes.
+        rows: The positions of the samples among the design's, in fitting order.
+        x: ``(len(rows), n_coefficients)`` fixed effects of the samples.
+        names: The names of the columns of ``x``.
+
+    Raises:
+        ValueError: As fit_mixed_model, for these samples; the message says why.
+    """
+    _random_intercepts(design)
+    x = np.array(x, dtype=np.float64, order="C")
+    aliasing = _aliasing(x)
+    if aliasing.aliased:
+        raise ValueError(
+            "the fixed effects are not of full column rank: column(s) "
+            + ", ".join(repr(names[j]) for j in aliasing.aliased)
+            + " are linear combinations of the preceding columns"
+        )
+    parts = []
+    for effect, codes, effects in design._random_parts:
+        index: dict[int, int] = {}
+        recoded = np.array(
+            [index.setdefault(int(code), len(index)) for code in codes[rows]],
+            dtype=np.intp,
+        )
+        parts.append((effect, recoded, replace(effects, matrix=effects.matrix[rows])))
+    errors: list[Any] = []
+    # The checks read the number of samples and the random effects of a Design.
+    _random_checks(
+        cast(Design, _SomeSamples(len(rows), tuple(parts))), aliasing, errors
+    )
+    for issue in errors:
+        raise ValueError(f"the random effects cannot be estimated: {issue}")
+    codes = np.array([part[1] for part in parts], dtype=np.int64).reshape(
+        len(parts), len(rows)
+    )
+    return _spanning_checked(x, tuple(names), codes, design)
+
+
+def _random_intercepts(design: Any) -> None:
+    """Refuse anything but a ``Design`` whose random effects are random intercepts."""
     reject_masked(design, "design")
     if not isinstance(design, Design):
         raise TypeError(
@@ -550,23 +729,13 @@ def _mixed_design(
                 f"{effect.group}), but the random effect {effect} has random slopes, "
                 "which are not available yet"
             )
-    report = design.check()
-    for issue in report.errors:
-        if issue.kind.startswith("random_"):
-            raise ValueError(f"the random effects cannot be estimated: {issue}")
-    if report.aliased:
-        raise ValueError(
-            "the fixed effects are not of full column rank: column(s) "
-            + ", ".join(repr(name) for name in report.aliased)
-            + " are linear combinations of the preceding columns; remove them or "
-            "reparametrise the design (see design.check())"
-        )
-    x = np.array(design.matrix, dtype=np.float64, order="C")
-    n_samples, n_coefficients = x.shape
-    parts = design._random_parts
-    codes = np.array([part[1] for part in parts], dtype=np.int64).reshape(
-        len(parts), n_samples
-    )
+
+
+def _spanning_checked(
+    x: FloatArray, names: tuple[str, ...], codes: IntArray, design: Design
+) -> _MixedDesign:
+    """The parts, after refusing fixed and random effects that span every sample."""
+    n_samples = x.shape[0]
     n_levels = codes.max(axis=1) + 1
     columns = [x]
     for row, count in zip(codes, n_levels):
@@ -581,9 +750,19 @@ def _mixed_design(
             "exactly; fit_mixed_model does not fit such designs yet: add samples, or "
             "remove a random effect or a covariate"
         )
-    names = tuple(design.columns)
     components = tuple(effect.group for effect in design.random)
-    return x, names, codes, n_levels, components
+    return _MixedDesign(x, names, codes, n_levels, components)
+
+
+def _maximum_likelihood(method: Any) -> bool:
+    """Whether ``method`` asks for maximum likelihood ("ml") rather than REML."""
+    if isinstance(method, str) and method in ("reml", "ml"):
+        return method == "ml"
+    error = ValueError if isinstance(method, str) else TypeError
+    raise error(
+        "method must be 'reml' (restricted maximum likelihood, lme4's REML = TRUE) "
+        f"or 'ml' (maximum likelihood, REML = FALSE), got {method!r}"
+    )
 
 
 def _response_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
@@ -659,16 +838,19 @@ def _symmetric(matrices: FloatArray) -> FloatArray:
 # The fits, compiled.
 
 
-def _empty_outputs(n_features: int, p: int, n_components: int) -> tuple[Any, ...]:
+def _empty_outputs(
+    n_features: int, p: int, n_components: int, n_levels: int
+) -> tuple[Any, ...]:
     """The outputs of the compiled fits, NaN (or not converged) until written.
 
     For each feature, in the orthonormal basis q of the fixed effects: the
     coefficients, the unscaled covariance matrix (q' V^-1 q)^-1, the residual
-    variance, the variance ratios gamma_k = sigma_k^2 / sigma^2, the REML criterion
-    (with log det(q' V^-1 q) in place of log det(x' V^-1 x)), the derivatives of the
-    covariance matrix of the coefficients with respect to each variance parameter,
-    the asymptotic covariance matrix of the variance parameters, whether the fit
-    converged and its iterations.
+    variance, the variance ratios gamma_k = sigma_k^2 / sigma^2, the criterion (for
+    REML with log det(q' V^-1 q) in place of log det(x' V^-1 x)), the derivatives of
+    the covariance matrix of the coefficients with respect to each variance
+    parameter, the asymptotic covariance matrix of the variance parameters, whether
+    the fit converged, its iterations, the predicted random effects of every level
+    of every grouping factor, and the approximate residual degrees of freedom.
     """
     parameters = n_components + 1
     return (
@@ -681,6 +863,8 @@ def _empty_outputs(n_features: int, p: int, n_components: int) -> tuple[Any, ...
         np.full((n_features, parameters, parameters), np.nan),
         np.zeros(n_features, dtype=np.bool_),
         np.zeros(n_features, dtype=np.int64),
+        np.full((n_features, n_levels), np.nan),
+        np.full(n_features, np.nan),
     )
 
 
@@ -712,6 +896,11 @@ _Work = namedtuple(
         "squared_scores",
         "frobenius",
         "score_products",
+        "tmat_v",
+        "absorbed_cross_v",
+        "column_norms_v",
+        "trace_v",
+        "frobenius_v",
         "gradient",
         "hessian",
         "residual_sum",
@@ -773,6 +962,11 @@ def _work_arrays(n_components: int, q_absorbed: int, q_rest: int, p: int) -> Any
         np.empty(k),  # squared_scores: |Z_k' P y|^2
         np.empty((k, k)),  # frobenius: |Z_k' P Z_l|^2
         np.empty((k, k)),  # score_products: (Z_k' P y)' Z_k' P Z_l (Z_l' P y)
+        np.empty((q_rest, q_rest)),  # tmat_v: Z_rest' V^-1 Z_rest (maximum likelihood)
+        np.empty((q_absorbed, q_rest)),  # absorbed_cross_v: Z_a' V^-1 Z_rest
+        np.empty(q_absorbed),  # column_norms_v: the random-effect rows' part
+        np.empty(k),  # trace_v: tr(Z_k' V^-1 Z_k)
+        np.empty((k, k)),  # frobenius_v: |Z_k' V^-1 Z_l|^2
         np.empty(k),  # gradient of the criterion in gamma
         np.empty((k, k)),  # hessian of the criterion in gamma
         np.empty(1),  # residual_sum: r^2 = y' P y
@@ -806,6 +1000,8 @@ def _fit_features(
     offsets: IntArray,
     absorbed: int,
     q_rest: int,
+    level_starts: IntArray,
+    ml: bool,
     start: int,
     stop: int,
     coefficients: FloatArray,
@@ -817,6 +1013,8 @@ def _fit_features(
     parameter_covariance: FloatArray,
     converged: BoolArray,
     iterations: IntArray,
+    random_effects: FloatArray,
+    residual_df: FloatArray,
 ) -> None:
     """Fit features ``start:stop`` into the outputs, with work arrays of their own.
 
@@ -838,6 +1036,9 @@ def _fit_features(
         absorbed: The grouping factor whose random effects are absorbed in closed
             form, the one with the most levels.
         q_rest: The number of levels of the other grouping factors.
+        level_starts: For each grouping factor, the position of its first level in
+            the rows of ``random_effects``, the factors in order.
+        ml: Whether to maximise the likelihood rather than the restricted one.
         start, stop: The run of features to fit.
         coefficients, ...: The outputs, from :func:`_empty_outputs`.
     """
@@ -860,7 +1061,7 @@ def _fit_features(
             work,
         )
         if _reproduced_by_effects(work, q_rest + p):
-            # The REML criterion has no minimum: nothing to estimate.
+            # The criterion has no minimum: nothing to estimate.
             continue
         done, count, value = _minimize(
             n_samples,
@@ -871,6 +1072,7 @@ def _fit_features(
             q_rest,
             sum_log_weights,
             1.0 / mean_weight,
+            ml,
             work,
         )
         if count < 0:
@@ -881,7 +1083,7 @@ def _fit_features(
         criterion[g] = value
         for k in range(n_components):
             ratios[g, k] = ratio[k]
-        variance = work.residual_sum[0] / (n_samples - p)
+        variance = work.residual_sum[0] / (n_samples if ml else n_samples - p)
         residual_variance[g] = variance
         _estimates(
             ratio,
@@ -892,12 +1094,77 @@ def _fit_features(
             offsets,
             absorbed,
             q_rest,
+            ml,
             work,
             coefficients[g],
             unscaled_covariance[g],
             derivatives[g],
             parameter_covariance[g],
         )
+        _predictions(
+            ratio,
+            n_levels,
+            offsets,
+            absorbed,
+            q_rest,
+            level_starts,
+            work,
+            random_effects[g],
+        )
+        residual_df[g] = _approximate_residual_df(ratio, n_samples, p, work)
+
+
+@jit(no_cpython_wrapper=True)
+def _predictions(
+    ratio: FloatArray,
+    n_levels: IntArray,
+    offsets: IntArray,
+    absorbed: int,
+    q_rest: int,
+    level_starts: IntArray,
+    work: Any,
+    out: FloatArray,
+) -> None:
+    """The predictions of the random effects (BLUPs) at the optimum, into ``out``.
+
+    The best linear unbiased predictor of the effects of factor k is
+    sigma_k^2 Z_k' Sigma^-1 (y - X beta) = gamma_k Z_k' P y, with Sigma = sigma^2 V
+    (Henderson 1975): the scores Z_k' P y of the optimum's evaluation, times its
+    ratio. A factor at the boundary predicts zero.
+    """
+    for k in range(ratio.size):
+        first = level_starts[k]
+        if k == absorbed:
+            for j in range(n_levels[k]):
+                out[first + j] = ratio[k] * work.absorbed_scores[j]
+        else:
+            for i in range(n_levels[k]):
+                out[first + i] = ratio[k] * work.tmat[offsets[k] + i, q_rest]
+
+
+@jit(no_cpython_wrapper=True)
+def _approximate_residual_df(
+    ratio: FloatArray, n_samples: int, p: int, work: Any
+) -> float:
+    """tr((I - H)' (I - H)) for the hat matrix H of the fitted values, weighted.
+
+    H maps the weighted values W^1/2 y to the weighted fitted values W^1/2 (X beta +
+    Z b), so that I - H = W^-1/2 P W^-1/2 =: Q. From P V P = P, Q^2 = Q - sum_k
+    gamma_k Q Z~_k Z~_k' Q with Z~_k = W^1/2 Z_k; with tr(Q) = n - p - sum_k
+    gamma_k tr(Z_k' P Z_k), this gives
+
+        tr(Q^2) = n - p - 2 sum_k gamma_k tr(Z_k' P Z_k)
+                  + sum_kl gamma_k gamma_l |Z_k' P Z_l|^2,
+
+    from the traces and norms of the optimum's evaluation. It is n - p when every
+    component is at zero, a linear model's residual df.
+    """
+    total = float(n_samples - p)
+    for k in range(ratio.size):
+        total -= 2.0 * ratio[k] * work.trace[k]
+        for other in range(ratio.size):
+            total += ratio[k] * ratio[other] * work.frobenius[k, other]
+    return total
 
 
 @jit(no_cpython_wrapper=True)
@@ -1038,16 +1305,22 @@ def _criterion(
     absorbed: int,
     q_rest: int,
     sum_log_weights: float,
+    ml: bool,
     work: Any,
 ) -> float:
-    """The profiled REML criterion at the variance ratios, and its derivatives.
+    """The profiled REML (or ML) criterion at the variance ratios, and its derivatives.
 
     Also fills ``work.gradient`` and ``work.hessian`` with the derivatives of the
     criterion with respect to the ratios gamma_k, ``work.residual_sum`` with r^2,
     and the traces, norms and products of Z_k' P Z_l and Z_k' P y that the
-    derivatives are made of. Returns infinity where the criterion is not defined:
-    where the fixed effects fit the feature exactly (r^2 = 0), or the covariance
-    matrix is numerically singular.
+    derivatives are made of. With ``ml``, the criterion is the profiled deviance of
+    maximum likelihood, log det V + n (1 + log(2 pi r^2 / n)), whose derivatives
+    take their traces and norms from Z_k' V^-1 Z_l instead (``work.trace_v`` and
+    ``work.frobenius_v``): after the random-effect pivots of the Cholesky
+    factorisation, the Schur complement of the queries is their cross-product
+    under V^-1, and after the fixed-effect pivots too, under P. Returns infinity
+    where the criterion is not defined: where the fixed effects fit the feature
+    exactly (r^2 = 0), or the covariance matrix is numerically singular.
     """
     n_components = ratio.size
     level_weights = work.level_weights
@@ -1062,6 +1335,7 @@ def _criterion(
     chol = work.chol
     border = work.border
     tmat = work.tmat
+    tmat_v = work.tmat_v
     ga = ratio[absorbed]
 
     # The cross-products under the covariance of the absorbed factor alone: within
@@ -1115,18 +1389,20 @@ def _criterion(
         border[s, q_rest] = scale[s] * gam[s, last]
     _forward_substitution(chol, pivots, border, q_rest + 1)
     # tmat = the queries' cross-products minus border' border: Z_rest' P Z_rest,
-    # Z_rest' P y and y' P y.
+    # Z_rest' P y and y' P y. Its random-effect block after the random pivots alone
+    # is Z_rest' V^-1 Z_rest, which maximum likelihood needs.
     for i in range(q_rest + 1):
         ci = i if i < q_rest else last
         for j in range(i + 1):
             cj = j if j < q_rest else last
             tmat[i, j] = gam[ci, cj]
-    for s in range(pivots):
-        for i in range(q_rest + 1):
-            v = border[s, i]
-            if v != 0.0:
-                for j in range(i + 1):
-                    tmat[i, j] -= v * border[s, j]
+    _subtract_cross_products(border, 0, q_rest, tmat, q_rest + 1)
+    if ml:
+        for i in range(q_rest):
+            for j in range(i + 1):
+                tmat_v[i, j] = tmat[i, j]
+                tmat_v[j, i] = tmat[i, j]
+    _subtract_cross_products(border, q_rest, pivots, tmat, q_rest + 1)
     for i in range(q_rest + 1):
         for j in range(i):
             tmat[j, i] = tmat[i, j]
@@ -1134,19 +1410,29 @@ def _criterion(
     work.residual_sum[0] = r2
     if not r2 > 0.0:
         return np.inf
-    df = n_samples - p
-    value = (
-        -sum_log_weights
-        + log_absorbed
-        + log_random
-        + log_fixed
-        + df * (1.0 + _LOG_TWO_PI + math.log(r2 / df))
-    )
+    if ml:
+        df = n_samples
+        value = (
+            -sum_log_weights
+            + log_absorbed
+            + log_random
+            + df * (1.0 + _LOG_TWO_PI + math.log(r2 / df))
+        )
+    else:
+        df = n_samples - p
+        value = (
+            -sum_log_weights
+            + log_absorbed
+            + log_random
+            + log_fixed
+            + df * (1.0 + _LOG_TWO_PI + math.log(r2 / df))
+        )
 
     # Queries of the absorbed factor's levels, with the same pivots.
     gb = work.absorbed_border
     scores = work.absorbed_scores
     gc = work.absorbed_cross
+    gc_v = work.absorbed_cross_v
     for s in range(pivots):
         for j in range(q_absorbed):
             gb[s, j] = scale[s] * shrink[j] * cross[j, s]
@@ -1156,6 +1442,11 @@ def _criterion(
         for i in range(q_rest):
             gc[j, i] = shrink[j] * cross[j, i]
     for s in range(pivots):
+        if ml and s == q_rest:
+            # Z_a' V^-1 Z_rest, before the fixed-effect pivots.
+            for j in range(q_absorbed):
+                for i in range(q_rest):
+                    gc_v[j, i] = gc[j, i]
         y_part = border[s, q_rest]
         for j in range(q_absorbed):
             v = gb[s, j]
@@ -1163,10 +1454,18 @@ def _criterion(
                 scores[j] -= v * y_part
                 for i in range(q_rest):
                     gc[j, i] -= v * border[s, i]
+    if ml and pivots == q_rest:
+        for j in range(q_absorbed):
+            for i in range(q_rest):
+                gc_v[j, i] = gc[j, i]
     norms = work.column_norms
+    norms_v = work.column_norms_v
     for j in range(q_absorbed):
         total = 0.0
-        for s in range(pivots):
+        for s in range(q_rest):
+            total += gb[s, j] * gb[s, j]
+        norms_v[j] = total
+        for s in range(q_rest, pivots):
             total += gb[s, j] * gb[s, j]
         norms[j] = total
     products = work.absorbed_gram
@@ -1181,9 +1480,12 @@ def _criterion(
     squared = work.squared_scores
     frobenius = work.frobenius
     score_products = work.score_products
+    trace_v = work.trace_v
+    frobenius_v = work.frobenius_v
     for k in range(n_components):
         if k == absorbed:
-            # Z_a' P Z_a = diag(w_j shrink_j) - gb' gb, never formed.
+            # Z_a' P Z_a = diag(w_j shrink_j) - gb' gb, never formed; Z_a' V^-1 Z_a
+            # takes only the random-effect rows of gb.
             t_total = 0.0
             s_total = 0.0
             f_total = 0.0
@@ -1206,6 +1508,19 @@ def _criterion(
             squared[k] = s_total
             frobenius[k, k] = f_total
             score_products[k, k] = p_total
+            if ml:
+                t_total = 0.0
+                f_total = 0.0
+                for j in range(q_absorbed):
+                    d = level_weights[j] * shrink[j]
+                    t_total += d - norms_v[j]
+                    f_total += d * d - 2.0 * d * norms_v[j]
+                for s in range(q_rest):
+                    f_total += products[s, s] * products[s, s]
+                    for t in range(s):
+                        f_total += 2.0 * products[s, t] * products[s, t]
+                trace_v[k] = t_total
+                frobenius_v[k, k] = f_total
             continue
         first = offsets[k]
         stop = first + n_levels[k]
@@ -1216,6 +1531,11 @@ def _criterion(
             s_total += tmat[i, q_rest] * tmat[i, q_rest]
         trace[k] = t_total
         squared[k] = s_total
+        if ml:
+            t_total = 0.0
+            for i in range(first, stop):
+                t_total += tmat_v[i, i]
+            trace_v[k] = t_total
         for other in range(k + 1):
             if other == absorbed:
                 continue
@@ -1229,6 +1549,13 @@ def _criterion(
             frobenius[other, k] = f_total
             score_products[k, other] = p_total
             score_products[other, k] = p_total
+            if ml:
+                f_total = 0.0
+                for i in range(first, stop):
+                    for v in range(offsets[other], offsets[other] + n_levels[other]):
+                        f_total += tmat_v[i, v] * tmat_v[i, v]
+                frobenius_v[k, other] = f_total
+                frobenius_v[other, k] = f_total
         # The pair with the absorbed factor: Z_a' P Z_k is a block of gc.
         f_total = 0.0
         p_total = 0.0
@@ -1240,15 +1567,43 @@ def _criterion(
         frobenius[absorbed, k] = f_total
         score_products[k, absorbed] = p_total
         score_products[absorbed, k] = p_total
+        if ml:
+            f_total = 0.0
+            for j in range(q_absorbed):
+                for i in range(first, stop):
+                    f_total += gc_v[j, i] * gc_v[j, i]
+            frobenius_v[k, absorbed] = f_total
+            frobenius_v[absorbed, k] = f_total
 
+    # The traces and norms of the criterion's derivatives: of Z' P Z for REML, of
+    # Z' V^-1 Z for maximum likelihood; the scores are of P y in both.
+    traces = trace_v if ml else trace
+    norms_of_pairs = frobenius_v if ml else frobenius
     for k in range(n_components):
-        work.gradient[k] = trace[k] - df * squared[k] / r2
+        work.gradient[k] = traces[k] - df * squared[k] / r2
         for other in range(n_components):
-            work.hessian[k, other] = -frobenius[k, other] + df * (
+            work.hessian[k, other] = -norms_of_pairs[k, other] + df * (
                 2.0 * score_products[k, other] / r2
                 - squared[k] * squared[other] / (r2 * r2)
             )
     return value
+
+
+@jit(no_cpython_wrapper=True)
+def _subtract_cross_products(
+    border: FloatArray, first: int, stop: int, target: FloatArray, size: int
+) -> None:
+    """Subtract the cross-products of rows ``first:stop`` of ``border`` from ``target``.
+
+    Only the lower triangle of ``target[:size, :size]`` is updated, row by row of
+    ``border`` in order.
+    """
+    for s in range(first, stop):
+        for i in range(size):
+            v = border[s, i]
+            if v != 0.0:
+                for j in range(i + 1):
+                    target[i, j] -= v * border[s, j]
 
 
 @jit(no_cpython_wrapper=True)
@@ -1261,9 +1616,10 @@ def _minimize(
     q_rest: int,
     sum_log_weights: float,
     start: float,
+    ml: bool,
     work: Any,
 ) -> tuple[bool, int, float]:
-    """Minimise the REML criterion over u_k = log(1 + c_k gamma_k) >= 0.
+    """Minimise the REML (or ML) criterion over u_k = log(1 + c_k gamma_k) >= 0.
 
     Projected Newton's method from gamma_k = ``start`` for every k, with a
     backtracking line search; see the module docstring. Every evaluation of the
@@ -1302,6 +1658,7 @@ def _minimize(
             absorbed,
             q_rest,
             sum_log_weights,
+            ml,
             work,
         )
         if finishing:
@@ -1446,6 +1803,7 @@ def _estimates(
     offsets: IntArray,
     absorbed: int,
     q_rest: int,
+    ml: bool,
     work: Any,
     coefficients: FloatArray,
     unscaled_covariance: FloatArray,
@@ -1456,7 +1814,10 @@ def _estimates(
 
     Writes the coefficients in the orthonormal basis, (q' V^-1 q)^-1, the derivatives
     of the covariance matrix of the coefficients with respect to (sigma_1^2, ...,
-    sigma_K^2, sigma^2), and the asymptotic covariance matrix of these parameters.
+    sigma_K^2, sigma^2), and the asymptotic covariance matrix of these parameters:
+    twice the inverse of the Hessian of the REML deviance, or with ``ml`` of the
+    deviance of maximum likelihood, whose Hessian takes the norms of Z_k' V^-1 Z_l in
+    place of those of Z_k' P Z_l and n in place of n - p.
     """
     n_components = ratio.size
     chol = work.chol
@@ -1521,9 +1882,10 @@ def _estimates(
             for j in range(p):
                 residual[i, j] -= ratio[k] * target[i, j]
 
-    # The Hessian of the REML deviance in (gamma_k of the free components, sigma^2),
-    # twice its inverse, then mapped to (sigma_1^2, ..., sigma_K^2, sigma^2) by the
-    # Jacobian of sigma_k^2 = gamma_k sigma^2.
+    # The Hessian of the REML (or ML) deviance in (gamma_k of the free components,
+    # sigma^2), twice its inverse, then mapped to (sigma_1^2, ..., sigma_K^2, sigma^2)
+    # by the Jacobian of sigma_k^2 = gamma_k sigma^2.
+    norms_of_pairs = work.frobenius_v if ml else work.frobenius
     free = work.free
     n_free = np.int64(0)
     for k in range(n_components):
@@ -1540,14 +1902,15 @@ def _estimates(
         for b in range(a + 1):
             other = free[b]
             value = (
-                -work.frobenius[k, other]
+                -norms_of_pairs[k, other]
                 + 2.0 * work.score_products[k, other] / variance
             )
             hessian[a, b] = value
             hessian[b, a] = value
         hessian[a, n_free] = work.squared_scores[k] / squared_variance
         hessian[n_free, a] = hessian[a, n_free]
-    hessian[n_free, n_free] = (n_samples - p) / squared_variance
+    df = n_samples if ml else n_samples - p
+    hessian[n_free, n_free] = df / squared_variance
     if not _inverse_positive_definite(
         hessian, size, covariance, work.parameter_product
     ):

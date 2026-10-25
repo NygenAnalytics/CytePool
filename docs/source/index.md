@@ -31,12 +31,13 @@ Nothing is released yet, and the interface may still change.
 | Normalization and filtering | [TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression`](/api/normalization.html) | edgeR, DESeq2 |
 | Designs | [Model matrices from R formulas, named contrasts, design checks](/api/designs.html) | R, limma, lme4 |
 | Linear models | [Ordinary, weighted and generalised least squares for every gene, contrasts](/api/linear_models.html) | limma |
-| Mixed models | [`fit_mixed_model` (random intercepts, by REML), `fixed_effect_tests` (Satterthwaite's degrees of freedom)](/api/mixed_models.html) | lme4, lmerTest |
+| Mixed models | [`fit_mixed_model` (random intercepts, by REML or maximum likelihood), `fixed_effect_tests` (Satterthwaite's degrees of freedom)](/api/mixed_models.html) | lme4, lmerTest |
 | Precision weights for counts | [`voom`](/api/voom.html) | limma |
+| dream | [`voom_with_dream_weights`, `moderated_fixed_effect_tests`](/api/dream.html) | variancePartition |
 | Negative binomial models | [`fit_negative_binomial_model` (edgeR's `glmFit`), deviances](/api/negative_binomial_models.html) | edgeR, mpmath |
 | Empirical Bayes moderation | [Moderated t and F statistics, B-statistics, TREAT](/api/empirical_bayes.html) | limma |
 | Multiple testing | [Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli](/api/multiple_testing.html) | R |
-| Differential expression | [`limma_voom`, `limma_trend` on every cell type of a cube](/api/differential_expression.html) | limma, edgeR |
+| Differential expression | [`limma_voom`, `limma_trend`, `dream_voom` on every cell type of a cube](/api/differential_expression.html) | limma, edgeR, variancePartition |
 | Distributions and smoothers | [Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, quantiles of the first four](/api/distributions.html); [LOWESS, natural spline bases](/api/smoothing.html) | mpmath, R |
 
 The [README](https://github.com/NygenAnalytics/CytePool#planned) lists what is planned

@@ -54,7 +54,7 @@ from cytepool.stats import distributions, special
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
-from cytepool.stats.mixed_models import fit_mixed_model
+from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.voom import voom_with_quality_weights
@@ -261,6 +261,26 @@ def _weighted_by_cells(context: Context) -> dict[str, Any]:
         ),
         "prior_weights": "n_cells",
     }
+
+
+def _dream(context: Context) -> dict[str, Any]:
+    """As _differential_expression, with a random donor intercept and no quality
+    weights, which dream_voom does not estimate."""
+    arguments = _differential_expression(context)
+    del arguments["quality_weights"]
+    return arguments | {
+        "design": Design(
+            SAMPLE_TABLE, "~ condition", random="(1 | donor)", levels=LEVELS
+        ),
+        "span": 0.6,
+        "n_threads": 1,
+    }
+
+
+def _dream_by_cells(context: Context) -> dict[str, Any]:
+    """As _dream, with prior weights from the cell numbers of _weighted_by_cells."""
+    arguments = _weighted_by_cells(context)
+    return arguments | {"design": _dream(context)["design"]}
 
 
 def _scverse_arguments(context: Context, container: str) -> dict[str, Any]:
@@ -682,6 +702,7 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.stats.mixed_models.fit_mixed_model": Entry(
         _mixed_model,
         {"y": None, "weights": None, "n_threads": None},
+        options=("method",),
         objects=("design",),
     ),
     "cytepool.stats.mixed_models.fixed_effect_tests": Entry(
@@ -693,6 +714,40 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"contrasts": None, "names": None},
         options=("df_method",),
         objects=("fit",),
+    ),
+    # dream: voom weights from mixed models, and their moderated tests.
+    "cytepool.stats.dream.voom_with_dream_weights": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": _mixed_model(c)["design"],
+            "library_sizes": LIBRARY_SIZES,
+            "norm_factors": NORM_FACTORS,
+            "span": 1.0,
+            "weights": np.full(COUNTS.shape, 2.0),
+            "method": "reml",
+            "n_threads": 1,
+        },
+        {
+            "counts": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "weights": None,
+            "n_threads": None,
+        },
+        options=("span", "method"),
+        objects=("design",),
+    ),
+    "cytepool.stats.dream.moderated_fixed_effect_tests": Entry(
+        lambda c: {
+            "tests": fixed_effect_tests(fit_mixed_model(**_mixed_model(c))),
+            "stdev_coef_lim": [0.1, 4.0],
+            "trend": np.linspace(1.0, 2.0, 8),
+            "winsor_tail_p": [0.05, 0.1],
+            "prior_estimator": "likelihood",
+        },
+        {"stdev_coef_lim": None, "trend": "NaN", "winsor_tail_p": None},
+        options=("proportion", "robust", "prior_estimator"),
+        objects=("tests",),
     ),
     # A span given as a number; None, the default, chooses it.
     "cytepool.stats.voom.voom": Entry(
@@ -1086,6 +1141,29 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.differential_expression.limma_voom[prior_weights]": Entry(
         _weighted_by_cells, {}, options=("prior_weights",)
     ),
+    "cytepool.differential_expression.dream_voom": Entry(
+        _dream,
+        {
+            "contrasts": None,
+            "groups": None,
+            "min_cells": None,
+            "expression_filter": None,
+            "n_threads": None,
+        },
+        options=(
+            "min_counts",
+            "normalization",
+            "span",
+            "robust",
+            "trend",
+            "adjust_across_groups",
+        ),
+        objects=("cube", "design"),
+        keys={"contrasts": "stim", "expression_filter": "min_count"},
+    ),
+    "cytepool.differential_expression.dream_voom[prior_weights]": Entry(
+        _dream_by_cells, {}, options=("prior_weights",)
+    ),
     "cytepool.differential_expression.limma_trend": Entry(
         _differential_expression,
         {
@@ -1270,6 +1348,7 @@ RECORDS = {
     "cytepool.stats.mixed_models.FixedEffectTests",
     "cytepool.stats.mixed_models.MixedModelFit",
     "cytepool.meta_analysis.MetaAnalysisFit",
+    "cytepool.stats.dream.ModeratedFixedEffectTests",
 }
 
 # Callables that modules with __all__ define but do not export.

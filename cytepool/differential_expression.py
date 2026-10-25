@@ -4,10 +4,13 @@
 the pseudobulk counts of each group of a cube: limma-voom, which gives every
 observation a precision weight from the mean-variance trend of the log counts per
 million (Law et al. 2014), and limma-trend, which lets the prior variance of the
-empirical Bayes moderation follow that trend instead. Both test the named contrasts of
-a :class:`~cytepool.design.Design` and return, for every group and contrast, a table
-of the tested features with limma's ``topTable`` statistics, together with a summary,
-the samples behind every fit and a provenance record.
+empirical Bayes moderation follow that trend instead. :func:`dream_voom` runs
+variancePartition's dream (Hoffman and Roussos 2021), limma-voom with a linear mixed
+model in place of the linear model, for designs with random effects such as several
+samples of each donor. Each tests the named contrasts of a
+:class:`~cytepool.design.Design` and returns, for every group and contrast, a table of
+the tested features with ``topTable``'s statistics, together with a summary, the
+samples behind every fit and a provenance record.
 
 Samples:
     The design's sample table must have a ``sample_id`` column. Its samples are matched
@@ -43,9 +46,10 @@ The design of a group:
 Groups that are not fitted:
     A group is not fitted, and its status in the summary says why, when no sample is
     left, the design leaves no residual degrees of freedom, no contrast is estimable,
-    no feature passes the expression filter (or, for voom, fewer than two), a sample
-    has no counts in the features that pass, or voom, the sample quality weights or
-    the moderation fail on its data. A run never stops for one group.
+    for dream the random effects cannot be estimated from the group's samples, no
+    feature passes the expression filter (or, for voom, fewer than two), a sample has
+    no counts in the features that pass, or voom, the sample quality weights or the
+    moderation fail on its data. A run never stops for one group.
 
 Steps:
     For each group, with the R functions they match in the limma and edgeR User's
@@ -109,6 +113,23 @@ Sample weights:
       ``voomLmFit(prior.weights = ...)`` forms them (found by probing). limma-trend
       passes them to ``lmFit`` as sample weights. Only their ratios within a group
       matter: weights that are all ten times larger give the same results.
+
+dream:
+    :func:`dream_voom` takes the steps of limma-voom up to the normalization, then
+    those of variancePartition's ``voomWithDreamWeights``, ``dream(ddf =
+    "Satterthwaite")``, ``eBayes`` and ``topTable``: precision weights from the
+    mean-variance trend of the design's mixed model, fitted to every feature by
+    maximum likelihood (:func:`~cytepool.stats.dream.voom_with_dream_weights`); the
+    mixed model of every feature fitted by REML with those weights
+    (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); Satterthwaite's t-tests of
+    the estimable contrasts (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`);
+    and their empirical Bayes moderation
+    (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The random effects of
+    a group are those of its samples: a grouping factor's levels without samples in
+    the group drop out. :mod:`cytepool.stats.dream` documents the conventions found by
+    probing variancePartition and the deliberate differences from it. Prior weights
+    from the number of cells are divided by their mean in each group, as
+    variancePartition divides prior weights, which changes no test.
 
 P-values adjusted across groups:
     ``adjusted_p_value`` adjusts the p-values of one group and contrast, as limma's
@@ -204,14 +225,16 @@ import numpy as np
 
 from ._analysis_records import cube_record, design_record, software_versions
 from ._columns import text_column
+from ._jit import thread_limit
 from ._masked_arrays import reject_masked
 from ._messages import listing, quoted
 from ._options import checked_choice, checked_flag
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design.checks import _aliasing, _contrast_violations
-from .design.design import _refuse_random_effects
+from .design.design import _is_random_intercept, _refuse_random_effects
 from .normalization import (
+    _effective_library_sizes,
     _non_negative,
     _real,
     filter_by_expression,
@@ -219,8 +242,20 @@ from .normalization import (
     log_cpm,
     tmm_factors,
 )
+from .stats.dream import (
+    _dream_weights,
+    _scaled_prior_weights,
+    moderated_fixed_effect_tests,
+)
 from .stats.empirical_bayes import moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
+from .stats.mixed_models import _fit as _fit_mixed_model
+from .stats.mixed_models import (
+    _mixed_design_of_samples,
+    _MixedDesign,
+    _random_intercepts,
+    fixed_effect_tests,
+)
 from .stats.multiple_testing import adjust_p_values
 from .stats.sample_weights import (
     _estimate,
@@ -231,10 +266,16 @@ from .stats.sample_weights import (
     _variance_model,
     _weights_of,
 )
-from .stats.voom import VoomResult, _quality_weighted_voom, _voom_inputs, voom
+from .stats.voom import (
+    VoomResult,
+    _quality_weighted_voom,
+    _trend_span,
+    _voom_inputs,
+    voom,
+)
 from .table import Table
 
-__all__ = ["DifferentialExpressionResult", "limma_trend", "limma_voom"]
+__all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
 
 _FITTED = "fitted"  # the status of a group whose contrasts were tested
 _LAYER = "counts"
@@ -259,12 +300,21 @@ _FIXED_SETTINGS = {
     "winsor_tail_p": [0.05, 0.1],
     "p_value_adjustment": "BH",
 }
+# dream's fits, recorded in the provenance: maximum likelihood for the weights, as
+# variancePartition's voomWithDreamWeights fits, REML and Satterthwaite's degrees of
+# freedom for the tests (dream's REML = TRUE, ddf = "Satterthwaite").
+_DREAM_SETTINGS = {
+    "weights_fit": "ml",
+    "fit": "reml",
+    "df_method": "satterthwaite",
+}
+_METHODS = ("limma_voom", "limma_trend", "dream_voom")
 # Warnings are attributed to the first caller outside the package.
 _PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 
 
 class DifferentialExpressionResult:
-    """Differential expression of every group of a cube, from limma_voom or limma_trend.
+    """Differential expression of every group of a cube, from limma or dream.
 
     Tables hold, for every group and estimable contrast, one row per tested feature,
     in the cube's feature order (``topTable(sort.by = "none")``):
@@ -287,13 +337,22 @@ class DifferentialExpressionResult:
     - ``b_statistic``: the log-odds that the feature is differentially expressed
       (``B``).
 
+    Tables from :func:`dream_voom` also give ``df``, the degrees of freedom of each
+    test (Satterthwaite's plus the prior's, ``df.total``), after ``t``, and
+    ``z_statistic``, the z-statistic with the test's p-value (``topTable``'s
+    ``z.std``), after ``b_statistic``; a feature whose mixed model has no minimum has
+    NaN statistics.
+
     The summary has one row per group: ``group_id``; ``status``, ``"fitted"`` or why
     the group was not fitted (``"no_samples"``, ``"no_residual_df"``,
-    ``"no_estimable_contrast"``, ``"no_features"``, ``"too_few_features"``,
-    ``"empty_library"`` or ``"failed"``); ``reason``, the explanation (empty when
-    fitted); ``n_samples_used`` and ``n_samples_left_out``; ``n_features_tested``;
-    ``df_residual``; ``prior_df``, the prior degrees of freedom (their median over
-    features with robust moderation, where each feature has its own); and
+    ``"no_estimable_contrast"``, ``"random_effects_not_estimable"``,
+    ``"no_features"``, ``"too_few_features"``, ``"empty_library"`` or
+    ``"failed"``); ``reason``, the explanation (empty when fitted);
+    ``n_samples_used`` and ``n_samples_left_out``; ``n_features_tested``;
+    ``df_residual``, for dream the median over the features of their approximate
+    residual degrees of freedom (in a group not fitted, the residual degrees of
+    freedom of the fixed effects, as for limma); ``prior_df``, the prior degrees of freedom (their
+    median over features with robust moderation, where each feature has its own); and
     ``not_estimable``, the contrasts the group's samples cannot estimate, separated
     by ``", "``. Numbers are NaN, or 0, where a group was not fitted that far.
 
@@ -306,16 +365,16 @@ class DifferentialExpressionResult:
     ``quality_weight``. Numbers that did not enter a fit are NaN: those of samples
     left out, and of groups not fitted.
 
-    Built by :func:`limma_voom` and :func:`limma_trend`, from the contrasts, tables
-    and record they computed. Immutable.
+    Built by :func:`limma_voom`, :func:`limma_trend` and :func:`dream_voom`, from the
+    contrasts, tables and record they computed. Immutable.
 
     Raises:
         TypeError: If ``method`` is not a string, ``contrasts`` not a ``Contrasts``,
             ``summary`` or ``samples`` not a ``Table``, ``tables`` not a mapping of
             (group id, contrast name) to ``Table``, or ``provenance`` not a mapping
             that JSON can write.
-        ValueError: If ``method`` is not ``"limma_voom"`` or ``"limma_trend"``, or
-            ``provenance`` holds a NaN or an infinity.
+        ValueError: If ``method`` is not ``"limma_voom"``, ``"limma_trend"`` or
+            ``"dream_voom"``, or ``provenance`` holds a NaN or an infinity.
     """
 
     __slots__ = ("_method", "_contrasts", "_summary", "_samples", "_tables", "_record")
@@ -338,9 +397,10 @@ class DifferentialExpressionResult:
     ) -> None:
         if not isinstance(method, str):
             raise TypeError(f"method must be a string, got {type(method).__name__}")
-        if method not in ("limma_voom", "limma_trend"):
+        if method not in _METHODS:
             raise ValueError(
-                f"method must be 'limma_voom' or 'limma_trend', got {method!r}"
+                "method must be 'limma_voom', 'limma_trend' or 'dream_voom', got "
+                f"{method!r}"
             )
         if not isinstance(contrasts, Contrasts):
             raise TypeError(
@@ -402,7 +462,7 @@ class DifferentialExpressionResult:
 
     @property
     def method(self) -> str:
-        """``"limma_voom"`` or ``"limma_trend"``."""
+        """``"limma_voom"``, ``"limma_trend"`` or ``"dream_voom"``."""
         return self._method
 
     @property
@@ -447,8 +507,12 @@ class DifferentialExpressionResult:
         settings; and, for every group, its status, the samples that entered its
         design, in the order they were fitted, those left out with the reason, the
         design columns its samples cannot separate, the contrasts it cannot
-        estimate with the reason, the number of features tested, for limma-voom
-        the span of its trend (``voom_span``, null where voom did not run), the
+        estimate with the reason, the number of features tested, for limma-voom and
+        dream the span of its trend (``voom_span``, null where voom did not run), for
+        dream the number of features whose mixed model has no minimum
+        (``features_not_fitted``) and of those whose REML fit stopped without
+        converging (``features_not_converged``; their tests use the estimates where
+        it stopped), the
         sample weights its fit used, in the order of its samples
         (``prior_weights`` with ``prior_weights``, ``quality_weights`` with
         ``quality_weights``; null where the group was not fitted), and the warnings
@@ -587,7 +651,8 @@ def limma_voom(
         design: A :class:`~cytepool.design.Design` whose sample table has a
             ``sample_id`` column with cube sample ids; its rows may be some of the
             cube's samples, in any order. A design with random effects is refused:
-            these fits have fixed effects only.
+            these fits have fixed effects only, and :func:`dream_voom` fits random
+            intercepts.
         groups: A group id or a list of them; all groups by default.
         contrasts: The contrasts to test, as accepted by
             :func:`~cytepool.design.make_contrasts` and matched to the design's
@@ -795,6 +860,126 @@ def limma_trend(
     )
 
 
+def dream_voom(
+    cube: Cube,
+    design: Design,
+    *,
+    groups: str | Sequence[str] | None = None,
+    contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
+    min_cells: int = 10,
+    min_counts: float = 0,
+    expression_filter: bool | Mapping[str, float] = True,
+    normalization: Literal["tmm"] | None = "tmm",
+    span: float | None = None,
+    prior_weights: Literal["n_cells"] | None = None,
+    robust: bool = False,
+    trend: bool = False,
+    adjust_across_groups: bool = False,
+    n_threads: int | None = None,
+) -> DifferentialExpressionResult:
+    """Test contrasts in every group of a cube by dream, with random effects.
+
+    variancePartition's dream workflow for repeated measures (Hoffman and Roussos
+    2021), such as several samples of each donor: as :func:`limma_voom`, but the
+    design's random intercepts, such as ``(1 | donor)``, enter every fit. For each
+    group, the samples are left out, the features filtered and the counts normalized
+    as for ``limma_voom``; voom's precision weights come from the mean-variance trend
+    of mixed models fitted by maximum likelihood (``voomWithDreamWeights``,
+    :func:`~cytepool.stats.dream.voom_with_dream_weights`); every feature's mixed
+    model is fitted by REML with those weights (``dream``,
+    :func:`~cytepool.stats.mixed_models.fit_mixed_model`); its estimable contrasts
+    are tested with Satterthwaite's degrees of freedom
+    (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`); and the tests are
+    moderated by empirical Bayes as variancePartition's ``eBayes`` moderates them
+    (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The module
+    documentation gives the steps and the differences from variancePartition.
+
+    Every group's mixed model uses the random effects of the samples left in it: the
+    levels of a grouping factor without samples there drop out, and a group whose
+    samples cannot estimate a random effect, such as one donor left, or one sample
+    per donor, is not fitted (status ``"random_effects_not_estimable"``). A feature
+    whose mixed model has no minimum, which the fixed and random effects reproduce,
+    is tested with NaN statistics; its group's record counts them.
+
+    Satterthwaite's degrees of freedom are used for every group, as ``dream(...,
+    ddf = "Satterthwaite")``; dream's default, ``ddf = "adaptive"``, uses
+    Kenward-Roger's for 20 samples or fewer, which are not available yet.
+
+    Args:
+        cube: A cube with a ``counts`` layer.
+        design: A :class:`~cytepool.design.Design` whose random effects are random
+            intercepts, such as ``random="(1 | donor)"``, matched to the cube by
+            ``sample_id`` as for :func:`limma_voom`.
+        groups: A group id or a list of them; all groups by default.
+        contrasts: The contrasts to test, matched to the design's columns by name;
+            by default the design's named contrasts.
+        min_cells: The fewest cells a sample needs in a group to enter its fit;
+            ignored for cubes without cell numbers.
+        min_counts: The fewest counts a sample needs in a group, over every
+            feature of the cube, to enter its fit; 0 by default.
+        expression_filter: True for edgeR's ``filterByExpr`` defaults with the
+            group's fixed effects, a mapping of changed settings, or False.
+        normalization: ``"tmm"`` for TMM normalization factors, or None.
+        span: The LOWESS span of the trend, in (0, 1], for every group; None
+            chooses it in each group from the number of features tested, as
+            ``limma_voom`` does. variancePartition's ``voomWithDreamWeights`` uses
+            0.5.
+        prior_weights: ``"n_cells"`` to give each sample its number of cells in
+            the group as a prior weight, as dreamlet weights samples, or None for
+            none. Needs a cube that records cell numbers.
+        robust: Whether to estimate the prior of the moderation robustly, as
+            ``eBayes(robust = TRUE)`` does.
+        trend: Whether the prior variance of the moderation follows the mean log2
+            CPM of the features, as ``eBayes(trend = TRUE)`` does. dream moderates
+            the residual variance of an observation of average weight, which keeps
+            much of the mean-variance trend that voom's weights remove (see
+            :mod:`cytepool.stats.dream`); variancePartition's default is False.
+        adjust_across_groups: Whether to add the column
+            ``adjusted_p_value_across_groups``, as for :func:`limma_voom`.
+        n_threads: The most threads for the mixed model fits of the features (see
+            :func:`~cytepool.stats.mixed_models.fit_mixed_model`), at least 1; None
+            keeps numba's setting. The results do not depend on it.
+
+    Returns:
+        The tables of every group and estimable contrast, a summary of every group,
+        the samples used and left out, the settings and a provenance record, as for
+        :func:`limma_voom`; the tables also give each test's degrees of freedom
+        (``df``) and z-statistic (``z_statistic``).
+
+    Raises:
+        TypeError: If ``cube`` is not a Cube, ``design`` not a Design, an option has
+            the wrong type, or ``contrasts``, ``groups``, ``min_cells``,
+            ``expression_filter`` or ``n_threads`` is or holds a numpy masked array.
+        ValueError: If the design has no random effects or one that is not a
+            random intercept, has no ``sample_id`` column, names samples the cube
+            does not have or names a sample twice, if there are no contrasts to
+            test, an option is invalid, or ``prior_weights`` is ``"n_cells"`` and
+            the cube does not record cell numbers.
+        KeyError: If a group is not in the cube.
+    """
+    return _analyse(
+        "dream_voom",
+        cube,
+        design,
+        groups=groups,
+        contrasts=contrasts,
+        settings={
+            "min_cells": _min_cells(min_cells),
+            "min_counts": _min_counts(min_counts),
+            "expression_filter": _filter_settings(expression_filter),
+            "normalization": _normalization(normalization),
+            "span": _span(span),
+            "prior_weights": _prior_weight_setting(prior_weights),
+            "robust": checked_flag(robust, "robust"),
+            "trend": checked_flag(trend, "trend"),
+            "adjust_across_groups": checked_flag(
+                adjust_across_groups, "adjust_across_groups"
+            ),
+            "n_threads": _threads(n_threads),
+        },
+    )
+
+
 # The analysis.
 
 
@@ -817,6 +1002,8 @@ class _GroupFit:
     prior_weights: np.ndarray | None = None  # per used sample, when fitted with them
     quality_weights: np.ndarray | None = None
     voom_span: float | None = None  # the span of voom's trend, once voom has run
+    features_not_fitted: int = 0  # dream: features whose mixed model has no minimum
+    features_not_converged: int = 0  # dream: fitted features whose fit did not converge
     warnings: list[str] = field(default_factory=list)  # given as the group is fitted
     tables: dict[str, Table] = field(default_factory=dict)
 
@@ -854,7 +1041,25 @@ def _analyse(
             "design must be a Design whose sample table has a sample_id column with "
             f"the cube's sample ids, got {type(design).__name__}"
         )
-    _refuse_random_effects(design, method)
+    if method == "dream_voom":
+        if not design.random:
+            raise ValueError(
+                "dream_voom fits a mixed model to every feature, but the design has "
+                "no random effects; build it with random intercepts such as "
+                "random='(1 | donor)', or test a design without random effects with "
+                "limma_voom"
+            )
+        _random_intercepts(design)
+    else:
+        try:
+            _refuse_random_effects(design, method)
+        except ValueError as error:
+            if not all(_is_random_intercept(effect) for effect in design.random):
+                raise
+            raise ValueError(
+                f"{error} On a cube, dream_voom fits these random intercepts in every "
+                "group, as variancePartition's dream does."
+            ) from None
     if settings["prior_weights"] == "n_cells" and cube.n_cells is None:
         raise ValueError(
             "prior_weights='n_cells' weights each sample by its number of cells, which "
@@ -865,9 +1070,10 @@ def _analyse(
     tested = _contrasts_to_test(design, contrasts, method)
     positions = _group_positions(cube, groups)
     inputs = _Inputs(method, cube, order, cube_rows, tested, settings)
+    fit_group = _fit_dream_group if method == "dream_voom" else _fit_group
     fits = []
     for g in positions:
-        fit = _fit_group(inputs, design, g)
+        fit = fit_group(inputs, design, g)
         for message in fit.warnings:
             warnings.warn(
                 f"group {fit.group_id!r}: {message}",
@@ -894,7 +1100,11 @@ def _analyse(
             "cube": cube_record(cube),
             "layer": _LAYER,
             "design": design_record(design, tested),
-            "settings": {**settings, **_FIXED_SETTINGS},
+            "settings": {
+                **settings,
+                **_FIXED_SETTINGS,
+                **(_DREAM_SETTINGS if method == "dream_voom" else {}),
+            },
             "groups": [
                 _group_record(fit, sample_ids, method, settings) for fit in fits
             ],
@@ -902,8 +1112,30 @@ def _analyse(
     )
 
 
-def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
-    """Fit one group, or record why it cannot be fitted."""
+@dataclass(frozen=True)
+class _GroupData:
+    """The checked data of one group, ready for the fits of a method."""
+
+    x: np.ndarray  # the rows of the full design for the samples used, kept columns
+    columns: tuple[str, ...]  # the names of the kept columns
+    kept: list[int]  # the kept columns among the design's
+    estimable: list[int]  # the contrasts that the samples can estimate
+    counts: np.ndarray  # samples used x features tested
+    sizes: np.ndarray  # library sizes over the features tested
+    factors: np.ndarray | None  # normalization factors, or None
+    prior: np.ndarray | None  # prior weights of the samples used, or None
+    mixed: _MixedDesign | None  # the mixed model's design of the samples used
+
+
+def _prepare_group(
+    inputs: _Inputs, design: Design, g: int, *, mixed: bool = False
+) -> tuple[_GroupFit, _GroupData | None]:
+    """The samples, design, features and normalization of one group.
+
+    Returns the group's record and its data, or no data when the group cannot be
+    fitted, with the record saying why. With ``mixed``, the random effects of the
+    design are also checked on the samples used.
+    """
     cube, settings = inputs.cube, inputs.settings
     counts = cube.layer(_LAYER, g)[inputs.cube_rows]  # design samples, cube order
     cells = None if cube.n_cells is None else cube.n_cells[inputs.cube_rows, g]
@@ -912,7 +1144,7 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
     used = np.array([not reason for reason in reasons], dtype=bool)
     fit = _GroupFit(str(cube.groups["group_id"][g]), used, reasons)
     if counts.shape[1] == 0:
-        return fit.stop("no_features", "the cube has no features")
+        return fit.stop("no_features", "the cube has no features"), None
     n_used = int(np.count_nonzero(used))
     if n_used == 0:
         # No counts is fewer than any positive minimum.
@@ -921,9 +1153,8 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
         )
         if cells is not None:
             rules = f"fewer than {settings['min_cells']} cells, or {rules}"
-        return fit.stop(
-            "no_samples", f"every one of the {used.size} samples was left out ({rules})"
-        )
+        reason = f"every one of the {used.size} samples was left out ({rules})"
+        return fit.stop("no_samples", reason), None
 
     # The rows of the full design, and the columns that span them.
     x = design.matrix[inputs.model_rows][used]
@@ -938,7 +1169,7 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             f"{n_used} sample{'' if n_used == 1 else 's'} left, so it fits "
             f"{'it' if n_used == 1 else 'them'} exactly and no variance can be "
             "estimated",
-        )
+        ), None
     contrasts = inputs.contrasts
     violations = _contrast_violations(
         replace(design.model_matrix, matrix=x), aliasing, contrasts
@@ -953,9 +1184,17 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
         return fit.stop(
             "no_estimable_contrast",
             "no contrast is estimable from the samples of this group",
-        )
+        ), None
     x_kept = np.ascontiguousarray(x[:, kept])
     columns = tuple(design.columns[j] for j in kept)
+    parts = None
+    if mixed:
+        try:
+            parts = _mixed_design_of_samples(
+                design, inputs.model_rows[used], x_kept, columns
+            )
+        except ValueError as error:
+            return fit.stop("random_effects_not_estimable", str(error)), None
 
     y = np.asarray(counts[used], dtype=np.float64)
     filter_settings = settings["expression_filter"]
@@ -966,7 +1205,7 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
     fit.tested = np.flatnonzero(keep)
     n_tested = fit.tested.size
     if n_tested == 0:
-        return fit.stop("no_features", "no feature passed the expression filter")
+        return fit.stop("no_features", "no feature passed the expression filter"), None
     y = np.ascontiguousarray(y[:, keep])
     sizes = library_sizes(y)
     if not np.all(sizes > 0.0):
@@ -976,12 +1215,26 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             "empty_library",
             f"{listing(empty)} {'has' if len(empty) == 1 else 'have'} no counts in "
             f"the {n_tested} features that passed the expression filter",
-        )
+        ), None
     factors = tmm_factors(y) if settings["normalization"] == "tmm" else None
     # Prior weights are positive: a used sample has counts, so it has cells.
     prior = None
     if settings["prior_weights"] == "n_cells" and cells is not None:
         prior = np.asarray(cells[used], dtype=np.float64)
+    data = _GroupData(x_kept, columns, kept, estimable, y, sizes, factors, prior, parts)
+    return fit, data
+
+
+def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
+    """Fit one group by limma, or record why it cannot be fitted."""
+    cube, settings = inputs.cube, inputs.settings
+    fit, data = _prepare_group(inputs, design, g)
+    if data is None:
+        return fit
+    x_kept, columns, kept, estimable = data.x, data.columns, data.kept, data.estimable
+    y, sizes, factors, prior = data.counts, data.sizes, data.factors, data.prior
+    n_used, n_tested = y.shape
+    contrasts = inputs.contrasts
     quality_settings = settings["quality_weights"]
 
     if inputs.method == "limma_voom":
@@ -1076,6 +1329,78 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
                 "p_value": moderated.p_value[:, column],
                 "adjusted_p_value": adjusted[:, column],
                 "b_statistic": moderated.lods[:, column],
+            }
+        )
+    return fit
+
+
+def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
+    """Fit one group by dream, or record why it cannot be fitted."""
+    cube, settings = inputs.cube, inputs.settings
+    fit, data = _prepare_group(inputs, design, g, mixed=True)
+    if data is None or data.mixed is None:
+        return fit
+    y = data.counts
+    n_used, n_tested = y.shape
+    with_counts = int(np.count_nonzero(y.any(axis=0)))
+    if with_counts < 2:
+        return fit.stop(
+            "too_few_features",
+            "the mean-variance trend of the precision weights needs at least two "
+            f"features with counts, and {with_counts} of the {n_tested} features "
+            f"tested {'has' if with_counts == 1 else 'have'} counts",
+        )
+    sizes = np.array(_effective_library_sizes(y, None, data.factors))
+    fraction = _trend_span(settings["span"], n_tested)
+    prior = None if data.prior is None else _scaled_prior_weights(data.prior, y.shape)
+    with thread_limit(settings["n_threads"]):
+        try:
+            weighted = _dream_weights(y, sizes, fraction, data.mixed, prior, True)
+        except ValueError as error:  # the trend cannot give weights for these data
+            return fit.stop("failed", f"voom with dream weights: {error}")
+        model = _fit_mixed_model(weighted.log_cpm, weighted.weights, False, data.mixed)
+    fit.voom_span = weighted.span
+    contrasts = inputs.contrasts
+    names = tuple(contrasts.names[p] for p in data.estimable)
+    # An estimable contrast is its kept part applied to the fit on the kept columns.
+    tests = fixed_effect_tests(
+        model,
+        Contrasts(
+            contrasts.matrix[np.ix_(data.kept, data.estimable)], names, data.columns
+        ),
+    )
+    try:
+        moderated = moderated_fixed_effect_tests(
+            tests, robust=settings["robust"], trend=settings["trend"]
+        )
+    except ValueError as error:  # for example, no feature has a fit
+        return fit.stop("failed", f"empirical Bayes moderation: {error}")
+    adjusted = adjust_p_values(moderated.p_value, "bh", axis=0)
+
+    fitted = np.isfinite(model.residual_variance)
+    fit.features_not_fitted = int(np.count_nonzero(~fitted))
+    fit.features_not_converged = int(np.count_nonzero(fitted & ~model.converged))
+    fit.df_residual = float(np.median(model.residual_df[fitted]))
+    fit.prior_df = float(np.median(moderated.prior_df))
+    fit.library_sizes = data.sizes
+    fit.norm_factors = np.ones(n_used) if data.factors is None else data.factors
+    fit.prior_weights = data.prior
+    features = cube.features
+    identity = {"feature_id": features["feature_id"][fit.tested]}
+    if "symbol" in features:
+        identity["symbol"] = features["symbol"][fit.tested]
+    for column, name in enumerate(names):
+        fit.tables[name] = Table(
+            {
+                **identity,
+                "log2_fold_change": tests.estimate[:, column],
+                "average_log2_cpm": model.mean_expression,
+                "t": moderated.t[:, column],
+                "df": moderated.df_total[:, column],
+                "p_value": moderated.p_value[:, column],
+                "adjusted_p_value": adjusted[:, column],
+                "b_statistic": moderated.lods[:, column],
+                "z_statistic": moderated.z[:, column],
             }
         )
     return fit
@@ -1305,10 +1630,8 @@ def _min_counts(value: Any) -> float:
     return _non_negative(value, "min_counts")
 
 
-def _sample_weight_settings(
-    prior_weights: Any, quality_weights: Any, method: str
-) -> dict[str, Any]:
-    """The checked settings of the sample weights, which are alternatives."""
+def _prior_weight_setting(prior_weights: Any) -> str | None:
+    """The checked prior weights: "n_cells" or None."""
     if prior_weights is not None and not (
         isinstance(prior_weights, str) and prior_weights == "n_cells"
     ):
@@ -1317,6 +1640,14 @@ def _sample_weight_settings(
             "prior_weights must be 'n_cells', for the number of cells of each sample "
             f"in the group, or None, got {prior_weights!r}"
         )
+    return None if prior_weights is None else "n_cells"
+
+
+def _sample_weight_settings(
+    prior_weights: Any, quality_weights: Any, method: str
+) -> dict[str, Any]:
+    """The checked settings of the sample weights, which are alternatives."""
+    _prior_weight_setting(prior_weights)
     quality = _quality_settings(quality_weights, _QUALITY_METHODS[method])
     if prior_weights is not None and quality is not None:
         raise ValueError(
@@ -1478,7 +1809,7 @@ def _sample_table(
     }
     if settings["prior_weights"] is not None:
         numbers["prior_weight"] = "prior_weights"
-    if settings["quality_weights"] is not None:
+    if settings.get("quality_weights") is not None:
         numbers["quality_weight"] = "quality_weights"
     # Per group and design sample; NaN where the number did not enter a fit.
     values = {column: np.full((len(fits), n), np.nan) for column in numbers}
@@ -1523,12 +1854,19 @@ def _group_record(
         "not_estimable": dict(fit.not_estimable),
         "n_features_tested": int(fit.tested.size) if fitted else 0,
     }
-    if method == "limma_voom":
+    if method in ("limma_voom", "dream_voom"):
         # The span of the group's voom trend; null when voom did not run.
         record["voom_span"] = fit.voom_span
+    if method == "dream_voom":
+        # The tested features whose mixed model has no minimum, and those whose fit
+        # stopped without converging; null when the group was not fitted.
+        record["features_not_fitted"] = fit.features_not_fitted if fitted else None
+        record["features_not_converged"] = (
+            fit.features_not_converged if fitted else None
+        )
     # The sample weights of the fit, in the order of "samples"; null when not fitted.
     for key in ("prior_weights", "quality_weights"):
-        if settings[key] is not None:
+        if settings.get(key) is not None:
             weights = getattr(fit, key)
             record[key] = weights.tolist() if fitted and weights is not None else None
     record["warnings"] = list(fit.warnings)

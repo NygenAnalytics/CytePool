@@ -693,7 +693,7 @@ def test_a_result_holds_checked_objects_and_a_json_record() -> None:
     assert rebuilt.provenance == result.provenance
     key = next(iter(result.tables))
     for changes, error, pattern in [
-        ({"method": "voom"}, ValueError, "'limma_voom' or 'limma_trend'"),
+        ({"method": "voom"}, ValueError, "'limma_voom', 'limma_trend' or 'dream_voom'"),
         ({"contrasts": result.contrasts.matrix}, TypeError, "must be a Contrasts"),
         ({"summary": result.summary.to_dict()}, TypeError, "summary must be a Table"),
         ({"tables": {key[0]: result.tables[key]}}, TypeError, "keyed by"),
