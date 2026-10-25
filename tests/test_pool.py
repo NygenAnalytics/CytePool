@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
+import cytepool
 from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.cube import pool as pool_module
 from cytepool.cube.cube import LAYER_NAMES
@@ -209,7 +210,20 @@ def test_every_layer_equals_pooling_with_masks(
         "pseudocount": 1.0,
         "library_sizes": "cell_totals",
     }
-    assert cube.provenance == {"source": "from_cells", "n_cells": int(CELLS.sum())}
+    assert cube.provenance == {
+        "source": None,
+        "construction": {
+            "function": "from_cells",
+            "cytepool_version": cytepool.__version__,
+            "n_cells": int(CELLS.sum()),
+            "layers": list(LAYER_NAMES),
+            "target_sum": TARGET_SUM,
+            "library_sizes": "cell_totals",
+            "samples": {"order": "sorted_labels", "labels": "text"},
+            "groups": {"order": "sorted_labels", "labels": "text"},
+            "features": "positions",
+        },
+    }
 
 
 def test_entries_without_cells_are_zero(cube: Cube) -> None:
@@ -590,7 +604,15 @@ def test_from_bulk() -> None:
     assert cube.samples["sample_id"].tolist() == ["A", "B"]
     assert cube.features["feature_id"].tolist() == ["x", "y", "z"]
     assert cube.n_cells is None and cube.normalization is None
-    assert cube.provenance == {"source": "from_bulk"}
+    assert cube.provenance == {
+        "source": None,
+        "construction": {
+            "function": "from_bulk",
+            "cytepool_version": cytepool.__version__,
+            "samples": "ids",
+            "features": "ids",
+        },
+    }
     assert cube.library_sizes()[:, 0].tolist() == [17, 17]
     default = from_bulk(counts.astype(np.float32))
     assert default.layer("counts").dtype == np.uint32

@@ -1,0 +1,86 @@
+{
+ "tiny": {
+  "record": {
+   "version": 1,
+   "shape": [
+    3,
+    4,
+    6
+   ],
+   "samples": "sha256:616e1666cd786dcf0ed81b366ffd694a00eddbcd31dcb58f15eb42ec3351e879",
+   "groups": "sha256:047a5ad1a1f8fe4e0379b596ad8519708606565fbb685eafb1ec6e7b9558634c",
+   "features": "sha256:b9a96cb36d302be163dea0ea8e498b126693e74b9db6364f5b8e05b835c6bd47",
+   "n_cells": "sha256:90234b8052e94ec758e25616b4c501663e978cbaa738210dbbc32bedb87f0cb5",
+   "normalization": "sha256:800bf8971dc02cd68958b2787a94f15ee2b26f5c88a2d9fcd78a2de3a2e32892",
+   "layers": {
+    "counts": {
+     "type": "int64",
+     "groups": [
+      "sha256:16bc67786556c1ca5acc62031e27f93b15a23f607524870cdbd1526987dedd3a",
+      "sha256:5d4b2b3b4a093fef03d51d5558667053ed114948528372d65bb6e11a6b3f5350",
+      "sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc"
+     ]
+    },
+    "detected": {
+     "type": "int64",
+     "groups": [
+      "sha256:c26a9bdfa17bfbe316f6405460601fa80d1f82a8255934450a60051362981c9c",
+      "sha256:cf6c5acf4014fba05a3cd89a6e4e4ef5c42388a511791868313ed4d349ccd4d1",
+      "sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc"
+     ]
+    },
+    "log_sum": {
+     "type": "float64",
+     "groups": [
+      "sha256:045b200027977e2c9fa60d91d94fe680b47e2bc99ea929eedc77991fe356f8e1",
+      "sha256:80e622f069f6a8cdef396ff725a52e06dd263dabba27aa7a8790bd519c720627",
+      "sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc"
+     ]
+    },
+    "log_sum_sq": {
+     "type": "float64",
+     "groups": [
+      "sha256:eb280e3b86a480466479ec9c75b012437bd501247b23a7d4fa5277ac38e17b1c",
+      "sha256:06b7d10e79488bb05f369c81732c9a5c83975f84b80720de3bd1c7403de7d3e8",
+      "sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc"
+     ]
+    },
+    "linear_sum": {
+     "type": "float64",
+     "groups": [
+      "sha256:3c0835024389ea66e500a6e502e83b592879dd7ea3311d92e9c573f78a8d341b",
+      "sha256:9d8c41723d70054f351f33197315f7cfbbe421ace1cac46a59ee6231c0f682d5",
+      "sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc"
+     ]
+    }
+   },
+   "fingerprint": "sha256:c7c1a5d1f7ff6c2f53bfcc795287f6bbbb2a08569dcff1ad00925ebb361c8401"
+  },
+  "manifest": "cytepool cube fingerprint 1\nshape 3 4 6\nsamples sha256:616e1666cd786dcf0ed81b366ffd694a00eddbcd31dcb58f15eb42ec3351e879\ngroups sha256:047a5ad1a1f8fe4e0379b596ad8519708606565fbb685eafb1ec6e7b9558634c\nfeatures sha256:b9a96cb36d302be163dea0ea8e498b126693e74b9db6364f5b8e05b835c6bd47\nn_cells sha256:90234b8052e94ec758e25616b4c501663e978cbaa738210dbbc32bedb87f0cb5\nnormalization sha256:800bf8971dc02cd68958b2787a94f15ee2b26f5c88a2d9fcd78a2de3a2e32892\nlayer counts int64 0 sha256:16bc67786556c1ca5acc62031e27f93b15a23f607524870cdbd1526987dedd3a\nlayer counts int64 1 sha256:5d4b2b3b4a093fef03d51d5558667053ed114948528372d65bb6e11a6b3f5350\nlayer counts int64 2 sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc\nlayer detected int64 0 sha256:c26a9bdfa17bfbe316f6405460601fa80d1f82a8255934450a60051362981c9c\nlayer detected int64 1 sha256:cf6c5acf4014fba05a3cd89a6e4e4ef5c42388a511791868313ed4d349ccd4d1\nlayer detected int64 2 sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc\nlayer log_sum float64 0 sha256:045b200027977e2c9fa60d91d94fe680b47e2bc99ea929eedc77991fe356f8e1\nlayer log_sum float64 1 sha256:80e622f069f6a8cdef396ff725a52e06dd263dabba27aa7a8790bd519c720627\nlayer log_sum float64 2 sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc\nlayer log_sum_sq float64 0 sha256:eb280e3b86a480466479ec9c75b012437bd501247b23a7d4fa5277ac38e17b1c\nlayer log_sum_sq float64 1 sha256:06b7d10e79488bb05f369c81732c9a5c83975f84b80720de3bd1c7403de7d3e8\nlayer log_sum_sq float64 2 sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc\nlayer linear_sum float64 0 sha256:3c0835024389ea66e500a6e502e83b592879dd7ea3311d92e9c573f78a8d341b\nlayer linear_sum float64 1 sha256:9d8c41723d70054f351f33197315f7cfbbe421ace1cac46a59ee6231c0f682d5\nlayer linear_sum float64 2 sha256:4db8888aa3ad5809435478033b4b79b7a48680ee66fbd1cec9071a912c03d4dc\n"
+ },
+ "small_bulk": {
+  "record": {
+   "version": 1,
+   "shape": [
+    1,
+    2,
+    3
+   ],
+   "samples": "sha256:ed3b7b7503feaad6144885769978c4a0fb72ce938187a03608efd9e4fbcf69ff",
+   "groups": "sha256:049801cb19c8604fa939b05d2c8720311210c574923a5a95636e313d0f920fe5",
+   "features": "sha256:839db3a14c048d2856404b8c26e4685d1717b6d03129ae3516da4658c0247383",
+   "n_cells": null,
+   "normalization": null,
+   "layers": {
+    "counts": {
+     "type": "float64",
+     "groups": [
+      "sha256:b6e69076d38f78c71372608e76296d120bfc96edd3687edd00f579c15222a977"
+     ]
+    }
+   },
+   "fingerprint": "sha256:458efe3692a43abb56064da91f5f26f7e1e95dfa13a7731bf71f99a1b6b9bc6c"
+  },
+  "manifest": "cytepool cube fingerprint 1\nshape 1 2 3\nsamples sha256:ed3b7b7503feaad6144885769978c4a0fb72ce938187a03608efd9e4fbcf69ff\ngroups sha256:049801cb19c8604fa939b05d2c8720311210c574923a5a95636e313d0f920fe5\nfeatures sha256:839db3a14c048d2856404b8c26e4685d1717b6d03129ae3516da4658c0247383\nn_cells none\nnormalization none\nlayer counts float64 0 sha256:b6e69076d38f78c71372608e76296d120bfc96edd3687edd00f579c15222a977\n"
+ }
+}

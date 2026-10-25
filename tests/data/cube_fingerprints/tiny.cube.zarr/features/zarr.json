@@ -1,0 +1,24 @@
+{
+  "attributes": {
+    "columns": [
+      "feature_id",
+      "symbol",
+      "measured",
+      "gc",
+      "length",
+      "exons",
+      "reads"
+    ],
+    "arrays": [
+      "feature_id",
+      "symbol",
+      "measured",
+      "gc",
+      "length",
+      "exons",
+      "reads"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

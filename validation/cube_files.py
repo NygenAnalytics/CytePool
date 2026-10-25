@@ -250,6 +250,7 @@ def contents(cube: Cube) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         "has_n_cells": cube.n_cells is not None,
         "normalization": cube.normalization,
         "provenance": cube.provenance,
+        "digests": cube.digests(),
     }
     arrays: dict[str, np.ndarray] = {}
     text: dict[str, Any] = {"attributes": attributes}

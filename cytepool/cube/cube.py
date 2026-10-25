@@ -1,7 +1,6 @@
 """The pseudobulk cube: additive statistics per sample, group and feature."""
 
 import json
-import math
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -10,6 +9,23 @@ import numpy as np
 
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table, _values_equal, _with_missing
+from .fingerprints import (
+    _block_digest,
+    _cells_digest,
+    _check_record,
+    _column_type,
+    _digest_record,
+    _layer_type,
+    _normalization_digest,
+    _table_digest,
+)
+from .provenance import (
+    _add_record,
+    _plain_json,
+    _provenance_of,
+    _provenance_texts,
+    describe_provenance,
+)
 
 LAYER_NAMES = ("counts", "detected", "log_sum", "log_sum_sq", "linear_sum")
 """The layers a cube can hold, in the order a cube stores and lists them."""
@@ -29,6 +45,15 @@ _OPTIONAL_TEXT_COLUMNS = {
     "features": ("symbol",),
 }
 _OPTIONAL_BOOLEAN_COLUMNS = {"features": ("measured",)}
+# The parts of a cube that have one digest each besides its layers, as messages name
+# them.
+_PART_NAMES = {
+    "samples": "the samples table",
+    "groups": "the groups table",
+    "features": "the features table",
+    "n_cells": "n_cells",
+    "normalization": "the normalization",
+}
 # Reads the block of a group of a lazy layer at sample and feature positions (None
 # for every position), as _LazyLayer.read does.
 _BlockReader = Callable[[int, np.ndarray | None, np.ndarray | None], np.ndarray]
@@ -78,21 +103,28 @@ class Cube:
             mapping with a ``"method"`` string, for example ``{"method":
             "library_size", "target_sum": 10000.0, "log": "natural", "pseudocount":
             1.0}``. Required with ``log_sum``, ``log_sum_sq`` or ``linear_sum``.
-        provenance: A JSON-serialisable mapping that says where the data came from.
-            Operations that derive a cube append a record of the operation and its
-            arguments to the list under ``"operations"``.
+        provenance: A JSON-serialisable mapping that says where the data came from
+            and how the cube was made (``cytepool.cube.provenance`` documents the
+            keys CytePool writes). Operations that derive a cube append a record of
+            the operation, its input and what it kept or pooled to the list under
+            ``"operations"``.
         copy: If False, a layer given as a C-contiguous numpy array with an
             accepted native dtype is stored without a copy and made read-only in
             place, so it must not be changed through other references afterwards.
             Other layers are always copied.
 
     Raises:
-        TypeError: If an argument has the wrong type or dtype, or is or holds a
-            numpy masked array.
+        TypeError: If an argument has the wrong type or dtype (a table column of a
+            type below included), or is or holds a numpy masked array.
         ValueError: If shapes disagree, a required argument is missing, an id is
             missing or repeated, or a value breaks a constraint below.
 
     Constraints:
+        Table columns hold text, booleans, integers, float16 to float64,
+        complex64, complex128, datetimes or timedeltas: the types cube files store,
+        and that a fingerprint encodes alike on every platform (longdouble, for
+        example, is refused).
+
         ``counts``, ``detected``, ``log_sum_sq`` and ``linear_sum`` are
         non-negative; integer layers and ``n_cells`` are at most 2**63 - 1, the
         largest int64, whatever their dtype; float layers are finite; ``detected``
@@ -137,6 +169,29 @@ class Cube:
         return new arrays, which the cube keeps without a copy, so a read holds
         about the values it returns and one chunk (with zstd, also the decoder's
         window, 2 MiB at the default level).
+
+        A read of a ``ZarrArray`` layer that covers a whole group, in any order (a
+        group read whole, merged or with its samples pooled, or a selection that
+        reorders samples or features), also hashes the group, to check it against
+        its digest: stored with the cube file, or kept from the first such read. A
+        read of a whole group of a layer derived from one hashes that group too, to
+        keep its digest for ``fingerprint()``. SHA-256 runs at about 2 GB/s on
+        processors with SHA instructions and 0.5 GB/s without, which adds about a
+        fifth to the time of reading a gzip-compressed group on the former. A
+        selection of some samples or features reads part of a group, which cannot
+        be checked on its own; ``verify_fingerprint()`` reads the groups it comes
+        from whole.
+
+    Fingerprint and provenance:
+        ``fingerprint()`` identifies the cube's values, tables and cell numbers
+        included, and ``provenance`` records how the cube was made: the caller's
+        source record, the function that built it with its settings, and each
+        operation that derived it, with the fingerprint of its input.
+        ``history()`` reads the record back in plain terms;
+        ``cytepool.cube.fingerprints`` and ``cytepool.cube.provenance`` document
+        both. To record the fingerprint of its input, the first operation applied
+        to a cube in memory hashes its layers, once, at about 1 s per GB of values
+        on processors with SHA instructions.
     """
 
     __slots__ = (
@@ -150,6 +205,7 @@ class Cube:
         "_sample_index",
         "_group_index",
         "_feature_index",
+        "_digests",
     )
 
     _layers: dict[str, "np.ndarray | _LazyLayer"]
@@ -158,10 +214,11 @@ class Cube:
     _features: Table
     _n_cells: np.ndarray | None
     _normalization: str | None
-    _provenance: str
+    _provenance: tuple[str, ...]  # JSON texts, see provenance._provenance_texts
     _sample_index: dict[str, int]
     _group_index: dict[str, int]
     _feature_index: dict[str, int]
+    _digests: "_Digests"
 
     def __init__(
         self,
@@ -197,7 +254,7 @@ class Cube:
         normalization_text = (
             None if normalization is None else _normalization_text(normalization)
         )
-        provenance_text = _provenance_text(provenance)
+        provenance_texts = _provenance_texts(provenance)
         stored = _store_layers(layers, shape, cells, normalization_text, ids, copy)
         # Every check has passed: only now are adopted arrays made read-only.
         for array in stored.values():
@@ -211,7 +268,7 @@ class Cube:
             feature_table,
             cells,
             normalization_text,
-            provenance_text,
+            provenance_texts,
             (sample_index, group_index, feature_index),
         )
 
@@ -243,6 +300,7 @@ class Cube:
                 self._n_cells,
                 self._normalization,
                 self._provenance,
+                self._digests,
             ),
         )
 
@@ -298,9 +356,8 @@ class Cube:
 
     @property
     def provenance(self) -> dict[str, Any]:
-        """A copy of the provenance mapping."""
-        result: dict[str, Any] = json.loads(self._provenance)
-        return result
+        """A copy of the provenance mapping (see ``cytepool.cube.provenance``)."""
+        return _provenance_of(self._provenance)
 
     def __repr__(self) -> str:
         lines = [
@@ -464,11 +521,14 @@ class Cube:
     def to_memory(self) -> "Cube":
         """Return a cube with every lazy layer read into memory.
 
-        Values are checked as they are read, the moment constraint included. A
-        cube without lazy layers is returned as it is.
+        Values are checked as they are read, the moment constraint included, and so
+        are the digests of a cube file's groups. A cube without lazy layers is
+        returned as it is. The result has the same values, so the same fingerprint
+        and provenance.
 
         Raises:
-            ValueError: If a value breaks a constraint.
+            ValueError: If a value breaks a constraint, or a group of a cube file
+                does not match its digest.
             OverflowError: If a sum of a derived lazy layer does not fit.
         """
         if all(isinstance(stored, np.ndarray) for stored in self._layers.values()):
@@ -477,6 +537,11 @@ class Cube:
             name: self._read_all(name) for name in self._layers
         }
         _check_moment_layers(layers, self._n_cells, self._ids())
+        # Whole reads check or keep the digests of lazy layers, so the copy knows them.
+        digests = _Digests(
+            dict(self._digests.parts),
+            {name: self._known_layer_digests(name) for name in self._layers},
+        )
         return _assemble(
             layers,
             self._samples,
@@ -485,7 +550,148 @@ class Cube:
             self._n_cells,
             self._normalization,
             self._provenance,
+            digests,
         )
+
+    # Fingerprint and provenance.
+
+    def fingerprint(self) -> str:
+        """Return the fingerprint of the cube's values.
+
+        The fingerprint identifies what an analysis reads: the sample, group and
+        feature tables (ids included), ``n_cells``, the normalization and every
+        layer. It leaves out the provenance, so cubes with the same values have the
+        same fingerprint however they were made, and a result can name the cube it
+        was computed from. It is ``"sha256:"`` followed by 64 hexadecimal digits;
+        ``cytepool.cube.fingerprints`` documents how it is computed, so another
+        program can compute it too.
+
+        Cost:
+            The fingerprint is built from a digest of each table, of ``n_cells``,
+            of the normalization and of each group of each layer, and the cube keeps
+            each digest once it is known.
+
+            - A cube in memory hashes its values once.
+            - A cube read from a cube file takes the digests stored in the file and
+              reads no layer; the tables, ``n_cells`` and the normalization were
+              checked against theirs when the file was opened, and each group is
+              checked whenever a read covers all of it. A file written by an
+              earlier version, without digests, is read whole once, a group at a
+              time.
+            - A lazy cube derived from a cube file with ``select()``, ``regroup()``
+              or ``collapse_samples()`` reads, once, the groups whose values the
+              operation changed and that were not read whole before, in every
+              layer: none for a selection of groups only, the merged groups for
+              ``regroup()``, and every group for ``collapse_samples()`` and for a
+              selection of samples or features. Groups it keeps unchanged take
+              the digests of the cube it was derived from.
+            - A lazy layer of another array-like, which can change, is read on every
+              call.
+
+        Raises:
+            ValueError: If a lazy layer gives a value that breaks a constraint, or a
+                group of a cube file does not match its digest.
+            OverflowError: If a sum of a derived lazy layer does not fit.
+        """
+        record = self._digest_record(read=True)
+        assert record is not None  # every digest is computed when read is True
+        fingerprint: str = record["fingerprint"]
+        return fingerprint
+
+    def digests(self) -> dict[str, Any]:
+        """Return the digests of the cube's parts and the fingerprint they make.
+
+        An analysis that reads some groups can record their digests, and check
+        them later against a cube file, which checks a group whenever a read covers
+        all of it. The digests are computed as ``fingerprint()`` computes them,
+        at the same cost.
+
+        Returns:
+            A new JSON-serialisable dict in the form cube files store, which
+            ``cytepool.cube.fingerprints`` documents. It holds the fingerprint
+            version and the cube's shape; the digest of each table, of ``n_cells``
+            and of the normalization (None without them); for each layer, its type
+            and the digest of each group, by position; and the fingerprint.
+
+        Raises:
+            ValueError, OverflowError: As ``fingerprint()``.
+        """
+        record = self._digest_record(read=True)
+        assert record is not None  # every digest is computed when read is True
+        return record
+
+    def verify_fingerprint(self) -> str:
+        """Compute the fingerprint from the values, checking every digest known.
+
+        Every group of every layer is read whole and hashed, and so are the tables,
+        ``n_cells`` and the normalization. A lazy layer derived from another is
+        computed from whole reads of the groups it comes from, so that what a
+        selection of some samples or features reads is checked too. Each digest
+        must equal the one the cube holds: stored with the cube file it was read
+        from, or computed before. Use it to check that a cube file still holds what
+        was written, and that a cube is the one a result was computed from:
+        ``read_cube(path).verify_fingerprint() == fingerprint_the_result_recorded``.
+
+        Returns:
+            The fingerprint, computed from the values.
+
+        Raises:
+            ValueError: If a part does not match its digest (the message names it),
+                or a lazy layer gives a value that breaks a constraint.
+            OverflowError: If a sum of a derived lazy layer does not fit.
+        """
+        known = self._part_digests()
+        parts = self._part_digests(fresh=True)
+        for part, digest in parts.items():
+            if known[part] != digest:
+                raise ValueError(
+                    f"{_PART_NAMES[part]} of this cube does not match its digest "
+                    f"{known[part]}: it was changed after the digest was computed"
+                )
+        layers = {}
+        for name, stored in self._layers.items():
+            digests = []
+            for group in range(self.n_groups):
+                if isinstance(stored, np.ndarray):
+                    digest = _block_digest(stored[group])
+                    kept = self._digests.layers.setdefault(name, [None] * self.n_groups)
+                    if kept[group] not in (None, digest):
+                        raise ValueError(
+                            f"group {self._groups['group_id'][group]!r} of the layer "
+                            f"{name!r} does not match its digest {kept[group]}: the "
+                            "array was changed after the digest was computed"
+                        )
+                    kept[group] = digest
+                else:
+                    # Every value is read with its whole group, and so checked.
+                    block = stored.read_checked(group)
+                    found = stored.known_digest(group)
+                    digest = _block_digest(block) if found is None else found
+                digests.append(digest)
+            layers[name] = (_layer_type(stored.dtype), digests)
+        shape = (self.n_groups, self.n_samples, self.n_features)
+        fingerprint: str = _digest_record(shape, parts, layers)["fingerprint"]
+        return fingerprint
+
+    def history(self) -> str:
+        """Describe how the cube was made, in plain terms, for printing.
+
+        The text is ``describe_provenance(cube.provenance)`` (see
+        ``cytepool.cube.provenance``): the caller's source record, how the cube was
+        built, and each operation in order, with the fingerprint of the cube it was
+        applied to. A last line gives the cube's own fingerprint when it is known
+        without reading lazy layers (see ``fingerprint()``).
+        """
+        lines = [describe_provenance(self.provenance)]
+        fingerprint = self._known_fingerprint()
+        if fingerprint is None:
+            lines.append(
+                "Fingerprint: not known without reading the lazy layers; "
+                "fingerprint() reads them."
+            )
+        else:
+            lines.append(f"Fingerprint: {fingerprint}")
+        return "\n".join(lines)
 
     # Deriving cubes.
 
@@ -495,9 +701,10 @@ class Cube:
         """Return a cube with a subset of samples, groups and features.
 
         Ids and positions also set the order of the result. A single id or position
-        selects one entry. The provenance record lists the kept sample and group ids
-        and the number of kept features, since feature lists can be long. Selecting
-        from a lazy cube reads nothing. Reads of the result ask its layers only for
+        selects one entry. The provenance record lists the kept sample, group and
+        feature ids, in order, and null for an axis given as None, and names this
+        cube by its fingerprint (see "Fingerprint and provenance" in ``Cube``).
+        Selecting from a lazy cube reads nothing. Reads of the result ask its layers only for
         the kept groups, samples and features: a cube file reads only the chunks
         that hold them, and a layer without ``oindex`` is read one whole kept group
         at a time (see "Lazy layers" in ``Cube``).
@@ -546,7 +753,7 @@ class Cube:
             "operation": "select",
             "samples": _kept_ids(sample_table, "sample_id", sample_positions),
             "groups": _kept_ids(group_table, "group_id", group_positions),
-            "n_features": None if feature_positions is None else len(feature_table),
+            "features": _kept_ids(feature_table, "feature_id", feature_positions),
         }
         return self._derive(
             sample_table,
@@ -568,7 +775,10 @@ class Cube:
         position of its member that comes first in the current group order. In the
         group table, a merged row keeps a column's value where all members agree
         and is missing otherwise; an integer or boolean column that needs a missing
-        value becomes float64 with NaN. Integer layers of the result are int64.
+        value becomes float64 with NaN. Integer layers of the result are int64. The
+        provenance record gives each merged or renamed group with its members, in
+        the current group order, and names this cube by its fingerprint (see
+        "Fingerprint and provenance" in ``Cube``).
 
         Args:
             mapping: New group id to the existing group ids it merges. A group id may
@@ -594,7 +804,6 @@ class Cube:
         ids = self._groups["group_id"].tolist()
         owner: dict[int, str] = {}
         merges: dict[str, list[int]] = {}
-        record_mapping: dict[str, list[str]] = {}
         for new_id, members in mapping.items():
             if not isinstance(new_id, str):
                 raise TypeError(
@@ -640,7 +849,6 @@ class Cube:
                 owner[position] = new_id
                 positions.append(position)
             merges[new_id] = sorted(positions)
-            record_mapping[new_id] = listed
         kept = [position for position in range(self.n_groups) if position not in owner]
         kept_ids = {ids[position] for position in kept}
         for new_id in merges:
@@ -671,7 +879,12 @@ class Cube:
                     f"{sample_ids[index[0]]!r}"
                 ),
             )
-        record = {"operation": "regroup", "mapping": record_mapping}
+        membership = {
+            new_id: [ids[position] for position in members]
+            for _, members, new_id in outputs
+            if new_id in merges
+        }
+        record = {"operation": "regroup", "membership": membership}
         return self._derive(
             self._samples,
             group_table,
@@ -691,7 +904,10 @@ class Cube:
         dropped. The column ``n_pooled_samples`` holds the number of original
         samples behind each new sample and comes last; if it already exists, it
         keeps its place and is summed, so collapsing twice counts the original
-        samples. Integer layers of the result are int64.
+        samples. Integer layers of the result are int64. The provenance record gives
+        each new sample with the ids of the samples it sums, in the current order,
+        and names this cube by its fingerprint (see "Fingerprint and provenance" in
+        ``Cube``).
 
         Args:
             by: A text or integer sample column without missing values.
@@ -798,7 +1014,15 @@ class Cube:
                     f"{group_ids[index[1]]!r}"
                 ),
             )
-        record = {"operation": "collapse_samples", "by": by}
+        original_ids = self._samples["sample_id"]
+        record = {
+            "operation": "collapse_samples",
+            "by": by,
+            "membership": {
+                new_id: [original_ids[position] for position in positions]
+                for new_id, positions in members.items()
+            },
+        }
         return self._derive(
             sample_table,
             self._groups,
@@ -827,7 +1051,15 @@ class Cube:
         feature_positions: np.ndarray | None = None,
         sums: bool,
     ) -> "Cube":
-        """Return the cube that a ``_Plan`` of these parts derives from this one."""
+        """Return the cube that a ``_Plan`` of these parts derives from this one.
+
+        ``record`` describes the operation; its input, this cube's fingerprint, is
+        added when it is known without reading lazy layers. Groups that the plan
+        leaves unchanged keep the digests this cube knows.
+        """
+        operation = {"operation": record.pop("operation")}
+        operation["input"] = self._known_fingerprint()
+        operation |= record
         plan = _Plan(
             group_sets,
             sample_order,
@@ -838,12 +1070,18 @@ class Cube:
         )
         shape = (len(groups), len(samples), len(features))
         layers: dict[str, np.ndarray | _LazyLayer] = {}
+        digests = _Digests()
         for name, stored in self._layers.items():
             dtype = stored.dtype
             if sums and dtype.kind in "iu":
                 dtype = np.dtype(np.int64)
             if isinstance(stored, np.ndarray):
                 layers[name] = plan.apply(name, stored, shape, dtype)
+                kept = self._known_layer_digests(name)
+                digests.layers[name] = [
+                    None if (source := plan.same_block(group)) is None else kept[source]
+                    for group in range(shape[0])
+                ]
             else:
                 layers[name] = _DerivedLayer(stored, plan, name, dtype, shape)
         if n_cells is not None:
@@ -855,8 +1093,83 @@ class Cube:
             features,
             n_cells,
             self._normalization,
-            _add_record(self._provenance, record),
+            _add_record(self._provenance, operation),
+            digests,
         )
+
+    def _part_digests(self, fresh: bool = False) -> dict[str, str | None]:
+        """Return the digests of the tables, n_cells and the normalization.
+
+        They are computed once and kept, unless ``fresh`` asks for them computed
+        anew (and not kept).
+        """
+        parts = {} if fresh else self._digests.parts
+        if len(parts) < len(_PART_NAMES):
+            for axis, table in (
+                ("samples", self._samples),
+                ("groups", self._groups),
+                ("features", self._features),
+            ):
+                if axis not in parts:
+                    parts[axis] = _table_digest(table)
+            if "n_cells" not in parts:
+                parts["n_cells"] = _cells_digest(self._n_cells)
+            if "normalization" not in parts:
+                parts["normalization"] = _normalization_digest(self.normalization)
+        return parts
+
+    def _known_layer_digests(self, name: str) -> list[str | None]:
+        """Return the digest of each group of a layer, None where not known yet."""
+        stored = self._layers[name]
+        if isinstance(stored, np.ndarray):
+            return list(self._digests.layers.get(name, [None] * self.n_groups))
+        return [stored.known_digest(group) for group in range(self.n_groups)]
+
+    def _layer_digest(self, name: str, group: int, read: bool) -> str | None:
+        """Return the digest of one group of a layer.
+
+        An in-memory group is hashed once. A lazy group's digest is taken from the
+        layer, and otherwise computed from a whole read when ``read`` is true, and
+        None when it is false.
+        """
+        stored = self._layers[name]
+        if isinstance(stored, np.ndarray):
+            kept = self._digests.layers.setdefault(name, [None] * self.n_groups)
+            if kept[group] is None:
+                kept[group] = _block_digest(stored[group])
+            return kept[group]
+        found = stored.known_digest(group)
+        if found is not None or not read:
+            return found
+        block = stored.read(group)  # a whole read keeps the digest of a stable layer
+        found = stored.known_digest(group)
+        return _block_digest(block) if found is None else found
+
+    def _digest_record(self, read: bool) -> dict[str, Any] | None:
+        """Return the digest record, or None if ``read`` is false and a lazy group's
+        digest is not known."""
+        if not read:
+            for stored in self._layers.values():
+                if not isinstance(stored, np.ndarray) and not all(
+                    stored.known_digest(group) is not None
+                    for group in range(self.n_groups)
+                ):
+                    return None
+        layers = {}
+        for name, stored in self._layers.items():
+            digests = []
+            for group in range(self.n_groups):
+                digest = self._layer_digest(name, group, read)
+                assert digest is not None  # computed, or known as checked above
+                digests.append(digest)
+            layers[name] = (_layer_type(stored.dtype), digests)
+        shape = (self.n_groups, self.n_samples, self.n_features)
+        return _digest_record(shape, self._part_digests(), layers)
+
+    def _known_fingerprint(self) -> str | None:
+        """Return the fingerprint if it needs no read of a lazy layer, else None."""
+        record = self._digest_record(read=False)
+        return None if record is None else record["fingerprint"]
 
     def _check_layer_name(self, name: str) -> None:
         if name in self._layers:
@@ -978,12 +1291,55 @@ class Cube:
 
 
 class _LazyLayer:
-    """A layer read one group, or one block of a group, at a time."""
+    """A layer read one group, or one block of a group, at a time.
 
-    __slots__ = ("dtype", "shape")
+    ``digests`` holds the digest of each group once it is known (None until then),
+    or is None for a layer whose values can change, such as one read from a memmap,
+    whose digests are never kept. A read that covers a whole group of a layer that
+    keeps digests hashes the group: it keeps the digest, or checks it against the
+    one kept.
+    """
+
+    __slots__ = ("dtype", "shape", "digests")
 
     dtype: np.dtype
     shape: tuple[int, int, int]
+    digests: list[str | None] | None
+
+    def known_digest(self, group: int) -> str | None:
+        """Return the digest of a group if it is known, else None."""
+        return None if self.digests is None else self.digests[group]
+
+    def _keep_digest(
+        self,
+        group: int,
+        block: np.ndarray,
+        rows: np.ndarray | None = None,
+        columns: np.ndarray | None = None,
+    ) -> None:
+        """Keep the digest of a group just read whole, or check it against the one
+        kept.
+
+        ``rows`` and ``columns`` say where each sample and feature of the group is
+        in ``block`` when it holds them in another order (see ``_block_digest``).
+        """
+        if self.digests is None:
+            return
+        digest = _block_digest(block, rows, columns)
+        kept = self.digests[group]
+        if kept is None:
+            self.digests[group] = digest
+        elif digest != kept:
+            raise self._changed(group)
+
+    def _changed(self, group: int) -> ValueError:
+        """The error for a group that does not match the digest kept for it."""
+        raise NotImplementedError
+
+    def read_checked(self, group: int) -> np.ndarray:
+        """Return one group, every value it is computed from read with its group
+        whole, so that each is checked against the digest kept for it."""
+        raise NotImplementedError
 
     def read(
         self,
@@ -1011,9 +1367,14 @@ class _StoredLayer(_LazyLayer):
     later (a memmap, say) cannot change what was read and checked. What a source
     returns is copied, except what a ``ZarrArray`` returns: a new array that nothing
     else holds (``reads_new_arrays``).
+
+    A ``ZarrArray`` layer keeps digests (see ``_LazyLayer``): those stored with its
+    cube file (``stored_digests``), which every whole read of a group checks, or
+    those of its first whole reads. Another source can change, so its digests are
+    not kept.
     """
 
-    __slots__ = ("source", "name", "n_cells", "ids", "reads_new_arrays")
+    __slots__ = ("source", "name", "n_cells", "ids", "reads_new_arrays", "stored")
 
     def __init__(
         self,
@@ -1031,6 +1392,14 @@ class _StoredLayer(_LazyLayer):
         self.n_cells = n_cells
         self.ids = ids
         self.reads_new_arrays = _reads_new_arrays(source)
+        self.digests = [None] * shape[0] if self.reads_new_arrays else None
+        self.stored = False  # whether the digests are those stored with a cube file
+
+    def stored_digests(self, digests: list[str]) -> None:
+        """Take the digests stored with the cube file this layer is read from."""
+        assert self.reads_new_arrays and len(digests) == self.shape[0]
+        self.digests = list(digests)
+        self.stored = True
 
     def read(
         self,
@@ -1045,8 +1414,16 @@ class _StoredLayer(_LazyLayer):
         _check_values(
             self.name, block, group, self.n_cells, self.ids, samples, features
         )
+        # A read of every sample and feature, in any order, is checked as a whole.
+        every_sample, rows = _inverse(samples, self.shape[1])
+        every_feature, columns = _inverse(features, self.shape[2])
+        if every_sample and every_feature:
+            self._keep_digest(group, block, rows, columns)
         block.flags.writeable = False
         return block
+
+    def read_checked(self, group: int) -> np.ndarray:
+        return self.read(group)
 
     def read_all(self) -> np.ndarray:
         if self.reads_new_arrays:  # one read, into the array it returns
@@ -1054,6 +1431,7 @@ class _StoredLayer(_LazyLayer):
             array = self._owned(whole, new=True)
             for group in range(self.shape[0]):
                 _check_values(self.name, array[group], group, self.n_cells, self.ids)
+                self._keep_digest(group, array[group])
         else:
             array = np.empty(self.shape, dtype=self.dtype)
             for group in range(self.shape[0]):
@@ -1061,6 +1439,23 @@ class _StoredLayer(_LazyLayer):
                 _check_values(self.name, array[group], group, self.n_cells, self.ids)
         array.flags.writeable = False
         return array
+
+    def _changed(self, group: int) -> ValueError:
+        what = f"group {self.ids[0][group]!r} of the layer {self.name!r}"
+        where = getattr(self.source, "path", "its source")
+        if self.stored:
+            return ValueError(
+                f"{what}, read from the array at {where}, does not match the digest "
+                "stored with its cube file: the file was changed after it was "
+                "written. If the change was meant, delete the root attribute "
+                "'digests' of the cube file (with zarr-python, for example) and open "
+                "it again"
+            )
+        return ValueError(
+            f"{what}, read from the array at {where}, differs from when it was first "
+            "read: the cube file changed while it was open; open it again with "
+            "read_cube"
+        )
 
     def _fetch(self, group: int) -> np.ndarray:
         """Read one group from the source and check its shape and dtype."""
@@ -1142,6 +1537,9 @@ class _DerivedLayer(_LazyLayer):
     """A lazy layer computed group by group from the layer of another cube.
 
     A read of some samples and features reads only what they need from the parent.
+    It keeps digests when its parent does: a group that the plan leaves unchanged
+    has the digest of its parent's group, and the digest of any other group is
+    computed when the group is read whole.
     """
 
     __slots__ = ("parent", "plan", "name")
@@ -1159,6 +1557,16 @@ class _DerivedLayer(_LazyLayer):
         self.name = name
         self.dtype = dtype
         self.shape = shape
+        self.digests = None if parent.digests is None else [None] * shape[0]
+
+    def known_digest(self, group: int) -> str | None:
+        if self.digests is None:
+            return None
+        if self.digests[group] is None:
+            source = self.plan.same_block(group)
+            if source is not None:
+                self.digests[group] = self.parent.known_digest(source)
+        return self.digests[group]
 
     def read(
         self,
@@ -1169,6 +1577,8 @@ class _DerivedLayer(_LazyLayer):
         block = self.plan.block(
             self.name, self.parent.read, group, self.dtype, samples, features
         )
+        if samples is None and features is None:
+            self._keep_whole(group, block)
         block.flags.writeable = False
         return block
 
@@ -1177,11 +1587,38 @@ class _DerivedLayer(_LazyLayer):
             return self.read(0)[np.newaxis]
         result = np.empty(self.shape, dtype=self.dtype)
         for group in range(self.shape[0]):
-            result[group] = self.plan.block(
-                self.name, self.parent.read, group, self.dtype
-            )
+            block = self.plan.block(self.name, self.parent.read, group, self.dtype)
+            self._keep_whole(group, block)
+            result[group] = block
         result.flags.writeable = False
         return result
+
+    def read_checked(self, group: int) -> np.ndarray:
+        def read(
+            source: int, samples: np.ndarray | None, features: np.ndarray | None
+        ) -> np.ndarray:
+            return _take(self.parent.read_checked(source), samples, features)
+
+        block = self.plan.block(self.name, read, group, self.dtype)
+        self._keep_whole(group, block)
+        block.flags.writeable = False
+        return block
+
+    def _keep_whole(self, group: int, block: np.ndarray) -> None:
+        """Keep or check the digest of a group just computed whole."""
+        if self.digests is None:
+            return
+        if self.plan.same_block(group) is not None and self.known_digest(group):
+            return  # the parent's whole read of the group checked its digest
+        self._keep_digest(group, block)
+
+    def _changed(self, group: int) -> ValueError:
+        return ValueError(
+            f"group {self.plan.target[0][group]!r} of the derived layer "
+            f"{self.name!r} differs from when it was first read: the cube file it "
+            "was derived from changed while it was open; open it again with "
+            "read_cube and derive the cube anew"
+        )
 
 
 class _Plan:
@@ -1197,7 +1634,9 @@ class _Plan:
     groups, and ``_pool`` the runs of samples.
 
     A block of an output group needs only some samples and features of the source
-    groups, so ``block`` reads only those, and sums only them.
+    groups, so ``block`` reads only those, and sums only them. Positions that keep
+    an axis as it is, and runs of one sample each in place, are stored as None, so
+    that an output group equal to a source group (``same_block``) is read whole.
     """
 
     __slots__ = (
@@ -1219,12 +1658,34 @@ class _Plan:
         source: tuple[np.ndarray, np.ndarray, np.ndarray],
         target: tuple[np.ndarray, np.ndarray, np.ndarray],
     ) -> None:
+        n_samples, n_features = source[1].size, source[2].size
+        if _is_identity(sample_order, n_samples) and (
+            sample_starts is None or sample_starts.size == n_samples
+        ):  # every sample in place, alone in its run if samples are pooled
+            sample_order = sample_starts = None
+        if _is_identity(feature_positions, n_features):
+            feature_positions = None
         self.group_sets = group_sets
         self.sample_order = sample_order
         self.sample_starts = sample_starts
         self.feature_positions = feature_positions
         self.source = source
         self.target = target
+
+    def same_block(self, group: int) -> int | None:
+        """Return the source group whose block output group ``group`` is, unchanged.
+
+        That is so when the output group has one member and every sample and
+        feature stays in place; otherwise None.
+        """
+        members = self.group_sets[group]
+        if members.size != 1 or not (
+            self.sample_order is None
+            and self.sample_starts is None
+            and self.feature_positions is None
+        ):
+            return None
+        return int(members[0])
 
     def block(
         self,
@@ -1384,6 +1845,30 @@ class _Plan:
         return total
 
 
+class _Digests:
+    """The digests of a cube's parts known so far: computed, or stored with a file.
+
+    ``parts`` maps "samples", "groups", "features", "n_cells" and "normalization"
+    to its digest (None for a cube without n_cells or normalization) once it is
+    known. ``layers`` maps an in-memory layer to the digest of each group, None
+    where not computed yet; a lazy layer keeps its own (``_LazyLayer.digests``).
+    The values of a cube never change, so what is known stays true.
+    """
+
+    __slots__ = ("parts", "layers")
+
+    def __init__(
+        self,
+        parts: dict[str, str | None] | None = None,
+        layers: dict[str, list[str | None]] | None = None,
+    ) -> None:
+        self.parts = {} if parts is None else parts
+        self.layers = {} if layers is None else layers
+
+    def __reduce__(self) -> tuple[type["_Digests"], tuple[Any, ...]]:
+        return (_Digests, (self.parts, self.layers))
+
+
 def _set_state(
     cube: Cube,
     layers: dict[str, np.ndarray | _LazyLayer],
@@ -1392,8 +1877,9 @@ def _set_state(
     features: Table,
     n_cells: np.ndarray | None,
     normalization: str | None,
-    provenance: str,
+    provenance: tuple[str, ...],
     indexes: tuple[dict[str, int], dict[str, int], dict[str, int]] | None = None,
+    digests: _Digests | None = None,
 ) -> None:
     if indexes is None:
         indexes = (
@@ -1412,6 +1898,7 @@ def _set_state(
         "_sample_index": indexes[0],
         "_group_index": indexes[1],
         "_feature_index": indexes[2],
+        "_digests": _Digests() if digests is None else digests,
     }
     for name, value in state.items():
         object.__setattr__(cube, name, value)
@@ -1424,12 +1911,21 @@ def _assemble(
     features: Table,
     n_cells: np.ndarray | None,
     normalization: str | None,
-    provenance: str,
+    provenance: tuple[str, ...],
+    digests: _Digests | None = None,
 ) -> Cube:
     """Build a cube from parts that are already checked, without copying them."""
     cube = object.__new__(Cube)
     _set_state(
-        cube, layers, samples, groups, features, n_cells, normalization, provenance
+        cube,
+        layers,
+        samples,
+        groups,
+        features,
+        n_cells,
+        normalization,
+        provenance,
+        digests=digests,
     )
     return cube
 
@@ -1441,8 +1937,12 @@ def _restore_cube(
     features: Table,
     n_cells: np.ndarray | None,
     normalization: str | None,
-    provenance: str,
+    provenance: tuple[str, ...] | str,
+    digests: _Digests | None = None,
 ) -> Cube:
+    # A cube pickled before digests were kept has none, and one JSON text.
+    if isinstance(provenance, str):
+        provenance = _provenance_texts(json.loads(provenance))
     # Unpickled arrays are new and writable.
     for stored in layers.values():
         if isinstance(stored, np.ndarray):
@@ -1450,8 +1950,75 @@ def _restore_cube(
     if n_cells is not None:
         n_cells.flags.writeable = False
     return _assemble(
-        layers, samples, groups, features, n_cells, normalization, provenance
+        layers, samples, groups, features, n_cells, normalization, provenance, digests
     )
+
+
+# Digests of cube files, for cytepool.io.cube_files.
+
+
+def _take_stored_digests(cube: Cube, record: Any, where: str) -> None:
+    """Give a cube just read from a cube file the digests stored with the file.
+
+    The tables, ``n_cells`` and the normalization, which are in memory, are checked
+    now; each group of a layer is checked whenever a read covers all of it.
+
+    Raises:
+        ValueError: If the record is malformed, or a part does not match its digest.
+    """
+    shape = (cube.n_groups, cube.n_samples, cube.n_features)
+    types = {name: _layer_type(layer.dtype) for name, layer in cube._layers.items()}
+    try:
+        _check_record(record, shape, types, where)
+    except ValueError as error:
+        error.add_note(
+            "(to open the file without the digests stored with it, delete its root "
+            "attribute 'digests', with zarr-python for example)"
+        )
+        raise
+    for part, digest in cube._part_digests(fresh=True).items():
+        if record[part] != digest:
+            raise ValueError(
+                f"{_PART_NAMES[part]} does not match the digest stored in {where}: "
+                "the cube file was changed after it was written. If the change was "
+                "meant, delete the root attribute 'digests' (with zarr-python, for "
+                "example) and open the file again"
+            )
+    cube._digests.parts.update({part: record[part] for part in _PART_NAMES})
+    for name, layer in cube._layers.items():
+        assert isinstance(layer, _StoredLayer)  # read_cube's layers are ZarrArrays
+        layer.stored_digests(record["layers"][name]["groups"])
+
+
+def _digest_of_read_group(cube: Cube, name: str, group: int, block: np.ndarray) -> str:
+    """Return the digest of a group of a layer that was just read whole as ``block``.
+
+    A digest the cube knows is taken (a lazy layer keeps the digest of a whole
+    read); otherwise the block is hashed, and the digest kept for an in-memory
+    layer.
+    """
+    layer = cube._layers[name]
+    found = (
+        cube._digests.layers.get(name, [None] * cube.n_groups)[group]
+        if isinstance(layer, np.ndarray)
+        else layer.known_digest(group)
+    )
+    if found is not None:
+        return found
+    digest = _block_digest(block)
+    if isinstance(layer, np.ndarray):
+        cube._digests.layers.setdefault(name, [None] * cube.n_groups)[group] = digest
+    return digest
+
+
+def _digest_record_of(cube: Cube, layers: Mapping[str, list[str]]) -> dict[str, Any]:
+    """Return a cube's digest record, given the digests of each group of each layer."""
+    shape = (cube.n_groups, cube.n_samples, cube.n_features)
+    typed = {
+        name: (_layer_type(cube._layers[name].dtype), layers[name])
+        for name in cube.layer_names
+    }
+    return _digest_record(shape, cube._part_digests(), typed)
 
 
 def _axis_table(
@@ -1505,6 +2072,9 @@ def _axis_table(
             raise TypeError(
                 f"{axis}[{column!r}] must be boolean, got dtype {table[column].dtype}"
             )
+    for column in table.columns:  # the types a fingerprint and a cube file encode
+        if table[column].dtype.kind != "O":
+            _column_type(table[column].dtype, f"{axis}[{column!r}]")
     return table, index
 
 
@@ -1948,6 +2518,33 @@ def _compose(
     return positions if selected is None else positions[selected]
 
 
+def _inverse(positions: np.ndarray | None, n: int) -> tuple[bool, np.ndarray | None]:
+    """Whether positions take each of ``n`` positions once, and where each one is.
+
+    Returns ``(True, None)`` for None (every position, in place), ``(True, where)``
+    for positions in another order, where ``where[p]`` is the index of position
+    ``p``, and ``(False, None)`` for positions that leave some out.
+    """
+    if positions is None:
+        return True, None
+    if positions.size != n:
+        return False, None
+    where = np.full(n, -1, dtype=np.intp)
+    where[positions] = np.arange(n)
+    if (where < 0).any():  # a repeated position leaves another out
+        return False, None
+    return True, None if _is_identity(positions, n) else where
+
+
+def _is_identity(positions: np.ndarray | None, n: int) -> bool:
+    """Whether positions take each of ``n`` positions once, in order."""
+    return (
+        positions is not None
+        and positions.size == n
+        and bool((positions == np.arange(n)).all())
+    )
+
+
 def _at(positions: np.ndarray | None, index: int) -> int:
     """Return the position that entry ``index`` of a block stands for."""
     return index if positions is None else int(positions[index])
@@ -2129,35 +2726,6 @@ def _preview(ids: np.ndarray, limit: int = 10) -> str:
     return shown + (f", ... ({ids.size} in all)" if ids.size > limit else "")
 
 
-def _plain_json(value: Any, path: str) -> Any:
-    """Return value as plain JSON types, raising an error that names a bad entry."""
-    if value is None or isinstance(value, str | bool):
-        return value
-    if isinstance(value, np.bool_):
-        return bool(value)
-    if isinstance(value, int | np.integer):
-        return int(value)
-    if isinstance(value, float | np.floating):
-        if not math.isfinite(value):
-            raise ValueError(f"{path} is {value}; JSON has no NaN or infinity")
-        return float(value)
-    if isinstance(value, np.ndarray):
-        return _plain_json(value.tolist(), path)
-    if isinstance(value, Mapping):
-        plain = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError(f"{path} has the key {key!r}; JSON keys are strings")
-            plain[key] = _plain_json(item, f"{path}[{key!r}]")
-        return plain
-    if isinstance(value, list | tuple):
-        return [_plain_json(item, f"{path}[{i}]") for i, item in enumerate(value)]
-    raise TypeError(
-        f"{path} has a value of type {type(value).__name__!r}, which is not "
-        "JSON-serialisable"
-    )
-
-
 def _normalization_text(normalization: Mapping[str, Any]) -> str:
     if not isinstance(normalization, Mapping):
         raise TypeError(
@@ -2171,24 +2739,4 @@ def _normalization_text(normalization: Mapping[str, Any]) -> str:
             "normalization needs a 'method' string that names how values were "
             "normalized, for example 'library_size'"
         )
-    return json.dumps(plain)
-
-
-def _provenance_text(provenance: Mapping[str, Any] | None) -> str:
-    if provenance is None:
-        return "{}"
-    if not isinstance(provenance, Mapping):
-        raise TypeError(
-            f"provenance must be a mapping, got {type(provenance).__name__}"
-        )
-    reject_masked(provenance, "provenance", missing="None")
-    plain = _plain_json(provenance, "provenance")
-    if "operations" in plain and not isinstance(plain["operations"], list):
-        raise ValueError("provenance['operations'] must be a list of operation records")
-    return json.dumps(plain)
-
-
-def _add_record(provenance: str, record: dict[str, Any]) -> str:
-    plain = json.loads(provenance)
-    plain.setdefault("operations", []).append(record)
     return json.dumps(plain)

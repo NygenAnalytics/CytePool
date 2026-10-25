@@ -126,7 +126,18 @@ def assert_same_cube(actual: Cube, expected: Cube) -> None:
     for name in expected.layer_names:
         assert_same_bits(actual.layer(name), expected.layer(name))
     assert actual.normalization == expected.normalization
-    assert actual.provenance == expected.provenance
+    assert_same_provenance(actual, expected)
+
+
+def assert_same_provenance(actual: Cube, expected: Cube) -> None:
+    """Equal provenance records, except that an operation applied to a lazy cube
+    derived from another records its input as null where a cube in memory names it.
+    """
+    mine, theirs = actual.provenance, expected.provenance
+    for record, other in zip(mine.get("operations", []), theirs.get("operations", [])):
+        if record.get("input") is None and "input" in other:
+            record["input"] = other["input"]
+    assert mine == theirs
 
 
 def stored_files(path: Path) -> set[str]:
@@ -305,6 +316,7 @@ def test_the_layout_on_disk_follows_the_documented_format(
     store: Path, cube: Cube
 ) -> None:
     root = json.loads((store / "zarr.json").read_text("utf-8"))
+    digests = root["attributes"].pop("digests")
     assert root == {
         "zarr_format": 3,
         "node_type": "group",
@@ -318,6 +330,22 @@ def test_the_layout_on_disk_follows_the_documented_format(
             "provenance": cube.provenance,
         },
     }
+    # tests/test_cube_fingerprints.py checks the digests against their reference.
+    assert list(digests) == [
+        "version",
+        "shape",
+        "samples",
+        "groups",
+        "features",
+        "n_cells",
+        "normalization",
+        "layers",
+        "fingerprint",
+    ]
+    assert digests["shape"] == [3, 4, 6]
+    assert {
+        name: len(layer["groups"]) for name, layer in digests["layers"].items()
+    } == (dict.fromkeys(cube.layer_names, 3))
     samples = json.loads((store / "samples" / "zarr.json").read_text("utf-8"))
     assert samples["attributes"] == {
         "columns": list(cube.samples.columns),
@@ -945,20 +973,31 @@ def test_write_cube_rejects_invalid_arguments(
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.skipif(
-    np.dtype(np.longdouble).itemsize <= 8, reason="long double is float64 here"
-)
-def test_columns_without_a_zarr_data_type_are_named(cube: Cube, tmp_path: Path) -> None:
-    samples = cube.samples.with_columns(weight=np.ones(4, dtype=np.longdouble))
+def test_columns_that_cube_files_cannot_store_are_named(
+    cube: Cube, tmp_path: Path
+) -> None:
+    # A cube's tables refuse dtypes without a Zarr data type, whose bytes differ
+    # between platforms, so that neither the file nor the fingerprint depends on one.
+    if np.dtype(np.longdouble).itemsize > 8:  # longdouble is float64 on some systems
+        samples = cube.samples.with_columns(weight=np.ones(4, dtype=np.longdouble))
+        with pytest.raises(TypeError, match=r"samples\['weight'\] has dtype float"):
+            Cube(
+                {"counts": cube.layer("counts")},
+                samples=samples,
+                groups=cube.groups,
+                features=cube.features,
+            )
+    # Text that JSON cannot hold (a lone surrogate) is named when it is written.
+    samples = cube.samples.with_columns(note=["a", "\ud800", None, "b"])
     odd = Cube(
         {"counts": cube.layer("counts")},
         samples=samples,
         groups=cube.groups,
         features=cube.features,
     )
-    with pytest.raises(TypeError, match="not a Zarr v3 core data type") as raised:
+    with pytest.raises(ValueError, match="lone surrogate") as raised:
         write_cube(odd, tmp_path / "a")
-    assert "(while writing the samples column 'weight')" in raised.value.__notes__
+    assert "(while writing the samples column 'note')" in raised.value.__notes__
     assert list(tmp_path.iterdir()) == []
 
 

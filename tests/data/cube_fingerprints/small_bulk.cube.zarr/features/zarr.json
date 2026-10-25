@@ -1,0 +1,12 @@
+{
+  "attributes": {
+    "columns": [
+      "feature_id"
+    ],
+    "arrays": [
+      "feature_id"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

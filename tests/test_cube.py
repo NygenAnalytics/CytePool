@@ -1703,23 +1703,33 @@ def test_cube_is_immutable_and_owns_its_arrays(layers: dict[str, np.ndarray]) ->
 
 
 def test_operations_append_to_the_provenance(cube: Cube) -> None:
-    derived = (
-        cube.select(samples=["S1", "S2"], features=np.arange(5))
-        .regroup({"T": ["T8", "T4"]})
-        .collapse_samples("condition")
-    )
+    selected = cube.select(samples=["S1", "S2"], features=np.arange(5))
+    regrouped = selected.regroup({"T": ["T8", "T4"]})
+    derived = regrouped.collapse_samples("condition")
     provenance = derived.provenance
+    # Each record names the cube it was applied to by fingerprint, and lists what
+    # it kept or pooled: merged groups in the order of the input, not as listed.
     assert provenance == {
         "source": "simulated cells",
         "operations": [
             {
                 "operation": "select",
+                "input": cube.fingerprint(),
                 "samples": ["S1", "S2"],
                 "groups": None,
-                "n_features": 5,
+                "features": ["G00", "G01", "G02", "G03", "G04"],
             },
-            {"operation": "regroup", "mapping": {"T": ["T8", "T4"]}},
-            {"operation": "collapse_samples", "by": "condition"},
+            {
+                "operation": "regroup",
+                "input": selected.fingerprint(),
+                "membership": {"T": ["T4", "T8"]},
+            },
+            {
+                "operation": "collapse_samples",
+                "input": regrouped.fingerprint(),
+                "by": "condition",
+                "membership": {"ctrl": ["S1"], "stim": ["S2"]},
+            },
         ],
     }
     assert json.loads(json.dumps(provenance)) == provenance

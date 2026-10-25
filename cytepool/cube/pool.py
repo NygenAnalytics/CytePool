@@ -16,10 +16,12 @@ from typing import Any, NamedTuple
 import numpy as np
 from numba import prange
 
+from .. import __version__
 from .._jit import jit, thread_limit
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table, _is_data_frame
 from .cube import LAYER_NAMES, Cube, _axis_table
+from .provenance import _source_record
 
 BULK_GROUP = "bulk"
 """The id of the single group of a cube built by ``from_bulk``."""
@@ -77,6 +79,7 @@ def from_cells(
     library_sizes: Any = None,
     layers: Sequence[str] | str | None = None,
     n_threads: int | None = None,
+    source: Mapping[str, Any] | None = None,
 ) -> Cube:
     """Pool the cells of every sample and group into a cube.
 
@@ -120,24 +123,33 @@ def from_cells(
             default all five.
         n_threads: The most threads to use. ``None`` uses numba's setting for the
             calling thread (see ``numba.set_num_threads``).
+        source: A record of where the cells came from, as a JSON-serialisable
+            mapping, stored as JSON in the cube's provenance as it is given: for
+            example a dataset identity, references to the artifacts of the tool that
+            exported the cells (such as their frozen sample and group memberships,
+            which stay in that tool's files) and its settings. CytePool does not
+            interpret it.
 
     Returns:
         A cube with ``n_cells`` of shape (n_samples, n_groups). Its normalization
         is ``{"method": "library_size", "target_sum": target_sum, "log": "natural",
         "pseudocount": 1.0, "library_sizes": "cell_totals"}``, with
         ``"library_sizes": "given"`` when ``library_sizes`` is passed, and None
-        without a normalized layer. Its provenance is ``{"source": "from_cells",
-        "n_cells": <number of cells>}``.
+        without a normalized layer. Its provenance holds ``source`` and the
+        settings: the number of cells, the layers, ``target_sum``, where library
+        sizes came from, how samples and groups were ordered and where feature ids
+        came from (``cytepool.cube.provenance`` documents the record).
 
     Raises:
         TypeError: If ``counts`` is neither a numeric array nor a CSR matrix (a CSC
-            matrix, for example), an argument has the wrong type, or an argument
-            is or holds a numpy masked array.
+            matrix, for example), an argument has the wrong type, ``source`` is not
+            a mapping or holds a value JSON cannot hold, or an argument is or holds
+            a numpy masked array.
         ValueError: If a count is negative, not finite or at least 2**53 (alone or
             summed over repeated entries), labels are missing or absent from a
-            table, lengths disagree, a layer name is unknown, or the normalized
-            values of a cell are undefined (a library size of 0) or beyond the
-            float64 range.
+            table, lengths disagree, a layer name is unknown, the normalized values
+            of a cell are undefined (a library size of 0) or beyond the float64
+            range, or ``source`` holds NaN, infinity or a lone surrogate.
         OverflowError: If, over the cells of an entry, the whole-number counts of
             a feature sum to more than 2**63 - 1 (the most a cube's integer layers
             hold) or its normalized values sum beyond the float64 range, or if
@@ -180,15 +192,17 @@ def from_cells(
     """
     names = _requested_layers(layers)
     target = _positive_number(target_sum, "target_sum")
+    record = _source_record(source)
     with thread_limit(n_threads) as threads:
         matrix = _cell_matrix(counts)
         n_rows, n_features = matrix.shape
-        sample_codes, sample_axis = _axis_codes(
+        sample_codes, sample_axis, sample_integers = _axis_codes(
             samples, "samples", n_rows, sample_table, "sample_table", "sample_id"
         )
-        group_codes, group_axis = _axis_codes(
+        group_codes, group_axis, group_integers = _axis_codes(
             groups, "groups", n_rows, group_table, "group_table", "group_id"
         )
+        feature_origin = _id_origin(features, counts, "columns")
         if features is None:
             features = _frame_labels(counts, "columns")
         feature_axis = _ids_or_table(features, n_features, "features", "feature_id")
@@ -242,6 +256,23 @@ def from_cells(
             "pseudocount": 1.0,
             "library_sizes": "cell_totals" if sizes is None else "given",
         }
+    construction = {
+        "function": "from_cells",
+        "cytepool_version": __version__,
+        "n_cells": n_rows,
+        "layers": list(names),
+        "target_sum": target,
+        "library_sizes": "cell_totals" if sizes is None else "given",
+        "samples": {
+            "order": "sorted_labels" if sample_table is None else "sample_table",
+            "labels": "integers" if sample_integers else "text",
+        },
+        "groups": {
+            "order": "sorted_labels" if group_table is None else "group_table",
+            "labels": "integers" if group_integers else "text",
+        },
+        "features": feature_origin,
+    }
     return Cube(
         {name: pooled[name].reshape(shape) for name in names},
         samples=sample_axis,
@@ -249,12 +280,18 @@ def from_cells(
         features=feature_axis,
         n_cells=cells_per_segment.reshape(n_groups, n_samples).T,
         normalization=normalization,
-        provenance={"source": "from_cells", "n_cells": n_rows},
+        provenance={"source": record, "construction": construction},
         copy=False,
     )
 
 
-def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube:
+def from_bulk(
+    counts: Any,
+    *,
+    samples: Any = None,
+    features: Any = None,
+    source: Mapping[str, Any] | None = None,
+) -> Cube:
     """Build a cube with one group from bulk counts.
 
     Args:
@@ -271,26 +308,39 @@ def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube
             per column of ``counts``, or a sequence of feature ids. By default the
             ids are the columns of a pandas DataFrame ``counts`` when they are text,
             and otherwise ``feature_0``, ``feature_1``, and so on.
+        source: A record of where the counts came from, as a JSON-serialisable
+            mapping, stored as JSON in the cube's provenance as it is given (see
+            ``from_cells``).
 
     Returns:
         A cube with the single group ``"bulk"``, only the ``counts`` layer, and
         ``n_cells`` None. Counts are uint32 when every count is a whole number up
         to 2**32 - 1, uint64 for larger whole numbers (up to 2**63 - 1), and
         float64 when a count is not a whole number (or, for float input, is at
-        least 2**53). Its provenance is ``{"source": "from_bulk"}``.
+        least 2**53). Its provenance holds ``source`` and where the sample and
+        feature ids came from (``cytepool.cube.provenance`` documents the record).
 
     Raises:
-        TypeError: If ``counts`` is not numeric, or an argument is or holds a numpy
+        TypeError: If ``counts`` is not numeric, ``source`` is not a mapping or
+            holds a value JSON cannot hold, or an argument is or holds a numpy
             masked array.
         ValueError: If ``counts`` is not 2-D, has a negative or non-finite value
-            or an integer above 2**63 - 1, the largest a cube holds, or its shape
-            disagrees with ``samples`` or ``features``.
+            or an integer above 2**63 - 1, the largest a cube holds, its shape
+            disagrees with ``samples`` or ``features``, or ``source`` holds NaN,
+            infinity or a lone surrogate.
 
     Example:
         >>> cube = from_bulk(np.array([[5, 0, 12], [7, 1, 9]]))
         >>> cube.layer("counts", "bulk").dtype
         dtype('uint32')
     """
+    record = _source_record(source)
+    construction = {
+        "function": "from_bulk",
+        "cytepool_version": __version__,
+        "samples": _id_origin(samples, counts, "index"),
+        "features": _id_origin(features, counts, "columns"),
+    }
     if samples is None:
         samples = _frame_labels(counts, "index")
     if features is None:
@@ -342,7 +392,7 @@ def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube
         samples=_ids_or_table(samples, n_samples, "samples", "sample_id"),
         groups={"group_id": [BULK_GROUP]},
         features=_ids_or_table(features, n_features, "features", "feature_id"),
-        provenance={"source": "from_bulk"},
+        provenance={"source": record, "construction": construction},
         copy=False,
     )
 
@@ -1064,13 +1114,14 @@ def _axis_codes(
     table: Any,
     table_name: str,
     id_column: str,
-) -> tuple[np.ndarray, Table]:
-    """Return the position of every cell's label on an axis, and the axis table."""
-    codes, distinct = _factorize(labels, name, n_cells)
+) -> tuple[np.ndarray, Table, bool]:
+    """Return the position of every cell's label on an axis, the axis table, and
+    whether the labels were integers."""
+    codes, distinct, integers = _factorize(labels, name, n_cells)
     if table is None:
         ids = np.empty(len(distinct), dtype=object)
         ids[:] = distinct
-        return codes, Table({id_column: ids})
+        return codes, Table({id_column: ids}), integers
     reject_masked_table(table, table_name, id_column)
     axis_table, index = _axis_table(table, name, id_column)
     positions = np.empty(len(distinct), dtype=np.int64)
@@ -1083,11 +1134,14 @@ def _axis_codes(
                 f"{table_name}[{id_column!r}]; every label needs a row"
             )
         positions[code] = position
-    return positions[codes], axis_table
+    return positions[codes], axis_table, integers
 
 
-def _factorize(labels: Any, name: str, n_cells: int) -> tuple[np.ndarray, list[str]]:
-    """Return the code of every cell's label and the sorted distinct labels.
+def _factorize(
+    labels: Any, name: str, n_cells: int
+) -> tuple[np.ndarray, list[str], bool]:
+    """Return the code of every cell's label, the sorted distinct labels, and
+    whether the labels are integers.
 
     Codes index the returned labels. Integer labels sort in numeric order and become
     their decimal text.
@@ -1173,7 +1227,7 @@ def _factorize(labels: Any, name: str, n_cells: int) -> tuple[np.ndarray, list[s
     order = sorted(range(len(values)), key=lambda code: values[code])
     rank = np.empty(len(values), dtype=np.int64)
     rank[order] = np.arange(len(values))
-    return rank[codes], [str(values[code]) for code in order]
+    return rank[codes], [str(values[code]) for code in order], kinds == {int}
 
 
 def _categorical_parts(labels: Any) -> tuple[np.ndarray, list[Any]] | None:
@@ -1197,6 +1251,20 @@ def _frame_labels(counts: Any, axis: str) -> np.ndarray | None:
     if all(isinstance(label, str) and label for label in labels.tolist()):
         return labels
     return None
+
+
+def _id_origin(value: Any, counts: Any, labels: str) -> str:
+    """Name where the ids of an axis come from, for the provenance record.
+
+    ``labels`` is the attribute of a DataFrame ``counts`` that gives them by
+    default: ``"index"`` or ``"columns"``.
+    """
+    if value is None:
+        found = _frame_labels(counts, labels)
+        return "positions" if found is None else f"data_frame_{labels}"
+    if isinstance(value, Table | Mapping) or _is_data_frame(value):
+        return "table"
+    return "ids"
 
 
 def _ids_or_table(value: Any, n: int, axis: str, id_column: str) -> Table:

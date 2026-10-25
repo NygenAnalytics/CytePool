@@ -13,7 +13,8 @@ what is planned.
 | Area | Implemented | Checked against |
 | --- | --- | --- |
 | Pseudobulk cubes | `Cube` (additive layers per sample, group and feature; merging groups; pooling samples; lazy layers, read as a selection needs them), `from_cells` (dense or CSR counts), `from_bulk` | scanpy, decoupler |
-| Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer) | zarr-python |
+| Provenance and fingerprints | A record of each cube's source (the caller's record, kept unchanged), of the settings that built it and of what each operation kept, merged or pooled, with the fingerprint of the cube it was applied to; `Cube.history()` reads it back. A content fingerprint (SHA-256, documented encoding) of the tables, cell numbers, normalization and layers | a reimplementation of the documented encoding, zarr-python |
+| Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer; stored digests, checked when a file is opened and when a read covers a whole group) | zarr-python |
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
@@ -62,6 +63,16 @@ These are not implemented yet:
   drawn at random from 30,000 usually fall in all eight chunks of a group. A read holds
   about what it returns plus one chunk, and with zstd also the decoder's window (2 MiB
   at the default level).
+- Every read that covers a whole group of a cube file, in any order, is hashed and
+  checked against the digest stored with the file. Reading every group of a gzip
+  file of 20 groups x 100 samples x 30,000 genes took 23% longer (SHA-256 ran at
+  2.3 GB/s with the processor's SHA instructions; without them it runs at about
+  0.5 GB/s). A selection of some samples or features reads part of a group, which is
+  checked only by `Cube.verify_fingerprint()`. The fingerprint of a lazy cube derived
+  from a cube file reads the groups whose values the operation changed and that were
+  not read whole before, and an operation applied to such a cube records the
+  fingerprint of its input only if it was computed. The first operation applied to a
+  cube in memory hashes its layers to record its fingerprint (about 1 s per GB).
 - A lazy layer other than those of `read_cube` is read with `oindex` when it has one, as
   zarr-python arrays do, and otherwise one whole group at a time, as HDF5 datasets
   are. The cube copies what such a layer returns, so a read holds it twice for a moment.

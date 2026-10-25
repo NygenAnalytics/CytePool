@@ -1,0 +1,388 @@
+"""Provenance records: how a cube was built and what it pooled.
+
+A result traced back to its data passes through the cube it was computed from. The
+cube's fingerprint (``cytepool.cube.fingerprints``) names its values, and its
+provenance, ``Cube.provenance``, says how it was made: a JSON object whose keys
+below are written by the functions and methods that build and derive cubes. Any
+other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
+``Cube.history()`` and ``describe_provenance`` read a record back in plain terms.
+
+``source``:
+    The caller's record of where the data came from, given to ``from_cells`` or
+    ``from_bulk`` as ``source``: for example a dataset identity, references to the
+    exporter's artifacts (such as frozen cell memberships, which stay in the
+    exporter's files) and the exporter's settings. CytePool stores it as JSON, as
+    it was given, does not interpret it, and reports its references as unresolved:
+    following them needs the tool that wrote them. Null when no record was given.
+
+``construction``:
+    How the cube was built: ``function`` (``"from_cells"`` or ``"from_bulk"``),
+    ``cytepool_version``, and the function's settings. ``from_cells`` records
+
+    - ``n_cells``: the number of cells pooled (the cells of each sample and group
+      are the cube's ``n_cells``);
+    - ``layers``: the layers computed;
+    - ``target_sum``: the total that normalization scales every cell to;
+    - ``library_sizes``: ``"cell_totals"`` (the total count of each cell) or
+      ``"given"`` (the ``library_sizes`` argument), as in the normalization;
+    - ``samples`` and ``groups``: ``{"order": ..., "labels": ...}``, where
+      ``order`` is ``"sample_table"`` or ``"group_table"`` (the rows of that table)
+      or ``"sorted_labels"`` (the distinct labels, text sorted by code point and
+      integers numerically), and ``labels`` is ``"text"`` or ``"integers"``
+      (integer labels became their decimal text);
+    - ``features``: where the feature ids came from: ``"table"``, ``"ids"`` (a
+      sequence), ``"data_frame_columns"`` or ``"positions"`` (``feature_0``,
+      ``feature_1``, ...).
+
+    ``from_bulk`` records ``samples`` and ``features``, where their ids came from:
+    ``"table"``, ``"ids"``, ``"data_frame_index"`` (samples) or
+    ``"data_frame_columns"`` (features), or ``"positions"``.
+
+``operations``:
+    The operations that derived the cube, oldest first. Each is an object with
+    ``operation``, the method, and ``input``, the fingerprint of the cube it was
+    applied to, so that a chain of operations can be checked link by link: apply
+    each operation to the cube with its input fingerprint, and compare the result's
+    fingerprint with the next record's input, or with the cube's own fingerprint
+    after the last.
+
+    ``input`` is recorded when it is known without reading lazy layer values. That
+    is so for a cube in memory: the first operation applied to it hashes its layers,
+    once, at about 1 s per GB of values where the processor has SHA instructions.
+    It is so for a cube read from a cube file, which stores its digests, and for a
+    lazy cube derived from one when every digest it needs is known: kept unchanged
+    from the file, or kept from whole reads of its groups, as ``fingerprint()``
+    makes them. It is null for a lazy cube derived from another whose groups were
+    not read whole, such as a cube file regrouped and then collapsed: call
+    ``fingerprint()`` on the intermediate cube before deriving from it to record
+    its fingerprint, or check the operations after the last recorded fingerprint
+    together. It is always null for a cube whose lazy layers are other array-likes
+    (a memmap or an HDF5 dataset), which can change: their fingerprint is computed
+    anew on every call and never kept.
+
+    - ``select``: ``samples``, ``groups`` and ``features``, the ids kept, in the
+      order of the result, or null for an axis that was given as None.
+    - ``regroup``: ``membership``, the id of each merged or renamed group with the
+      ids of the groups it sums, in the input's order. The groups not listed are
+      kept as they are.
+    - ``collapse_samples``: ``by``, the sample column, and ``membership``, the id of
+      each new sample with the ids of the samples it sums, in the input's order.
+"""
+
+import json
+import math
+from collections.abc import Mapping
+from typing import Any
+
+import numpy as np
+
+from .._masked_arrays import reject_masked
+
+__all__ = ["describe_provenance"]
+
+_SHOWN_IDS = 10  # ids listed before a list is shortened
+_SHOWN_MEMBERS = 20  # merged groups or pooled samples listed in full
+_SHOWN_CHARACTERS = 200  # of the JSON of one value of a record shown as it is
+_ORDERS = {
+    "sample_table": "the rows of sample_table",
+    "group_table": "the rows of group_table",
+    "sorted_labels": "the sorted distinct labels",
+}
+_ORIGINS = {
+    "table": "the ids of a table",
+    "ids": "ids given as a sequence",
+    "data_frame_index": "the index of the counts data frame",
+    "data_frame_columns": "the columns of the counts data frame",
+}
+_LIBRARY_SIZES = {
+    "cell_totals": "the total count of each cell",
+    "given": "given for each cell (library_sizes)",
+}
+_REFERENCES = (
+    "References: CytePool resolves none on its own. The source record's references "
+    "need the tool that wrote them. A fingerprint names a cube without saying where "
+    "it is: Cube.fingerprint() of a cube at hand says whether it is that cube."
+)
+
+
+def describe_provenance(provenance: Mapping[str, Any]) -> str:
+    """Describe a provenance record in plain terms.
+
+    The source record comes first, then how the cube was built, then each operation
+    in order with what it kept, merged or pooled; long lists are shortened. Entries
+    the schema in this module does not describe, such as those of cubes saved by
+    earlier versions, are shown as JSON. The references that CytePool cannot follow
+    on its own are reported as unresolved: those of the source record, and the
+    fingerprints of the cubes that operations were applied to, which name those
+    cubes without saying where they are.
+
+    Args:
+        provenance: A provenance record, such as ``Cube.provenance`` or the record of
+            a cube that a result keeps.
+
+    Returns:
+        Text with one item per line, for printing.
+
+    Raises:
+        TypeError: If ``provenance`` is not a mapping, holds a value JSON cannot
+            hold, or is or holds a numpy masked array.
+        ValueError: If it holds NaN, infinity or text that is not valid Unicode (a
+            lone surrogate), or its ``operations`` is not a list.
+
+    Example:
+        >>> pooled = {"operation": "collapse_samples", "by": "donor"}
+        >>> pooled["membership"] = {"D1": ["S1", "S3"], "D2": ["S2"]}
+        >>> print(describe_provenance({"operations": [pooled]}))
+        1. collapse_samples by 'donor'
+          D1: S1 + S3
+          D2: S2
+    """
+    record = _provenance_of(_provenance_texts(provenance))
+    if not record:
+        return "Nothing is recorded."
+    lines: list[str] = []
+    references = False
+    if "source" in record:
+        lines += _source_lines(record["source"])
+        references = isinstance(record["source"], dict)
+    if "construction" in record:
+        lines += _construction_lines(record["construction"])
+    for number, operation in enumerate(record.get("operations", []), start=1):
+        lines += _operation_lines(number, operation)
+        references |= isinstance(operation, dict) and operation.get("input") is not None
+    others = [key for key in record if key not in ("source", "construction")]
+    for key in others:
+        if key != "operations":
+            lines.append(f"{key}: {_json(record[key])}")
+    if references:
+        lines.append(_REFERENCES)
+    return "\n".join(lines)
+
+
+def _source_lines(source: Any) -> list[str]:
+    if source is None:
+        return ["Source: no record was given."]
+    if not isinstance(source, dict):
+        return [f"Source: {_json(source)}"]
+    lines = [
+        "Source, as the caller recorded it (unresolved: CytePool does not follow its "
+        "references):"
+    ]
+    lines += [f"  {key}: {_json(value)}" for key, value in source.items()]
+    return lines
+
+
+def _construction_lines(construction: Any) -> list[str]:
+    if not isinstance(construction, dict):
+        return [f"Construction: {_json(construction)}"]
+    settings = dict(construction)
+    function = settings.pop("function", None)
+    version = settings.pop("cytepool_version", None)
+    header = f"Built by {function if isinstance(function, str) else _json(function)}"
+    if version is not None:
+        header += f" (CytePool {version})"
+    if function == "from_cells" and isinstance(settings.get("n_cells"), int):
+        header += f" from {settings.pop('n_cells'):,} cells"
+    lines = [header + ":"]
+    for axis in ("samples", "groups"):
+        value = settings.get(axis)
+        if (
+            function == "from_cells"
+            and isinstance(value, dict)
+            and value.get("order") in _ORDERS
+            and value.get("labels") in ("text", "integers")
+            and len(value) == 2
+        ):
+            del settings[axis]
+            text = _ORDERS[value["order"]]
+            if value["labels"] == "integers":
+                text += "; the labels were integers, written as decimal text"
+            lines.append(f"  {axis}: {text}")
+    for axis in ("samples", "features"):
+        value = settings.get(axis)
+        if isinstance(value, str) and (value in _ORIGINS or value == "positions"):
+            del settings[axis]
+            text = _ORIGINS.get(value, f"positions ({axis[:-1]}_0, {axis[:-1]}_1, ...)")
+            lines.append(f"  {axis}: {text}")
+    layers = settings.get("layers")
+    if isinstance(layers, list) and all(isinstance(name, str) for name in layers):
+        del settings["layers"]
+        lines.append(f"  layers: {', '.join(layers)}")
+    target, sizes = settings.get("target_sum"), settings.get("library_sizes")
+    if (
+        isinstance(target, int | float)
+        and not isinstance(target, bool)
+        and sizes in _LIBRARY_SIZES
+    ):
+        del settings["target_sum"], settings["library_sizes"]
+        lines.append(
+            f"  normalized values: each cell scaled to a total of {_number(target)}, "
+            f"with library sizes {_LIBRARY_SIZES[sizes]}"
+        )
+    lines += [f"  {key}: {_json(value)}" for key, value in settings.items()]
+    return lines
+
+
+def _operation_lines(number: int, operation: Any) -> list[str]:
+    if not isinstance(operation, dict):
+        return [f"{number}. {_json(operation)}"]
+    fields = dict(operation)
+    name = fields.pop("operation", None)
+    header = f"{number}. {name if isinstance(name, str) else _json(name)}"
+    if name == "collapse_samples" and isinstance(fields.get("by"), str):
+        header += f" by {fields.pop('by')!r}"
+    if "input" in fields:
+        found = fields.pop("input")
+        header += (
+            ", applied to a cube whose fingerprint was not recorded"
+            if found is None
+            else f", applied to the cube {found if isinstance(found, str) else _json(found)}"
+        )
+    lines = [header]
+    if name == "select":
+        for axis in ("samples", "groups", "features"):
+            if axis not in fields:
+                continue
+            kept = fields.pop(axis)
+            if kept is None:
+                lines.append(f"  {axis}: every {axis[:-1]}, as they were")
+            elif _is_text_list(kept):
+                lines.append(f"  {axis}: {_listing(kept, ', ')}")
+            else:
+                lines.append(f"  {axis}: {_json(kept)}")
+    if name in ("regroup", "collapse_samples") and _is_membership(
+        fields.get("membership")
+    ):
+        membership = fields.pop("membership")
+        for new_id, members in list(membership.items())[:_SHOWN_MEMBERS]:
+            lines.append(f"  {new_id}: {_listing(members, ' + ')}")
+        if len(membership) > _SHOWN_MEMBERS:
+            lines.append(f"  ... ({len(membership):,} in all)")
+    lines += [f"  {key}: {_json(value)}" for key, value in fields.items()]
+    return lines
+
+
+def _number(value: float) -> str:
+    if float(value).is_integer() and abs(value) < 1e15:
+        return f"{int(value):,}"
+    return repr(value)
+
+
+def _is_text_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_membership(value: Any) -> bool:
+    return isinstance(value, dict) and all(map(_is_text_list, value.values()))
+
+
+def _listing(items: list[str], separator: str) -> str:
+    shown = separator.join(items[:_SHOWN_IDS])
+    if len(items) > _SHOWN_IDS:
+        shown += f"{separator}... ({len(items):,} in all)"
+    return shown
+
+
+def _json(value: Any) -> str:
+    text = json.dumps(value, ensure_ascii=False)
+    if len(text) > _SHOWN_CHARACTERS:
+        return text[: _SHOWN_CHARACTERS - 3] + "..."
+    return text
+
+
+# Checking and storing JSON records, for cubes and the functions that build them.
+
+
+def _plain_json(value: Any, path: str) -> Any:
+    """Return value as plain JSON types, raising an error that names a bad entry."""
+    if isinstance(value, str):
+        return _valid_text(value, path)
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, int | np.integer):
+        return int(value)
+    if isinstance(value, float | np.floating):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} is {value}; JSON has no NaN or infinity")
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return _plain_json(value.tolist(), path)
+    if isinstance(value, Mapping):
+        plain = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{path} has the key {key!r}; JSON keys are strings")
+            key = _valid_text(key, f"a key of {path}")
+            plain[key] = _plain_json(item, f"{path}[{key!r}]")
+        return plain
+    if isinstance(value, list | tuple):
+        return [_plain_json(item, f"{path}[{i}]") for i, item in enumerate(value)]
+    raise TypeError(
+        f"{path} has a value of type {type(value).__name__!r}, which is not "
+        "JSON-serialisable"
+    )
+
+
+def _valid_text(text: str, path: str) -> str:
+    """Return text as a str, refusing what UTF-8 cannot encode (lone surrogates)."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"{path} holds the lone surrogate {text[error.start : error.end]!r}, which "
+            "is not valid Unicode text; JSON metadata must be valid text"
+        ) from None
+    return str(text)
+
+
+def _provenance_texts(provenance: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Return a provenance record as JSON texts, after checking it.
+
+    The first text is the record with an empty list in place of its operations,
+    and each operation record follows as a text of its own, so that an operation is
+    added without reading the others again (``_add_record``).
+    """
+    if provenance is None:
+        return ("{}",)
+    if not isinstance(provenance, Mapping):
+        raise TypeError(
+            f"provenance must be a mapping, got {type(provenance).__name__}"
+        )
+    reject_masked(provenance, "provenance", missing="None")
+    plain = _plain_json(provenance, "provenance")
+    operations = plain.get("operations", [])
+    if not isinstance(operations, list):
+        raise ValueError("provenance['operations'] must be a list of operation records")
+    if "operations" in plain:
+        plain["operations"] = []
+    return (json.dumps(plain), *map(json.dumps, operations))
+
+
+def _provenance_of(texts: tuple[str, ...]) -> dict[str, Any]:
+    """Return the provenance record that ``_provenance_texts`` stored as texts."""
+    record: dict[str, Any] = json.loads(texts[0])
+    if len(texts) > 1 or "operations" in record:
+        record["operations"] = [json.loads(text) for text in texts[1:]]
+    return record
+
+
+def _source_record(source: Any) -> dict[str, Any] | None:
+    """Return a caller's source record as plain JSON, after checking it."""
+    if source is None:
+        return None
+    if not isinstance(source, Mapping):
+        raise TypeError(
+            "source must be a mapping (a JSON object) that records where the data "
+            f"came from, such as a dataset identity and artifact references; got "
+            f"{type(source).__name__}"
+        )
+    reject_masked(source, "source", missing="None")
+    plain: dict[str, Any] = _plain_json(source, "source")
+    return plain
+
+
+def _add_record(provenance: tuple[str, ...], record: dict[str, Any]) -> tuple[str, ...]:
+    """Return the texts of a provenance record with an operation record appended."""
+    return (*provenance, json.dumps(record))
