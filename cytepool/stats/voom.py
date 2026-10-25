@@ -21,6 +21,20 @@ predicted variance, w_gi = lo(lambda_gi)^(-4), where
 is its fitted log2 count. A weighted least squares fit of the log2 counts per million
 with these weights, followed by empirical Bayes moderation, is limma-voom.
 
+With prior weights p_gi, for samples, observations or features, the design is fitted
+by weighted least squares with them, which gives the residual standard deviations
+and fitted values of the trend, and the weights are w_gi p_gi. limma's ``voom``
+returns w_gi alone, which its help page says modify the prior weights in a
+multiplicative fashion: limma's weights times the prior weights are CytePool's, the
+weights a fit needs.
+
+:func:`voom_with_quality_weights` combines the weights with sample quality weights
+(Liu et al. 2015), as limma's ``voomWithQualityWeights`` does (found by probing):
+voom; sample quality weights a from its log2 counts per million and weights, by
+:func:`~cytepool.stats.sample_weights.sample_quality_weights`; voom again, with a as
+prior weights; sample quality weights b from the new trend's weights w'; and the
+weights w'_gi b_i.
+
 Results match limma 3.62.1, called with ``adaptive.span = TRUE`` where the span is
 chosen. Conventions that the paper leaves open were settled from limma's
 documentation (its help page and NEWS) or by running limma as a black box; comments
@@ -44,10 +58,12 @@ mark the latter "found by probing":
   gives tied points the same value, so each distinct x is one point of the curve.
   The x are computed as R computes them, to the last bit, so that their ties are
   limma's: LOWESS treats tied points differently from points a rounding error apart.
+- x averages every log2 count per million of a feature, those of zero prior weight
+  included, as limma's ``Amean`` does (found by probing).
 - A design that leaves no residual degrees of freedom gives every observation weight
-  one, with a warning (limma's NEWS).
+  one, times its prior weight, with a warning (limma's NEWS).
 - There must be at least two features, as limma requires, and at least two with counts
-  to fit a trend.
+  (and residual degrees of freedom under the prior weights) to fit a trend.
 
 Deliberate deviations, where limma returns values without meaning or fails:
 
@@ -60,28 +76,51 @@ Deliberate deviations, where limma returns values without meaning or fails:
   :func:`~cytepool.stats.linear_models.fit_linear_model`; limma drops the aliased
   columns.
 - ``span`` must lie in (0, 1], as limma documents; limma accepts larger values.
+- A feature whose prior weights leave no residual degrees of freedom is left out of
+  the trend. limma passes its missing standard deviation to R's ``lowess``, which
+  then returns a curve without meaning for every feature.
+- Where zero prior weights leave coefficients of a feature that its other samples
+  cannot estimate, its fitted values are those of the least squares fit over the
+  samples of positive weight, and its observations of zero prior weight get weight
+  zero. limma returns missing weights for every observation of such a feature.
 
 References:
     Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear
     model analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+
+    Liu R, Holik AZ, Su S, Jansz N, Chen K, Leong HS, Blewitt ME, Asselin-Labat ML,
+    Smyth GK, Ritchie ME (2015). Why weight? Modelling sample and observational level
+    variability improves power in RNA-seq analyses. Nucleic Acids Research 43, e97.
 """
 
 import math
 import numbers
 import warnings
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
 
 from cytepool._masked_arrays import reject_masked
 from cytepool._summation import accurate_mean
+from cytepool.design.design import _refuse_random_effects
 from cytepool.normalization import _as_counts, _effective_library_sizes
-from cytepool.stats.linear_models import _design_matrix, fit_linear_model
+from cytepool.stats.linear_models import (
+    LinearModelFit,
+    _design_matrix,
+    fit_linear_model,
+)
+from cytepool.stats.sample_weights import (
+    _estimate,
+    _prior_weights,
+    _too_few_df_message,
+    _variance_model,
+    _weights_of,
+)
 from cytepool.stats.smoothing import choose_lowess_span, lowess
 
-__all__ = ["VoomResult", "voom"]
+__all__ = ["VoomResult", "voom", "voom_with_quality_weights"]
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -89,6 +128,15 @@ FloatArray = npt.NDArray[np.float64]
 # by probing).
 _TREND_ITERATIONS = 3
 _LOG2_MILLION = math.log2(1e6)
+_NO_REPLICATION = (
+    "the design leaves no residual degrees of freedom (no replication), so no "
+    "mean-variance trend can be fitted; every weight is set to 1"
+)
+_NO_RESIDUAL_DF = (
+    "the design, without the observations of zero prior weight, leaves no residual "
+    "degrees of freedom, so no mean-variance trend can be fitted; every weight is "
+    "set to its prior weight"
+)
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -104,7 +152,8 @@ class VoomResult:
         log_cpm: ``(n_samples, n_features)`` log2 counts per million,
             ``log2((r + 0.5) / (R + 1) * 1e6)`` with R the effective library size.
         weights: ``(n_samples, n_features)`` precision weights: the inverse of each
-            observation's variance predicted by the trend.
+            observation's variance predicted by the trend, times the prior weights
+            given to :func:`voom` or the ``sample_weights``.
         effective_library_sizes: ``(n_samples,)`` library sizes times
             normalization factors. Pass them back as ``library_sizes`` without
             normalization factors to repeat the computation.
@@ -112,8 +161,9 @@ class VoomResult:
             x of the mean-variance trend. NaN for features with no counts, which
             are left out of the trend.
         sqrt_sd: ``(n_features,)`` square root of each feature's residual standard
-            deviation, the y of the trend. NaN where ``mean_log_count`` is, and for
-            every feature when the design leaves no residual degrees of freedom.
+            deviation, the y of the trend. NaN for the features left out of the
+            trend: those with no counts, those whose prior weights leave no residual
+            degrees of freedom, and every feature when the design leaves none.
         sqrt_sd_trend: ``(n_features,)`` the LOWESS trend of ``sqrt_sd`` at
             ``mean_log_count``; NaN where ``sqrt_sd`` is. Sort by
             ``mean_log_count`` to draw it as a curve.
@@ -121,12 +171,15 @@ class VoomResult:
             the trend that each local fit uses, as chosen or given. NaN when
             the design leaves no residual degrees of freedom, so that no trend
             is fitted.
+        sample_weights: ``(n_samples,)`` sample quality weights that ``weights``
+            include, from :func:`voom_with_quality_weights`; None otherwise.
 
     Raises:
         TypeError: If an array is a numpy masked array, or ``span`` is not a
             real number.
-        ValueError: If the shapes of the arrays disagree, or ``span`` is
-            neither in (0, 1] nor NaN.
+        ValueError: If the shapes of the arrays disagree, ``span`` is
+            neither in (0, 1] nor NaN, or a sample weight is not positive and
+            finite.
     """
 
     log_cpm: FloatArray
@@ -136,9 +189,10 @@ class VoomResult:
     sqrt_sd: FloatArray
     sqrt_sd_trend: FloatArray
     span: float
+    sample_weights: FloatArray | None = None
 
     def __post_init__(self) -> None:
-        for name in ("log_cpm", "weights", "effective_library_sizes"):
+        for name in ("log_cpm", "weights", "effective_library_sizes", "sample_weights"):
             reject_masked(getattr(self, name), name)
         # NaN marks the features that the trend leaves out.
         for name in ("mean_log_count", "sqrt_sd", "sqrt_sd_trend"):
@@ -166,10 +220,16 @@ class VoomResult:
             "sqrt_sd": (n_features,),
             "sqrt_sd_trend": (n_features,),
         }
+        if self.sample_weights is not None:
+            shapes["sample_weights"] = (n_samples,)
         for name, shape in shapes.items():
             array = np.asarray(getattr(self, name), dtype=np.float64)
             if array.shape != shape:
                 raise ValueError(f"{name} must have shape {shape}, got {array.shape}")
+            if name == "sample_weights" and not np.all(
+                np.isfinite(array) & (array > 0.0)
+            ):
+                raise ValueError("sample_weights must be positive and finite")
             view = array.view()
             view.flags.writeable = False
             object.__setattr__(self, name, view)
@@ -177,10 +237,23 @@ class VoomResult:
     def __repr__(self) -> str:
         n_samples, n_features = self.log_cpm.shape
         in_trend = int(np.count_nonzero(~np.isnan(self.sqrt_sd)))
+        quality = "" if self.sample_weights is None else ", with sample weights"
         return (
             f"VoomResult(n_samples={n_samples}, n_features={n_features}, "
-            f"features_in_trend={in_trend}, span={self.span:.3g})"
+            f"features_in_trend={in_trend}, span={self.span:.3g}{quality})"
         )
+
+
+@dataclass(frozen=True)
+class _Trend:
+    """voom's quantities before prior weights are multiplied in."""
+
+    log_cpm: FloatArray
+    weights: FloatArray  # the trend's: NaN only where a prior weight is zero
+    mean_log_count: FloatArray
+    sqrt_sd: FloatArray
+    sqrt_sd_trend: FloatArray
+    span: float
 
 
 def voom(
@@ -190,6 +263,7 @@ def voom(
     library_sizes: npt.ArrayLike | None = None,
     norm_factors: npt.ArrayLike | None = None,
     span: float | None = None,
+    weights: npt.ArrayLike | None = None,
 ) -> VoomResult:
     """Log2 counts per million with precision weights from the mean-variance trend.
 
@@ -226,14 +300,24 @@ def voom(
             (``adaptive.span = TRUE``). A number fixes it, as
             ``adaptive.span = FALSE, span = <number>`` does in limma, whose
             default before 3.66 was 0.5.
+        weights: Prior weights, as limma's ``voom(weights = ...)`` takes them:
+            ``(n_samples,)`` sample weights, such as sample quality weights,
+            ``(n_samples, n_features)`` observation weights, or ``(1, n_features)``
+            feature weights. Finite and non-negative; a zero weight leaves an
+            observation out of the fit of the trend and gives it weight zero. The
+            returned weights include them. A vector is always sample weights, also
+            when there are as many features as samples, where limma takes it for
+            feature weights.
 
     Returns:
-        The log2 counts per million, their weights (positive and finite), the
-        effective library sizes, and the mean-variance trend with its span.
+        The log2 counts per million, their weights (finite and non-negative;
+        positive where the prior weights are), the effective library sizes, and the
+        mean-variance trend with its span.
 
     Warns:
-        RuntimeWarning: If the design leaves no residual degrees of freedom, so
-            that no trend can be fitted; every weight is then one.
+        RuntimeWarning: If the design, without the observations of zero prior
+            weight, leaves no residual degrees of freedom, so that no trend can be
+            fitted; every weight is then its prior weight, or one.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -241,10 +325,142 @@ def voom(
         ValueError: If ``counts`` is not a 2-D array of finite, non-negative values
             with at least two features, the design does not have one row per
             sample or is not of full column rank, a library size or normalization
-            factor is not positive, ``span`` is not in (0, 1], fewer than two
+            factor is not positive, ``span`` is not in (0, 1], the weights have
+            another shape or a negative or non-finite value, fewer than two
             features have counts (with residual degrees of freedom), or the trend
             is not positive where the weights are read from it.
     """
+    y, sizes, fraction = _voom_inputs(
+        counts, design, library_sizes, norm_factors, span, "voom"
+    )
+    prior = _prior_weights(weights, y.shape, np.ones(y.shape, dtype=bool))
+    trend, fitted = _voom_trend(y, design, sizes, fraction, prior)
+    if not fitted:
+        message = _NO_REPLICATION if prior is None else _NO_RESIDUAL_DF
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+    return VoomResult(
+        log_cpm=trend.log_cpm,
+        weights=_times_prior(trend.weights, prior),
+        effective_library_sizes=sizes,
+        mean_log_count=trend.mean_log_count,
+        sqrt_sd=trend.sqrt_sd,
+        sqrt_sd_trend=trend.sqrt_sd_trend,
+        span=trend.span,
+    )
+
+
+def voom_with_quality_weights(
+    counts: npt.ArrayLike,
+    design: Any,
+    *,
+    library_sizes: npt.ArrayLike | None = None,
+    norm_factors: npt.ArrayLike | None = None,
+    span: float | None = None,
+    variance_design: Any = None,
+    variance_groups: npt.ArrayLike | None = None,
+    method: Literal["gene_by_gene", "reml"] = "gene_by_gene",
+    prior_n: float = 10.0,
+    max_iterations: int = 50,
+    tolerance: float = 1e-5,
+) -> VoomResult:
+    """voom's precision weights combined with sample quality weights.
+
+    limma's ``voomWithQualityWeights`` (Liu et al. 2015): the module docstring gives
+    the steps, and :func:`~cytepool.stats.sample_weights.sample_quality_weights`
+    the sample weights. Samples that follow the model less closely, such as
+    pseudobulk samples pooled from few cells or from an outlying donor, get lower
+    weights instead of being removed. Continue as after :func:`voom`, with
+    ``fit_linear_model(result.log_cpm, design, weights=result.weights)``.
+
+    Args:
+        counts: ``(n_samples, n_features)`` counts, as for :func:`voom`.
+        design: The design, as for :func:`voom`.
+        library_sizes: Library size of each sample, as for :func:`voom`.
+        norm_factors: Normalization factor of each sample, as for :func:`voom`.
+        span: The span of the LOWESS trend, as for :func:`voom`: by default chosen
+            from the number of features, as limma's ``voomWithQualityWeights``
+            does with ``adaptive.span = TRUE``.
+        variance_design: Design of the variance model, as for
+            ``sample_quality_weights``; defaults to a weight for each sample.
+        variance_groups: One label per sample, for a weight per group of samples;
+            give at most one of the two.
+        method: ``"gene_by_gene"``, limma's default here, or ``"reml"``.
+        prior_n: Prior number of genes at equal weights, as for
+            ``sample_quality_weights``; limma's ``voomWithQualityWeights`` uses 10.
+        max_iterations: The most REML iterations for each estimate of the weights.
+        tolerance: Convergence tolerance of REML.
+
+    Returns:
+        The log2 counts per million, their weights (the second trend's times the
+        sample weights), the effective library sizes, the second trend, its span,
+        and the ``sample_weights``.
+
+    Warns:
+        RuntimeWarning: If the design leaves no residual degrees of freedom (every
+            weight is one), fewer than two (every sample weight is one), or the
+            sample weights warn as ``sample_quality_weights`` does.
+
+    Raises:
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
+        ValueError: If an argument is invalid as for :func:`voom` or
+            ``sample_quality_weights``, or the trend is not positive where weights
+            are read from it.
+    """
+    y, sizes, fraction = _voom_inputs(
+        counts, design, library_sizes, norm_factors, span, "voom_with_quality_weights"
+    )
+    x, _ = _design_matrix(design, None)
+    model = _variance_model(
+        variance_design,
+        variance_groups,
+        y.shape[0],
+        prior_n=prior_n,
+        method=method,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+        methods=("gene_by_gene", "reml"),
+    )
+    first, fitted = _voom_trend(y, design, sizes, fraction, None)
+    notes = []
+    if not fitted:
+        notes.append(_NO_REPLICATION)
+        second, quality = first, np.ones(y.shape[0])
+    elif y.shape[0] - x.shape[1] < 2:
+        # The sample weights need two residual degrees of freedom; voom does not.
+        notes.append(_too_few_df_message(y.shape[0] - x.shape[1]))
+        second, quality = first, np.ones(y.shape[0])
+    else:
+        log_variances, first_notes = _estimate(first.log_cpm, x, first.weights, model)
+        second, _ = _voom_trend(y, design, sizes, fraction, _weights_of(log_variances))
+        log_variances, second_notes = _estimate(
+            second.log_cpm, x, second.weights, model
+        )
+        notes += list(dict.fromkeys(first_notes + second_notes))
+        quality = _weights_of(log_variances)
+    for note in notes:
+        warnings.warn(note, RuntimeWarning, stacklevel=2)
+    return VoomResult(
+        log_cpm=second.log_cpm,
+        weights=second.weights * quality[:, np.newaxis],
+        effective_library_sizes=sizes,
+        mean_log_count=second.mean_log_count,
+        sqrt_sd=second.sqrt_sd,
+        sqrt_sd_trend=second.sqrt_sd_trend,
+        span=second.span,
+        sample_weights=quality,
+    )
+
+
+def _voom_inputs(
+    counts: npt.ArrayLike,
+    design: Any,
+    library_sizes: npt.ArrayLike | None,
+    norm_factors: npt.ArrayLike | None,
+    span: Any,
+    function: str,
+) -> tuple[FloatArray, FloatArray, float]:
+    """The counts, effective library sizes and span, checked for ``function``."""
     y = _as_counts(counts)
     n_samples, n_features = y.shape
     if n_features < 2:
@@ -252,6 +468,7 @@ def voom(
             f"a mean-variance trend needs at least two features, got {n_features}"
         )
     n_design_rows = _design_matrix(design, None)[0].shape[0]
+    _refuse_random_effects(design, function)
     if n_design_rows != n_samples:
         raise ValueError(
             f"counts have {n_samples} rows (samples) but the design has "
@@ -259,45 +476,59 @@ def voom(
         )
     # A copy, so that the result does not change with the caller's array.
     sizes = np.array(_effective_library_sizes(y, library_sizes, norm_factors))
-    fraction = _trend_span(span, n_features)
+    return y, sizes, _trend_span(span, n_features)
 
+
+def _voom_trend(
+    y: FloatArray,
+    design: Any,
+    sizes: FloatArray,
+    fraction: float,
+    prior: FloatArray | None,
+) -> tuple[_Trend, bool]:
+    """voom's log2 CPM and the trend's weights; False when no trend can be fitted.
+
+    Args:
+        y: The counts, checked.
+        design: The design, checked by ``fit_linear_model``.
+        sizes: The effective library sizes.
+        fraction: The span.
+        prior: Prior weights from ``_prior_weights``, or None.
+    """
+    n_features = y.shape[1]
     # The operations of limma, which give its values to the last bit (found by
     # probing).
     log_cpm = np.log2((y + 0.5) / (sizes + 1.0)[:, np.newaxis] * 1e6)
-    fit = fit_linear_model(log_cpm, design)
+    fit = fit_linear_model(log_cpm, design, weights=prior)
     # fit.mean_expression is R's rowMeans to the last bit on log2 CPM, and the sum
     # is formed in limma's order, so that x and its ties are limma's (found by
     # probing).
     log_size = np.log2(sizes + 1.0)
     mean_log_count = (fit.mean_expression + accurate_mean(log_size)) - _LOG2_MILLION
     # Features without counts are left out of the trend (found by probing).
-    in_trend = (y > 0.0).any(axis=0)
-    mean_log_count[~in_trend] = np.nan
+    with_counts = (y > 0.0).any(axis=0)
+    mean_log_count[~with_counts] = np.nan
     sqrt_sd = np.full(n_features, np.nan)
     sqrt_sd_trend = np.full(n_features, np.nan)
 
-    if fit.df_residual[0] == 0.0:
-        warnings.warn(
-            "the design leaves no residual degrees of freedom (no replication), so "
-            "no mean-variance trend can be fitted; every weight is set to 1",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    if not np.any(fit.df_residual > 0.0):
         # limma returns no span then (found by probing).
-        return VoomResult(
-            log_cpm=log_cpm,
-            weights=np.ones_like(log_cpm),
-            effective_library_sizes=sizes,
-            mean_log_count=mean_log_count,
-            sqrt_sd=sqrt_sd,
-            sqrt_sd_trend=sqrt_sd_trend,
-            span=math.nan,
+        unit = _Trend(
+            log_cpm,
+            np.ones_like(log_cpm),
+            mean_log_count,
+            sqrt_sd,
+            sqrt_sd_trend,
+            math.nan,
         )
+        return unit, False
+    in_trend = with_counts & (fit.df_residual > 0.0)
     n_in_trend = int(np.count_nonzero(in_trend))
     if n_in_trend < 2:
+        condition = "" if prior is None else " and residual degrees of freedom"
         raise ValueError(
-            "a mean-variance trend needs at least two features with counts, got "
-            f"{n_in_trend}"
+            f"a mean-variance trend needs at least two features with counts"
+            f"{condition}, got {n_in_trend}"
         )
 
     trend_x = mean_log_count[in_trend]
@@ -311,33 +542,76 @@ def voom(
     knots_x, first = np.unique(trend_x, return_index=True)
     knots_y = trend[first]
 
-    fitted = fit.design @ fit.coefficients.T
+    fitted = _fitted_values(fit, log_cpm, prior)
     # The fitted log2 counts, formed on the count scale as limma forms them (found
     # by probing).
     fitted_log_count = np.log2(
         np.power(2.0, fitted) * (sizes + 1.0)[:, np.newaxis] * 1e-6
     )
     predicted = _interpolate(knots_x, knots_y, fitted_log_count)
-    with np.errstate(divide="ignore", over="ignore"):
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         weights = 1.0 / np.power(predicted, 4.0)
-    if not np.all((predicted > 0.0) & np.isfinite(weights)):
+    weighted = (
+        np.ones(y.shape, dtype=bool) if prior is None else _positive(prior, y.shape)
+    )
+    usable = (predicted > 0.0) & np.isfinite(weights)
+    if not np.all(usable[weighted]):
+        lowest = float(np.nanmin(np.where(weighted, predicted, np.inf)))
         raise ValueError(
             "the mean-variance trend falls to "
-            f"{float(np.min(predicted)):.3g} where weights are read from it, but "
+            f"{lowest:.3g} where weights are read from it, but "
             "the weights, its inverse fourth power, need it positive and large "
             "enough to invert. Few features, or features that the design fits "
             "exactly, can cause this: filter out features with low counts, or use "
             "more features"
         )
-    return VoomResult(
-        log_cpm=log_cpm,
-        weights=weights,
-        effective_library_sizes=sizes,
-        mean_log_count=mean_log_count,
-        sqrt_sd=sqrt_sd,
-        sqrt_sd_trend=sqrt_sd_trend,
-        span=fraction,
-    )
+    result = _Trend(log_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
+    return result, True
+
+
+def _fitted_values(
+    fit: LinearModelFit, log_cpm: FloatArray, prior: FloatArray | None
+) -> FloatArray:
+    """Fitted log2 CPM of every observation, NaN where it is not determined.
+
+    A feature whose coefficients are all estimable has fitted values design @
+    coefficients. Zero prior weights can leave some coefficients of a feature
+    inestimable; its observations of positive weight then get the values of the
+    least squares fit over them, which determines them, and the others NaN.
+    """
+    fitted: FloatArray = fit.design @ fit.coefficients.T
+    inestimable = np.flatnonzero(np.isnan(fit.coefficients).any(axis=1))
+    if prior is None or inestimable.size == 0:
+        return fitted
+    for g in inestimable:
+        weights = prior if prior.ndim == 1 else prior[:, g]
+        rows = weights > 0.0
+        fitted[:, g] = np.nan
+        if rows.any():
+            root = np.sqrt(weights[rows])
+            design = fit.design[rows]
+            solution = np.linalg.lstsq(
+                design * root[:, np.newaxis], log_cpm[rows, g] * root, rcond=None
+            )[0]
+            fitted[rows, g] = design @ solution
+    return fitted
+
+
+def _positive(prior: FloatArray, shape: tuple[int, int]) -> npt.NDArray[np.bool_]:
+    positive = prior > 0.0
+    if prior.ndim == 1:
+        return np.repeat(positive[:, np.newaxis], shape[1], axis=1)
+    return positive
+
+
+def _times_prior(weights: FloatArray, prior: FloatArray | None) -> FloatArray:
+    """The trend's weights times the prior weights; zero where a prior weight is."""
+    if prior is None:
+        return weights
+    full = prior[:, np.newaxis] if prior.ndim == 1 else prior
+    with np.errstate(invalid="ignore"):
+        combined: FloatArray = np.where(full > 0.0, weights * full, 0.0)
+    return combined
 
 
 def _interpolate(
@@ -347,10 +621,11 @@ def _interpolate(
 
     The value between knots j and j + 1 is y_j + (y_j+1 - y_j) ((v - x_j) /
     (x_j+1 - x_j)), the operations of R's ``approx`` (found by probing); at a knot
-    it is the knot's value.
+    it is the knot's value. NaN where ``at`` is NaN.
     """
     if knots_x.size == 1:
-        return np.full(at.shape, knots_y[0])
+        constant: FloatArray = np.where(np.isnan(at), np.nan, knots_y[0])
+        return constant
     j = np.searchsorted(knots_x, at, side="right") - 1
     np.clip(j, 0, knots_x.size - 2, out=j)
     x0, x1 = knots_x[j], knots_x[j + 1]

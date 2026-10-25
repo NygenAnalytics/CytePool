@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: voom precision weights for log counts per million from the mean-variance trend, with its LOWESS span chosen from the number of genes, as in limma's voom, in CytePool.
+    description: voom precision weights for log counts per million from the mean-variance trend, with prior weights and with sample quality weights, as in limma's voom and voomWithQualityWeights, in CytePool.
 ---
 
 # Precision weights for counts

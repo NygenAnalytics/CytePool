@@ -18,7 +18,8 @@ what is planned.
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
-| Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, for a weighted linear model (limma-voom) | limma |
+| Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
+| Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result | limma, edgeR; on simulated data and on published single-cell data |
@@ -86,12 +87,23 @@ These are not implemented yet:
 - Contrast standard errors and moderated F statistics are exact by default. limma's
   approximations are available as an option and can differ when weights vary between
   genes.
-- `voom` normalizes by library-size factors only, and fits its trend without prior
-  weights or a block correlation; `voomWithQualityWeights` and `voomLmFit` are not
-  implemented. It needs a design of full column rank (limma drops aliased columns;
-  `limma_voom` fits a group's column space), and it raises an error where limma returns
-  values without meaning: for a sample whose library size is zero, or a trend that is
-  not positive where weights are read.
+- `voom` normalizes by library-size factors only, and fits its trend without a block
+  correlation; `voomLmFit` is not implemented, and `limma_voom` does not use sample
+  quality weights yet. `voom` and `voom_with_quality_weights` need a design of full
+  column rank (limma drops aliased columns; `limma_voom` fits a group's column space),
+  and raise an error where limma returns values without meaning: for a sample whose
+  library size is zero, or a trend that is not positive where weights are read. With
+  prior weights, `voom` returns the trend's weights times the prior weights, which a
+  fit needs; limma returns the trend's alone.
+- `sample_quality_weights` stops REML where limma does, so that its weights are
+  limma's: within about half a percent of the REML estimate without prior weights, and
+  up to about 15% from it with prior weights (as for the voom weights of
+  `voom_with_quality_weights` with `method="reml"`), where limma stops after one or
+  two iterations, and further where the iterations oscillate and limma stops early. A
+  smaller `tolerance` converges further where the iterations converge. The
+  gene-by-gene algorithm, limma's default for quality weights, depends on the order of
+  the genes, as limma's does, and its time grows with the cube of the number of
+  samples: 0.2 to 0.3 s for 20,000 genes and 40 samples, 2.5 to 3 s for 100 samples.
 - `voom` chooses the span of its trend from the number of genes, as limma does by
   default since limma 3.66, and limma 3.60 to 3.65 do with `adaptive.span = TRUE`.
   Their default, and that of earlier versions, is a span of 0.5: pass `span=0.5` to

@@ -18,7 +18,8 @@ This page summarises the tables the scripts printed when they were run against t
 package in this revision of the repository: on **2026-10-25** for the five scripts on
 cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`
 and `cube_fingerprints.py`), for `linear_models.py`, `voom.py`,
-`differential_expression.py` and `interferon_stimulated_pbmcs.py`, and for
+`sample_quality_weights.py`, `differential_expression.py` and
+`interferon_stimulated_pbmcs.py`, and for
 `design.py` and `empirical_bayes.py`, which printed the same tables again after
 changes to the code they check; and on **2026-10-24** for the others, with the
 reference versions given in each section. Every script exited without a failure.
@@ -38,13 +39,14 @@ covers and the largest difference among them. Run a script to see every check.
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
+| [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **776** | **714 pass, none failed; 45 information, 16 deliberate differences, 1 control** | | |
+| **All** | | | **865** | **797 pass, none failed; 45 information, 22 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -407,6 +409,72 @@ tier. Deliberate differences:
   points for a `min.span` above 1 or a negative `power`; CytePool raises. limma
   documents a `power` between 0 and 1, and `min.span` is the span for many points, a
   fraction in (0, 1].
+
+## Sample quality weights
+
+[`validation/sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py)
+compares `sample_quality_weights` with limma's `arrayWeights`, `voom` with prior
+weights with limma's `voom(weights = ...)`, and `voom_with_quality_weights` with
+`voomWithQualityWeights`, on data simulated from fixed seeds, in 37 cases. The sample
+weights are estimated from normal log-expression values with one or two samples two
+to four times noisier, and from voom's log2 CPM with its weights: 4 to 12 samples and
+2,000 or 20,000 genes; two groups, an intercept, and three groups with a covariate;
+REML and the gene-by-gene algorithm; a weight per sample, per group (`var.group`) and
+from a covariate (`var.design`); `prior.n` of 0, 10 and 50; observation weights;
+missing values, with genes left with one residual degree of freedom or none of
+residual variance; data on which limma's REML stops early; one gene, and no
+replication. voom gets sample, observation and
+feature weights, observation weights with zeros, and a span chosen from the number of
+genes. voom with quality weights runs both algorithms, with the span fixed and chosen,
+weights per group and from log library size, TMM factors with given library sizes and
+contrasts, two noisy pseudobulk samples among 20,000 genes, and no replication.
+Designs come from the same sample table through R's `model.matrix` and `Design`,
+contrasts through `makeContrasts` and named contrasts. Reference: R 4.4.3, limma
+3.62.1, edgeR 4.4.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Sample weights | `arrayWeights` | 8.3e-15 | 1e-6 | 24 pass |
+| Reports: the genes with missing values that REML leaves out (the same number), and an early stop of REML | `arrayWeights` | both report | n/a | 2 pass |
+| voom with prior weights: E | `voom` | 0 | 1e-10 | 5 pass |
+| voom with prior weights: the weights times the prior weights, the trend saved with `save.plot = TRUE`, and the chosen span | `voom` | 1.2e-13 | 1e-10 | 11 pass |
+| voom with prior weights: moderated t and p after `lmFit` with the weights and `eBayes` | limma | 3.2e-13 | 1e-10 | 5 pass |
+| voom with quality weights: E and the chosen span | `voomWithQualityWeights` | 0 | 1e-10 | 11 pass |
+| voom with quality weights: sample weights | `voomWithQualityWeights` | 7.2e-15 | 1e-6 | 8 pass |
+| voom with quality weights: weights | `voomWithQualityWeights` | 9.8e-14 | 1e-6 | 8 pass |
+| voom with quality weights: moderated t and p after `lmFit`, `contrasts.fit` and `eBayes` | limma | 1.1e-13 | 1e-6 | 7 pass |
+| No replication: both report it | `voomWithQualityWeights` | both | n/a | 1 pass |
+| A gene whose prior weights are all zero: the weights of the other genes against limma's without that gene | `voom` | 3.0e-14 | 1e-10 | 1 pass |
+| Deliberate differences, listed below | `arrayWeights`, `voom` | 3 where limma returns values and CytePool raises, 1 where limma fails and CytePool returns values, 2 where both return values that differ | n/a | 6 deliberate differences |
+
+Differences are relative, except for E, the trend's x and t, scaled by
+max(\|reference\|, 1); the trend's y, scaled by max(\|reference\|, its median); and
+p-values, scaled by max(p, 1e-300) max(1, \|log p\|). The sample weights are iterative
+estimates, in the close tier, as is everything computed from them. They agree to
+rounding because CytePool repeats limma's iterations and stopping rule, found by
+running limma as a black box: the starting point, the prior's terms in the score and
+the information, the exact REML information of Smyth (2002), and the criterion that
+stops the iterations, including the early stop where it rises. The weights that limma's `voom` returns with prior weights are
+the trend's alone; CytePool's are those times the prior weights, which the comparison
+multiplies in. `eBayes` runs with `legacy = TRUE`, CytePool's estimator of the prior:
+zero weights make the residual degrees of freedom unequal, where limma's default
+estimator differs. Deliberate differences:
+
+- `var.design` and `var.group` together: limma uses `var.group`; CytePool refuses the
+  two.
+- A negative `prior.n`: limma accepts it; CytePool requires at least zero.
+- REML when one gene has every value observed: limma fails; CytePool gives weights of
+  one, with a warning, as limma does with one gene.
+- REML with `prior.n = 0` and a sample that carries no information about its
+  variance (the only sample of a group): limma returns weights that rounding error
+  decides; CytePool raises, as the information matrix is singular.
+- A gene whose prior weights are all zero: limma passes its missing residual standard
+  deviation to R's `lowess`, which returns a curve without meaning; CytePool leaves the
+  gene out of the trend, and the other genes get the weights that limma gives them
+  without the gene (the row above).
+- Zero prior weights that leave a gene's coefficients inestimable: limma returns
+  missing weights for the gene; CytePool's are those of the trend at its fitted values
+  over the samples of positive weight, and zero where the prior weight is.
 
 ## Empirical Bayes moderation
 
@@ -802,6 +870,7 @@ python validation/linear_models.py
 python validation/linear_models.py --benchmark
 python validation/empirical_bayes.py
 python validation/voom.py
+python validation/sample_quality_weights.py
 python validation/differential_expression.py
 # Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583
 # unless --data or GSE96583_DATA names another directory outside the repository.
