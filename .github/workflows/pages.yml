@@ -1,0 +1,49 @@
+name: GitHub Pages
+
+# Publishes the documentation at https://docs.nygen.io/CytePool/ after every change
+# to master that can change it.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "docs/**"
+      - "cytepool/**"
+      - "validation/**"
+      - "tests/test_documentation.py"
+      - "README.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+      - ".github/workflows/pages.yml"
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer one waits rather than cancelling one in progress.
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/master'
+    uses: ./.github/workflows/docs.yml
+    with:
+      ref: ${{ github.sha }}
+      pages: true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: https://docs.nygen.io/CytePool/
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

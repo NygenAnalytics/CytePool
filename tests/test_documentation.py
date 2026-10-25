@@ -317,6 +317,73 @@ def test_notebook_checks_reject_stale_failed_partial_or_undescribed_notebooks(
         getattr(build_docs, check)(notebook, "example.ipynb")
 
 
+def test_the_table_of_contents_links_below_the_base_url() -> None:
+    entries = [
+        {"file": "index.md"},
+        {
+            "title": "Reference",
+            "children": [
+                {"url": "/api/index.html", "open_in_same_tab": True},
+                {"url": "https://github.com/NygenAnalytics/CytePool/issues"},
+                {"url": "//example.org/page.html"},
+                {"url": "page.html"},
+            ],
+        },
+    ]
+    original = copy.deepcopy(entries)
+
+    result = build_docs.toc_with_base_url(entries, "/CytePool")
+
+    assert result[0] == {"file": "index.md"}
+    assert result[1]["children"] == [
+        {"url": "/CytePool/api/index.html", "open_in_same_tab": True},
+        {"url": "https://github.com/NygenAnalytics/CytePool/issues"},
+        {"url": "//example.org/page.html"},
+        {"url": "page.html"},
+    ]
+    assert entries == original
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        (None, "/api/index.html"),
+        ("/", "/api/index.html"),
+        ("/CytePool", "/CytePool/api/index.html"),
+        ("/CytePool/", "/CytePool/api/index.html"),
+    ],
+)
+def test_the_staged_site_links_to_the_api_reference_below_the_base_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_url: str | None,
+    expected: str,
+) -> None:
+    yaml = pytest.importorskip("yaml")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "index.md").write_text("# Example\n")
+    toc = [
+        {"file": "index.md"},
+        {"title": "Reference", "children": [{"url": "/api/index.html"}]},
+    ]
+    (source / "myst.yml").write_text(
+        yaml.safe_dump({"version": 1, "project": {"toc": toc}})
+    )
+    monkeypatch.setattr(build_docs, "SOURCE", source)
+    monkeypatch.setattr(build_docs, "BUILD", tmp_path / "build")
+    monkeypatch.setattr(build_docs, "SITE", tmp_path / "build" / "site")
+    if base_url is None:
+        monkeypatch.delenv("BASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("BASE_URL", base_url)
+
+    site = build_docs.stage_site()
+
+    staged = yaml.safe_load((site / "myst.yml").read_text())
+    assert staged["project"]["toc"][1]["children"] == [{"url": expected}]
+
+
 def test_prose_can_change_without_executing_again() -> None:
     notebook = _executed_notebook()
     fingerprint = build_docs.code_fingerprint(notebook)
