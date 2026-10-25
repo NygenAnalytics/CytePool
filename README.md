@@ -76,6 +76,12 @@ These are not implemented yet:
   aliased columns), and it raises an error where limma returns values without meaning:
   for a sample whose library size is zero, or a trend that is not positive where
   weights are read.
+- numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
+  are refused with a `TypeError` that names the argument, because numpy drops the
+  mask when it converts one and the masked entries would be read as data. Where an
+  argument accepts missing values, mark them with NaN in numbers
+  (`numpy.ma.filled(values.astype(float), numpy.nan)`) and None in text
+  (`values.tolist()`); otherwise remove them first. pandas objects work as before.
 
 ## Principles
 

@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from .._masked_arrays import reject_masked
 from ..table import Table, _missing_mask
 from .checks import DesignReport, _same_partition, check_design
 from .contrasts import Contrasts, _is_pandas, make_contrasts
@@ -57,7 +58,8 @@ class Design:
             table; levels of columns the design does not use are ignored.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
         ValueError: If the formula or random effects are invalid, use columns that
             do not exist or have missing values, ``levels`` does not match the data,
             or a contrast is invalid.
@@ -98,7 +100,7 @@ class Design:
         contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
         levels: Mapping[str, Sequence[Any]] | None = None,
     ) -> None:
-        table, categories = _read_samples(samples)
+        table, categories = _read_samples(samples, "samples")
         parsed = parse_formula(formula)
         effects = _parse_random(random)
         given = _normalize_levels(levels)
@@ -213,6 +215,8 @@ class Design:
             contrasts: Named contrasts, as accepted by ``make_contrasts``.
 
         Raises:
+            TypeError: If a contrast has the wrong type, or is or holds a numpy
+                masked array.
             ValueError: If a contrast is invalid.
         """
         design = object.__new__(Design)
@@ -273,13 +277,21 @@ def _design_columns(design: Any) -> tuple[Any, Any]:
     Returns:
         The matrix, not yet checked or converted, and the column names, or None
         when the design has none.
+
+    Raises:
+        TypeError: If the design, or its matrix or columns, is a numpy masked array.
     """
+    reject_masked(design, "design")
     if _is_pandas(design):
         # Its columns, which pandas also shows as attributes, are the design's.
         return design, design.columns
     if hasattr(design, "matrix") and hasattr(design, "columns"):
+        reject_masked(design.matrix, "design.matrix")
+        reject_masked(design.columns, "design.columns")
         return design.matrix, design.columns
-    return design, getattr(design, "columns", None)
+    columns = getattr(design, "columns", None)
+    reject_masked(columns, "design.columns")
+    return design, columns
 
 
 def _refuse_dropped_random_effects(
@@ -389,6 +401,7 @@ def _random_effects_refusal(design: Design, function: str, reason: str) -> str:
 def _parse_random(random: str | Sequence[str] | None) -> tuple[RandomEffect, ...]:
     if random is None:
         return ()
+    reject_masked(random, "random")
     if isinstance(random, str):
         texts = [random]
     elif isinstance(random, Sequence):

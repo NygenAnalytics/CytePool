@@ -41,6 +41,7 @@ from typing import Any
 
 import numpy as np
 
+from .._masked_arrays import reject_masked
 from .formula import _close_matches
 
 __all__ = ["Contrasts", "make_contrasts"]
@@ -71,6 +72,11 @@ class Contrasts:
         columns: The design columns that the rows of ``matrix`` refer to. Rows are
             matched to the coefficients of a fit, or to the columns of another
             design, by these names.
+
+    Raises:
+        TypeError: If a field is or holds a numpy masked array.
+        ValueError: If ``matrix`` does not have one row per column and one column
+            per name.
     """
 
     matrix: np.ndarray
@@ -78,6 +84,8 @@ class Contrasts:
     columns: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        for name in ("matrix", "names", "columns"):
+            reject_masked(getattr(self, name), name)
         matrix = np.array(self.matrix, dtype=np.float64)
         if matrix.shape != (len(self.columns), len(self.names)):
             raise ValueError(
@@ -102,8 +110,10 @@ class Contrasts:
 
         Raises:
             KeyError: If a name is not a contrast.
+            TypeError: If ``names`` is a numpy masked array.
             ValueError: If a name is repeated.
         """
+        reject_masked(names, "names")
         chosen = [names] if isinstance(names, str) else list(names)
         positions = [self._position(name) for name in chosen]
         repeated = [name for i, name in enumerate(chosen) if name in chosen[:i]]
@@ -181,7 +191,8 @@ def make_contrasts(
         The contrasts, with a ``(n_columns, n_contrasts)`` weight matrix.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
         ValueError: If a name is not a column, an expression is not linear (a
             product or ratio of columns, a constant term, a power or a function),
             a contrast is zero, names repeat, columns repeat, or weights that
@@ -192,6 +203,7 @@ def make_contrasts(
         ...                ["groupA", "groupB", "groupC"]).matrix[:, 0]
         array([-1.,  1.,  0.])
     """
+    _reject_masked_contrasts(contrasts, "contrasts")
     names_of_columns = _column_names(columns)
     if _is_named_contrasts(contrasts):
         named: Any = contrasts
@@ -231,8 +243,10 @@ Mapping.register(Contrasts)
 
 
 def _column_names(columns: Any) -> tuple[str, ...]:
+    reject_masked(columns, "columns")
     if hasattr(columns, "columns") and not isinstance(columns, str | Sequence):
         columns = columns.columns  # a Design, ModelMatrix or pandas DataFrame
+        reject_masked(columns, "columns.columns")
     if isinstance(columns, str | bytes | Set | Mapping) or not hasattr(
         columns, "__iter__"
     ):
@@ -307,6 +321,19 @@ def _vector(name: str, values: Any, columns: tuple[str, ...]) -> np.ndarray:
     if not np.all(np.isfinite(vector)):
         raise ValueError(f"contrast {name!r} has weights that are not finite")
     return vector
+
+
+def _reject_masked_contrasts(contrasts: Any, name: str) -> None:
+    """Refuse numpy masked arrays in contrasts given to a function.
+
+    That is, in the contrasts themselves (a matrix, a vector, or the weights of a
+    mapping), and in the ``matrix``, ``names`` and ``columns`` of named contrasts
+    (see :func:`_is_named_contrasts`).
+    """
+    reject_masked(contrasts, name)
+    if _is_named_contrasts(contrasts):
+        for attribute in ("matrix", "names", "columns"):
+            reject_masked(getattr(contrasts, attribute), f"{name}.{attribute}")
 
 
 def _is_pandas(values: Any) -> bool:

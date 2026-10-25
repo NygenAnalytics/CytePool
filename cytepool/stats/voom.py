@@ -66,6 +66,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from cytepool._masked_arrays import reject_masked
 from cytepool._summation import accurate_mean
 from cytepool.normalization import _as_counts, _effective_library_sizes
 from cytepool.stats.linear_models import _design_matrix, fit_linear_model
@@ -109,6 +110,7 @@ class VoomResult:
             ``mean_log_count`` to draw it as a curve.
 
     Raises:
+        TypeError: If an array is a numpy masked array.
         ValueError: If the shapes of the arrays disagree.
     """
 
@@ -120,6 +122,11 @@ class VoomResult:
     sqrt_sd_trend: FloatArray
 
     def __post_init__(self) -> None:
+        for name in ("log_cpm", "weights", "effective_library_sizes"):
+            reject_masked(getattr(self, name), name)
+        # NaN marks the features that the trend leaves out.
+        for name in ("mean_log_count", "sqrt_sd", "sqrt_sd_trend"):
+            reject_masked(getattr(self, name), name, missing="NaN")
         log_cpm = np.asarray(self.log_cpm, dtype=np.float64)
         if log_cpm.ndim != 2:
             raise ValueError(
@@ -198,7 +205,8 @@ def voom(
             that no trend can be fitted; every weight is then one.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
         ValueError: If ``counts`` is not a 2-D array of finite, non-negative values
             with at least two features, the design does not have one row per
             sample or is not of full column rank, a library size or normalization

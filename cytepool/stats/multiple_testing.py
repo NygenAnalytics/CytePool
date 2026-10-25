@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from cytepool._jit import jit
+from cytepool._masked_arrays import reject_masked, unmasked_array
 
 _EULER_GAMMA = 0.5772156649015329
 
@@ -77,8 +78,9 @@ def adjust_p_values(
         The adjusted p-values as float64, with the shape of ``p``.
 
     Raises:
-        TypeError: If ``p`` is not real-valued, ``method`` is not a string, or
-            ``n`` or ``axis`` is not an integer.
+        TypeError: If ``p`` is not real-valued, ``method`` is not a string, ``n``
+            or ``axis`` is not an integer, or ``p``, ``n`` or ``axis`` is a numpy
+            masked array.
         ValueError: If a p-value is outside [0, 1], ``method`` is unknown,
             ``n`` is smaller than the number of non-missing p-values in a
             family or larger than 2**53, or ``axis`` is out of range.
@@ -108,7 +110,7 @@ def _procedure(method: str) -> str:
 
 
 def _p_value_array(p: ArrayLike) -> np.ndarray:
-    values = np.asarray(p)
+    values = unmasked_array(p, "p", missing="NaN")
     if values.dtype.kind not in "iuf":
         raise TypeError(f"p must hold real numbers, got dtype {values.dtype}")
     values = values.astype(np.float64, copy=False)
@@ -124,6 +126,8 @@ def _p_value_array(p: ArrayLike) -> np.ndarray:
 def _integer(value: int, name: str) -> int:
     if isinstance(value, bool | np.bool_):
         raise TypeError(f"{name} must be an integer, got a boolean")
+    # operator.index accepts a 0-d masked integer and ignores its mask.
+    reject_masked(value, name)
     try:
         return operator.index(value)
     except TypeError:
