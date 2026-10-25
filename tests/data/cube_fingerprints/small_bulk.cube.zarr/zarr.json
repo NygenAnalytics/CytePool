@@ -1,0 +1,19 @@
+{
+  "attributes": {
+    "format": "cytepool.cube",
+    "format_version": 1,
+    "axes": [
+      "groups",
+      "samples",
+      "features"
+    ],
+    "layers": [
+      "counts"
+    ],
+    "has_n_cells": false,
+    "normalization": null,
+    "provenance": {}
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

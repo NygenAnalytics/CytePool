@@ -1,0 +1,34 @@
+{
+  "attributes": {
+    "columns": [
+      "sample_id",
+      "donor",
+      "note",
+      "age",
+      "score",
+      "batch",
+      "visit",
+      "Treated?",
+      "ratio",
+      "plate",
+      "lane",
+      "depth"
+    ],
+    "arrays": [
+      "sample_id",
+      "donor",
+      "note",
+      "age",
+      "score",
+      "batch",
+      "visit",
+      "column_7",
+      "ratio",
+      "plate",
+      "lane",
+      "depth"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

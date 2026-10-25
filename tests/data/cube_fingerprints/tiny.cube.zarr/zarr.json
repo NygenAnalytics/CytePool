@@ -1,0 +1,42 @@
+{
+  "attributes": {
+    "format": "cytepool.cube",
+    "format_version": 1,
+    "axes": [
+      "groups",
+      "samples",
+      "features"
+    ],
+    "layers": [
+      "counts",
+      "detected",
+      "log_sum",
+      "log_sum_sq",
+      "linear_sum"
+    ],
+    "has_n_cells": true,
+    "normalization": {
+      "method": "library_size",
+      "target_sum": 10000.0,
+      "log": "natural",
+      "pseudocount": 1.0,
+      "notes": {
+        "\u00fcn\u00ef": [
+          1,
+          2.5,
+          null,
+          true,
+          false,
+          "x"
+        ]
+      }
+    },
+    "provenance": {
+      "source": {
+        "script": "validation/cube_fingerprints.py"
+      }
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

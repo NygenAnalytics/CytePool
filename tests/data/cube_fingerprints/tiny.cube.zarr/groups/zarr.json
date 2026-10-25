@@ -1,0 +1,22 @@
+{
+  "attributes": {
+    "columns": [
+      "group_id",
+      "cell_ontology_id",
+      "phase",
+      "phase64",
+      "rank",
+      "lifetime"
+    ],
+    "arrays": [
+      "group_id",
+      "cell_ontology_id",
+      "phase",
+      "phase64",
+      "rank",
+      "lifetime"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

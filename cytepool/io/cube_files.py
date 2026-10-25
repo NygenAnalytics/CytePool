@@ -30,7 +30,13 @@ Root attributes (others are ignored, so a publisher may add, say, a title):
 - ``has_n_cells``: whether the ``n_cells`` array is present (false for bulk cubes,
   where cell numbers are unknown).
 - ``normalization``: the cube's normalization mapping, or null.
-- ``provenance``: the cube's provenance mapping.
+- ``provenance``: the cube's provenance mapping (``cytepool.cube.provenance``).
+- ``digests``: the digests of the cube's tables, cell numbers, normalization and of
+  each group of each layer, and the fingerprint they make, as ``Cube.digests()``
+  returns them (``cytepool.cube.fingerprints`` documents them). ``write_cube``
+  computes them while it writes the layers. A file written before CytePool stored
+  digests has none; it is read all the same, and its fingerprint is computed from
+  its values when it is asked for.
 
 Tables. Each table group holds one 1-D array per column, with ``dimension_names`` set
 to the table's axis (``["samples"]``, ``["groups"]`` or ``["features"]``). Its
@@ -65,7 +71,13 @@ zeros.
 
 Reading is strict: the format name and version, every attribute above, every node's
 metadata (see ``cytepool.io.zarr``), dimension names, data types and text codes are
-checked, and so are the values of every layer group when the cube reads it. A store
+checked, and so are the values of every layer group when the cube reads it. The
+tables, cell numbers and normalization are checked against their stored digests when
+the file is opened, and each group of a layer whenever a read covers all of it, in
+any order, so a file changed after it was written is reported, not read as if it
+were the cube it held; ``Cube.verify_fingerprint()`` checks every group, also the
+groups that a selection of some samples or features reads in part. Digests describe values, not their
+encoding: a copy with other chunks, byte order or compression keeps them. A store
 replaced while ``read_cube`` reads it raises an error instead of mixing the tables of
 one cube with the layers of another, and so does a lazy layer whose file was replaced
 after it was opened.
@@ -96,7 +108,13 @@ from typing import Any
 
 import numpy as np
 
-from ..cube.cube import LAYER_NAMES, Cube
+from ..cube.cube import (
+    LAYER_NAMES,
+    Cube,
+    _digest_of_read_group,
+    _digest_record_of,
+    _take_stored_digests,
+)
 from ..table import Table
 from .zarr import (
     METADATA_FILE,
@@ -149,7 +167,9 @@ def write_cube(
 
     The store appears at ``path`` only once it is complete, so a write that fails
     leaves no store there; with ``overwrite=True`` it leaves the old store as it was.
-    Lazy layers are read, and their values checked, one group at a time.
+    Lazy layers are read, and their values checked, one group at a time. Each group
+    is hashed as it is written, and the digests are stored with the file, so the
+    fingerprint of the saved cube needs no further pass over its values.
 
     Args:
         cube: The cube to save.
@@ -208,6 +228,10 @@ def read_cube(path: str | os.PathLike[str]) -> Cube:
     whatever its size, and a cube derived with ``select()`` reads only the chunks that
     hold the selected features of the selected groups.
 
+    The digests stored with the file give the cube's fingerprint without reading
+    the layers. The tables, cell numbers and normalization are checked against
+    theirs now, and each group of a layer whenever a read covers all of it.
+
     Args:
         path: The cube file's directory.
 
@@ -217,7 +241,9 @@ def read_cube(path: str | os.PathLike[str]) -> Cube:
     Raises:
         FileNotFoundError: If there is no store at ``path``.
         ValueError: If the store is not a cube file, has another format version, is
-            corrupt or uses a Zarr feature this reader does not support.
+            corrupt, uses a Zarr feature this reader does not support, or holds
+            tables, cell numbers or a normalization that do not match its stored
+            digests.
         TypeError: If a stored value has a type the cube does not accept.
         RuntimeError: If the store was replaced while it was being read.
     """
@@ -261,6 +287,9 @@ def read_cube(path: str | os.PathLike[str]) -> Cube:
     except (TypeError, ValueError) as error:
         error.add_note(f"(while reading the cube file {root})")
         raise
+    if "digests" in attributes:
+        where = f"the 'digests' attribute of {root / METADATA_FILE}"
+        _take_stored_digests(cube, attributes["digests"], where)
     # A store replaced while it was read could pair one cube's tables with another's
     # layers; the root metadata of a store written anew is a new file.
     try:
@@ -369,6 +398,7 @@ def _write_store(
             dimension_names=["samples", "groups"],
         )
     write_group(root / "layers")
+    digests = {}
     for name in cube.layer_names:
         groups = _GroupsOfLayer(cube, name)
         write_array(
@@ -381,6 +411,7 @@ def _write_store(
             level=level,
             dimension_names=list(AXES),
         )
+        digests[name] = groups.digests()
     # The root metadata comes last: until it exists, the directory is not a group.
     write_group(
         root,
@@ -392,6 +423,7 @@ def _write_store(
             "has_n_cells": cube.n_cells is not None,
             "normalization": cube.normalization,
             "provenance": cube.provenance,
+            "digests": _digest_record_of(cube, digests),
         },
     )
 
@@ -467,14 +499,18 @@ def _is_portable(name: str) -> bool:
 
 
 class _GroupsOfLayer:
-    """One layer of a cube as ``write_array`` reads it: rows are groups."""
+    """One layer of a cube as ``write_array`` reads it: rows are groups.
 
-    __slots__ = ("_cube", "_name", "_first", "shape", "dtype")
+    It keeps the digest of each group it gives, for the cube file's digests.
+    """
+
+    __slots__ = ("_cube", "_name", "_first", "_digests", "shape", "dtype")
 
     def __init__(self, cube: Cube, name: str) -> None:
         self._cube = cube
         self._name = name
         self.shape = (cube.n_groups, cube.n_samples, cube.n_features)
+        self._digests: list[str | None] = [None] * cube.n_groups
         # Group 0 gives the dtype; a cube with an empty axis has no values to read.
         self._first = None if 0 in self.shape else cube.layer(name, 0)
         self.dtype = (cube.layer(name) if self._first is None else self._first).dtype
@@ -483,15 +519,29 @@ class _GroupsOfLayer:
         blocks = []
         for group in range(*rows.indices(self.shape[0])):
             if group == 0 and self._first is not None:
-                blocks.append(self._first)
-                self._first = None
+                block, self._first = self._first, None
             else:
-                blocks.append(self._cube.layer(self._name, group))
+                block = self._cube.layer(self._name, group)
+            self._digests[group] = _digest_of_read_group(
+                self._cube, self._name, group, block
+            )
+            blocks.append(block)
         if len(blocks) == 1:
             return blocks[0][np.newaxis]
         return (
             np.stack(blocks) if blocks else np.empty((0, *self.shape[1:]), self.dtype)
         )
+
+    def digests(self) -> list[str]:
+        """Return the digest of each group, hashing those never read (empty ones)."""
+        return [
+            _digest_of_read_group(
+                self._cube, self._name, group, self._cube.layer(self._name, group)
+            )
+            if digest is None
+            else digest
+            for group, digest in enumerate(self._digests)
+        ]
 
 
 # Reading.

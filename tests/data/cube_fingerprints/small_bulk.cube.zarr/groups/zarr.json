@@ -1,0 +1,12 @@
+{
+  "attributes": {
+    "columns": [
+      "group_id"
+    ],
+    "arrays": [
+      "group_id"
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

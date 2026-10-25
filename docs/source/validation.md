@@ -15,11 +15,11 @@ they compare bit for bit), runs CytePool, prints a table with one row per check,
 exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
-package in this revision of the repository: on **2026-10-25** for the four scripts on
-cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py` and
-`cube_reads.py`) and for `linear_models.py` and `voom.py`, and on **2026-10-24** for
-the others, with
-the reference versions given in each section. Every script exited without a failure. Each
+package in this revision of the repository: on **2026-10-25** for the five scripts on
+cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`
+and `cube_fingerprints.py`) and for `linear_models.py` and `voom.py`, and on
+**2026-10-24** for the others, with the reference versions given in each section.
+Every script exited without a failure. Each
 row below is a family of checks: it gives the number of printed checks it covers and
 the largest difference among them. Run a script to see every check.
 
@@ -27,10 +27,11 @@ the largest difference among them. Run a script to see every check.
 
 | Script | Area | Reference | Checks | Outcomes | Run time | Peak memory |
 | --- | --- | --- | --- | --- | --- | --- |
-| [`cube.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube.py) | Pseudobulk cubes | scanpy 1.12.4 | 20 | 19 pass, 1 information | 13.9 s | 925 MiB |
-| [`pool_cells.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pool_cells.py) | Pooling cells into cubes | scanpy 1.12.4, decoupler 2.2.0 | 27 | 27 pass | 36.9 s | 1,725 MiB |
-| [`cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py) | Cube files | zarr-python 3.4.1 | 7 | 7 pass | 1.9 s | 143 MiB |
-| [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 58 s | 500 MiB |
+| [`cube.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube.py) | Pseudobulk cubes | scanpy 1.12.4 | 20 | 19 pass, 1 information | 12.5 s | 926 MiB |
+| [`pool_cells.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pool_cells.py) | Pooling cells into cubes | scanpy 1.12.4, decoupler 2.2.0 | 27 | 27 pass | 30.2 s | 1,725 MiB |
+| [`cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py) | Cube files | zarr-python 3.4.1 | 7 | 7 pass | 3.1 s | 146 MiB |
+| [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 46 s | 500 MiB |
+| [`cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py) | Cube fingerprints | the documented encoding, with zarr-python 3.4.1 | 7 | 7 pass | 4.4 s | 122 MiB |
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
@@ -39,7 +40,7 @@ the largest difference among them. Run a script to see every check.
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **696** | **662 pass, none failed; 21 information, 12 deliberate differences, 1 control** | | |
+| **All** | | | **703** | **669 pass, none failed; 21 information, 12 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -168,6 +169,40 @@ Reference: zarr-python 3.4.1, numpy 2.5.4, Python 3.13.12.
 Every chunk that holds a selected element is opened once, and no other: 40 chunk
 files for 50 neighbouring genes of the 20 groups, where reading whole groups opens all
 320. The script also measures each read; see [](#validation-timings).
+
+## Cube fingerprints
+
+No other tool computes the fingerprint of a cube, so
+[`validation/cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py)
+checks it against a second implementation, written from the encoding that
+`cytepool.cube.fingerprints` documents: a separate program reads cube files with
+zarr-python and recomputes every digest and the fingerprint with numpy and `hashlib`,
+without importing CytePool. Its encoder differs from CytePool's where it can: it finds
+NaN with `numpy.isnan` instead of comparing bits, splits complex values with `.real`
+and `.imag`, and decodes text columns from their codes and levels. The cubes (seed
+20261025) have a table column of every type a cube's tables hold (text, bool, int8 to
+int64, uint8 to uint64, float16 to float64, complex64, complex128, datetime and
+timedelta), missing text, NaT, NaN, complex values with one NaN part, -0.0 in a table
+and in `log_sum`, a uint64 column beyond the int64 range, a normalization holding
+every kind of JSON value, uint16 and int16 layers, a group without cells, a bulk cube
+without cell numbers or normalization, and a cube with empty axes. Reference:
+zarr-python 3.4.1, numpy 2.5.4, Python 3.13.12.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Digests `write_cube` stores with 5 cube files (3,000 x 12 x 6 genes x samples x groups and smaller), 74 parts | recomputed from the documentation | 0 parts differ | 0 | 1 pass |
+| `Cube.fingerprint()` of the 5 cubes in memory | recomputed from the documentation | 0 fingerprints differ | 0 | 1 pass |
+| Copies zarr-python made with other chunks, big-endian bytes, gzip level 1 or no compression: recomputed, and checked by `verify_fingerprint()` | the original fingerprint | 0 fingerprints differ | 0 | 1 pass |
+| The 3,000-gene cube with int64 layers instead of uint16 and int16 | the fingerprint of the narrow cube | 0 fingerprints differ | 0 | 1 pass |
+| A count, a `log_sum` value moved by one unit in the last place, a sample id, a gene symbol, a cell number and the target sum, each changed in a copy | recomputed from the documentation | 6 of 6 change the fingerprint | all | 1 pass |
+| -0.0 for 0.0, and NaN with another payload, in sample columns | recomputed from the documentation | 0 of 2 change it | none | 1 pass |
+| CytePool on those 8 copies: `read_cube` refuses the changed tables, cell numbers and normalization, each with the message for that part; a changed layer group raises when it is read, whole or with its samples pooled, and in `verify_fingerprint()`, while the other groups read; and the 2 equal copies read and verify | the changes made | 8 of 8 as expected | all | 1 pass |
+
+Before this run, the script was run against CytePool with five deliberate mistakes:
+-0.0 left as it is, integer layers hashed in their own width, the lengths of text
+written after the text, every float of the normalization hashed as a float64, and
+reads of whole groups in another order (pooled samples) left unchecked. The first four
+each made five checks fail, and the last one the check of the changed files.
 
 ## Normalization and filtering
 
@@ -511,12 +546,12 @@ a first run, building all five layers:
 
 | Run | Seconds |
 | --- | --- |
-| `from_cells`, 2 threads | 0.100 |
-| `from_cells`, 1 thread | 0.166 |
-| `from_cells`, dense float32 input | 0.255 |
-| `from_cells`, first call (compiles unless cached) | 0.315 |
-| scanpy `normalize_total`, `log1p` and 3 `aggregate` calls (float32), warm | 0.334 |
-| decoupler `pseudobulk` (sums only), warm | 0.814 |
+| `from_cells`, 2 threads | 0.092 |
+| `from_cells`, 1 thread | 0.171 |
+| `from_cells`, dense float32 input | 0.254 |
+| `from_cells`, first call (compiles unless cached) | 0.379 |
+| scanpy `normalize_total`, `log1p` and 3 `aggregate` calls (float32), warm | 0.282 |
+| decoupler `pseudobulk` (sums only), warm | 0.583 |
 
 The peak resident memory of that whole run was 1,725 MiB, in its largest process.
 
@@ -545,16 +580,18 @@ one:
 
 | Selection | Chunk files opened | Read from disk (MB) | Decompressed (MB) | Result (MB) | Peak memory (MB) | Seconds |
 | --- | --- | --- | --- | --- | --- | --- |
-| 50 neighbouring genes | 40 | 69.2 | 98.3 | 1.20 | 5.6 | 0.48 |
-| 50 genes at random | 320 | 507.1 | 786.4 | 1.20 | 5.8 | 4.33 |
-| 2,000 genes at random | 320 | 507.1 | 786.4 | 48.00 | 54.2 | 4.17 |
-| 50 genes at random, 2 groups | 32 | 51.3 | 78.6 | 0.12 | 4.7 | 0.41 |
-| 10 samples, every gene | 320 | 507.1 | 786.4 | 72.00 | 78.9 | 4.10 |
-| one whole group | 16 | 25.0 | 39.3 | 36.00 | 40.5 | 0.23 |
+| 50 neighbouring genes | 40 | 69.2 | 98.3 | 1.20 | 5.6 | 0.77 |
+| 50 genes at random | 320 | 507.1 | 786.4 | 1.20 | 5.8 | 4.55 |
+| 2,000 genes at random | 320 | 507.1 | 786.4 | 48.00 | 55.8 | 3.02 |
+| 50 genes at random, 2 groups | 32 | 51.3 | 78.6 | 0.12 | 4.7 | 0.35 |
+| 10 samples, every gene | 320 | 507.1 | 786.4 | 72.00 | 81.3 | 3.18 |
+| one whole group | 16 | 25.0 | 39.3 | 36.00 | 40.5 | 0.20 |
 
 A read holds what it returns and about one decompressed chunk (3.3 MB of `log_sum`).
 Genes at random lie in every chunk, so they decompress the whole file, and so does a
-selection of samples, since every chunk holds every sample.
+selection of samples, since every chunk holds every sample. A read that covers a whole
+group is hashed, to check it against the digest stored with the file, and a selection's
+groups are hashed as they are read, for the selection's own fingerprint.
 
 (reproduce-validation)=
 ## Reproducing this page
@@ -583,6 +620,7 @@ SCANPY_PYTHON=$REF/python-scanpy/bin/python \
 REFERENCE_PYTHON=$REF/python/bin/python $REF/python3.14/bin/python \
     validation/cube_files.py
 python validation/cube_reads.py
+python validation/cube_fingerprints.py
 ```
 
 Here `python` is `$REF/python/bin/python`, the environment below. With

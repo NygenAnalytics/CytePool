@@ -213,6 +213,7 @@ def _from_cells_arguments(context: Context) -> dict[str, Any]:
         "library_sizes": [3.0, 4.0, 7.0, 5.0],
         "layers": ["counts", "detected"],
         "n_threads": 1,
+        "source": {"dataset": "test", "values": [1, 2]},
     }
 
 
@@ -313,12 +314,15 @@ ENTRY_POINTS: dict[str, Entry] = {
             "library_sizes": None,
             "layers": None,
             "n_threads": None,
+            # A source record is JSON, which marks missing values with None.
+            "source": "None",
         },
         options=("target_sum",),
         keys={
             "sample_table": "sample_id",
             "group_table": "group_id",
             "features": "feature_id",
+            "source": "values",
         },
     ),
     # Feature ids rather than a feature table.
@@ -336,9 +340,10 @@ ENTRY_POINTS: dict[str, Entry] = {
             "counts": COUNTS,
             "samples": {"sample_id": SAMPLE_TABLE["sample_id"]},
             "features": {"feature_id": [f"g{i}" for i in range(8)]},
+            "source": {"dataset": "test", "values": [1, 2]},
         },
-        {"counts": None, "samples": None, "features": None},
-        keys={"samples": "sample_id", "features": "feature_id"},
+        {"counts": None, "samples": None, "features": None, "source": "None"},
+        keys={"samples": "sample_id", "features": "feature_id", "source": "values"},
     ),
     "cytepool.cube.pool.from_bulk[ids]": Entry(
         lambda c: {
@@ -347,6 +352,12 @@ ENTRY_POINTS: dict[str, Entry] = {
             "features": [f"g{i}" for i in range(8)],
         },
         {"samples": None, "features": None},
+    ),
+    # Provenance records are JSON, which marks missing values with None.
+    "cytepool.cube.provenance.describe_provenance": Entry(
+        lambda c: {"provenance": {"source": {"dataset": "test"}, "values": [1, 2]}},
+        {"provenance": "None"},
+        keys={"provenance": "values"},
     ),
     # Saved arrays. operator.index reads a 0-d masked integer, and so does a slice.
     "cytepool.io.zarr.ZarrArray.__getitem__": Entry(
