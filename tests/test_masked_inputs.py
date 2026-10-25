@@ -285,6 +285,19 @@ _SCVERSE_KEYS = {
     "source": "values",
 }
 
+
+def _gene_set_arguments() -> dict[str, Any]:
+    """log-CPM of COUNTS (complete), the design, a contrast and one set of two ids."""
+    return {
+        "y": log_cpm(COUNTS),
+        "design": DESIGN,
+        "contrast": [0.0, 1.0],
+        "gene_sets": {"set": ["g1", "g2"]},
+        "gene_ids": [f"g{i}" for i in range(COUNTS.shape[1])],
+        "weights": np.full(COUNTS.shape, 2.0),
+    }
+
+
 TABLE = Table({"x": [1.0, 2.0], "s": ["a", "b"]})
 NORM_FACTORS = [1.0, 1.1, 0.9, 1.0]
 LIBRARY_SIZES = COUNTS.sum(axis=1).astype(float)
@@ -754,6 +767,29 @@ ENTRY_POINTS: dict[str, Entry] = {
     # A fold change instead of its logarithm; treat refuses both at once.
     "cytepool.stats.empirical_bayes.treat[fc]": Entry(
         lambda c: {"fit": c.fit, "fc": 1.5}, {}, options=("fc",), objects=("fit",)
+    ),
+    # Gene-set tests take complete values: none may be missing.
+    "cytepool.stats.gene_set_tests.camera": Entry(
+        lambda c: {**_gene_set_arguments(), "inter_gene_correlation": 0.05},
+        dict.fromkeys(
+            ("y", "design", "contrast", "gene_sets", "gene_ids", "weights"), None
+        ),
+        options=(
+            "inter_gene_correlation",
+            "allow_negative_correlation",
+            "use_ranks",
+            "trend",
+            "robust",
+        ),
+        keys={"gene_sets": "set"},
+    ),
+    "cytepool.stats.gene_set_tests.fry": Entry(
+        lambda c: _gene_set_arguments(),
+        dict.fromkeys(
+            ("y", "design", "contrast", "gene_sets", "gene_ids", "weights"), None
+        ),
+        options=("standardize", "trend", "robust"),
+        keys={"gene_sets": "set"},
     ),
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
