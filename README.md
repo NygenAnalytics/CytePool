@@ -19,6 +19,7 @@ what is planned.
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
+| Mixed models | `fit_mixed_model`: linear mixed models with random intercepts of one or more grouping factors (nested or crossed), with observation weights, fitted to every gene by REML, with exact zeros for variance components at the boundary; `fixed_effect_tests`: t-tests of contrasts with Satterthwaite's degrees of freedom, as lmerTest computes them for dream | lme4, lmerTest |
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
@@ -35,12 +36,13 @@ These are not implemented yet:
 
 - Dispersion estimation and tests for negative binomial models (edgeR's
   quasi-likelihood F-tests and likelihood ratio tests, DESeq2-style tests)
-- Mixed models (dream-style fits, variance partitioning). A design can describe random
-  effects, and its checks examine them, but no function estimates them yet.
-  `fit_linear_model` fits one random intercept with a known correlation, given `block=`
-  that groups the samples as the intercept does and `correlation=` (which CytePool does
-  not estimate), and refuses a design whose random effects it would otherwise drop; its
-  message says what can be fitted instead.
+- The rest of dream (variancePartition): empirical Bayes moderation of mixed-model
+  fits, a workflow over the groups of a cube, Kenward-Roger degrees of freedom (dream's
+  default for 20 samples or fewer), F-tests of several contrasts at once, random
+  slopes, and variance partitioning with the maximum likelihood fits it uses by
+  default. Random intercepts are fitted by REML now (see the table above);
+  `fit_linear_model` refuses a design whose random effects it would drop, and its
+  message points to `fit_mixed_model`.
 - Rotation gene-set tests (`roast`, `mroast`, `romer`), and pathway or
   transcription-factor activity
 - Composition tests with precision weights or random effects (crumblr)
@@ -62,6 +64,17 @@ These are not implemented yet:
   parallel routine cannot fork workers that run one again: start them with the
   "spawn" or "forkserver" method of `multiprocessing`. With one thread
   (`n_threads=1`), these fits run without a parallel region.
+- A mixed model stores, for every gene, the covariance matrix of the coefficients and
+  its derivative with respect to each variance parameter, for Satterthwaite's degrees
+  of freedom: about 8 x genes x (components + 2) x coefficients² bytes, so 23 MB for
+  20,000 genes, two random intercepts and 6 coefficients. `fit_mixed_model` fits random
+  intercepts only, by REML, to complete data with positive weights: missing values or
+  a zero weight make it raise an error, as no gene is fitted to fewer samples. It also
+  refuses a design whose fixed and random effects together span every sample, which
+  lme4 fits. A gene whose values the fixed and random effects reproduce, such as one
+  constant within every donor, has no REML estimate and is returned unfitted (NaN).
+  Its genes run on Python threads, in compiled code that releases the GIL, so the
+  forking limit above does not apply to it.
 - A chunk of a cube file holds up to 4,096 features of every sample of one group, and a
   read decompresses every chunk that holds a selected feature. A few neighbouring
   features are therefore quick to read, but features scattered over the file, or a few

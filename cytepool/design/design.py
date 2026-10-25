@@ -35,8 +35,9 @@ class Design:
     Every model in the package takes a design: ``matrix`` and ``columns`` are what a
     linear model is fitted to, ``random`` describes the random effects of a mixed
     model, and ``contrasts`` holds the comparisons to test. ``check()`` looks for the
-    problems that silently ruin an analysis before anything is fitted. No function
-    estimates random effects yet: ``fit_linear_model`` fits one random intercept
+    problems that silently ruin an analysis before anything is fitted.
+    ``fit_mixed_model`` estimates random intercepts by REML; random slopes are not
+    estimated by any function yet. ``fit_linear_model`` fits one random intercept
     with a known correlation, given ``block=`` that groups the samples as the
     intercept does, and refuses a design whose random effects it would otherwise
     drop.
@@ -50,7 +51,7 @@ class Design:
             ``"~ condition + batch"`` or ``"~ 0 + group"``; see ``model_matrix``.
         random: Random-effect terms in lme4 notation, such as ``"(1 | donor)"`` or
             ``"(1 | donor) + (1 | plate)"``, or a list of such strings. ``check()``
-            examines them, but no function estimates them yet.
+            examines them, and ``fit_mixed_model`` estimates random intercepts.
         contrasts: Named contrasts over the design columns, as accepted by
             ``make_contrasts``: for example ``{"stim_vs_ctrl": "conditionstim"}``.
         levels: Level order of factors, such as ``{"condition": ["ctrl", "stim"]}``;
@@ -193,7 +194,7 @@ class Design:
 
     @property
     def random(self) -> tuple[RandomEffect, ...]:
-        """The random-effect terms, in the order given; none is estimated yet."""
+        """The random-effect terms, in the order given."""
         return self._random
 
     @property
@@ -299,12 +300,13 @@ def _refuse_dropped_random_effects(
 ) -> None:
     """Refuse a fit that would drop the random effects of a ``Design``.
 
-    Every function that fits a model calls this. Such a fit takes fixed effects
-    and, through a correlation within blocks, at most one random intercept: a
-    ``Design`` with random effects is accepted only when they are one random
-    intercept, such as ``(1 | donor)``, whose grouping splits the samples as the
-    blocks do, with a correlation of at least zero. Only a ``Design`` carries
-    random effects; any other design is a matrix.
+    Every function that fits fixed effects and, through a correlation within
+    blocks, at most one random intercept calls this; ``fit_mixed_model``, which
+    estimates random intercepts, does not. A ``Design`` with random effects is
+    accepted only when they are one random intercept, such as ``(1 | donor)``,
+    whose grouping splits the samples as the blocks do, with a correlation of at
+    least zero. Only a ``Design`` carries random effects; any other design is a
+    matrix.
 
     Args:
         design: The design given to the fit.
@@ -355,10 +357,12 @@ def _is_random_intercept(effect: RandomEffect) -> bool:
 def _random_effects_refusal(
     design: Design, function: str, reason: str, *, block: bool = True
 ) -> str:
-    """Why a fit refuses the random effects of a design, and what it can fit now.
+    """Why a fit refuses the random effects of a design, and what can be fitted.
 
     ``block`` says whether the function fits a random intercept with a known
-    correlation through ``block=`` and ``correlation=``.
+    correlation through ``block=`` and ``correlation=``. Random intercepts, alone or
+    with others, are estimated by ``fit_mixed_model``, which the message names
+    first; random slopes are not estimated by any function yet.
     """
     effects = design.random
     listed = " + ".join(str(effect) for effect in effects)
@@ -370,6 +374,7 @@ def _random_effects_refusal(
     # combination of variables with them already.
     term = quote_name(effects[0].grouping[0]) if single else group
     intercept = len(effects) == 1 and _is_random_intercept(effects[0])
+    intercepts = all(_is_random_intercept(effect) for effect in effects)
     if group is None:
         options = [
             "a fixed-effects analysis, with the Design built without random= and the "
@@ -391,8 +396,8 @@ def _random_effects_refusal(
             )
             options.append(
                 "this random intercept with a known correlation between the samples "
-                f"of each {group}, given {labels} and correlation= (CytePool does not "
-                "estimate the correlation)"
+                f"of each {group}, given {labels} and correlation= ({function} does "
+                "not estimate the correlation)"
             )
         by = (
             f"({group!r})"
@@ -415,10 +420,16 @@ def _random_effects_refusal(
         if block
         else f"{function} fits fixed effects only"
     )
+    dropped = f"{fits}, so it would drop the {noun} {listed} of this design{reason}."
+    if intercepts:
+        return (
+            f"{dropped} fit_mixed_model estimates {'it' if len(effects) == 1 else 'them'}"
+            " by REML, and fixed_effect_tests tests contrasts of the fixed effects with "
+            f"Satterthwaite's degrees of freedom. Other analyses: {fitted}."
+        )
     return (
-        f"{fits}, so it would drop the {noun} {listed} of this design{reason}. Fitting "
-        "random effects (mixed models) is planned but not available yet. What it can "
-        f"fit now: {fitted}."
+        f"{dropped} Random slopes are not available yet: fit_mixed_model fits random "
+        f"intercepts only. What can be fitted now: {fitted}."
     )
 
 

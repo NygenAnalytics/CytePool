@@ -53,6 +53,7 @@ from cytepool.stats import distributions, special
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
+from cytepool.stats.mixed_models import fit_mixed_model
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.voom import voom_with_quality_weights
@@ -315,6 +316,18 @@ def _gene_set_arguments() -> dict[str, Any]:
         "gene_sets": {"set": ["g1", "g2"]},
         "gene_ids": [f"g{i}" for i in range(COUNTS.shape[1])],
         "weights": np.full(COUNTS.shape, 2.0),
+    }
+
+
+def _mixed_model(context: Context) -> dict[str, Any]:
+    """Complete log-CPM values, and a design with a random intercept per donor."""
+    return {
+        "y": log_cpm(COUNTS),
+        "design": Design(
+            SAMPLE_TABLE, "~ condition", random="(1 | donor)", levels=LEVELS
+        ),
+        "weights": np.full(COUNTS.shape, 2.0),
+        "n_threads": 1,
     }
 
 
@@ -643,6 +656,23 @@ ENTRY_POINTS: dict[str, Entry] = {
         lambda c: {"fit": c.fit, "contrasts": np.eye(2), "names": ["u", "v"]},
         {"contrasts": None, "names": None},
         options=("method",),
+        objects=("fit",),
+    ),
+    # Mixed models take complete values; n_threads goes through operator.index,
+    # which reads a 0-d masked integer.
+    "cytepool.stats.mixed_models.fit_mixed_model": Entry(
+        _mixed_model,
+        {"y": None, "weights": None, "n_threads": None},
+        objects=("design",),
+    ),
+    "cytepool.stats.mixed_models.fixed_effect_tests": Entry(
+        lambda c: {
+            "fit": fit_mixed_model(**_mixed_model(c)),
+            "contrasts": np.eye(2),
+            "names": ["u", "v"],
+        },
+        {"contrasts": None, "names": None},
+        options=("df_method",),
         objects=("fit",),
     ),
     # A span given as a number; None, the default, chooses it.
@@ -1102,6 +1132,8 @@ RECORDS = {
     "cytepool.stats.empirical_bayes.ModeratedFit",
     "cytepool.stats.empirical_bayes.TreatFit",
     "cytepool.stats.negative_binomial_models.NegativeBinomialFit",
+    "cytepool.stats.mixed_models.FixedEffectTests",
+    "cytepool.stats.mixed_models.MixedModelFit",
 }
 
 # Callables that modules with __all__ define but do not export.

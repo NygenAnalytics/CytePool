@@ -569,19 +569,19 @@ def _confounded_factors(
 
 
 def _random_intercept_alternatives(group: str | None) -> str:
-    """What can be fitted now for a random intercept, which no function estimates."""
+    """How a random intercept can be fitted: by REML, or with a known correlation."""
     if group is None:
         return (
-            "no function estimates random effects yet, but fit_linear_model fits a "
-            "random intercept whose correlation is known, given block= (the group "
-            "of each sample) and correlation=; and, when the conditions compared "
-            "differ between groups, not within them, Cube.collapse_samples pools the "
-            "repeated samples of each group into one"
+            "fit_mixed_model estimates such a random intercept by REML; "
+            "fit_linear_model fits one whose correlation is known, given block= (the "
+            "group of each sample) and correlation=; and, when the conditions "
+            "compared differ between groups, not within them, Cube.collapse_samples "
+            "pools the repeated samples of each group into one"
         )
     return (
-        "no function estimates random effects yet, but fit_linear_model fits this "
-        f"random intercept with a known correlation, given block= (the {group} of "
-        f"each sample) and correlation=; or pool the samples of each {group} with "
+        "fit_mixed_model estimates this random intercept by REML; fit_linear_model "
+        f"fits it with a known correlation, given block= (the {group} of each "
+        f"sample) and correlation=; or pool the samples of each {group} with "
         f"Cube.collapse_samples({group!r})"
     )
 
