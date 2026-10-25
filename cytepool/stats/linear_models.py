@@ -27,10 +27,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import numba
 import numpy as np
 import numpy.typing as npt
+from numba import prange
 
-from cytepool._jit import jit
+from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool.design.contrasts import (
@@ -229,6 +231,7 @@ def fit_linear_model(
     block: npt.ArrayLike | None = None,
     correlation: float | None = None,
     coefficient_names: Sequence[str] | None = None,
+    n_threads: int | None = None,
 ) -> LinearModelFit:
     """Fit the same linear model to every feature by least squares.
 
@@ -277,12 +280,17 @@ def fit_linear_model(
             the design's column names when it has them, else ``x1, x2, ...``.
             They may rename the design's columns, but not give a column the name
             of another: contrasts are matched to coefficients by name.
+        n_threads: The most threads for fitting features one at a time. ``None``
+            uses numba's setting for the calling thread (see
+            ``numba.set_num_threads``). The result does not depend on it, and with
+            one thread no parallel region runs.
 
     Returns:
         The fit. Without missing values, and with no weights or positive
         sample weights, one factorisation serves every feature. Otherwise each
-        feature is fitted on its own, and the fit stores the covariance matrix
-        of every feature: ``n_features * n_coefficients**2`` floats.
+        feature is fitted on its own, in parallel on up to ``n_threads`` threads,
+        and the fit stores the covariance matrix of every feature:
+        ``n_features * n_coefficients**2`` floats.
 
     Raises:
         TypeError: If an input is not real-valued, a label is not comparable, or an
@@ -295,49 +303,50 @@ def fit_linear_model(
             and ``correlation`` are invalid, or ``coefficient_names`` move a
             design column's name to another column.
     """
-    x, names = _design_matrix(design, coefficient_names)
-    codes, counts, rho = _block_structure(block, correlation, x.shape[0])
-    _refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
-    values = _expression_matrix(y, x.shape[0])
-    observed = ~np.isnan(values)
-    precision = _precision_weights(weights, values.shape, observed)
+    with thread_limit(n_threads):
+        x, names = _design_matrix(design, coefficient_names)
+        codes, counts, rho = _block_structure(block, correlation, x.shape[0])
+        _refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
+        values = _expression_matrix(y, x.shape[0])
+        observed = ~np.isnan(values)
+        precision = _precision_weights(weights, values.shape, observed)
 
-    aliased = _aliased_columns(x)
-    if aliased:
-        listed = ", ".join(repr(names[j]) for j in aliased)
-        raise ValueError(
-            f"design is not of full column rank: column(s) {listed} are linear "
-            "combinations of the preceding columns; remove them or "
-            "reparametrise the design"
-        )
-    if precision is not None and precision.ndim == 1:
-        # Sample weights apply to every feature, and a zero weight removes the
-        # sample from every feature's fit.
-        positive = precision > 0.0
-        weighted = x[positive] * np.sqrt(precision[positive])[:, np.newaxis]
-        aliased = _aliased_columns(weighted)
+        aliased = _aliased_columns(x)
         if aliased:
             listed = ", ".join(repr(names[j]) for j in aliased)
             raise ValueError(
-                "design is not of full column rank once the sample weights are "
-                f"applied (samples of zero weight are left out): column(s) {listed} "
-                "are linear combinations of the preceding columns"
+                f"design is not of full column rank: column(s) {listed} are linear "
+                "combinations of the preceding columns; remove them or "
+                "reparametrise the design"
             )
+        if precision is not None and precision.ndim == 1:
+            # Sample weights apply to every feature, and a zero weight removes the
+            # sample from every feature's fit.
+            positive = precision > 0.0
+            weighted = x[positive] * np.sqrt(precision[positive])[:, np.newaxis]
+            aliased = _aliased_columns(weighted)
+            if aliased:
+                listed = ", ".join(repr(names[j]) for j in aliased)
+                raise ValueError(
+                    "design is not of full column rank once the sample weights are "
+                    f"applied (samples of zero weight are left out): column(s) {listed} "
+                    "are linear combinations of the preceding columns"
+                )
 
-    complete = bool(observed.all())
-    mean_expression = _observed_means(values)
-    # Only in this case does limma report the covariance matrix of the
-    # weighted design; otherwise it reports that of the design without
-    # weights (found by probing).
-    if complete and (
-        precision is None or (precision.ndim == 1 and bool(np.all(precision > 0.0)))
-    ):
-        return _fit_shared_design(
+        complete = bool(observed.all())
+        mean_expression = _observed_means(values)
+        # Only in this case does limma report the covariance matrix of the
+        # weighted design; otherwise it reports that of the design without
+        # weights (found by probing).
+        if complete and (
+            precision is None or (precision.ndim == 1 and bool(np.all(precision > 0.0)))
+        ):
+            return _fit_shared_design(
+                values, x, names, precision, codes, counts, rho, mean_expression
+            )
+        return _fit_each_feature(
             values, x, names, precision, codes, counts, rho, mean_expression
         )
-    return _fit_each_feature(
-        values, x, names, precision, codes, counts, rho, mean_expression
-    )
 
 
 def contrasts_fit(
@@ -550,18 +559,28 @@ def _fit_each_feature(
         n_blocks = 1
     else:
         block_codes, n_blocks = codes, counts.shape[0]
-    # Writable C-ordered arrays give the compiled routine a single signature.
-    coefficients, stdev_unscaled, sigma, df_residual, per_feature = (
-        _least_squares_per_feature(
-            _writable_c_array(values.T, np.float64),
-            _writable_c_array(weight_rows, np.float64),
-            _writable_c_array(x, np.float64),
-            _writable_c_array(block_codes, np.int64),
-            n_blocks,
-            correlation,
-            RANK_TOLERANCE,
-        )
+    # Writable C-ordered arrays give the compiled routines a single signature.
+    arguments = (
+        _writable_c_array(values.T, np.float64),
+        _writable_c_array(weight_rows, np.float64),
+        _writable_c_array(x, np.float64),
+        _writable_c_array(block_codes, np.int64),
+        n_blocks,
+        correlation,
+        RANK_TOLERANCE,
     )
+    threads = numba.get_num_threads()
+    if threads > 1:
+        # Several chunks of features per thread balance the work. Each feature is
+        # fitted by the same operations whatever its chunk, so the result does not
+        # depend on the number of threads.
+        n_chunks = max(1, min(values.shape[1], 4 * threads))
+        fitted = _least_squares_per_feature(*arguments, n_chunks)
+    else:
+        # Without a parallel region, which forked processes and several Python
+        # threads at once can run whatever numba's threading layer.
+        fitted = _least_squares_in_order(*arguments)
+    coefficients, stdev_unscaled, sigma, df_residual, per_feature = fitted
     # limma reports the covariance matrix of the design without weights here
     # (found by probing).
     _, r = np.linalg.qr(_whiten(x, None, codes, counts, correlation))
@@ -578,7 +597,7 @@ def _fit_each_feature(
     )
 
 
-@jit
+@jit(parallel=True)
 def _least_squares_per_feature(
     responses: FloatArray,
     weight_rows: FloatArray,
@@ -587,8 +606,13 @@ def _least_squares_per_feature(
     n_blocks: int,
     correlation: float,
     tolerance: float,
+    n_chunks: int,
 ) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray, FloatArray]:
-    """Weighted or generalised least squares fit of each feature.
+    """Weighted or generalised least squares fit of each feature, in parallel.
+
+    The features are split into ``n_chunks`` runs of consecutive features, fitted in
+    parallel by :func:`_fit_features`; :func:`_least_squares_in_order` fits them on
+    one thread, without a parallel region.
 
     Args:
         responses: ``(n_features, n_samples)`` values, NaN where missing.
@@ -600,19 +624,114 @@ def _least_squares_per_feature(
         n_blocks: Number of blocks.
         correlation: Correlation within blocks; zero for none.
         tolerance: Relative norm at or below which a column is aliased.
+        n_chunks: The number of runs of features, from 1 to ``n_features``.
 
     Returns:
         Coefficients, unscaled standard errors, residual standard deviations,
         residual degrees of freedom and unscaled covariance matrices, NaN
         where a coefficient cannot be estimated.
     """
-    n_features, n_samples = responses.shape
+    n_features = responses.shape[0]
+    coefficients, stdev_unscaled, sigma, df_residual, covariances = _empty_fits(
+        n_features, design.shape[1]
+    )
+    for chunk in prange(n_chunks):
+        _fit_features(
+            responses,
+            weight_rows,
+            design,
+            block_codes,
+            n_blocks,
+            correlation,
+            tolerance,
+            chunk * n_features // n_chunks,
+            (chunk + 1) * n_features // n_chunks,
+            coefficients,
+            stdev_unscaled,
+            sigma,
+            df_residual,
+            covariances,
+        )
+    return coefficients, stdev_unscaled, sigma, df_residual, covariances
+
+
+@jit
+def _least_squares_in_order(
+    responses: FloatArray,
+    weight_rows: FloatArray,
+    design: FloatArray,
+    block_codes: IntArray,
+    n_blocks: int,
+    correlation: float,
+    tolerance: float,
+) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray, FloatArray]:
+    """The fits of :func:`_least_squares_per_feature` on the calling thread alone."""
+    n_features = responses.shape[0]
+    coefficients, stdev_unscaled, sigma, df_residual, covariances = _empty_fits(
+        n_features, design.shape[1]
+    )
+    _fit_features(
+        responses,
+        weight_rows,
+        design,
+        block_codes,
+        n_blocks,
+        correlation,
+        tolerance,
+        0,
+        n_features,
+        coefficients,
+        stdev_unscaled,
+        sigma,
+        df_residual,
+        covariances,
+    )
+    return coefficients, stdev_unscaled, sigma, df_residual, covariances
+
+
+@jit
+def _empty_fits(
+    n_features: int, n_coefficients: int
+) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray, FloatArray]:
+    """The outputs of the per-feature fits before any feature is fitted.
+
+    Coefficients, unscaled standard errors, residual standard deviations and
+    covariance matrices are NaN, and residual degrees of freedom zero, for a feature
+    whose fit has none.
+    """
+    return (
+        np.full((n_features, n_coefficients), np.nan),
+        np.full((n_features, n_coefficients), np.nan),
+        np.full(n_features, np.nan),
+        np.zeros(n_features),
+        np.full((n_features, n_coefficients, n_coefficients), np.nan),
+    )
+
+
+@jit
+def _fit_features(
+    responses: FloatArray,
+    weight_rows: FloatArray,
+    design: FloatArray,
+    block_codes: IntArray,
+    n_blocks: int,
+    correlation: float,
+    tolerance: float,
+    start: int,
+    stop: int,
+    coefficients: FloatArray,
+    stdev_unscaled: FloatArray,
+    sigma: FloatArray,
+    df_residual: FloatArray,
+    covariances: FloatArray,
+) -> None:
+    """Fit features ``start:stop`` into the output arrays, with work arrays of their own.
+
+    The arguments are those of :func:`_least_squares_per_feature`, followed by its
+    outputs, of which only the rows of these features are written.
+    """
+    n_samples = responses.shape[1]
     n_coefficients = design.shape[1]
-    coefficients = np.full((n_features, n_coefficients), np.nan)
-    stdev_unscaled = np.full((n_features, n_coefficients), np.nan)
-    sigma = np.full(n_features, np.nan)
-    df_residual = np.zeros(n_features)
-    covariances = np.full((n_features, n_coefficients, n_coefficients), np.nan)
 
     # Row t of work is the t-th sample in a feature's fit, whitened: its
     # design row followed by its response.
@@ -631,7 +750,7 @@ def _least_squares_per_feature(
     shared_weights = weight_rows.shape[0] == 1
     last = n_coefficients
 
-    for g in range(n_features):
+    for g in range(start, stop):
         w = 0 if shared_weights else g
         m = 0
         for i in range(n_samples):
@@ -710,7 +829,6 @@ def _least_squares_per_feature(
                     total += inverse[s, u] * inverse[t, u]
                 covariances[g, js, jt] = total
             stdev_unscaled[g, jt] = math.sqrt(covariances[g, jt, jt])
-    return coefficients, stdev_unscaled, sigma, df_residual, covariances
 
 
 @jit

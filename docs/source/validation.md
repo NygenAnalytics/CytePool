@@ -17,8 +17,8 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-25** for the four scripts on
 cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py` and
-`cube_reads.py`), and on **2026-10-24** for the others, with the reference versions
-given in each section. Every script exited without a failure. Each
+`cube_reads.py`) and for `linear_models.py`, and on **2026-10-24** for the others, with
+the reference versions given in each section. Every script exited without a failure. Each
 row below is a family of checks: it gives the number of printed checks it covers and
 the largest difference among them. Run a script to see every check.
 
@@ -32,7 +32,7 @@ the largest difference among them. Run a script to see every check.
 | [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 58 s | 500 MiB |
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
-| [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 5.5 s | 176 MiB |
+| [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 80 | 75 pass, 5 deliberate differences | 8.3 s | 289 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
@@ -497,15 +497,16 @@ The peak resident memory of that whole run was 1,725 MiB, in its largest process
 
 `linear_models.py --benchmark` on 20,000 genes x 200 samples (limma's time as R
 measured it, CytePool's the median of three runs after a warm-up), with a peak
-resident memory of 479 MiB in the largest process of the run:
+resident memory of 479 MiB in the largest process of the run. The scenarios with
+observation weights or missing values fit each gene on its own, on 2 threads here:
 
 | Scenario | limma `lmFit` (s) | CytePool (s) |
 | --- | --- | --- |
-| Ordinary least squares | 0.22 | 0.028 |
-| Observation weights | 1.15 | 0.368 |
-| 5% missing values | 1.00 | 0.308 |
-| Block correlation | 0.15 | 0.110 |
-| Block correlation and observation weights | 11.50 | 0.386 |
+| Ordinary least squares | 0.21 | 0.032 |
+| Observation weights | 0.97 | 0.173 |
+| 5% missing values | 0.73 | 0.170 |
+| Block correlation | 0.13 | 0.090 |
+| Block correlation and observation weights | 10.81 | 0.194 |
 
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
 `multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the

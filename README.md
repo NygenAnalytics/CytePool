@@ -16,7 +16,7 @@ what is planned.
 | Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer) | zarr-python |
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
-| Linear models | Ordinary, weighted and generalised least squares for every gene, contrasts (named contrasts are matched to the coefficients by name) | limma |
+| Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, for a weighted linear model (limma-voom) | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
@@ -50,6 +50,11 @@ These are not implemented yet:
 - A linear model fitted with observation weights or missing values stores a covariance
   matrix for every gene: 8 x genes x coefficients² bytes, so 16 MB for 20,000 genes and
   10 coefficients, and 1.6 GB at 100 coefficients.
+- Such fits, in which each gene needs its own fit, run on numba's threads, as
+  `from_cells` does. With numba's OpenMP threading layer, a process that has run a
+  parallel routine cannot fork workers that run one again: start them with the
+  "spawn" or "forkserver" method of `multiprocessing`. With one thread
+  (`n_threads=1`), these fits run without a parallel region.
 - A chunk of a cube file holds up to 4,096 features of every sample of one group, and a
   read decompresses every chunk that holds a selected feature. A few neighbouring
   features are therefore quick to read, but features scattered over the file, or a few
