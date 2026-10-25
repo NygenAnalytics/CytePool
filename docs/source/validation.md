@@ -20,7 +20,7 @@ cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
 `negative_binomial_fits.py`, `differential_expression.py`,
-`differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
+`differential_expression_options.py`, `dream.py`, `interferon_stimulated_pbmcs.py`,
 `gene_set_tests.py`, `rotation_gene_set_tests.py`, `composition_tests.py` and
 `meta_analysis.py`, and for `design.py`, which printed the same table again after
 changes to the code it checks; and on **2026-10-24** for the others, with the
@@ -51,12 +51,13 @@ covers and the largest difference among them. Run a script to see every check.
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
+| [`dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py) | dream | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | 63 | 53 pass, 5 information, 5 deliberate differences | 30.5 s | 390 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,585** | **1,371 pass, none failed; 132 information, 81 deliberate differences, 1 control** | | |
+| **All** | | | **1,648** | **1,424 pass, none failed; 137 information, 86 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -395,6 +396,7 @@ Deliberate differences:
 With `--benchmark`, the script times both packages on 20,000 genes x 200 samples; see
 [](#validation-timings).
 
+(validation-mixed-models)=
 ## Mixed models
 
 [`validation/mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py)
@@ -1062,6 +1064,96 @@ set `min_counts`. limma's `voomWithQualityWeights` takes no prior weights, and e
 `voomLmFit` stops with "Can't specify prior.weights and estimate sample weights";
 CytePool refuses the two together as well.
 
+## dream
+
+[`validation/dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py)
+compares `voom_with_dream_weights`, `moderated_fixed_effect_tests` and `dream_voom`,
+and the maximum likelihood fits, fitted values and approximate residual degrees of
+freedom of `fit_mixed_model` behind them, with variancePartition's
+`voomWithDreamWeights`, `dream(ddf = "Satterthwaite")`, `eBayes` and `topTable`, on
+negative binomial counts of 60 genes from fixed seeds (20261025 to 20261029): a random
+donor intercept with a condition, an age and the contrast `conditionstim - age` (10
+donors x 3 samples, with two hypervariable genes), moderated also with `robust = TRUE`
+and `trend = TRUE`; crossed donor and batch intercepts (8 donors x 4 samples over 3
+batches) with sample prior weights; unbalanced donors with 1 to 4 samples, with prior
+weights for every observation; and `dream_voom` on three cell types of a cube of 8
+donors x 2 conditions, with prior weights from the numbers of cells, the samples with
+fewer than 10 cells left out (both samples of a donor and one of another in one cell
+type, and all but one sample of each of three donors in the third), and the moderation
+also with `trend = TRUE`. Reference: R 4.4.3, variancePartition 1.36.2,
+limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3, Matrix 1.7-4, RcppEigen
+0.3.4.0.2 and minqa 1.2.8. dream is compared on lme4 1.1-38, while the
+[mixed models](#validation-mixed-models) are compared on lme4 2.0.6: variancePartition 1.36.2's
+`dream` fails for every gene with lme4 2.0, which reworked lme4's random-effect terms.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Precision weights and the square roots of the residual SDs in the trend; with prior weights for samples or observations, also the trend's weights alone | `voomWithDreamWeights` | 2.1e-8 | 1e-6 | 3 pass |
+| Coefficients and a contrast, relative to the larger of their absolute value and standard error, and standard errors | `dream` | 6.2e-8 | 1e-6 | 3 pass |
+| Satterthwaite df | `dream` | 2.2e-7 | 1e-5 | 3 pass |
+| Residual SD of an observation of average weight, and approximate residual df | `dream` `sigma`, `rdf` | 2.8e-8 | 1e-6 | 3 pass |
+| Prior df and variance, posterior variances (constant, robust and trend priors) | `eBayes` | 1.6e-8 | 1e-6 | 5 pass |
+| Moderated t-statistics and B-statistics, relative to max(\|x\|, 1) | `eBayes` | 1.2e-7 | 1e-6 | 5 pass |
+| Total df, p-values, adjusted p-values and z-statistics | `eBayes`, `topTable` | 7.9e-8 | 1e-5 | 5 pass |
+| Maximum likelihood and REML at CytePool's estimates: log-likelihood, residual variance, approximate residual df, and fitted values relative to their largest value | lme4 `logLik`, `sigma`, `fitted`; `rdf.merMod` | 5.9e-15 | 1e-10 | 4 pass |
+| Satterthwaite df there, of maximum likelihood and REML fits | lmerTest `summary` | 5.8e-7 | 1e-5 | 4 pass |
+| Maximum likelihood optimum: log-likelihood and residual variance | lme4 `logLik`, `sigma` | 2.5e-8 | 1e-6 | 2 pass |
+| Genes whose log-likelihood is below lme4's maximum by more than 1e-10, relative | lme4 `logLik` | 0 genes | 0 | 2 pass |
+| `dream_voom`, in two cell types: samples used and features tested | the rules of `limma_voom` | 0 differences | 0 | 2 pass |
+| `dream_voom`, with constant and trend priors: logFC and AveExpr | `topTable` | 1.5e-8 | 1e-6 | 4 pass |
+| `dream_voom`: t and B | `eBayes` | 2.7e-8 | 1e-6 | 4 pass |
+| `dream_voom`: df, P.Value, adj.P.Val and z.std | `eBayes`, `topTable` | 1.1e-7 | 1e-5 | 4 pass |
+| Prior df (median and smallest) and the estimator of the prior | CytePool | 8.4 to 15.2; robust 5.7 to 12.0; likelihood | n/a | 5 information |
+| Deliberate differences, listed below | variancePartition | 5 inputs | n/a | 5 deliberate differences |
+
+variancePartition fits every gene with lme4, whose optimiser stops at about 1e-6 of
+the optimum with its default tolerances. The script runs it with Powell's BOBYQA from
+minqa (lme4's `"bobyqa"`) with the trust region shrunk to 1e-10, which lme4's
+`optimizer` argument accepts by name as a function that reports convergence: at such
+tolerances lme4 warns for some genes, and variancePartition turns the warning into an
+error and drops the gene. BOBYQA from nloptr at tolerances near machine precision
+ended at worse points inside `voomWithDreamWeights` for crossed random effects, so it
+is not used. Estimates are then compared to the close tier, and Satterthwaite's
+degrees of freedom, with the p-values and z-statistics that use them, to 1e-5, as in
+the section on mixed models: lmerTest differentiates the deviance numerically. At
+CytePool's estimates, lme4 evaluated once (`maxeval = 1`) gives closed forms, compared
+to the exact tier. P-values are scaled by max(p, 1e-300) max(1, \|log p\|), as for
+voom. In the cube the features tested and the TMM factors are CytePool's
+(`filter_by_expression` and `tmm_factors`, which the sections above check against
+edgeR), passed to R with the samples kept by the rule of `limma_voom`; R gets the
+effective library sizes and the numbers of cells as prior weights, with
+`rescaleWeightsAfter = TRUE`.
+
+The conventions of variancePartition that its documentation leaves open, found by
+probing it and listed in the documentation of `cytepool.stats.dream`, are all exercised
+here: `voomWithDreamWeights` fits the mixed models by maximum likelihood and reads the
+trend at the fitted values with the predicted random effects; it divides each gene's
+prior weights by their mean, and by default returns the trend's weights alone; `dream`
+fits each gene with its weights divided by their mean, so that `sigma` is the residual
+standard deviation of an observation of average weight; `eBayes` moderates these
+variances on `rdf` with limma's default estimator (here the likelihood estimator, as
+the `rdf` differ), and the p-values use Satterthwaite's df plus the prior's, without
+limma's cap. With `robust = TRUE` the two hypervariable genes got prior df of 5.7,
+against 12.0 for the others.
+
+Deliberate differences:
+
+- The default span: `voom_with_dream_weights` chooses it from the number of genes, as
+  `voom` does (0.959 for 60 genes), and `voomWithDreamWeights` uses 0.5; with the
+  defaults, the weights differ by up to 26%. `span=0.5` reproduces variancePartition.
+- A z-statistic beyond p = 1e-300: `topTable` computes `z.std` from the p-value
+  floored at 1e-300, so it gives -37.07 for a contrast scaled up 1e13 times, where
+  CytePool's z-statistic, from the logarithm of the tail probability, is -44.59.
+- A gene that the fixed and random effects reproduce, constant within every donor:
+  `voomWithDreamWeights` keeps it in the trend with the square root of a residual SD
+  of 3.7e-4, and `dream` keeps it; CytePool leaves it out of the trend and returns its
+  tests as NaN.
+- A design without random effects: `dream` fits it with `lmFit` (class `MArrayLM`);
+  `dream_voom` refuses it and points to `limma_voom`.
+- A cell type left with one sample per donor: `voomWithDreamWeights` stops ("Initial
+  model failed"); `dream_voom` reports the status `random_effects_not_estimable` and
+  goes on with the other cell types.
+
 ## Differential expression on published data
 
 [`validation/interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py)
@@ -1528,6 +1620,8 @@ python validation/differential_expression_options.py
 python validation/interferon_stimulated_pbmcs.py
 RSCRIPT=$REF/r-speckle/bin/Rscript python validation/composition_tests.py
 RSCRIPT=$REF/r-metafor/bin/Rscript python validation/meta_analysis.py
+# variancePartition, in an R environment of its own with lme4 1.1-38 (below).
+RSCRIPT=$REF/r-dream/bin/Rscript python validation/dream.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python \
@@ -1578,6 +1672,21 @@ jsonlite 2.0.0:
 ```bash
 conda create -p $REF/r-metafor -c conda-forge r-base=4.4.3 r-metafor=5.0.1 \
     r-jsonlite=2.0.0
+```
+
+`dream.py` runs variancePartition 1.36.2 (Bioconductor 3.20) with limma 3.62.1, in an
+R environment of its own on lme4 1.1-38, as variancePartition 1.36.2's `dream` fails
+for every gene with lme4 2.0 ("Unable to extract deviance function from model fit"):
+R 4.4.3, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3, Matrix 1.7-4, RcppEigen
+0.3.4.0.2, minqa 1.2.8, nloptr 2.2.1, BiocParallel 1.40.0 and jsonlite 2.0.0, from
+conda-forge and bioconda. lme4 1.1-35.5's conda build crashed in `lmer` with these
+versions of Matrix and RcppEigen:
+
+```bash
+conda create -p $REF/r-dream -c conda-forge -c bioconda r-base=4.4.3 \
+    bioconductor-variancepartition=1.36.2 bioconductor-limma=3.62.1 r-lme4=1.1_38 \
+    r-lmertest=3.1_3 r-pbkrtest=0.5.3 r-matrix=1.7_4 r-rcppeigen=0.3.4.0.2 \
+    r-minqa=1.2.8 r-nloptr=2.2.1 r-jsonlite=2.0.0
 ```
 
 The Python environments use Python 3.13.12. scanpy has its own environment, and
