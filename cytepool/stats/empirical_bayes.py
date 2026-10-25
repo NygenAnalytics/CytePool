@@ -75,6 +75,7 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._linear_algebra import column_space
+from cytepool._masked_arrays import unmasked_array
 from cytepool.stats.distributions import (
     _f_log_x_density,
     _f_tail_quantile,
@@ -322,7 +323,7 @@ def fit_f_distribution(
         exponentiated trend.
 
     Raises:
-        TypeError: If an input is not real-valued.
+        TypeError: If an input is not real-valued, or is a numpy masked array.
         ValueError: If shapes disagree, a variance is negative or infinite, a df is
             negative or not finite, a usable feature has a NaN covariate, or no
             variance is usable.
@@ -407,7 +408,7 @@ def fit_f_distribution_robust(
         The robust fit.
 
     Raises:
-        TypeError: If an input is not real-valued.
+        TypeError: If an input is not real-valued, or is a numpy masked array.
         ValueError: As :func:`fit_f_distribution`, if ``winsor_tail_p`` is
             invalid, or if more than half of three or more usable variances are
             zero.
@@ -457,7 +458,8 @@ def squeeze_variances(
         The posterior variances, the prior variance and the prior df.
 
     Raises:
-        TypeError: If an input is not real-valued, or ``robust`` not a bool.
+        TypeError: If an input is not real-valued or is a numpy masked array, or
+            ``robust`` is not a bool.
         ValueError: As :func:`fit_f_distribution`, or if an option is invalid.
     """
     x = _variance_vector(variances)
@@ -535,8 +537,8 @@ def moderated_statistics(
         The moderated statistics.
 
     Raises:
-        TypeError: If ``fit`` is not a LinearModelFit or an option has the wrong
-            type.
+        TypeError: If ``fit`` is not a LinearModelFit, or an option has the wrong
+            type or is a numpy masked array.
         ValueError: If an option is invalid, no feature has residual degrees of
             freedom, or "exact" F-statistics are asked of a fit whose standard
             errors are limma's approximation.
@@ -633,8 +635,8 @@ def treat(
         The tests relative to the threshold.
 
     Raises:
-        TypeError: If ``fit`` is not a LinearModelFit or an option has the wrong
-            type.
+        TypeError: If ``fit`` is not a LinearModelFit, or an option has the wrong
+            type or is a numpy masked array.
         ValueError: If both ``lfc`` and ``fc`` are given, either is invalid, or no
             feature has residual degrees of freedom.
     """
@@ -1317,7 +1319,7 @@ def _unit_correlation(covariance: FloatArray) -> FloatArray:
 
 
 def _variance_vector(values: Any) -> FloatArray:
-    x = _real_array(values, "variances")
+    x = _real_array(unmasked_array(values, "variances", missing="NaN"), "variances")
     if x.ndim != 1:
         raise ValueError(f"variances must be a 1-D array, got shape {x.shape}")
     if x.size == 0:
@@ -1333,7 +1335,7 @@ def _variance_vector(values: Any) -> FloatArray:
 
 
 def _df_vector(df: Any, n: int) -> FloatArray:
-    d = _real_array(df, "df")
+    d = _real_array(unmasked_array(df, "df"), "df")
     if d.size == 1 and d.ndim <= 1:
         d = np.full(n, float(d.reshape(-1)[0]))
     elif d.shape != (n,):
@@ -1387,7 +1389,7 @@ def _covariate_vector(
 ) -> FloatArray | None:
     if covariate is None:
         return None
-    z = _real_array(covariate, "covariate")
+    z = _real_array(unmasked_array(covariate, "covariate", missing="NaN"), "covariate")
     if z.shape != usable.shape:
         raise ValueError(
             f"covariate must have one value per variance ({usable.size}), "
@@ -1422,7 +1424,8 @@ def _finite_covariate(z: FloatArray) -> FloatArray:
 
 
 def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
-    values = _real_array(winsor_tail_p, "winsor_tail_p").reshape(-1)
+    proportions = unmasked_array(winsor_tail_p, "winsor_tail_p")
+    values = _real_array(proportions, "winsor_tail_p").reshape(-1)
     if values.size == 1:
         values = np.repeat(values, 2)
     if values.size != 2:
@@ -1440,7 +1443,7 @@ def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
 def _trend_covariate(trend: Any, fit: LinearModelFit) -> FloatArray | None:
     if isinstance(trend, (bool, np.bool_)):
         return np.asarray(fit.mean_expression, dtype=np.float64) if trend else None
-    z = _real_array(trend, "trend")
+    z = _real_array(unmasked_array(trend, "trend", missing="NaN"), "trend")
     if z.shape != fit.sigma.shape:
         raise ValueError(
             "trend must be a bool or one covariate value per feature "
@@ -1480,7 +1483,8 @@ def _treat_threshold(lfc: Any, fc: Any) -> float:
 
 
 def _coefficient_limits(limits: Any) -> tuple[float, float]:
-    values = _real_array(limits, "stdev_coef_lim").reshape(-1)
+    values = _real_array(unmasked_array(limits, "stdev_coef_lim"), "stdev_coef_lim")
+    values = values.reshape(-1)
     if values.size != 2:
         raise ValueError(
             f"stdev_coef_lim must hold two values (lower, upper), got {values.size}"
@@ -1512,7 +1516,8 @@ def _check_flag(value: Any, name: str) -> None:
 
 
 def _check_prior_estimator(prior_estimator: Any) -> None:
-    if prior_estimator != "moments":
+    # A masked value compares as masked, which is false, so test the type first.
+    if not isinstance(prior_estimator, str) or prior_estimator != "moments":
         raise ValueError(
             "prior_estimator must be 'moments', the method of moments (limma's "
             f"legacy=TRUE); got {prior_estimator!r}. limma's estimator for unequal "

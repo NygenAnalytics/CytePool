@@ -48,6 +48,7 @@ import numpy.typing as npt
 from ._jit import jit
 from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
 from ._linear_algebra import column_space
+from ._masked_arrays import unmasked_array
 
 __all__ = [
     "cpm",
@@ -87,7 +88,7 @@ def library_sizes(counts: npt.ArrayLike) -> FloatArray:
         Float64 array of shape ``(n_samples,)``.
 
     Raises:
-        TypeError: If counts are not numeric.
+        TypeError: If counts are not numeric, or are a numpy masked array.
         ValueError: If counts are not a non-empty 2-D array of finite,
             non-negative values.
         OverflowError: If a library size exceeds the float64 range.
@@ -149,7 +150,7 @@ def tmm_factors(
         Float64 array of shape ``(n_samples,)`` with geometric mean one.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If an argument is out of range, or a sample has library
             size zero.
         OverflowError: If a library size exceeds the float64 range.
@@ -198,7 +199,7 @@ def upper_quartile_factors(
         Float64 array of shape ``(n_samples,)`` with geometric mean one.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If an argument is out of range, a sample has library size
             zero, or the quantile is zero in some sample (edgeR then returns
             NaN factors).
@@ -244,7 +245,7 @@ def rle_factors(
         Float64 array of shape ``(n_samples,)`` with geometric mean one.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If a sample has library size zero, or no feature has
             positive counts in every sample (edgeR then returns NaN factors).
         OverflowError: If a library size exceeds the float64 range.
@@ -287,7 +288,7 @@ def median_ratio_size_factors(
         Float64 array of shape ``(n_samples,)``.
 
     Raises:
-        TypeError: If counts are not numeric.
+        TypeError: If counts are not numeric, or are a numpy masked array.
         ValueError: If method is unknown; with ``"ratio"``, if no feature has
             positive counts in every sample; with ``"poscounts"``, if a sample
             has no positive count.
@@ -331,7 +332,7 @@ def cpm(
         Float64 array of shape ``(n_samples, n_features)``.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If an argument is out of range, or a sample has library
             size zero.
         OverflowError: If a library size, or a count per million as edgeR forms
@@ -378,7 +379,7 @@ def log_cpm(
         Float64 array of shape ``(n_samples, n_features)``.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If an argument is out of range, or a sample has library
             size zero.
         OverflowError: If a library size, or the sum of the library sizes,
@@ -443,7 +444,7 @@ def filter_by_expression(
         Boolean array of shape ``(n_features,)``, True for features to keep.
 
     Raises:
-        TypeError: If an argument has the wrong type.
+        TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If an argument is out of range, both group and design are
             given (edgeR silently ignores the design then), or a sample has
             library size zero.
@@ -490,7 +491,7 @@ def filter_by_expression(
 
 
 def _as_counts(counts: npt.ArrayLike) -> FloatArray:
-    array = np.asarray(counts)
+    array = unmasked_array(counts, "counts")
     if array.dtype.kind not in "iuf":
         raise TypeError(
             f"counts must be a dense integer or float array, got dtype {array.dtype}"
@@ -518,7 +519,7 @@ def _as_counts(counts: npt.ArrayLike) -> FloatArray:
 
 
 def _positive_vector(values: npt.ArrayLike, name: str, n_samples: int) -> FloatArray:
-    array = np.asarray(values)
+    array = unmasked_array(values, name)
     if array.dtype.kind not in "iuf":
         raise TypeError(f"{name} must be numeric, got dtype {array.dtype}")
     if array.ndim != 1 or array.shape[0] != n_samples:
@@ -602,7 +603,7 @@ def _sample_index(value: object, n_samples: int) -> int:
 
 
 def _smallest_group_size(group: npt.ArrayLike, n_samples: int) -> int:
-    labels = np.asarray(group)
+    labels = unmasked_array(group, "group")
     if labels.ndim != 1 or labels.shape[0] != n_samples:
         raise ValueError(
             f"group must have one label per sample ({n_samples}), "
@@ -618,7 +619,10 @@ def _smallest_group_size(group: npt.ArrayLike, n_samples: int) -> int:
 
 
 def _design_matrix(design: object, n_samples: int) -> FloatArray:
-    matrix = np.asarray(getattr(design, "matrix", design))
+    if hasattr(design, "matrix"):
+        matrix = unmasked_array(design.matrix, "design.matrix")
+    else:
+        matrix = unmasked_array(design, "design")
     if matrix.dtype.kind not in "iufb":
         raise TypeError(f"design must be a numeric matrix, got dtype {matrix.dtype}")
     if matrix.ndim != 2 or matrix.shape[0] != n_samples or matrix.shape[1] == 0:

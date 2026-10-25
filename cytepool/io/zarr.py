@@ -64,6 +64,8 @@ from typing import Any, Literal, NamedTuple
 
 import numpy as np
 
+from .._masked_arrays import reject_masked, unmasked_array
+
 METADATA_FILE = "zarr.json"
 """The name of the metadata document of every Zarr v3 group and array."""
 
@@ -299,7 +301,7 @@ class ZarrArray:
         Raises:
             TypeError: If the key holds something other than integers, slices and
                 one ellipsis, such as a mask, a list or ``None`` (``oindex`` takes
-                masks and lists).
+                masks and lists), or holds a numpy masked array.
             IndexError: If an integer is out of range or there are too many indices.
             ValueError: If a chunk is corrupt.
             RuntimeError: If the array changed on disk after it was opened.
@@ -321,6 +323,9 @@ class ZarrArray:
         return _OrthogonalIndexer(self)
 
     def _get(self, key: Any, orthogonal: bool) -> Any:
+        # operator.index, which also reads slice bounds, accepts a 0-d masked
+        # integer and ignores its mask.
+        reject_masked(key, "index")
         ranges, kept, scalar = _selection(key, self._metadata.shape, orthogonal)
         self._check_unchanged()
         values = self._read(ranges, kept)
@@ -529,12 +534,19 @@ def write_array(
 
     Raises:
         TypeError: If ``data`` has no shape and dtype, its data type is not a core
-            data type, or another argument has the wrong type.
+            data type, it is or gives rows as a numpy masked array, or another
+            argument has the wrong type.
         ValueError: If an argument is invalid, a chunk would exceed
             ``MAX_CHUNK_BYTES``, or ``data`` gives rows of the wrong shape or dtype.
         FileExistsError: If ``path`` exists.
     """
     directory = _local_path(path)
+    for argument, value in (
+        ("data", data),
+        ("chunks", chunks),
+        ("dimension_names", dimension_names),
+    ):
+        reject_masked(value, argument)
     if not (hasattr(data, "shape") and hasattr(data, "dtype")):
         raise TypeError(
             "data must be a numpy array or an array-like with shape and dtype, got "
@@ -1480,13 +1492,13 @@ def _write_chunks(
         _write_new_file(parent / parts[-1], encode(raw))
 
     if not shape:
-        write((), np.asarray(data))
+        write((), unmasked_array(data, "data"))
         return
     grid = [math.ceil(n / c) for n, c in zip(shape, chunks, strict=True)]
     rows = chunks[0]
     for row in range(grid[0]):
         start, stop = row * rows, min(shape[0], (row + 1) * rows)
-        block = np.asarray(data[start:stop])
+        block = unmasked_array(data[start:stop], f"data[{start}:{stop}]")
         expected = (stop - start, *shape[1:])
         if block.shape != expected or block.dtype.newbyteorder(
             "="

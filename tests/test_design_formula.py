@@ -8,9 +8,11 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from cytepool.design import RandomEffect, parse_formula, parse_random_effects
+from cytepool.design.formula import quote_name
 
 DATA = Path(__file__).parent / "data" / "design"
 
@@ -130,6 +132,18 @@ def test_unicode_letters_make_syntactic_names() -> None:
     # R in a UTF-8 locale treats letters such as a-circumflex as letters.
     assert parse_formula("~ âge").labels == ("âge",)
     assert parse_formula("~ `1x` + `if` + `_y`").labels == ("`1x`", "`if`", "`_y`")
+
+
+def test_quote_name_takes_only_text() -> None:
+    assert [quote_name(name) for name in ("age", "cell type", "if")] == [
+        "age",
+        "`cell type`",
+        "`if`",
+    ]
+    # Falsy objects such as None and numpy.ma.masked were quoted as their text.
+    for name in (None, np.ma.masked, 3):
+        with pytest.raises(TypeError, match="name must be a str, got"):
+            quote_name(name)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

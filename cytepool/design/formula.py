@@ -117,7 +117,12 @@ def quote_name(name: str) -> str:
     ``_`` or ``.`` followed by a digit, and not a reserved word) are returned as they
     are; other names are quoted with backticks: ``quote_name("cell type")`` returns
     ``"`cell type`"``.
+
+    Raises:
+        TypeError: If ``name`` is not a string.
     """
+    if not isinstance(name, str):
+        raise TypeError(f"name must be a str, got {type(name).__name__}")
     return name if _is_syntactic(name) else f"`{name}`"
 
 

@@ -777,7 +777,7 @@ INVALID_CALLS = [
         "masked array",
         lambda d: {"counts": np.ma.masked_array(d, mask=d > 3)},
         TypeError,
-        r"counts is a masked array.*counts.filled\(0\)",
+        "counts is a numpy masked array; CytePool does not accept",
     ),
     (
         "column index outside the matrix",
