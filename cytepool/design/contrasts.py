@@ -42,13 +42,13 @@ from typing import Any
 import numpy as np
 
 from .._masked_arrays import reject_masked
+from .._messages import listing, quoted
 from .formula import _close_matches
 
 __all__ = ["Contrasts", "make_contrasts"]
 
 _NUMBER = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 _WORD = re.compile(r"[\w.]+")
-_LISTED = 8  # names listed in a message before "and n more"
 
 
 @dataclass(frozen=True, eq=False)
@@ -398,7 +398,7 @@ def _weights_on_columns(
             raise ValueError(
                 f"the index of {label} must hold the names of {target}, or be the "
                 f"default 0, 1, ..., n - 1 for weights in the order of {target}; got "
-                + _quoted(names)
+                + quoted(names)
             )
     elif _is_named_contrasts(weights):
         values = np.asarray(weights.matrix)
@@ -431,20 +431,20 @@ def _weights_on_columns(
     if missing or unexpected:
         problems = []
         if missing:
-            problems.append(f"{_quoted(missing)} {_is_or_are(missing)} missing")
+            problems.append(f"{quoted(missing)} {_is_or_are(missing)} missing")
         if unexpected:
             hinted = [
                 repr(name) + _close_matches(str(name), [str(m) for m in missing])
                 for name in unexpected
             ]
-            problems.append(f"{_listed(hinted)} {_is_or_are(hinted)} not among them")
+            problems.append(f"{listing(hinted)} {_is_or_are(hinted)} not among them")
         if pandas and not unexpected:
             remedy += (
                 "; to give the missing ones zero weight, reindex the weights with "
                 "fill_value=0"
             )
         raise ValueError(
-            f"{label} must weigh exactly {target} ({_quoted(columns)}), in any "
+            f"{label} must weigh exactly {target} ({quoted(columns)}), in any "
             f"order, but {' and '.join(problems)}; {remedy}"
         )
     return values[[rows[name] for name in columns]]
@@ -458,19 +458,6 @@ def _default_positions(labels: list[Any]) -> bool:
         and label == position
         for position, label in enumerate(labels)
     )
-
-
-def _quoted(names: Sequence[Any]) -> str:
-    return _listed([repr(name) for name in names])
-
-
-def _listed(items: list[str]) -> str:
-    """Items as "a, b and c", or the first few and how many more."""
-    if len(items) > _LISTED:
-        return ", ".join(items[:_LISTED]) + f" and {len(items) - _LISTED} more"
-    if len(items) <= 1:
-        return "".join(items)
-    return ", ".join(items[:-1]) + " and " + items[-1]
 
 
 def _is_or_are(items: Sequence[Any]) -> str:
@@ -541,10 +528,10 @@ class _LinearExpression:
                     raise self.error(
                         i, len(text), "a backtick-quoted name is not closed"
                     )
-                quoted = text[i + 1 : close]
-                if quoted not in self.position_of:
-                    raise self._unknown(quoted, i, close + 1)
-                tokens.append(("name", quoted, i, close + 1))
+                backticked = text[i + 1 : close]
+                if backticked not in self.position_of:
+                    raise self._unknown(backticked, i, close + 1)
+                tokens.append(("name", backticked, i, close + 1))
                 i = close + 1
                 continue
             number = _NUMBER.match(text, i)

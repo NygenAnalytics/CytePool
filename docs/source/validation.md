@@ -19,10 +19,10 @@ package in this revision of the repository: on **2026-10-25** for the six script
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
 `sample_quality_weights.py`, `differential_expression.py`,
-`differential_expression_options.py`, `interferon_stimulated_pbmcs.py` and
-`gene_set_tests.py`, and for `design.py` and `empirical_bayes.py`, which printed the
-same tables again after changes to the code they check; and on **2026-10-24** for the
-others, with the
+`differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
+`gene_set_tests.py` and `composition_tests.py`, and for `design.py` and
+`empirical_bayes.py`, which printed the same tables again after changes to the code
+they check; and on **2026-10-24** for the others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -48,9 +48,10 @@ covers and the largest difference among them. Run a script to see every check.
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
+| [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,042** | **960 pass, none failed; 51 information, 30 deliberate differences, 1 control** | | |
+| **All** | | | **1,074** | **985 pass, none failed; 51 information, 37 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -905,6 +906,83 @@ cells. Once the cell-level matrices were released it held 232 MiB, and while
 20 MiB to a process that held the cube; from then to the end, with the negative
 control and the export to R, it held at most 321 MiB. R peaked at 227 MiB.
 
+## Cell-type composition
+
+[`validation/composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py)
+compares `propeller` with speckle's `propeller`, `propeller.ttest` and
+`propeller.anova`. It simulates the number of cells of every sample in every cell type
+from a Dirichlet-multinomial model (seed 20261025), holds them in cubes, and gives
+speckle one label per cell; `propeller.ttest` and `propeller.anova` get
+`getTransformedProps` and design matrices from `model.matrix`. Every case runs with
+the logit and the arcsine square-root transform, and with speckle's defaults (robust
+moderation, no trend) unless a row says otherwise. The cases are two groups of 5
+samples with 1,000 to 5,000 cells and 12 cell types, three of which change, also with
+`robust = FALSE` and `trend = TRUE`; three groups of 4 samples, by speckle's F-test;
+three groups of 5 samples and a covariate (age), `~ 0 + group + age`, with the
+contrasts B - A and (A + B)/2 - C, the F-test of `group` (`propeller.anova` with
+`coef = 1:3`), the slope of age and A + B, and `~ group + age` with the contrast
+`groupB`; a pairing of 6 donors in two conditions, `~ 0 + condition + donor` and
+`~ donor + condition`; 8 samples with 6 to 32 cells, in which most cell types are
+absent from some samples and two from all of them, in a cube that also holds a cell
+type and a sample without cells; two cell types, which limma does not moderate; and
+samples that are copies of one another within each condition. Reference: R 4.4.3,
+speckle 1.6.0, limma 3.62.1.
+
+| Check family | Reference | Largest difference: proportions, statistics | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Two groups (t-test) and three groups (F-test), 12 cell types: `BaselineProp`, `PropMean`, `PropRatio`, `Tstatistic` or `Fstatistic`, `P.Value` and `FDR` | `propeller` | 1.7e-15, 3.9e-9 | 1e-10, 1e-6 | 4 pass |
+| Two groups with `robust = FALSE` and with `trend = TRUE` | `propeller` | 5.4e-16, 6.7e-15 | 1e-10, 1e-10 and 1e-6 | 2 pass |
+| B - A and (A + B)/2 - C with a covariate, and B - A as `groupB` in `~ group + age` | `propeller.ttest` | 6.1e-16, 9.4e-15 | 1e-10, 1e-6 | 6 pass |
+| F-test of `group` with a covariate | `propeller.anova` | 4.9e-16, 3.6e-15 | 1e-10, 1e-6 | 2 pass |
+| The slope of the covariate, which speckle refuses | limma `eBayes` on speckle's transformed proportions | none reported, 3.0e-15 | 1e-6 | 2 pass |
+| A pairing, in group means and in treatment coding | `propeller.ttest` | 4.7e-16, 7.7e-15 | 1e-10, 1e-6 | 4 pass |
+| Few cells and absent cell types; the sample without cells, with the arcsine transform | `propeller`, `propeller.ttest` | 3.7e-16, 3.5e-15 | 1e-10 | 3 pass |
+| Two cell types | `propeller` | 2.3e-16, 3.3e-15 | 1e-10 | 2 pass |
+| Deliberate differences, listed below | `propeller.ttest`, `propeller` | 2 contrasts speckle refuses, 2 ratios of contrasts that compare nothing, 2 unused levels speckle keeps, 1 data set CytePool refuses | n/a | 7 deliberate differences |
+
+Each row compares every column that speckle reports, matched by cell type, and the
+columns themselves must match: the mean proportions of the levels a contrast
+compares, and no others. Proportions and ratios are compared relative to speckle's
+values, in the exact tier; statistics are scaled by max(\|reference\|, 1), and
+p-values and FDRs by max(p, 1e-300) max(1, \|log p\|), in the exact tier, or in the
+close tier with robust moderation of 10 cell types or more, whose prior limma solves
+only to a tolerance. The largest difference, 3.9e-9, is in such a case; every other is
+below 1e-14. Deliberate differences:
+
+- speckle's `PropMean` are the coefficients of the proportions regressed on the
+  columns of the design matrix that a contrast weighs, and its `PropRatio` their
+  product raised to the contrast's weights (found by probing). Where those columns
+  indicate groups of samples, as in the group-means designs above, they are the
+  groups' mean proportions, and CytePool's values agree. Otherwise they are not. For
+  A + B, which compares nothing, speckle reports the product of the two means as a
+  ratio; CytePool reports no mean proportions and no ratio, and its t-statistics,
+  p-values and FDRs agree with speckle's. For the slope of the covariate,
+  `propeller.ttest` stops with "dim(X) must have a positive length", as it does for a
+  contrast of a single column such as `groupB` in `~ group + age`. CytePool finds the
+  levels a contrast compares from the design's coding: it tests the slope, without
+  mean proportions or ratio, and its statistics agree with limma's `eBayes` on
+  speckle's transformed proportions; `groupB` in `~ group + age` and `conditionstim`
+  in `~ donor + condition` agree with speckle's values for the same comparisons in
+  its group-means designs.
+- A cell type without cells: from cell labels speckle never sees it, and CytePool,
+  which leaves it out, agrees with it. From a factor of cell labels with an unused
+  level, speckle tests that level, and with the logit transform its half cells change
+  the transformed proportions of every other cell type (a scaled difference of 0.23
+  here).
+- A sample without cells, as an unused level of a factor of sample labels: with the
+  logit transform speckle gives each of its I cell types the proportion 1/I and fits
+  them as data (a scaled difference of 0.74 here); with the arcsine transform its
+  proportions are NaN and limma leaves it out, as CytePool does with either transform.
+- Samples that are copies of one another within each condition: the design fits the
+  transformed proportions of every cell type exactly, so no variance can be estimated.
+  speckle tests the rounding errors, with t-statistics up to 3.4e15 here; CytePool
+  raises an error.
+
+CytePool computes the transforms as log((x + 0.5) / (N - x + 0.5 (I - 1))) and
+arctan2(sqrt(x), sqrt(N - x)), equal to speckle's formulas but without the
+cancellation in 1 - q and the loss of digits of arcsin near 1; on these data the two
+agree to rounding.
+
 ## Distributions and special functions
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
@@ -1073,6 +1151,7 @@ python validation/differential_expression_options.py
 # Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583
 # unless --data or GSE96583_DATA names another directory outside the repository.
 python validation/interferon_stimulated_pbmcs.py
+RSCRIPT=$REF/r-speckle/bin/Rscript python validation/composition_tests.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python \
@@ -1098,6 +1177,14 @@ bioconda:
 conda create -p $REF/r -c conda-forge -c bioconda r-base=4.4.3 \
     bioconductor-limma=3.62.1 bioconductor-edger=4.4.0 bioconductor-deseq2=1.46.0 \
     r-lme4=2.0_6
+```
+
+speckle 1.6.0 (Bioconductor 3.20), which `composition_tests.py` runs, has an R
+environment of its own, with R 4.4.3, limma 3.62.1 and jsonlite 2.0.0:
+
+```bash
+conda create -p $REF/r-speckle -c conda-forge -c bioconda r-base=4.4.3 \
+    bioconductor-limma=3.62.1 bioconductor-speckle=1.6.0 r-jsonlite=2.0.0
 ```
 
 The Python environments use Python 3.13.12. scanpy has its own environment, and

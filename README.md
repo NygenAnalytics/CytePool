@@ -25,6 +25,7 @@ what is planned.
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR; on simulated data and on published single-cell data |
+| Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
 
 ## Planned
@@ -41,7 +42,7 @@ These are not implemented yet:
   message says what can be fitted instead.
 - Rotation gene-set tests (`roast`, `mroast`, `romer`), and pathway or
   transcription-factor activity
-- Composition tests
+- Composition tests with precision weights or random effects (crumblr)
 - Ligand-receptor scoring and differential interactions
 - Dose-response fits, benchmark doses and synergy
 - Meta-analysis across studies
@@ -149,6 +150,17 @@ These are not implemented yet:
   tests of these
   conversions are skipped on Python 3.15, for which h5py and numcodecs, which
   anndata needs, have no wheels yet.
+- `propeller` fits fixed effects only: a design with random effects is refused, and
+  there is no `duplicateCorrelation`. It reads whole numbers of cells, not
+  proportions with assumed totals (speckle's `convertDataToList`), and its F-test
+  compares all the levels of a factor; to compare some of them, test their contrasts,
+  whose p-values use limma's degrees of freedom for t-tests, capped at the residual
+  degrees of freedom of all cell types, where those of F-tests are not. It leaves out
+  a cell type or a sample without cells, which speckle keeps when it is an unused
+  level of a factor of labels; it tests contrasts that speckle refuses, such as the
+  slope of a covariate, and gives no mean proportions or ratio for a contrast that
+  compares no levels, where speckle reports regression coefficients; and it refuses
+  data that the design fits exactly, such as copies of samples.
 - numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
   are refused with a `TypeError` that names the argument, because numpy drops the
   mask when it converts one and the masked entries would be read as data. Where an

@@ -193,7 +193,6 @@ import json
 import numbers
 import operator
 import os
-import platform
 import warnings
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -201,11 +200,13 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal
 
-import numba
 import numpy as np
 
-from . import __version__
+from ._analysis_records import cube_record, design_record, software_versions
+from ._columns import text_column
 from ._masked_arrays import reject_masked
+from ._messages import listing, quoted
+from ._options import checked_choice, checked_flag
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design.checks import _aliasing, _contrast_violations
@@ -258,7 +259,6 @@ _FIXED_SETTINGS = {
     "winsor_tail_p": [0.05, 0.1],
     "p_value_adjustment": "BH",
 }
-_LISTED = 8  # ids named in an error message before "and n more"
 # Warnings are attributed to the first caller outside the package.
 _PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 
@@ -476,12 +476,12 @@ class DifferentialExpressionResult:
         if group not in record:
             raise KeyError(
                 f"no group {group!r} was analysed; groups are: "
-                f"{_listing(list(record)) or '(none)'}"
+                f"{listing(list(record)) or '(none)'}"
             )
         if contrast not in self._contrasts.names:
             raise KeyError(
                 f"no contrast {contrast!r} was tested; contrasts are: "
-                f"{_listing(list(self._contrasts.names))}"
+                f"{listing(list(self._contrasts.names))}"
             )
         entry = record[group]
         if entry["status"] != _FITTED:
@@ -660,7 +660,7 @@ def limma_voom(
             ``"n_cells"`` and the cube does not record cell numbers.
         KeyError: If a group is not in the cube.
     """
-    standard_errors = _choice(
+    standard_errors = checked_choice(
         contrast_standard_errors, "contrast_standard_errors", ("exact", "limma")
     )
     return _analyse(
@@ -676,9 +676,11 @@ def limma_voom(
             "normalization": _normalization(normalization),
             "span": _span(span),
             **_sample_weight_settings(prior_weights, quality_weights, "limma_voom"),
-            "robust": _flag(robust, "robust"),
+            "robust": checked_flag(robust, "robust"),
             "contrast_standard_errors": standard_errors,
-            "adjust_across_groups": _flag(adjust_across_groups, "adjust_across_groups"),
+            "adjust_across_groups": checked_flag(
+                adjust_across_groups, "adjust_across_groups"
+            ),
             "n_threads": _threads(n_threads),
         },
     )
@@ -780,8 +782,10 @@ def limma_trend(
             "normalization": _normalization(normalization),
             "prior_count": count,
             **_sample_weight_settings(prior_weights, quality_weights, "limma_trend"),
-            "robust": _flag(robust, "robust"),
-            "adjust_across_groups": _flag(adjust_across_groups, "adjust_across_groups"),
+            "robust": checked_flag(robust, "robust"),
+            "adjust_across_groups": checked_flag(
+                adjust_across_groups, "adjust_across_groups"
+            ),
         },
     )
 
@@ -881,10 +885,10 @@ def _analyse(
         },
         {
             "method": method,
-            "versions": _versions(),
-            "cube": _cube_record(cube),
+            "versions": software_versions(),
+            "cube": cube_record(cube),
             "layer": _LAYER,
-            "design": _design_record(design, tested),
+            "design": design_record(design, tested),
             "settings": {**settings, **_FIXED_SETTINGS},
             "groups": [
                 _group_record(fit, sample_ids, method, settings) for fit in fits
@@ -965,7 +969,7 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
         empty = sample_ids[sizes == 0.0].tolist()
         return fit.stop(
             "empty_library",
-            f"{_listing(empty)} {'has' if len(empty) == 1 else 'have'} no counts in "
+            f"{listing(empty)} {'has' if len(empty) == 1 else 'have'} no counts in "
             f"the {n_tested} features that passed the expression filter",
         )
     factors = tmm_factors(y) if settings["normalization"] == "tmm" else None
@@ -1197,13 +1201,13 @@ def _matched_samples(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray
     blank = [row for row, value in enumerate(values) if value is None]
     if blank:
         raise ValueError(
-            f"the design's 'sample_id' column is missing in row(s) {_listing(blank)}; "
+            f"the design's 'sample_id' column is missing in row(s) {listing(blank)}; "
             "every sample needs an id"
         )
     repeated = [value for value, count in Counter(values).items() if count > 1]
     if repeated:
         raise ValueError(
-            f"the design's sample table repeats the sample id(s) {_quoted(repeated)}; "
+            f"the design's sample table repeats the sample id(s) {quoted(repeated)}; "
             "each sample must appear once"
         )
     index = {value: i for i, value in enumerate(cube.samples["sample_id"].tolist())}
@@ -1211,8 +1215,8 @@ def _matched_samples(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray
     if unknown:
         raise ValueError(
             f"{len(unknown)} of the design's {len(values)} samples are not samples of "
-            f"the cube: {_quoted(unknown)}; the design's 'sample_id' must hold the "
-            f"cube's sample ids, such as {_quoted(list(index)[:3])}"
+            f"the cube: {quoted(unknown)}; the design's 'sample_id' must hold the "
+            f"cube's sample ids, such as {quoted(list(index)[:3])}"
         )
     positions = np.array([index[value] for value in values], dtype=np.intp)
     order = np.argsort(positions, kind="stable")
@@ -1261,7 +1265,7 @@ def _group_positions(cube: Cube, groups: str | Sequence[str] | None) -> list[int
             )
         if value not in index:
             raise KeyError(
-                f"no group with id {value!r}; groups are: {_listing(ids) or '(none)'}"
+                f"no group with id {value!r}; groups are: {listing(ids) or '(none)'}"
             )
         if index[value] in positions:
             raise ValueError(f"group {value!r} is listed more than once")
@@ -1337,7 +1341,7 @@ def _quality_settings(value: Any, method: str) -> dict[str, Any] | None:
             )
     settings |= dict(value)
     return {
-        "method": _choice(
+        "method": checked_choice(
             settings["method"], "quality_weights['method']", ("gene_by_gene", "reml")
         ),
         "prior_n": _real_at_least(
@@ -1421,28 +1425,15 @@ def _normalization(value: Any) -> str | None:
     )
 
 
-def _flag(value: Any, name: str) -> bool:
-    if not isinstance(value, bool | np.bool_):
-        raise TypeError(f"{name} must be True or False, got {type(value).__name__}")
-    return bool(value)
-
-
-def _choice(value: Any, name: str, options: tuple[str, ...]) -> str:
-    if isinstance(value, str) and value in options:
-        return value
-    error = ValueError if isinstance(value, str) else TypeError
-    raise error(f"{name} must be one of {', '.join(map(repr, options))}, got {value!r}")
-
-
 # Results.
 
 
 def _summary_table(fits: list[_GroupFit]) -> Table:
     return Table(
         {
-            "group_id": _text([fit.group_id for fit in fits]),
-            "status": _text([fit.status for fit in fits]),
-            "reason": _text([fit.reason for fit in fits]),
+            "group_id": text_column([fit.group_id for fit in fits]),
+            "status": text_column([fit.status for fit in fits]),
+            "reason": text_column([fit.reason for fit in fits]),
             "n_samples_used": np.array(
                 [np.count_nonzero(fit.used) for fit in fits], dtype=np.int64
             ),
@@ -1455,7 +1446,9 @@ def _summary_table(fits: list[_GroupFit]) -> Table:
             ),
             "df_residual": np.array([fit.df_residual for fit in fits], dtype=float),
             "prior_df": np.array([fit.prior_df for fit in fits], dtype=float),
-            "not_estimable": _text([", ".join(fit.not_estimable) for fit in fits]),
+            "not_estimable": text_column(
+                [", ".join(fit.not_estimable) for fit in fits]
+            ),
         }
     )
 
@@ -1485,60 +1478,21 @@ def _sample_table(
         for column, attribute in numbers.items():
             values[column][row, fit.used] = getattr(fit, attribute)
     columns: dict[str, Any] = {
-        "group_id": _text([fit.group_id for fit in fits for _ in range(n)]),
-        "sample_id": _text(np.tile(sample_ids, len(fits)).tolist()),
+        "group_id": text_column([fit.group_id for fit in fits for _ in range(n)]),
+        "sample_id": text_column(np.tile(sample_ids, len(fits)).tolist()),
     }
     if cube.n_cells is not None:
         cells = cube.n_cells[np.ix_(cube_rows, positions)]  # samples x groups
         columns["n_cells"] = np.ascontiguousarray(cells.T).reshape(-1)
     columns |= {
         "used": np.concatenate([fit.used for fit in fits] or [np.zeros(0, bool)]),
-        "reason": _text([reason for fit in fits for reason in fit.reasons]),
+        "reason": text_column([reason for fit in fits for reason in fit.reasons]),
     }
     columns |= {column: array.reshape(-1) for column, array in values.items()}
     return Table(columns)
 
 
-def _text(values: Sequence[str]) -> np.ndarray:
-    """A text column, also when it is empty (numpy reads [] as float64)."""
-    column = np.empty(len(values), dtype=object)
-    column[:] = list(values)
-    return column
-
-
 # The provenance record.
-
-
-def _cube_record(cube: Cube) -> dict[str, Any]:
-    """The part of a result's provenance that identifies the cube it came from.
-
-    It holds the cube's fingerprint, the digests it is built from (those of the
-    tables, ``n_cells``, the normalization and each group of each layer, with which
-    a cube file can be checked group by group), and the cube's provenance. Built
-    after the fits, so that the whole groups they read count towards the digests;
-    see "Provenance" in :func:`limma_voom` for the cost.
-    """
-    digests = cube.digests()
-    return {
-        "fingerprint": digests["fingerprint"],
-        "digests": digests,
-        "provenance": cube.provenance,
-    }
-
-
-def _design_record(design: Design, contrasts: Contrasts) -> dict[str, Any]:
-    samples = design.samples
-    variables = ["sample_id", *design.model_matrix.variables]
-    return {
-        "formula": design.formula,
-        "columns": list(design.columns),
-        "levels": {name: list(levels) for name, levels in design.levels.items()},
-        "samples": {name: samples[name].tolist() for name in variables},
-        "contrasts": {
-            name: contrasts.matrix[:, position].tolist()
-            for position, name in enumerate(contrasts.names)
-        },
-    }
 
 
 def _group_record(
@@ -1571,31 +1525,7 @@ def _group_record(
     return record
 
 
-def _versions() -> dict[str, str]:
-    return {
-        "cytepool": __version__,
-        "numpy": np.__version__,
-        "numba": numba.__version__,
-        "python": platform.python_version(),
-    }
-
-
 # Messages.
-
-
-def _listing(items: Sequence[Any]) -> str:
-    """Items as "a, b and c", or the first few and how many more."""
-    shown = [str(item) for item in items[:_LISTED]]
-    more = len(items) - len(shown)
-    if more:
-        return ", ".join(shown) + f" and {more} more"
-    if len(shown) <= 1:
-        return "".join(shown)
-    return ", ".join(shown[:-1]) + " and " + shown[-1]
-
-
-def _quoted(items: Sequence[Any]) -> str:
-    return _listing([repr(item) for item in items])
 
 
 def _amount(value: float) -> str:

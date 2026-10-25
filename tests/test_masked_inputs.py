@@ -910,6 +910,37 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.differential_expression.limma_trend[prior_weights]": Entry(
         _weighted_by_cells, {}, options=("prior_weights",)
     ),
+    # Composition. A table of cell numbers takes no missing values; a cube would be
+    # an object, built and checked before.
+    "cytepool.composition.propeller": Entry(
+        lambda c: {
+            "data": {
+                "sample_id": SAMPLE_TABLE["sample_id"],
+                "B": [10, 22, 15, 31],
+                "T": [40, 35, 52, 20],
+            },
+            "design": Design(SAMPLE_TABLE, "~ condition", levels=LEVELS),
+            "contrasts": {"stim": [0.0, 1.0]},
+            "f_test": "condition",
+        },
+        {"data": None, "contrasts": None},
+        options=("f_test", "transform", "robust", "trend"),
+        objects=("design",),
+        keys={"data": "B", "contrasts": "stim"},
+    ),
+    # Contrasts given as expressions.
+    "cytepool.composition.propeller[expressions]": Entry(
+        lambda c: {
+            "data": {
+                "sample_id": SAMPLE_TABLE["sample_id"],
+                "B": [1, 2, 3, 4],
+                "T": [6, 5, 7, 4],
+            },
+            "design": Design(SAMPLE_TABLE, "~ condition", levels=LEVELS),
+            "contrasts": ["conditionstim"],
+        },
+        {"contrasts": None},
+    ),
 }
 # Every argument of the distribution and special functions is an array, with NaN
 # for missing values; values outside a domain give NaN, so any numbers are valid.
@@ -973,6 +1004,23 @@ NO_ARRAY_INPUT = {
     "cytepool.differential_expression.DifferentialExpressionResult.table": (
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
+    ),
+    "cytepool.composition.CompositionResult": (
+        (
+            "contrasts",
+            "tables",
+            "f_test",
+            "summary",
+            "samples",
+            "proportions",
+            "provenance",
+        ),
+        "Contrasts and Tables, which were checked when they were built, and a record "
+        "kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.composition.CompositionResult.table": (
+        ("contrast",),
+        "a contrast name, looked up",
     ),
 }
 
