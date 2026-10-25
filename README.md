@@ -12,8 +12,8 @@ what is planned.
 
 | Area | Implemented | Checked against |
 | --- | --- | --- |
-| Pseudobulk cubes | `Cube` (additive layers per sample, group and feature; merging groups; pooling samples; layers read one group at a time), `from_cells` (dense or CSR counts), `from_bulk` | scanpy, decoupler |
-| Cube files | `write_cube`, `read_cube` (a subset of Zarr v3; gzip, and zstd on Python 3.14 or newer) | zarr-python |
+| Pseudobulk cubes | `Cube` (additive layers per sample, group and feature; merging groups; pooling samples; lazy layers, read as a selection needs them), `from_cells` (dense or CSR counts), `from_bulk` | scanpy, decoupler |
+| Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer) | zarr-python |
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene, contrasts (named contrasts are matched to the coefficients by name) | limma |
@@ -50,7 +50,16 @@ These are not implemented yet:
 - A linear model fitted with observation weights or missing values stores a covariance
   matrix for every gene: 8 x genes x coefficients² bytes, so 16 MB for 20,000 genes and
   10 coefficients, and 1.6 GB at 100 coefficients.
-- Selecting some features of a saved cube reads each requested group in full.
+- A chunk of a cube file holds up to 4,096 features of every sample of one group, and a
+  read decompresses every chunk that holds a selected feature. A few neighbouring
+  features are therefore quick to read, but features scattered over the file, or a few
+  samples of every feature, decompress most chunks of each selected group: 50 genes
+  drawn at random from 30,000 usually fall in all eight chunks of a group. A read holds
+  about what it returns plus one chunk, and with zstd also the decoder's window (2 MiB
+  at the default level).
+- A lazy layer other than those of `read_cube` is read with `oindex` when it has one, as
+  zarr-python arrays do, and otherwise one whole group at a time, as HDF5 datasets
+  are. The cube copies what such a layer returns, so a read holds it twice for a moment.
 - Integer layers and cell numbers hold whole numbers up to 2**63 - 1, the largest int64.
   A library size, merged group or pooled sample whose sum would exceed it raises
   `OverflowError` instead of wrapping around. Normalization works in float64, which is

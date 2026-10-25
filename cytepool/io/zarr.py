@@ -21,6 +21,14 @@ Anything else, such as another data type, the ``blosc``, ``crc32c``, ``transpose
 ``sharding_indexed`` codec, another chunk grid or a storage transformer, raises a
 ``ValueError`` that names it; zarr-python reads such stores.
 
+A read opens only the chunks that hold a selected element and decodes each of them once,
+one at a time, so it holds the result and about one chunk: compressed chunks are read
+from disk and decoded in pieces of at most 256 KiB. A zstd decoder also keeps its
+frame's window, outside Python's allocations: up to the size of the chunk, and 2 MiB at
+zstd's default level of 3. A chunk compressed twice holds the output of both steps.
+Selections take integers and slices, and, through ``ZarrArray.oindex``, integer arrays
+and boolean masks along any axes.
+
 Reading is strict. A metadata document must be a JSON object without repeated keys or
 NaN and Infinity tokens, and every field must be valid; a field the specification does
 not define is an error unless its value is an object with ``"must_understand":
@@ -120,7 +128,9 @@ _GROUP_FIELDS = frozenset(
 )
 _HEX_DIGITS = re.compile(r"[0-9a-fA-F]+")
 _FIRST_PIECE = 4096  # input a decoder gets first in each gzip member or zstd frame
-_LAST_PIECE = 1 << 20
+# The most input a decoder gets and the most output it returns at a time, and the
+# most of a chunk file read at a time.
+_LAST_PIECE = 1 << 18
 _MAX_MEMBERS = 1024  # gzip members or zstd frames in one chunk; writers use one
 _USE_ZARR_PYTHON = "read the store with zarr-python instead"
 
@@ -195,9 +205,16 @@ class ZarrArray:
 
     Open one with ``open_array``. Indexing with integers and slices, as in
     ``array[2]``, ``array[1, :, 100:200]`` or ``array[..., ::2]``, reads only the chunks
-    the selection touches and returns a new numpy array in native byte order (a numpy
-    scalar when every axis gets an integer, as in numpy). ``numpy.asarray(array)``
-    reads the whole array. A chunk that is not stored reads as the fill value.
+    the selection touches and returns a new numpy array in native byte order, which
+    owns its memory (a numpy scalar when every axis gets an integer, as in numpy).
+    ``array.oindex[...]`` also takes, along any axis, a 1-D integer array or a boolean
+    mask (as a list or a numpy array), and selects every combination of the positions
+    each axis selects (orthogonal indexing, as in zarr-python):
+    ``array.oindex[0, [3, 1], [5, 9]]`` is
+    ``numpy.asarray(array)[0][numpy.ix_([3, 1], [5, 9])]``. Integer arrays may be in
+    any order, repeat positions and count negative positions from the end.
+    ``numpy.asarray(array)`` reads the whole array. A chunk that is not stored reads as
+    the fill value.
 
     Every read first checks that the array's ``zarr.json`` is still the file it was
     when the array was opened, and raises otherwise, so an array replaced on disk is
@@ -281,14 +298,32 @@ class ZarrArray:
 
         Raises:
             TypeError: If the key holds something other than integers, slices and
-                one ellipsis, such as a mask, a list or ``None``.
+                one ellipsis, such as a mask, a list or ``None`` (``oindex`` takes
+                masks and lists).
             IndexError: If an integer is out of range or there are too many indices.
             ValueError: If a chunk is corrupt.
             RuntimeError: If the array changed on disk after it was opened.
         """
-        ranges, kept, scalar = _selection(key, self._metadata.shape)
+        return self._get(key, orthogonal=False)
+
+    @property
+    def oindex(self) -> "_OrthogonalIndexer":
+        """Orthogonal indexing, which selects along each axis independently.
+
+        ``array.oindex[key]`` reads what ``key`` selects. ``key`` gives each axis an
+        integer, a slice, a 1-D integer array or a boolean mask with one value per
+        position (arrays as lists or numpy arrays), and may hold one ``...``. The
+        result has an axis for every axis that gets no integer, holding the selected
+        positions in the order given, as in zarr-python's ``oindex``. It raises the
+        errors of ``__getitem__``, and IndexError for an array that is not 1-D or a
+        mask of the wrong length.
+        """
+        return _OrthogonalIndexer(self)
+
+    def _get(self, key: Any, orthogonal: bool) -> Any:
+        ranges, kept, scalar = _selection(key, self._metadata.shape, orthogonal)
         self._check_unchanged()
-        values = self._read(ranges).reshape(kept)
+        values = self._read(ranges, kept)
         return values[()] if scalar else values
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
@@ -299,7 +334,8 @@ class ZarrArray:
                 "converted without a copy (copy=False)"
             )
         self._check_unchanged()
-        values = self._read([range(n) for n in self._metadata.shape])
+        shape = self._metadata.shape
+        values = self._read([range(n) for n in shape], shape)
         return values if dtype is None else values.astype(dtype, copy=False)
 
     def _check_unchanged(self) -> None:
@@ -315,46 +351,87 @@ class ZarrArray:
                 f"{METADATA_FILE} was rewritten); open it again"
             )
 
-    def _read(self, ranges: list[range]) -> np.ndarray:
+    def _read(
+        self, ranges: list[range | np.ndarray], shape: tuple[int, ...]
+    ) -> np.ndarray:
+        """Read what ``ranges`` select into a new array of ``shape``.
+
+        ``shape`` leaves out the axes that an integer selected. The array owns its
+        memory, so a read-only flag set on it holds for every view of it.
+        """
         metadata = self._metadata
-        out = np.empty(tuple(len(selected) for selected in ranges), metadata.dtype)
-        if out.size == 0:
-            return out
+        result = np.empty(shape, metadata.dtype)
+        if result.size == 0:
+            return result
+        # A view with an axis for every range, through which the chunks are copied.
+        out = result.reshape(tuple(len(selected) for selected in ranges))
         per_axis = [
             _pieces(selected, size)
             for selected, size in zip(ranges, metadata.chunks, strict=True)
         ]
+        # Each chunk index comes once, so every chunk is read and decoded once.
         for pieces in itertools.product(*per_axis):
-            block = self._read_chunk(tuple(piece.chunk for piece in pieces))
-            if all(isinstance(piece.target, slice) for piece in pieces):
-                target: Any = tuple(piece.target for piece in pieces)
-                source: Any = tuple(piece.source for piece in pieces)
-            else:
-                target = np.ix_(*(_positions(piece.target) for piece in pieces))
-                source = np.ix_(*(_positions(piece.source) for piece in pieces))
-            out[target] = metadata.fill_value if block is None else block[source]
-        return out
+            self._copy_chunk(out, pieces)
+        return result
+
+    def _copy_chunk(self, out: np.ndarray, pieces: tuple[_Piece, ...]) -> None:
+        """Copy what a selection takes from one chunk into ``out``.
+
+        The decoded chunk is freed on return, so a read holds one chunk at a time.
+        """
+        block = self._read_chunk(tuple(piece.chunk for piece in pieces))
+        target = _index(tuple(piece.target for piece in pieces))
+        if block is None:
+            out[target] = self._metadata.fill_value
+        else:
+            out[target] = block[_index(tuple(piece.source for piece in pieces))]
 
     def _read_chunk(self, index: tuple[int, ...]) -> np.ndarray | None:
-        key = self._metadata.chunk_key(index)
+        """Read and decode the chunk at a grid index; None if it is not stored."""
+        metadata = self._metadata
+        key = metadata.chunk_key(index)
         where = f"the chunk {key!r} of the array at {self._path}"
-        most = self._metadata.limits[-1]
+        compressors = metadata.compressors
         try:
             with open(self._path / key, "rb") as handle:
                 size = os.fstat(handle.fileno()).st_size
-                if size > most:
+                if size > metadata.limits[-1]:
                     raise ValueError(
                         f"{where} holds {size:,} bytes, more than any valid encoding "
-                        f"of a chunk of {self._metadata.limits[0]:,} bytes"
+                        f"of a chunk of {metadata.limits[0]:,} bytes"
                     )
-                data = handle.read(size + 1)  # read allocates what it is asked for
+                if compressors:
+                    # The outermost compressor decodes the file as it is read.
+                    data: Any = _decode_stream(
+                        _Input(b"", handle, size, where),
+                        compressors[-1],
+                        metadata.limits[len(compressors) - 1],
+                        where,
+                    )
+                else:
+                    data = handle.read(size + 1)  # read allocates what it is asked for
+                    if len(data) != size:
+                        raise ValueError(f"{where} changed while it was being read")
         except FileNotFoundError:
             return None
         except (IsADirectoryError, NotADirectoryError):
             raise ValueError(f"{where} is not a file") from None
-        if len(data) != size:
-            raise ValueError(f"{where} changed while it was being read")
-        return _decode_chunk(data, self._metadata, where)
+        for position in reversed(range(len(compressors) - 1)):
+            codec, limit = compressors[position], metadata.limits[position]
+            data = _decode_stream(_Input(data), codec, limit, where)
+        return _chunk_values(data, metadata, where)
+
+
+class _OrthogonalIndexer:
+    """What ``ZarrArray.oindex`` returns: ``array.oindex[key]`` reads a selection."""
+
+    __slots__ = ("_array",)
+
+    def __init__(self, array: ZarrArray) -> None:
+        self._array = array
+
+    def __getitem__(self, key: Any) -> Any:
+        return self._array._get(key, orthogonal=True)
 
 
 def open_array(path: str | os.PathLike[str]) -> ZarrArray:
@@ -990,9 +1067,13 @@ def _unsupported_codec(name: str, where: str) -> str:
 
 
 def _selection(
-    key: Any, shape: tuple[int, ...]
-) -> tuple[list[range], tuple[int, ...], bool]:
-    """Return the range of every axis, the result shape and whether it is a scalar."""
+    key: Any, shape: tuple[int, ...], orthogonal: bool
+) -> tuple[list[range | np.ndarray], tuple[int, ...], bool]:
+    """Return what every axis selects, the result shape and whether it is a scalar.
+
+    An axis selects a range of positions or, in an orthogonal selection, an array of
+    positions in the order given.
+    """
     keys = key if isinstance(key, tuple) else (key,)
     ellipses = sum(1 for item in keys if item is Ellipsis)
     if ellipses > 1:
@@ -1008,7 +1089,7 @@ def _selection(
         keys = keys[:at] + (slice(None),) * (len(shape) - named) + keys[at + 1 :]
     else:
         keys = keys + (slice(None),) * (len(shape) - named)
-    ranges = []
+    ranges: list[range | np.ndarray] = []
     kept = []
     for axis, (item, n) in enumerate(zip(keys, shape, strict=True)):
         if isinstance(item, slice):
@@ -1016,17 +1097,34 @@ def _selection(
             ranges.append(selected)
             kept.append(len(selected))
             continue
-        if isinstance(item, bool | np.bool_):
+        if orthogonal and (
+            isinstance(item, list) or (isinstance(item, np.ndarray) and item.ndim)
+        ):
+            positions = _axis_positions(item, n, axis)
+            ranges.append(positions)
+            kept.append(positions.size)
+            continue
+        if isinstance(item, bool | np.bool_) or (
+            isinstance(item, np.ndarray) and item.dtype.kind == "b"
+        ):
             raise TypeError(
-                "ZarrArray indices are integers and slices, not booleans; read the "
-                "array with numpy.asarray() to index it with a mask"
+                "ZarrArray.oindex takes a mask as an array of booleans, not a single "
+                "boolean"
+                if orthogonal
+                else "ZarrArray indices are integers and slices, not booleans; use "
+                "array.oindex[...] to index an axis with a mask"
             )
         try:
             position = operator.index(item)
         except TypeError:
             raise TypeError(
-                "ZarrArray indices are integers, slices and '...', not "
-                f"{type(item).__name__}; read the array with numpy.asarray() for "
+                "ZarrArray.oindex indices are integers, slices, '...', and 1-D integer "
+                f"arrays and boolean masks as lists or numpy arrays, not "
+                f"{type(item).__name__}"
+                if orthogonal
+                else "ZarrArray indices are integers, slices and '...', not "
+                f"{type(item).__name__}; use array.oindex[...] to index axes with "
+                "integer arrays or masks, or read the array with numpy.asarray() for "
                 "other indexing"
             ) from None
         if not -n <= position < n:
@@ -1039,12 +1137,45 @@ def _selection(
     return ranges, tuple(kept), scalar
 
 
-def _pieces(selected: range, size: int) -> list[_Piece]:
-    """Split one axis of a selection by the chunks (of length ``size``) it touches."""
-    if not selected:
-        return []
-    if selected.step == 1:
-        pieces = []
+def _axis_positions(item: list[Any] | np.ndarray, n: int, axis: int) -> np.ndarray:
+    """Return the positions an integer array or a boolean mask selects along an axis."""
+    values = np.asarray(item)
+    if values.ndim != 1:
+        raise IndexError(
+            f"oindex takes 1-D arrays, but axis {axis} got one of shape {values.shape}"
+        )
+    if values.dtype.kind == "b":
+        if values.size != n:
+            raise IndexError(
+                f"a boolean mask for axis {axis} needs {n} values, got {values.size}"
+            )
+        return np.flatnonzero(values)
+    if values.size == 0:  # [] is float64 in numpy
+        return np.empty(0, dtype=np.intp)
+    if values.dtype.kind not in "iu":
+        raise TypeError(
+            f"oindex takes integer arrays and boolean masks, but axis {axis} got "
+            f"values of dtype {values.dtype}"
+        )
+    outside = (values < -n) | (values >= n)
+    if outside.any():
+        raise IndexError(
+            f"index {values[outside][0]} is out of bounds for axis {axis} with size {n}"
+        )
+    positions: np.ndarray = values.astype(np.intp) % n
+    return positions
+
+
+def _pieces(selected: range | np.ndarray, size: int) -> list[_Piece]:
+    """Split one axis of a selection by the chunks (of length ``size``) it touches.
+
+    Each chunk comes once, with the positions it gives in the order the selection
+    takes them, so positions in any order or repeated read every chunk once.
+    """
+    pieces: list[_Piece] = []
+    if isinstance(selected, range) and selected.step == 1:
+        if not selected:
+            return pieces
         for chunk in range(selected.start // size, (selected.stop - 1) // size + 1):
             begin = max(selected.start, chunk * size)
             end = min(selected.stop, (chunk + 1) * size)
@@ -1056,19 +1187,48 @@ def _pieces(selected: range, size: int) -> list[_Piece]:
                 )
             )
         return pieces
-    # An integer dtype keeps steps beyond int64, such as ::10**20, exact.
-    indices = np.arange(selected.start, selected.stop, selected.step, dtype=np.intp)
+    if isinstance(selected, range):
+        # An integer dtype keeps steps beyond int64, such as ::10**20, exact.
+        indices = np.arange(selected.start, selected.stop, selected.step, dtype=np.intp)
+    else:
+        indices = selected
+    if not indices.size:
+        return pieces
     chunk_of = indices // size
-    starts = np.flatnonzero(np.diff(chunk_of)) + 1  # indices are monotonic
-    pieces = []
-    for positions in np.split(np.arange(indices.size), starts):
+    order = np.argsort(chunk_of, kind="stable")
+    starts = np.flatnonzero(np.diff(chunk_of[order])) + 1
+    for positions in np.split(order, starts):
         chunk = int(chunk_of[positions[0]])
-        pieces.append(_Piece(chunk, indices[positions] - chunk * size, positions))
+        pieces.append(
+            _Piece(
+                chunk, _compact(indices[positions] - chunk * size), _compact(positions)
+            )
+        )
     return pieces
 
 
+def _compact(positions: np.ndarray) -> slice | np.ndarray:
+    """Return evenly spaced increasing positions as a slice, which numpy copies faster."""
+    first = int(positions[0])
+    if positions.size == 1:
+        return slice(first, first + 1)
+    step = int(positions[1]) - first
+    if step > 0 and bool((np.diff(positions) == step).all()):
+        return slice(first, int(positions[-1]) + 1, step)
+    return positions
+
+
+def _index(parts: tuple[slice | np.ndarray, ...]) -> Any:
+    """Return a numpy index that takes every combination of what each axis selects."""
+    if sum(isinstance(part, np.ndarray) for part in parts) <= 1:
+        return parts  # numpy keeps a single array index in its axis's place
+    return np.ix_(*(_positions(part) for part in parts))
+
+
 def _positions(part: slice | np.ndarray) -> np.ndarray:
-    return np.arange(part.start, part.stop) if isinstance(part, slice) else part
+    if isinstance(part, slice):
+        return np.arange(part.start, part.stop, part.step or 1)
+    return part
 
 
 # Chunks.
@@ -1083,69 +1243,164 @@ def _zstd() -> ModuleType | None:
         return None
 
 
-def _decode_chunk(data: bytes, metadata: _ArrayMetadata, where: str) -> np.ndarray:
-    decoded: bytes | bytearray = data
-    for position in reversed(range(len(metadata.compressors))):
-        codec = metadata.compressors[position]
-        decoded = _decode_stream(decoded, codec, metadata.limits[position], where)
+def _chunk_values(data: Any, metadata: _ArrayMetadata, where: str) -> np.ndarray:
+    """Return the decoded bytes of a chunk as its values, after checking them."""
     size = metadata.limits[0]
-    if len(decoded) != size:
+    if len(data) != size:
         raise ValueError(
-            f"{where} holds {len(decoded)} bytes after decoding, but a chunk of shape "
+            f"{where} holds {len(data)} bytes after decoding, but a chunk of shape "
             f"{metadata.chunks} and data type {metadata.dtype} has {size}"
         )
-    if metadata.dtype.kind == "b" and np.frombuffer(decoded, dtype=np.uint8).max() > 1:
+    if metadata.dtype.kind == "b" and np.frombuffer(data, dtype=np.uint8).max() > 1:
         raise ValueError(f"{where} has bool values other than 0 and 1")
     stored = metadata.dtype.newbyteorder(metadata.byte_order)
-    return np.frombuffer(decoded, dtype=stored).reshape(metadata.chunks)
+    return np.frombuffer(data, dtype=stored).reshape(metadata.chunks)
+
+
+class _Input:
+    """The input of one decoding step: bytes in memory, or a chunk file.
+
+    A file is read in pieces of at most ``_LAST_PIECE`` bytes as the decoder asks for
+    them, so little of it is in memory at a time, and reading raises if the file turns
+    out shorter or longer than the ``size`` it had when it was opened. Pieces are
+    views of what was read, and bytes the decoder hands back are put in front of the
+    rest, so nothing but those bytes is copied.
+    """
+
+    __slots__ = ("_parts", "_handle", "_left", "_where")
+
+    def __init__(
+        self, data: Any, handle: Any = None, size: int = 0, where: str = ""
+    ) -> None:
+        # The bytes not decoded yet, the next ones last.
+        self._parts = [memoryview(data)] if len(data) else []
+        self._handle = handle
+        self._left = size  # bytes of the file not read yet
+        self._where = where
+        if handle is not None and not size and handle.read(1):
+            self._changed()
+
+    def take(self, n: int) -> memoryview:
+        """Remove and return up to the next ``n`` bytes; nothing only at the end."""
+        if not self._parts and self._left:
+            wanted = min(_LAST_PIECE, self._left)
+            data = self._handle.read(wanted)
+            self._left -= wanted
+            if len(data) != wanted or (not self._left and self._handle.read(1)):
+                self._changed()
+            self._parts.append(memoryview(data))
+        if not self._parts:
+            return memoryview(b"")
+        part = self._parts.pop()
+        if len(part) > n:
+            self._parts.append(part[n:])
+            part = part[:n]
+        return part
+
+    def give_back(self, data: bytes) -> None:
+        """Put bytes the decoder did not use in front of the others."""
+        if data:
+            self._parts.append(memoryview(data))
+
+    def at_end(self) -> bool:
+        return not self._parts and not self._left
+
+    def _changed(self) -> None:
+        raise ValueError(f"{self._where} changed while it was being read")
+
+
+class _Output:
+    """Decoded bytes, copied once into memory that never moves.
+
+    They go into a bytearray while they fit in one piece, and beyond that into one
+    buffer of ``limit`` bytes, the most a valid chunk decodes to, so a small or
+    malformed stream costs only what it decodes to.
+    """
+
+    __slots__ = ("_small", "_buffer", "_limit", "size")
+
+    def __init__(self, limit: int) -> None:
+        self._small = bytearray()
+        self._buffer: np.ndarray | None = None
+        self._limit = limit
+        self.size = 0
+
+    def add(self, data: bytes) -> None:
+        end = self.size + len(data)
+        if self._buffer is None and end > _LAST_PIECE:
+            self._buffer = np.empty(self._limit, dtype=np.uint8)
+            self._buffer[: self.size] = memoryview(self._small)
+            self._small = bytearray()
+        if self._buffer is None:
+            self._small += data
+        else:
+            self._buffer[self.size : end] = memoryview(data)
+        self.size = end
+
+    def value(self) -> bytearray | np.ndarray:
+        """Return the decoded bytes, as a bytearray or a 1-D array of uint8."""
+        return self._small if self._buffer is None else self._buffer[: self.size]
 
 
 def _decode_stream(
-    data: bytes | bytearray, codec: str, limit: int, where: str
-) -> bytearray:
-    """Decode the gzip members or zstd frames in ``data``, raising past ``limit`` bytes.
+    source: _Input, codec: str, limit: int, where: str
+) -> bytearray | np.ndarray:
+    """Decode the gzip members or zstd frames ``source`` holds, up to ``limit`` bytes.
 
-    The decoder gets the input in pieces that start small at each member or frame and
-    double while it lasts, so that the leftover input it copies when a member ends is
-    small; with at most ``_MAX_MEMBERS`` members, decoding takes time in proportion to
-    the input.
+    More output raises ValueError. The decoder gets the input in pieces that start
+    small at each member or frame and double while it lasts, so that the leftover
+    input it copies when a member ends is small; with at most ``_MAX_MEMBERS``
+    members, decoding takes time in proportion to the input. It returns at most
+    ``_LAST_PIECE`` bytes at a time; while it holds more output, it gets small pieces
+    or none, so that the input it hands back stays small. Decoding therefore holds
+    the output and about 1 MiB besides, and a zstd decoder also its window.
     """
     zstd = _zstd() if codec == "zstd" else None
     if codec == "zstd" and zstd is None:  # open_array refuses such arrays
         raise ValueError(f"{where} needs zstd, which needs Python 3.14 or newer")
     error_type = zlib.error if zstd is None else zstd.ZstdError
-    output = bytearray()
-    view = memoryview(data)
-    offset = 0
+    output = _Output(limit)
     for _ in range(_MAX_MEMBERS):  # one gzip member or zstd frame at a time
         # wbits=31: the gzip format, with its CRC-32 checked; a zstd frame's
         # checksum, when present, is checked too.
-        decoder = (
+        decoder: Any = (
             zlib.decompressobj(wbits=31) if zstd is None else zstd.ZstdDecompressor()
         )
         piece_size = _FIRST_PIECE
+        held = False  # whether the decoder has output it could not return yet
         while True:
-            piece = view[offset : offset + piece_size]
+            if held and zstd is not None:
+                piece: Any = b""  # zstd keeps the input it has not decoded
+            else:
+                piece = source.take(piece_size)
+                if not piece and not held:
+                    raise ValueError(
+                        f"{where} ends inside a {codec} stream (truncated)"
+                    )
+            asked = min(limit - output.size + 1, _LAST_PIECE)
             try:
-                decoded = decoder.decompress(piece, limit - len(output) + 1)
+                decoded = decoder.decompress(piece, asked)
             except error_type as error:
                 raise ValueError(
                     f"{where} is not valid {codec} data ({error})"
                 ) from None
-            if len(output) + len(decoded) > limit:
+            if output.size + len(decoded) > limit:
                 raise ValueError(
                     f"{where} decodes to more than the {limit:,} bytes a chunk can "
                     f"hold ({codec})"
                 )
-            offset += len(piece) - len(decoder.unused_data)
-            output += decoded
+            output.add(decoded)
             if decoder.eof:
+                source.give_back(decoder.unused_data)
                 break
-            if offset >= len(view):
-                raise ValueError(f"{where} ends inside a {codec} stream (truncated)")
-            piece_size = min(2 * piece_size, _LAST_PIECE)
-        if offset >= len(view):
-            return output
+            if zstd is None:  # zlib hands back the input it has not decoded
+                source.give_back(decoder.unconsumed_tail)
+                held = len(decoded) == asked
+            else:
+                held = not decoder.needs_input
+            piece_size = _FIRST_PIECE if held else min(2 * piece_size, _LAST_PIECE)
+        if source.at_end():
+            return output.value()
     unit = "members" if zstd is None else "frames"
     raise ValueError(f"{where} holds more than {_MAX_MEMBERS:,} {codec} {unit}")
 

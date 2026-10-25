@@ -1,11 +1,12 @@
-"""Cube files: a cube saved as a Zarr v3 group and opened one group at a time.
+"""Cube files: a cube saved as a Zarr v3 group and read as it is used.
 
 A cube file is a directory, by convention named ``<name>.cube.zarr``, holding a Zarr v3
 group (https://zarr-specs.readthedocs.io/en/latest/v3/core/) that any Zarr v3 reader
 can open. ``write_cube`` saves a cube. ``read_cube`` opens one: it reads the metadata
 and the sample, group and feature tables, and leaves the layers on disk as
-``ZarrArray`` objects that the cube reads one group at a time, so a cube far larger
-than memory can be opened and analysed group by group.
+``ZarrArray`` objects that the cube reads one group at a time, and only the chunks
+that hold the features it needs, so a cube far larger than memory can be opened and
+analysed group by group, or for a few features of every group.
 
 Format ``cytepool.cube``, version 1::
 
@@ -51,8 +52,9 @@ as:
 
 Layers have ``dimension_names`` ``["groups", "samples", "features"]`` and chunks of one
 group, every sample and up to 4,096 features, so reading one group reads only its own
-chunks. (A chunk holds fewer samples only where it would otherwise exceed 256 MiB,
-``LAYER_CHUNK_BYTES``: beyond 8,192 samples of float64 values.) ``n_cells`` is int32
+chunks, and reading some features of it only the chunks that hold them. (A chunk holds
+fewer samples only where it would otherwise exceed 256 MiB, ``LAYER_CHUNK_BYTES``:
+beyond 8,192 samples of float64 values.) ``n_cells`` is int32
 (int64 if a value does not fit), with ``dimension_names`` ``["samples", "groups"]``.
 
 Every array has the default chunk key encoding with ``/``, a fill value of zero
@@ -200,9 +202,11 @@ def read_cube(path: str | os.PathLike[str]) -> Cube:
     """Open a cube file.
 
     The metadata and the sample, group and feature tables are read now. The layers
-    stay on disk: the cube reads one group of a layer when a method needs it, and
-    checks its values then (see "Lazy layers" in ``Cube``). Opening a cube therefore
-    takes little memory, whatever its size.
+    stay on disk: when a method needs a group of a layer, the cube reads the chunks
+    that hold the samples and features it needs, and checks those values then (see
+    "Lazy layers" in ``Cube``). Opening a cube therefore takes little memory,
+    whatever its size, and a cube derived with ``select()`` reads only the chunks that
+    hold the selected features of the selected groups.
 
     Args:
         path: The cube file's directory.
