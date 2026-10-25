@@ -488,6 +488,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "block": SAMPLE_TABLE["donor"],
             "correlation": 0.2,
             "coefficient_names": ["a", "b"],
+            "n_threads": 1,
         },
         {
             "y": "NaN",
@@ -495,6 +496,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "weights": None,
             "block": None,
             "coefficient_names": None,
+            "n_threads": None,
         },
         options=("correlation",),
     ),
