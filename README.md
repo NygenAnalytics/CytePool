@@ -22,6 +22,7 @@ what is planned.
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
+| Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result | limma, edgeR; on simulated data and on published single-cell data |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
@@ -38,7 +39,8 @@ These are not implemented yet:
   that groups the samples as the intercept does and `correlation=` (which CytePool does
   not estimate), and refuses a design whose random effects it would otherwise drop; its
   message says what can be fitted instead.
-- Gene-set tests and pathway or transcription-factor activity
+- Rotation gene-set tests (`roast`, `mroast`, `romer`), and pathway or
+  transcription-factor activity
 - Composition tests
 - Ligand-receptor scoring and differential interactions
 - Dose-response fits, benchmark doses and synergy
@@ -109,6 +111,14 @@ These are not implemented yet:
   default since limma 3.66, and limma 3.60 to 3.65 do with `adaptive.span = TRUE`.
   Their default, and that of earlier versions, is a span of 0.5: pass `span=0.5` to
   reproduce it.
+- `camera` and `fry` need every value observed, with positive weights, and fit fixed
+  effects only (no block correlation); `fry` has no gene contribution weights (limma's
+  `gene.weights`). `fry`'s mixed p-value of a set of 2 to d genes (d the residual
+  degrees of freedom) differs from limma's on purpose: it uses all d + 1 dimensions of
+  the rotation, where limma's uses only the set's and can be far from the rotation
+  p-value. For larger sets the two agree, and their beta approximation can be much too
+  small far in the tail. `camera` also offers robust moderation, which limma's does
+  not.
 - `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
   is refused, and there is no `duplicateCorrelation`. Normalization factors are TMM or
   none. In a group whose design is rank deficient they test every contrast the

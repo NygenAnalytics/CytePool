@@ -18,10 +18,10 @@ This page summarises the tables the scripts printed when they were run against t
 package in this revision of the repository: on **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
-`sample_quality_weights.py`, `differential_expression.py` and
-`interferon_stimulated_pbmcs.py`, and for
-`design.py` and `empirical_bayes.py`, which printed the same tables again after
-changes to the code they check; and on **2026-10-24** for the others, with the
+`sample_quality_weights.py`, `differential_expression.py`,
+`interferon_stimulated_pbmcs.py` and `gene_set_tests.py`, and for `design.py` and
+`empirical_bayes.py`, which printed the same tables again after changes to the code
+they check; and on **2026-10-24** for the others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -42,12 +42,13 @@ covers and the largest difference among them. Run a script to see every check.
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
+| [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **883** | **815 pass, none failed; 45 information, 22 deliberate differences, 1 control** | | |
+| **All** | | | **976** | **894 pass, none failed; 51 information, 30 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -562,6 +563,88 @@ Deliberate differences, none of which is a failing check:
 - `treat` reports a t-statistic of NaN for a coefficient that is NaN, and for an
   all-zero contrast tested with a zero threshold, where limma reports 0.
 
+## Gene-set tests
+
+[`validation/gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py)
+compares `camera` and `fry` with limma's `camera` and `fry` on log-expression of 1,500
+genes simulated from fixed seeds, with gene-specific variances from a scaled inverse
+chi-squared prior around a mean-variance trend. The gene sets change up, down or in
+both directions, or not at all, share random sample effects (inter-gene correlation)
+with or without a change, overlap others, hold one, two or five genes, or 40% of the
+genes. The cases are three groups with the contrast given as a design column, also
+with only sets of one or more than d genes (so that fry's adjusted mixed p-values can
+be compared); three groups in interleaved order with observation weights and the
+contrast given as weights (a named contrast); counts with voom weights from `voom`
+(limma gets the same weights matrix), with the contrast both ways; a paired design with
+sample weights; residual variances that are all equal, so that the prior df is
+infinite; 16 samples with sets of 2 to 30 unchanged genes and three sets with changed
+genes; a gene the design fits exactly and ten identical genes; and 8 genes, fewer than
+the residual df. Designs are `Design` objects with named contrasts and genes are named
+by id in CytePool; R gets the design matrices and the genes' positions. camera runs with
+the default inter-gene correlation of 0.01, with it estimated for each set, with
+negative correlations allowed, with ranks, with a trend and robustly; fry with each
+standardization, and with a trend and robustly. limma's camera has no robust option: its
+reference is `cameraPR` or `rankSumTestWithCorrelation` on the z-scores of the
+moderated t-statistics of `eBayes(robust = TRUE)`, limma's `zscoreT(approx = TRUE,
+method = "hill")`, with the design reparametrised by `contrastAsCoef`; with an estimated
+correlation, the parametric p-value of `cameraPR` is converted to the df of the
+estimate. Reference: R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| camera: numbers of genes, correlations, directions, p-values and FDR, with a given or estimated correlation, ranks and a trend | `camera` | 1.5e-14 | 1e-10 | 35 pass |
+| camera with robust moderation | `cameraPR`, `rankSumTestWithCorrelation` | 1.7e-12 | 1e-6 | 12 pass |
+| fry with `standardize` `"none"` and `"residual_sd"`: numbers of genes, directions, p-values and FDR, mixed p-values of sets of one or more than d genes, and their FDR | `fry` | 5.2e-13 | 1e-10 | 15 pass |
+| fry with `"posterior_sd"`, with and without trend or robust moderation | `fry` | 4.4e-5 | 1e-3 | 15 pass |
+| fry with `"posterior_sd"` and an infinite prior df, where both standardize as `"none"` | `fry` | 3.3e-14 | 1e-10 | 1 pass |
+| CytePool's mixed p-values of the sets of 2 to 14 genes against 200,000 random rotations of their effects | simulation | 0.025 (absolute) | 0.1 | 1 pass |
+| fry's mixed p-values of sets of 2 to d genes | `fry` | 0.88 (absolute) | n/a | 8 deliberate differences |
+| The rotation simulation: limma's mixed p-values of the sets of 2 to 14 genes; both programs' of the sets of 15 to 30 genes; both programs' of the three sets with changed genes (relative) | simulation | 0.59, 0.030, 0.99 | n/a | 3 information |
+| Samples sorted by group, observation weights and the contrast as weights: camera, fry with `"residual_sd"`, and the genes whose last pivot R's `qr()` signs by rounding noise | `camera`, `fry`, `qr` | 0.012, 0.48; 115 of 1,500 genes | n/a | 3 information |
+
+Correlations are compared as differences, p-values relative to max(p, 1e-300) max(1,
+\|log p\|) as in `empirical_bayes.py` (limma's p-values above 1 count as 1), and a
+direction or a number of genes that differs counts as an infinite difference. Robust
+moderation is in the close tier because limma solves the robust prior df only to a
+tolerance. With `"posterior_sd"`, fry moderates each gene's mean square of its d + 1
+effects without the largest, divided by its expected value under the null hypothesis,
+as a variance on 0.92 d degrees of freedom, as limma does (found by probing); limma's
+expected value is about 7.3e-5 (d + 1) / d above the exact one that CytePool computes,
+so directional p-values differ by up to 4.9e-5 and mixed p-values by up to 5.7e-4 of
+their value, which the tolerance of 1e-3 allows. The rotation check uses sets without
+a change, whose p-values a simulation resolves: the beta approximation that both
+programs use for the mixed p-value is off by up to 0.03 at such p-values for sets of
+more than d genes, where the programs agree, and in the tail it can be much too small
+for both: sets with changed genes and rotation p-values of 3.2e-3 and about 6e-5 get
+6.3e-4 and 2.9e-7.
+
+In each gene's QR decomposition, CytePool treats a pivot that is zero up to rounding
+as zero, which R's `qr()` signs as positive. With the samples sorted by group and a
+contrast between groups given as weights, every gene's last pivot is such a zero.
+limma computes most of them exactly, but its arithmetic leaves rounding noise in a few
+percent of genes, which changes their residual bases, and camera and fry do so for
+different genes: fry's are the 115 of the 1,500 whose last pivot R's `qr()` signs by
+noise. camera's correlations of sets then differ by up to 0.012, and fry's p-values
+with `"residual_sd"` by up to a factor of 2. limma's results there change with the
+last bits of the weights, CytePool's do not; in every other case the two agree.
+
+Deliberate differences:
+
+- fry's mixed p-value of a set of 2 to d genes. Its statistic, the sum of the set's
+  squared standardized contrast effects, is r'(E'E)r under a random rotation r of the
+  d + 1 effects, which both programs approximate by a beta distribution with its first
+  two moments. CytePool uses all d + 1 dimensions, as for larger sets; limma uses only
+  the set's m nonzero eigenvalues of E'E as if r had m dimensions (found by probing).
+  Against 200,000 random rotations, CytePool's mixed p-values of the sets of 2 to 14
+  genes are within 0.025 and limma's off by up to 0.59.
+- A p-value above 1 from camera's rank test (its continuity correction can put both
+  tails above 1/2): limma reports twice the smaller tail, CytePool 1. A gene listed
+  twice in a set: limma counts it twice, CytePool once. A set without genes, or holding
+  every gene in camera: NaN p-values in CytePool, left out of the other sets'
+  adjustment; limma reports the direction "Up", in camera's rank test the p-value 2,
+  which it adjusts with the others, and in fry a mixed p-value of 0 for an empty set.
+  The tests check these.
+
 ## Multiple testing
 
 [`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
@@ -923,6 +1006,7 @@ python validation/design.py
 python validation/linear_models.py
 python validation/linear_models.py --benchmark
 python validation/empirical_bayes.py
+python validation/gene_set_tests.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/differential_expression.py
