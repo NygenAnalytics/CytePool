@@ -32,14 +32,15 @@ Nothing is released yet, and the interface may still change.
 | Designs | [Model matrices from R formulas, named contrasts, design checks](/api/designs.html) | R, limma, lme4 |
 | Linear models | [Ordinary, weighted and generalised least squares for every gene, contrasts](/api/linear_models.html) | limma |
 | Precision weights for counts | [`voom`](/api/voom.html) | limma |
+| Negative binomial models | [`fit_negative_binomial_model` (edgeR's `glmFit`), deviances](/api/negative_binomial_models.html) | edgeR, mpmath |
 | Empirical Bayes moderation | [Moderated t and F statistics, B-statistics, TREAT](/api/empirical_bayes.html) | limma |
 | Multiple testing | [Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli](/api/multiple_testing.html) | R |
 | Differential expression | [`limma_voom`, `limma_trend` on every cell type of a cube](/api/differential_expression.html) | limma, edgeR |
 | Distributions and smoothers | [Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, quantiles of the first four](/api/distributions.html); [LOWESS, natural spline bases](/api/smoothing.html) | mpmath, R |
 
 The [README](https://github.com/NygenAnalytics/CytePool#planned) lists what is planned
-(negative binomial and mixed models, gene-set and composition tests, and more) and the
-known limits of what exists.
+(dispersion estimation and tests for negative binomial models, mixed models, gene-set
+and composition tests, and more) and the known limits of what exists.
 
 ## Principles
 
