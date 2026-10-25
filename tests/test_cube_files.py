@@ -6,7 +6,8 @@ import os
 import pickle
 import shutil
 import sys
-from collections.abc import Iterator
+import tracemalloc
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -479,6 +480,214 @@ def test_opening_reads_no_layer_chunks_and_a_group_reads_only_its_own(
         str(store / "layers" / name / "c" / "0" / "0" / "0")
         for name in ("log_sum", "log_sum_sq")
     ]
+
+
+@pytest.fixture(scope="module")
+def narrow(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Cube]:
+    """A cube of 10 features saved in layer chunks of 3: features 0-2, 3-5, 6-8, 9."""
+    simulated = simulate_cube(n_features=10)
+    cube = Cube(
+        {name: simulated.layer(name) for name in simulated.layer_names},
+        samples=simulated.samples.with_columns(pool=["P1", "P2", "P1", "P1"]),
+        groups=simulated.groups,
+        features=simulated.features,
+        n_cells=simulated.n_cells,
+        normalization=simulated.normalization,
+        provenance=simulated.provenance,
+    )
+    path = tmp_path_factory.mktemp("narrow") / "c.cube.zarr"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cube_files, "FEATURES_PER_CHUNK", 3)
+        write_cube(cube, path)
+    return path, cube
+
+
+def chunk_files(
+    path: Path, layer: str, groups: list[int], chunks: list[int]
+) -> list[str]:
+    """The paths of the chunks of the given groups and feature chunks, sorted."""
+    root = path / "layers" / layer / "c"
+    return sorted(str(root / str(g) / "0" / str(j)) for g in groups for j in chunks)
+
+
+@pytest.mark.parametrize(
+    ("selection", "groups", "chunks"),
+    [
+        pytest.param({"features": [4]}, [0, 1, 2], [1], id="one feature"),
+        pytest.param({"features": [9, 0, 4]}, [0, 1, 2], [0, 1, 3], id="unsorted"),
+        pytest.param({"features": [2, 3]}, [0, 1, 2], [0, 1], id="across chunks"),
+        pytest.param({"features": np.arange(10) >= 6}, [0, 1, 2], [2, 3], id="mask"),
+        pytest.param({"features": ["G8", "G7"]}, [0, 1, 2], [2], id="ids"),
+        pytest.param({"features": 5, "groups": ["T"]}, [1], [1], id="one group"),
+        pytest.param(
+            {"samples": ["S3", "S1"], "features": [6, 1]},
+            [0, 1, 2],
+            [0, 2],
+            id="samples",
+        ),
+        pytest.param(
+            {"samples": ["S2"], "groups": [2, 0]},
+            [0, 2],
+            [0, 1, 2, 3],
+            id="all features",
+        ),
+        pytest.param({"features": []}, [], [], id="no features"),
+    ],
+)
+def test_selections_of_a_saved_cube_read_only_the_chunks_that_hold_them(
+    narrow: tuple[Path, Cube], selection: dict, groups: list[int], chunks: list[int]
+) -> None:
+    path, cube = narrow
+    chosen, expected = read_cube(path).select(**selection), cube.select(**selection)
+    for name in cube.layer_names:
+        with opened_files() as opened:
+            values = chosen.layer(name)
+        # Each chunk once, opened even where it is not stored (the NK group).
+        assert sorted(opened) == chunk_files(path, name, groups, chunks)
+        assert_same_bits(values, expected.layer(name))
+
+
+def test_derived_cubes_of_a_saved_cube_read_only_the_chunks_they_need(
+    narrow: tuple[Path, Cube],
+) -> None:
+    path, cube = narrow
+    derivations: list[tuple[Callable[[Cube], Cube], list[int], list[int]]] = [
+        (
+            lambda c: c.regroup({"lymphoid": ["B", "T"]}).select(features=[7, 2]),
+            [0, 1, 2],
+            [0, 2],
+        ),
+        (
+            lambda c: c.select(features=[9, 3]).collapse_samples("pool"),
+            [0, 1, 2],
+            [1, 3],
+        ),
+        (
+            lambda c: c.collapse_samples("pool").select(
+                samples=["P2"], features=[0], groups=["NK", "B"]
+            ),
+            [0, 2],
+            [0],
+        ),
+    ]
+    for derive, groups, chunks in derivations:
+        derived, expected = derive(read_cube(path)), derive(cube)
+        with opened_files() as opened:
+            values = derived.layer("counts")
+        assert sorted(opened) == chunk_files(path, "counts", groups, chunks)
+        assert_same_bits(values, expected.layer("counts"))
+        assert_same_cube(derived, expected)
+        assert_same_cube(pickle.loads(pickle.dumps(derived)), expected)
+
+
+def test_reads_of_a_saved_cube_hold_what_they_return_and_about_one_chunk(
+    tmp_path: Path,
+) -> None:
+    # One group of 256 samples x 4,096 features of int32 takes 4 MiB, saved in 16
+    # chunks of 256 features (256 KiB). A read holds what it returns, the chunk it
+    # copies from and the part of it a selection takes. Reading whole groups for a
+    # few features would take 4 MiB; copying what the reader returns, or reordering
+    # features after the read, would hold a whole group twice.
+    counts = np.random.default_rng(5).integers(0, 50, (1, 256, 4096), dtype=np.int32)
+    original = Cube(
+        {"counts": counts},
+        samples={"sample_id": [f"s{i}" for i in range(256)]},
+        groups={"group_id": ["g"]},
+        features={"feature_id": [f"f{j}" for j in range(4096)]},
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cube_files, "FEATURES_PER_CHUNK", 256)
+        write_cube(original, tmp_path / "c.cube.zarr", compression=None)
+    back = read_cube(tmp_path / "c.cube.zarr")
+    chunk, group = 2**18, 2**22
+    shuffled = np.random.default_rng(6).permutation(4096)
+    reversed_samples = np.arange(256)[::-1]
+    reads: list[tuple[Cube, Callable[[Cube], np.ndarray], np.ndarray, float]] = [
+        # Features in two chunks, then in four chunks and out of order.
+        (
+            back.select(features=[1000, 1500]),
+            lambda c: c.layer("counts"),
+            counts[:, :, [1000, 1500]],
+            2 * chunk,
+        ),
+        (
+            back.select(features=[4000, 10, 1000, 2000]),
+            lambda c: c.layer("counts"),
+            counts[:, :, [4000, 10, 1000, 2000]],
+            2 * chunk,
+        ),
+        # The whole group, the whole layer, every feature shuffled, and every
+        # sample in reverse order (read as the selection's one group).
+        (back, lambda c: c.layer("counts", 0), counts[0], 1.25 * group),
+        (back, lambda c: c.layer("counts"), counts, 1.25 * group),
+        (
+            back.select(features=shuffled),
+            lambda c: c.layer("counts", 0),
+            counts[0][:, shuffled],
+            1.25 * group,
+        ),
+        (
+            back.select(samples=reversed_samples),
+            lambda c: c.layer("counts"),
+            counts[:, reversed_samples],
+            1.25 * group,
+        ),
+    ]
+    for chosen, read, expected, bound in reads:
+        tracemalloc.start()
+        try:
+            values = read(chosen)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert_same_bits(values, expected)
+        assert values.flags.c_contiguous and not values.flags.writeable
+        assert peak < bound
+
+
+def test_merging_groups_of_a_saved_cube_holds_the_sum_and_one_group(
+    tmp_path: Path,
+) -> None:
+    # Four groups of 64 samples x 4,096 uint32 counts, 1 MiB each and one chunk
+    # each. Merging them holds the int64 sum (2 MiB), the group being read and its
+    # chunk; keeping the first group, or an int64 copy of each, would take more.
+    counts = np.random.default_rng(7).integers(0, 50, (4, 64, 4096), dtype=np.uint32)
+    groups = ["a", "b", "c", "d"]
+    original = Cube(
+        {"counts": counts},
+        samples={"sample_id": [f"s{i}" for i in range(64)]},
+        groups={"group_id": groups},
+        features={"feature_id": [f"f{j}" for j in range(4096)]},
+    )
+    write_cube(original, tmp_path / "c.cube.zarr", compression=None)
+    merged = read_cube(tmp_path / "c.cube.zarr").regroup({"all": groups})
+    tracemalloc.start()
+    try:
+        values = merged.layer("counts", "all")
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert_same_bits(values, counts.sum(axis=0, dtype=np.int64))
+    assert peak < 4.5 * 2**20
+
+
+def test_layers_kept_from_a_saved_cube_cannot_be_made_writable(store: Path) -> None:
+    # The cube keeps the arrays a cube file's reader returns without a copy. The
+    # read-only flag it sets on them holds for the views it gives out only because
+    # those arrays own their memory: a read-only view of a writable array can be
+    # made writable again.
+    back = read_cube(store)
+    kept = [
+        back.to_memory(),
+        back.select(groups=["T"]).to_memory(),  # keeps the one group as it was read
+        back.select(groups=["T"], features=[3, 1]).to_memory(),
+        back.select(samples=["S2", "S1"]).to_memory(),
+    ]
+    for cube in kept:
+        for name in cube.layer_names:
+            for values in (cube.layer(name), cube.layer(name, 0)):
+                with pytest.raises(ValueError, match="WRITEABLE"):
+                    values.flags.writeable = True
 
 
 def test_a_cube_whose_file_was_replaced_stops_reading(
@@ -972,5 +1181,17 @@ def test_a_value_corrupted_on_disk_raises_when_its_group_is_read(
     chunk.write_bytes(gzip.compress(values.tobytes()))
     back = read_cube(path)
     assert_same_bits(back.layer("counts", "B"), cube.layer("counts", "B"))
-    with pytest.raises(ValueError, match="'counts' is 9 at group 'T', sample 'S2'"):
-        back.layer("counts", "T")
+    # Every read that takes the entry checks it; a selection without it reads.
+    message = "'counts' is 9 at group 'T', sample 'S2', feature 'G0'"
+    for read in (
+        lambda: back.layer("counts", "T"),
+        lambda: back.layer("counts"),
+        back.to_memory,
+        lambda: back.select(features=["G3", "G0"]).layer("counts", "T"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            read()
+    assert_same_bits(
+        back.select(features=["G3", "G1"]).layer("counts", "T"),
+        cube.layer("counts", "T")[:, [3, 1]],
+    )

@@ -157,6 +157,28 @@ class LazyArray:
         raise AssertionError("the whole lazy array was converted")
 
 
+class OuterIndexedArray(LazyArray):
+    """A lazy array that also reads blocks through ``oindex``, recording each key."""
+
+    def __init__(self, array: np.ndarray) -> None:
+        super().__init__(array)
+        self.blocks: list[tuple[int, Any, Any]] = []
+        self.oindex = OuterIndex(self)
+
+
+class OuterIndex:
+    def __init__(self, owner: OuterIndexedArray) -> None:
+        self.owner = owner
+
+    def __getitem__(self, key: tuple[int, Any, Any]) -> np.ndarray:
+        group, samples, features = key
+        self.owner.blocks.append(key)
+        block = self.owner._array[group]
+        rows = np.arange(block.shape[0])[samples]  # slice(None) or positions
+        columns = np.arange(block.shape[1])[features]
+        return block[np.ix_(rows, columns)]
+
+
 # Statistics against direct computation from the cells.
 
 
@@ -610,6 +632,185 @@ def test_lazy_layers_with_the_wrong_shape_or_dtype(
         ValueError, match=r"group 'B' of the lazy layer 'counts' gave shape \(4, 3\)"
     ):
         lazy_cube.layer("counts", 0)
+
+    class ShortIndex(OuterIndex):
+        def __getitem__(self, key: tuple[int, Any, Any]) -> np.ndarray:
+            return super().__getitem__(key)[:, :-1]  # one feature too few
+
+    lazy = OuterIndexedArray(layers["counts"])
+    lazy.oindex = ShortIndex(lazy)
+    with pytest.raises(
+        ValueError,
+        match=r"group 'T4' of the lazy layer 'counts' with oindex gave shape \(4, 1\), "
+        r"expected \(4, 2\)",
+    ):
+        make_cube(dict(layers, counts=lazy)).select(features=[2, 1]).layer("counts", 1)
+    lazy = OuterIndexedArray(layers["log_sum"].astype(np.float32))
+    lazy.dtype = np.dtype(np.float64)  # declares float64, gives float32
+    with pytest.raises(
+        TypeError,
+        match="group 'NK' of the lazy layer 'log_sum' with oindex gave dtype float32",
+    ):
+        make_cube(dict(layers, log_sum=lazy)).select(samples=[1]).mean("NK")
+
+
+# Reads of selected samples and features of lazy layers.
+
+SELECTION = {"samples": ["S3", "S1"], "groups": ["T8", "B"], "features": [19, 5, 0, 6]}
+
+
+def test_lazy_layers_with_oindex_read_only_the_selected_samples_and_features(
+    layers: dict[str, np.ndarray],
+) -> None:
+    lazy = {name: OuterIndexedArray(array) for name, array in layers.items()}
+    chosen = make_cube(lazy).select(**SELECTION)
+    assert all(not array.reads and not array.blocks for array in lazy.values())
+    for name, array in layers.items():
+        values = chosen.layer(name)
+        assert_array_equal(values, array[np.ix_([2, 0], [2, 0], [19, 5, 0, 6])])
+        assert values.dtype == array.dtype
+    # Each group was asked for its distinct positions in increasing order, which
+    # the cube then put in the order of the selection; nothing read whole groups.
+    keys = lazy["counts"].blocks
+    assert [group for group, _, _ in keys] == [2, 0]
+    assert all(samples.tolist() == [0, 2] for _, samples, _ in keys)
+    assert all(features.tolist() == [0, 5, 6, 19] for _, _, features in keys)
+    assert all(not array.reads for array in lazy.values())
+    # An axis without a selection is a slice, and a selection that is already in
+    # increasing order is asked for as it is.
+    lazy["counts"].blocks.clear()
+    block = make_cube(lazy).select(features=[3, 7]).layer("counts", "NK")
+    ((group, samples, features),) = lazy["counts"].blocks
+    assert (group, samples, features.tolist()) == (3, slice(None), [3, 7])
+    assert_array_equal(block, layers["counts"][3][:, [3, 7]])
+
+
+def test_lazy_layers_without_oindex_are_read_whole_and_the_selection_kept(
+    layers: dict[str, np.ndarray],
+) -> None:
+    lazy = {name: LazyArray(array) for name, array in layers.items()}
+    chosen = make_cube(lazy).select(**SELECTION)
+    for name, array in layers.items():
+        assert_array_equal(
+            chosen.layer(name), array[np.ix_([2, 0], [2, 0], [19, 5, 0, 6])]
+        )
+    assert lazy["counts"].reads == [2, 0]  # whole groups, as their only read
+
+
+def test_derived_lazy_cubes_read_only_what_their_groups_need(
+    cube: Cube, layers: dict[str, np.ndarray]
+) -> None:
+    lazy = {name: OuterIndexedArray(array) for name, array in layers.items()}
+    chains: list[Callable[[Cube], Cube]] = [
+        lambda c: c.regroup({"T": ["T4", "T8"]}).select(
+            samples=["S2"], features=[4, 1]
+        ),
+        lambda c: c.select(features=[4, 1]).collapse_samples("donor"),
+        lambda c: c.collapse_samples("donor").select(samples=["D2"], features=[4, 1]),
+        lambda c: c.select(features=[9, 4, 1, 0]).select(
+            features=[2, 1], groups=[1, 2]
+        ),
+    ]
+    for derive in chains:
+        derived, expected = derive(make_cube(lazy)), derive(cube)
+        for name in layers:
+            assert_array_equal(derived.layer(name), expected.layer(name))
+            assert derived.layer(name).dtype == expected.layer(name).dtype
+        assert_array_equal(derived.variance(), expected.variance())
+        assert_array_equal(derived.library_sizes(), expected.library_sizes())
+    # Every chain asked for features 4 and 1 alone, in increasing order.
+    assert {tuple(f.tolist()) for _, _, f in lazy["counts"].blocks} == {(1, 4)}
+    assert all(not array.reads for array in lazy.values())
+    # Merging T4 and T8 at S2 reads that sample of each; pooling donor D1 reads its
+    # samples S1, S3 and S4.
+    lazy["log_sum"].blocks.clear()
+    chains[0](make_cube(lazy)).layer("log_sum", "T")
+    assert [(g, s.tolist()) for g, s, _ in lazy["log_sum"].blocks] == [
+        (1, [1]),
+        (2, [1]),
+    ]
+    lazy["log_sum"].blocks.clear()
+    make_cube(lazy).collapse_samples("donor").select(samples=["D1"]).layer("log_sum", 0)
+    ((group, samples, features),) = lazy["log_sum"].blocks
+    assert (group, samples.tolist(), features) == (0, [0, 2, 3], slice(None))
+
+
+def test_empty_selections_of_a_lazy_cube_read_nothing(
+    layers: dict[str, np.ndarray],
+) -> None:
+    lazy = {name: OuterIndexedArray(array) for name, array in layers.items()}
+    plain = {name: LazyArray(array) for name, array in layers.items()}
+    for source in (lazy, plain):
+        lazy_cube = make_cube(source)
+        assert lazy_cube.select(features=[]).layer("counts").shape == (4, 4, 0)
+        no_samples = lazy_cube.select(samples=[]).collapse_samples("donor")
+        assert no_samples.layer("log_sum", "B").shape == (0, 20)
+        pooled = lazy_cube.collapse_samples("donor").select(features=[])
+        assert pooled.layer("detected", "NK").shape == (2, 0)
+    assert all(not array.reads and not array.blocks for array in lazy.values())
+    assert all(not array.reads for array in plain.values())
+
+
+@pytest.mark.parametrize("source", [LazyArray, OuterIndexedArray])
+def test_values_are_checked_in_the_blocks_that_are_read(
+    layers: dict[str, np.ndarray], source: type
+) -> None:
+    def chosen(changed: dict[str, np.ndarray], **selection: Any) -> Cube:
+        lazy = {name: source(array) for name, array in changed.items()}
+        return make_cube(lazy).select(**selection)
+
+    counts = layers["counts"].astype(np.uint64)
+    counts[3, 1, 4] = 2**63  # group NK, sample S2, feature G04: beyond int64
+    changed = dict(layers, counts=counts)
+    assert chosen(changed, features=["G05", "G03"]).layer("counts", "NK").shape == (
+        4,
+        2,
+    )
+    assert chosen(changed, samples=["S1", "S3"]).layer("counts", "NK").shape == (2, 20)
+    message = re.escape(
+        "'counts' has a value above 2**63 - 1 (9223372036854775808) at group 'NK', "
+        "sample 'S2', feature 'G04'"
+    )
+    with pytest.raises(ValueError, match=message):
+        chosen(changed, samples=["S4", "S2"], features=["G05", "G04"]).layer("counts")
+    # S2 has no T4 cells, so every layer must be zero there.
+    counts = layers["counts"].copy()
+    counts[1, 1, 7] = 5
+    changed = dict(layers, counts=counts)
+    assert chosen(changed, samples=["S1", "S3"]).layer("counts", "T4").any()
+    with pytest.raises(ValueError, match="'counts' is 5 at group 'T4', sample 'S2', "):
+        chosen(changed, samples=["S2", "S4"], features=[7]).layer("counts", "T4")
+    detected = layers["detected"].copy()
+    detected[0, 1, 2] = CELLS[1, 0] + 1  # more cells detected than pooled
+    changed = dict(layers, detected=detected)
+    with pytest.raises(
+        ValueError,
+        match="exceeds n_cells at group 'B', sample 'S2', feature 'G02': 11 cells "
+        "detected but 10 pooled",
+    ):
+        chosen(changed, samples=["S4", "S2"], features=[2, 0]).fraction_detected("B")
+
+
+def test_sums_of_a_lazy_cube_raise_only_for_the_entries_that_are_read() -> None:
+    # Feature f1 sums beyond 2**63 - 1 over the two groups, and over the samples
+    # s0 and s1 of donor D; the other sums are small.
+    by_group = np.array([[[1, 2**62, 5]], [[2, 2**62, 6]]], dtype=np.uint64)
+    merged = tiny_cube(by_group, lazy=True).regroup({"all": ["g0", "g1"]})
+    assert merged.select(features=["f2", "f0"]).layer("counts").tolist() == [[[11, 3]]]
+    with pytest.raises(
+        OverflowError,
+        match="merged group 'all' at sample 's0', feature 'f1' sums to 922337203685477",
+    ):
+        merged.select(features=["f1", "f2"]).layer("counts", "all")
+    by_sample = np.array([[[1, 2**62], [2, 2**62], [3, 4]]], dtype=np.uint64)
+    pooled = tiny_cube(by_sample, ["D", "D", "E"], lazy=True).collapse_samples("donor")
+    assert pooled.select(features=["f0"]).layer("counts", "g0").tolist() == [[3], [3]]
+    assert pooled.select(samples=["E"]).layer("counts", "g0").tolist() == [[3, 4]]
+    with pytest.raises(
+        OverflowError,
+        match="pooled sample 'D' at group 'g0', feature 'f1' sums to 92233720368547",
+    ):
+        pooled.select(samples=["E", "D"], features=["f1"]).layer("counts", "g0")
 
 
 # Dtypes, memory and alignment.

@@ -1,5 +1,5 @@
 ---
-description: How closely each method in CytePool agrees with the tool that defined it, from the tables the validation scripts printed on 2026-10-24.
+description: How closely each method in CytePool agrees with the tool that defined it, from the tables the validation scripts printed on 2026-10-24 and 2026-10-25.
 ---
 
 (validation)=
@@ -14,9 +14,11 @@ exchanging data through files in a temporary directory (float64 values as binary
 they compare bit for bit), runs CytePool, prints a table with one row per check, and
 exits with an error when any check falls outside its tolerance.
 
-This page summarises the tables the scripts printed when they were run on
-**2026-10-24**, against the package in this revision of the repository, with the
-reference versions given in each section. Every script exited without a failure. Each
+This page summarises the tables the scripts printed when they were run against the
+package in this revision of the repository: on **2026-10-25** for the four scripts on
+cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py` and
+`cube_reads.py`), and on **2026-10-24** for the others, with the reference versions
+given in each section. Every script exited without a failure. Each
 row below is a family of checks: it gives the number of printed checks it covers and
 the largest difference among them. Run a script to see every check.
 
@@ -24,9 +26,10 @@ the largest difference among them. Run a script to see every check.
 
 | Script | Area | Reference | Checks | Outcomes | Run time | Peak memory |
 | --- | --- | --- | --- | --- | --- | --- |
-| [`cube.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube.py) | Pseudobulk cubes | scanpy 1.12.4 | 20 | 19 pass, 1 information | 14.3 s | 926 MiB |
-| [`pool_cells.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pool_cells.py) | Pooling cells into cubes | scanpy 1.12.4, decoupler 2.2.0 | 27 | 27 pass | 47.1 s | 1,751 MiB |
-| [`cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py) | Cube files | zarr-python 3.4.1 | 7 | 7 pass | 6.3 s | 179 MiB |
+| [`cube.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube.py) | Pseudobulk cubes | scanpy 1.12.4 | 20 | 19 pass, 1 information | 13.9 s | 925 MiB |
+| [`pool_cells.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pool_cells.py) | Pooling cells into cubes | scanpy 1.12.4, decoupler 2.2.0 | 27 | 27 pass | 36.9 s | 1,725 MiB |
+| [`cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py) | Cube files | zarr-python 3.4.1 | 7 | 7 pass | 1.9 s | 143 MiB |
+| [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 58 s | 500 MiB |
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 5.5 s | 176 MiB |
@@ -35,7 +38,7 @@ the largest difference among them. Run a script to see every check.
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **653** | **621 pass, none failed; 21 information, 10 deliberate differences, 1 control** | | |
+| **All** | | | **658** | **626 pass, none failed; 21 information, 10 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -141,6 +144,29 @@ script skips those cases.
 | CytePool reads 84 arrays zarr-python wrote: every core data type, partial edge chunks, both byte orders, gzip, zstd, gzip then zstd and no compression, and the default (with either separator) and v2 chunk key encodings | zarr-python | 0 elements differ | 0 | 1 pass |
 | Chunks of those arrays left unstored because they equal the fill value | zarr-python | 295 of 840 chunks read as the fill value | more than 0 | 1 pass |
 | `read_cube` of copies that zarr-python made node by node, with other chunks, big-endian bytes and gzip then zstd | zarr-python | 0 values differ | 0 | 1 pass |
+
+## Reads of selected features
+
+[`validation/cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py)
+checks that reads of a selection take only what they need and return what zarr-python
+reads. zarr-python writes an int32 array of 3 x 5 x 11 in chunks of 2 x 2 x 4 (gzip,
+fill value 7, one chunk left unstored), and CytePool writes a cube file of 20 groups x
+100 samples x 30,000 genes, with uint32 counts and float64 `log_sum` (gzip level 4,
+seed 20261024). zarr-python's `Array.oindex` then reads 7 selections of each array and
+6 selections of the cube: 50 neighbouring genes, 50 and 2,000 genes at random, 50
+genes out of order in 2 groups, 10 samples of every gene, and one whole group.
+Reference: zarr-python 3.4.1, numpy 2.5.4, Python 3.13.12.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| `ZarrArray.oindex`, 21 selections of the small array and of the two layers of the cube file: positions in any order, repeated and negative, masks, slices, integers, an empty selection, and the chunk that is not stored | zarr-python `Array.oindex` | 0 elements differ | 0 | 1 pass |
+| Every layer of the 6 selections of the cube, read with `Cube.select` from the cube `read_cube` opened | zarr-python `Array.oindex` | 0 elements differ | 0 | 1 pass |
+| Chunk files each selection opens | the chunks that hold a selected feature of a selected group | 0 selections open other files | 0 | 1 pass |
+| Merged groups and pooled samples of the 50 genes at random: counts, and `log_sum` | sums of what zarr-python read | 0 and 4.3e-16 | 0 and 1e-12 | 2 pass |
+
+Every chunk that holds a selected element is opened once, and no other: 40 chunk
+files for 50 neighbouring genes of the 20 groups, where reading whole groups opens all
+320. The script also measures each read; see [](#validation-timings).
 
 ## Normalization and filtering
 
@@ -460,14 +486,14 @@ a first run, building all five layers:
 
 | Run | Seconds |
 | --- | --- |
-| `from_cells`, 2 threads | 0.159 |
-| `from_cells`, 1 thread | 0.235 |
-| `from_cells`, dense float32 input | 0.400 |
-| `from_cells`, first call (compiles unless cached) | 3.747 |
-| scanpy `normalize_total`, `log1p` and 3 `aggregate` calls (float32), warm | 0.322 |
-| decoupler `pseudobulk` (sums only), warm | 0.831 |
+| `from_cells`, 2 threads | 0.100 |
+| `from_cells`, 1 thread | 0.166 |
+| `from_cells`, dense float32 input | 0.255 |
+| `from_cells`, first call (compiles unless cached) | 0.315 |
+| scanpy `normalize_total`, `log1p` and 3 `aggregate` calls (float32), warm | 0.334 |
+| decoupler `pseudobulk` (sums only), warm | 0.814 |
 
-The peak resident memory of that whole run was 1,751 MiB, in its largest process.
+The peak resident memory of that whole run was 1,725 MiB, in its largest process.
 
 `linear_models.py --benchmark` on 20,000 genes x 200 samples (limma's time as R
 measured it, CytePool's the median of three runs after a warm-up), with a peak
@@ -484,6 +510,25 @@ resident memory of 479 MiB in the largest process of the run:
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
 `multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the
 references and CytePool 3.6 s to evaluate them, including compilation.
+
+`cube_reads.py` read every layer of each selection of its cube file into memory with
+`to_memory()`. The file holds 720 MB of values in chunks of one group, every sample
+and 4,096 genes, 507 MB once compressed. Peak memory is the most that Python's
+`tracemalloc` traced during a read, and time the best of three reads after a first
+one:
+
+| Selection | Chunk files opened | Read from disk (MB) | Decompressed (MB) | Result (MB) | Peak memory (MB) | Seconds |
+| --- | --- | --- | --- | --- | --- | --- |
+| 50 neighbouring genes | 40 | 69.2 | 98.3 | 1.20 | 5.6 | 0.48 |
+| 50 genes at random | 320 | 507.1 | 786.4 | 1.20 | 5.8 | 4.33 |
+| 2,000 genes at random | 320 | 507.1 | 786.4 | 48.00 | 54.2 | 4.17 |
+| 50 genes at random, 2 groups | 32 | 51.3 | 78.6 | 0.12 | 4.7 | 0.41 |
+| 10 samples, every gene | 320 | 507.1 | 786.4 | 72.00 | 78.9 | 4.10 |
+| one whole group | 16 | 25.0 | 39.3 | 36.00 | 40.5 | 0.23 |
+
+A read holds what it returns and about one decompressed chunk (3.3 MB of `log_sum`).
+Genes at random lie in every chunk, so they decompress the whole file, and so does a
+selection of samples, since every chunk holds every sample.
 
 (reproduce-validation)=
 ## Reproducing this page
@@ -511,6 +556,7 @@ SCANPY_PYTHON=$REF/python-scanpy/bin/python \
     DECOUPLER_PYTHON=$REF/python/bin/python python validation/pool_cells.py
 REFERENCE_PYTHON=$REF/python/bin/python $REF/python3.14/bin/python \
     validation/cube_files.py
+python validation/cube_reads.py
 ```
 
 Here `python` is `$REF/python/bin/python`, the environment below. With

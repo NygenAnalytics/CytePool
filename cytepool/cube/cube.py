@@ -28,6 +28,9 @@ _OPTIONAL_TEXT_COLUMNS = {
     "features": ("symbol",),
 }
 _OPTIONAL_BOOLEAN_COLUMNS = {"features": ("measured",)}
+# Reads the block of a group of a lazy layer at sample and feature positions (None
+# for every position), as _LazyLayer.read does.
+_BlockReader = Callable[[int, np.ndarray | None, np.ndarray | None], np.ndarray]
 
 
 class Cube:
@@ -108,12 +111,30 @@ class Cube:
         A layer may be any object with ``shape``, ``dtype`` and a ``__getitem__``
         that accepts an integer on the first axis and returns one group, such as an
         HDF5 or zarr array; a numpy memmap is also kept lazy. Construction checks
-        its shape and dtype and reads nothing. Each read copies one group into
-        memory and checks it against the constraints, so a bad value raises when it
-        is first used; the moment constraint is checked when ``variance()`` or
-        ``to_memory()`` reads both moments. Selecting, regrouping and collapsing a
-        lazy cube give a lazy cube, which computes its sums, and raises any
-        OverflowError, when a group is read; ``to_memory()`` reads every layer.
+        its shape and dtype and reads nothing. Each read puts what it needs in
+        memory the cube owns, copying what the layer returns unless the layer is a
+        ``ZarrArray`` (see below), and checks those values against the
+        constraints, so a bad value raises when it is first used; the moment
+        constraint is checked when ``variance()`` or ``to_memory()`` reads both
+        moments. Selecting, regrouping and collapsing a lazy cube give a lazy cube,
+        which computes its sums, and raises any OverflowError, when a group is
+        read; ``to_memory()`` reads every layer.
+
+        A lazy cube asks a layer only for the groups, samples and features it
+        needs, such as those that ``select()`` kept. A layer that also has an
+        ``oindex`` attribute for orthogonal indexing, as zarr-python arrays have,
+        is read with ``layer.oindex[group, samples, features]``, where ``group`` is
+        an integer and ``samples`` and ``features`` are each ``slice(None)`` or a
+        1-D integer numpy array of positions in increasing order without repeats;
+        it must return an array of shape ``(len(samples), len(features))``,
+        counting a slice as the whole axis. Any other layer is read one whole group
+        at a time, and the cube keeps the part it needs.
+
+        The layers of ``read_cube`` are ``ZarrArray`` objects. They read only the
+        chunks that hold the selected features, take positions in any order and
+        return new arrays, which the cube keeps without a copy, so a read holds
+        about the values it returns and one chunk (with zstd, also the decoder's
+        window, 2 MiB at the default level).
     """
 
     __slots__ = (
@@ -464,7 +485,11 @@ class Cube:
 
         Ids and positions also set the order of the result. A single id or position
         selects one entry. The provenance record lists the kept sample and group ids
-        and the number of kept features, since feature lists can be long.
+        and the number of kept features, since feature lists can be long. Selecting
+        from a lazy cube reads nothing. Reads of the result ask its layers only for
+        the kept groups, samples and features: a cube file reads only the chunks
+        that hold them, and a layer without ``oindex`` is read one whole kept group
+        at a time (see "Lazy layers" in ``Cube``).
 
         Args:
             samples: Sample ids, a boolean mask or integer positions; ``None`` keeps
@@ -937,15 +962,25 @@ class Cube:
 
 
 class _LazyLayer:
-    """A layer read one group at a time."""
+    """A layer read one group, or one block of a group, at a time."""
 
     __slots__ = ("dtype", "shape")
 
     dtype: np.dtype
     shape: tuple[int, int, int]
 
-    def read(self, group: int) -> np.ndarray:
-        """Return one group, read-only, of shape ``shape[1:]``."""
+    def read(
+        self,
+        group: int,
+        samples: np.ndarray | None = None,
+        features: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return one group, or its block at some sample and feature positions.
+
+        ``samples`` and ``features`` are 1-D intp arrays of positions in any order,
+        or None for every position. The block is read-only, of shape
+        ``(len(samples), len(features))`` with None counting the whole axis.
+        """
         raise NotImplementedError
 
     def read_all(self) -> np.ndarray:
@@ -956,11 +991,13 @@ class _LazyLayer:
 class _StoredLayer(_LazyLayer):
     """A lazy layer from a user's array-like.
 
-    Every read copies one group into memory the cube owns, so a source that changes
-    later (a memmap, say) cannot change what was read and checked.
+    Every read puts what it needs in memory the cube owns, so a source that changes
+    later (a memmap, say) cannot change what was read and checked. What a source
+    returns is copied, except what a ``ZarrArray`` returns: a new array that nothing
+    else holds (``reads_new_arrays``).
     """
 
-    __slots__ = ("source", "name", "n_cells", "ids")
+    __slots__ = ("source", "name", "n_cells", "ids", "reads_new_arrays")
 
     def __init__(
         self,
@@ -977,28 +1014,105 @@ class _StoredLayer(_LazyLayer):
         self.shape = shape
         self.n_cells = n_cells
         self.ids = ids
+        self.reads_new_arrays = _reads_new_arrays(source)
 
-    def read(self, group: int) -> np.ndarray:
-        block = np.array(self._fetch(group), dtype=self.dtype, order="C")
-        _check_values(self.name, block, group, self.n_cells, self.ids)
+    def read(
+        self,
+        group: int,
+        samples: np.ndarray | None = None,
+        features: np.ndarray | None = None,
+    ) -> np.ndarray:
+        if samples is None and features is None:
+            block = self._owned(self._fetch(group), self.reads_new_arrays)
+        else:
+            block = self._fetch_block(group, samples, features)
+        _check_values(
+            self.name, block, group, self.n_cells, self.ids, samples, features
+        )
         block.flags.writeable = False
         return block
 
     def read_all(self) -> np.ndarray:
-        array = np.empty(self.shape, dtype=self.dtype)
-        for group in range(self.shape[0]):
-            array[group] = self._fetch(group)
-            _check_values(self.name, array[group], group, self.n_cells, self.ids)
+        if self.reads_new_arrays:  # one read, into the array it returns
+            array = self._owned(np.asarray(self.source[...]), new=True)
+            for group in range(self.shape[0]):
+                _check_values(self.name, array[group], group, self.n_cells, self.ids)
+        else:
+            array = np.empty(self.shape, dtype=self.dtype)
+            for group in range(self.shape[0]):
+                array[group] = self._fetch(group)
+                _check_values(self.name, array[group], group, self.n_cells, self.ids)
         array.flags.writeable = False
         return array
 
     def _fetch(self, group: int) -> np.ndarray:
         """Read one group from the source and check its shape and dtype."""
-        block = np.asarray(self.source[group])
-        what = f"group {self.ids[0][group]!r} of the lazy layer {self.name!r}"
-        if block.shape != self.shape[1:]:
+        return self._checked(np.asarray(self.source[group]), group, self.shape[1:])
+
+    def _fetch_block(
+        self, group: int, samples: np.ndarray | None, features: np.ndarray | None
+    ) -> np.ndarray:
+        """Read some samples and features of one group into a new array.
+
+        A ``ZarrArray`` is asked for the positions in the order given. Another source
+        with ``oindex`` is asked for the distinct positions in increasing order, and
+        the block is then put in the order asked for. Any other source gives the whole
+        group, and the block is taken from it.
+        """
+        rows = self.shape[1] if samples is None else samples.size
+        columns = self.shape[2] if features is None else features.size
+        if not rows or not columns:  # nothing to read
+            return np.empty((rows, columns), dtype=self.dtype)
+        outer = getattr(self.source, "oindex", None)
+        if outer is None:
+            return self._owned(_take(self._fetch(group), samples, features), new=True)
+        if self.reads_new_arrays:
+            key = (group, _every_if_none(samples), _every_if_none(features))
+            block = self._checked(
+                np.asarray(outer[key]), group, (rows, columns), " with oindex"
+            )
+            return self._owned(block, new=True)
+        sample_key, sample_order = _increasing(samples)
+        feature_key, feature_order = _increasing(features)
+        block = self._checked(
+            np.asarray(outer[group, sample_key, feature_key]),
+            group,
+            (_length(sample_key, rows), _length(feature_key, columns)),
+            " with oindex",
+        )
+        if sample_order is None and feature_order is None:
+            return self._owned(block, new=False)
+        return self._owned(_take(block, sample_order, feature_order), new=True)
+
+    def _owned(self, block: np.ndarray, new: bool) -> np.ndarray:
+        """Return a read as a C-contiguous array of the layer's dtype, the cube's own.
+
+        A ``new`` block, which nothing else holds, is kept as it is if it already is
+        such an array and owns its memory; anything else is copied. Only an array that
+        owns its memory keeps the read-only flag the cube sets on it for every view of
+        it, and numpy gives a view even for a dtype that only equals the array's.
+        """
+        if (
+            new
+            and block.flags.owndata
+            and block.flags.c_contiguous
+            and block.dtype == self.dtype
+        ):
+            return block
+        return np.array(block, dtype=self.dtype, order="C")  # a copy
+
+    def _checked(
+        self,
+        block: np.ndarray,
+        group: int,
+        shape: tuple[int, ...],
+        how: str = "",
+    ) -> np.ndarray:
+        """Return what a read of a group gave, after checking its shape and dtype."""
+        what = f"group {self.ids[0][group]!r} of the lazy layer {self.name!r}{how}"
+        if block.shape != shape:
             raise ValueError(
-                f"reading {what} gave shape {block.shape}, expected {self.shape[1:]}"
+                f"reading {what} gave shape {block.shape}, expected {shape}"
             )
         if block.dtype.newbyteorder("=") != self.dtype:
             raise TypeError(
@@ -1009,7 +1123,10 @@ class _StoredLayer(_LazyLayer):
 
 
 class _DerivedLayer(_LazyLayer):
-    """A lazy layer computed group by group from the layer of another cube."""
+    """A lazy layer computed group by group from the layer of another cube.
+
+    A read of some samples and features reads only what they need from the parent.
+    """
 
     __slots__ = ("parent", "plan", "name")
 
@@ -1027,12 +1144,21 @@ class _DerivedLayer(_LazyLayer):
         self.dtype = dtype
         self.shape = shape
 
-    def read(self, group: int) -> np.ndarray:
-        block = self.plan.block(self.name, self.parent.read, group, self.dtype)
+    def read(
+        self,
+        group: int,
+        samples: np.ndarray | None = None,
+        features: np.ndarray | None = None,
+    ) -> np.ndarray:
+        block = self.plan.block(
+            self.name, self.parent.read, group, self.dtype, samples, features
+        )
         block.flags.writeable = False
         return block
 
     def read_all(self) -> np.ndarray:
+        if self.shape[0] == 1:  # the one block, without copying it into a new array
+            return self.read(0)[np.newaxis]
         result = np.empty(self.shape, dtype=self.dtype)
         for group in range(self.shape[0]):
             result[group] = self.plan.block(
@@ -1046,13 +1172,16 @@ class _Plan:
     """How each group of a derived layer is computed from a source layer.
 
     Output group ``h`` is the sum of the source groups ``group_sets[h]``. Its samples
-    are then taken at ``sample_order`` (when ``sample_starts`` is None) or pooled by
-    summing the runs of ``sample_order`` that begin at ``sample_starts``, and its
-    features are taken at ``feature_positions``. ``None`` keeps an axis as it is.
-    ``source`` and ``target`` hold the group, sample and feature ids of the source
-    and of the result, for error messages. Integer sums are exact or raise
+    are the source samples at ``sample_order`` (when ``sample_starts`` is None) or
+    the sums of the runs of ``sample_order`` that begin at ``sample_starts``, and its
+    features are the source features at ``feature_positions``. ``None`` keeps an axis
+    as it is. ``source`` and ``target`` hold the group, sample and feature ids of the
+    source and of the result, for error messages. Integer sums are exact or raise
     OverflowError, and so do float sums beyond the float64 range: ``_merge`` sums
-    groups, and ``_checked_sum`` the runs of samples.
+    groups, and ``_pool`` the runs of samples.
+
+    A block of an output group needs only some samples and features of the source
+    groups, so ``block`` reads only those, and sums only them.
     """
 
     __slots__ = (
@@ -1084,53 +1213,107 @@ class _Plan:
     def block(
         self,
         name: str,
-        read: Callable[[int], np.ndarray],
+        read: _BlockReader,
         group: int,
         dtype: np.dtype,
+        samples: np.ndarray | None = None,
+        features: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Compute one output group of layer ``name``; ``read`` reads a source group."""
-        block = self._merge(name, read, group)
-        if self.sample_order is not None:
-            if self.sample_starts is None:
-                block = block[self.sample_order]
-            else:
-                group_id, pooled_ids = self.target[0][group], self.target[1]
-                feature_ids = self.source[2]  # features are taken last
-                block = _sum_runs(
-                    block,
-                    self.sample_order,
-                    self.sample_starts,
-                    0,
-                    lambda index: (
-                        f"layer {name!r} of the pooled sample {pooled_ids[index[0]]!r} "
-                        f"at group {group_id!r}, feature {feature_ids[index[1]]!r}"
-                    ),
-                )
-        if self.feature_positions is not None:
-            block = block[:, self.feature_positions]
+        """Compute output group ``group`` of layer ``name``, or a block of it.
+
+        The block holds the sample and feature positions given (None for every
+        position); ``read(g, samples, features)`` reads a block of source group ``g``.
+        """
+        source_features = _compose(self.feature_positions, features)
+        if self.sample_starts is None:
+            source_samples = _compose(self.sample_order, samples)
+            block = self._merge(name, read, group, source_samples, source_features)
+        else:
+            source_samples, starts = self._runs_of(samples)
+            block = self._merge(name, read, group, source_samples, source_features)
+            block = self._pool(name, block, group, samples, starts, source_features)
         return block.astype(dtype, copy=False)
 
     def apply(
         self, name: str, array: np.ndarray, shape: tuple[int, int, int], dtype: np.dtype
     ) -> np.ndarray:
         """Compute every output group of an in-memory layer."""
+
+        def read(
+            group: int, samples: np.ndarray | None, features: np.ndarray | None
+        ) -> np.ndarray:
+            return _take(array[group], samples, features)
+
         result = np.empty(shape, dtype=dtype)
         for group in range(shape[0]):
-            result[group] = self.block(name, array.__getitem__, group, dtype)
+            result[group] = self.block(name, read, group, dtype)
         result.flags.writeable = False
         return result
 
-    def _merge(
-        self, name: str, read: Callable[[int], np.ndarray], group: int
-    ) -> np.ndarray:
-        """Sum the source groups of output group ``group``, one at a time.
+    def _runs_of(self, samples: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
+        """Return the runs of source samples that pooled samples sum, and their starts.
 
+        ``samples`` are positions of pooled samples, None for all of them.
+        """
+        assert self.sample_order is not None and self.sample_starts is not None
+        if samples is None:
+            return self.sample_order, self.sample_starts
+        ends = np.append(self.sample_starts[1:], self.sample_order.size)
+        return _runs(
+            [
+                self.sample_order[self.sample_starts[pooled] : ends[pooled]]
+                for pooled in samples.tolist()
+            ]
+        )
+
+    def _pool(
+        self,
+        name: str,
+        block: np.ndarray,
+        group: int,
+        samples: np.ndarray | None,
+        starts: np.ndarray,
+        features: np.ndarray | None,
+    ) -> np.ndarray:
+        """Sum the runs of rows of ``block`` that begin at ``starts``.
+
+        ``samples`` are the pooled samples the runs give and ``features`` the source
+        features of the columns (None for all), for error messages.
+        """
+        if not starts.size:  # no samples to pool
+            return block
+        group_id, pooled_ids = self.target[0][group], self.target[1]
+        feature_ids = self.source[2]
+        longest = int(np.diff(np.append(starts, block.shape[0])).max())
+        return _checked_sum(
+            block,
+            longest,
+            lambda values, dtype: np.add.reduceat(values, starts, axis=0, dtype=dtype),
+            lambda index: (
+                f"layer {name!r} of the pooled sample "
+                f"{pooled_ids[_at(samples, index[0])]!r} at group {group_id!r}, "
+                f"feature {feature_ids[_at(features, index[1])]!r}"
+            ),
+        )
+
+    def _merge(
+        self,
+        name: str,
+        read: _BlockReader,
+        group: int,
+        samples: np.ndarray | None,
+        features: np.ndarray | None,
+    ) -> np.ndarray:
+        """Sum the source groups of output group ``group``, one member at a time.
+
+        Only the source sample and feature positions given are read (None for all).
         Integers accumulate in int64 while the sum of the members' largest possible
         values fits, which proves that every sum does, and as Python integers once
-        it does not. Every member is read once, and only one is held at a time.
+        it does not. Every member is read once, and besides the sum only one is held
+        at a time.
         """
         members = self.group_sets[group]
-        first = read(int(members[0]))
+        first = read(int(members[0]), samples, features)
         if members.size == 1:
             return first
         merged_id = self.target[0][group]
@@ -1139,13 +1322,15 @@ class _Plan:
         def subject(index: tuple[int, ...]) -> str:
             return (
                 f"layer {name!r} of the merged group {merged_id!r} at sample "
-                f"{sample_ids[index[0]]!r}, feature {feature_ids[index[1]]!r}"
+                f"{sample_ids[_at(samples, index[0])]!r}, feature "
+                f"{feature_ids[_at(features, index[1])]!r}"
             )
 
         if first.dtype.kind == "f":
             total = first.astype(np.float64)  # a new array to accumulate into
+            del first  # from here on, the sum and one member are held
             for member in members[1:]:
-                term = read(int(member))
+                term = read(int(member), samples, features)
                 try:
                     with np.errstate(over="raise"):
                         total += term
@@ -1153,17 +1338,27 @@ class _Plan:
                     # numpy writes the sums before it raises.
                     index = _first(~np.isfinite(total))
                     raise _float_overflow(subject(index)) from None
+                del term  # before the next member is read
             return total
         total = first.astype(np.int64)  # values are at most 2**63 - 1: exact
         bound = _largest_possible(first)
+        del first
         for member in members[1:]:
-            term = read(int(member))
+            term = read(int(member), samples, features)
             bound += _largest_possible(term)
             if bound > _INT64_MAX and total.dtype != object:
                 total = total.astype(object)
-            # Cast first: numpy refuses to add uint64 into int64 in place, and a
-            # Python integer plus a numpy integer is a numpy integer, which wraps.
-            total += term.astype(total.dtype, copy=False)
+            if total.dtype == object:
+                # As Python integers: a Python integer plus a numpy integer would be
+                # a numpy integer, which wraps.
+                total += term.astype(object)
+            else:
+                # Values are at most 2**63 - 1, so uint64 ones read as int64 unchanged;
+                # numpy would add uint64 to int64 in float64.
+                if term.dtype == np.uint64:
+                    term = term.view(np.int64)
+                np.add(total, term, out=total)
+            del term  # before the next member is read
         if total.dtype == object:
             too_large = total > _INT64_MAX
             if too_large.any():
@@ -1510,14 +1705,21 @@ def _check_values(
     group: int,
     n_cells: np.ndarray | None,
     ids: tuple[np.ndarray, np.ndarray, np.ndarray],
+    samples: np.ndarray | None = None,
+    features: np.ndarray | None = None,
 ) -> None:
-    """Check one group of a layer, shape ``(n_samples, n_features)``.
+    """Check the values of one group of a layer, or of a block of it.
 
-    Each check is a single reduction; the offending entry is located only when a
-    check fails.
+    ``block`` has shape ``(n_samples, n_features)``, or holds the sample and feature
+    positions given (None for every position). Each check is a single reduction; the
+    offending entry is located only when a check fails.
     """
     if block.size == 0:
         return
+
+    def where(sample: int, feature: int) -> str:
+        return _where(ids, group, _at(samples, sample), _at(features, feature))
+
     if block.dtype.kind == "f":
         # Finite values can sum to infinity, or to infinity minus infinity.
         with np.errstate(over="ignore", invalid="ignore"):
@@ -1528,7 +1730,7 @@ def _check_values(
                 sample, feature = _first(bad)
                 raise ValueError(
                     f"layer {name!r} has a non-finite value ({block[sample, feature]}) "
-                    f"at {_where(ids, group, sample, feature)}"
+                    f"at {where(sample, feature)}"
                 )
     # Only uint64 holds values above 2**63 - 1, and no unsigned value is negative.
     if block.dtype.kind == "u" and block.dtype.itemsize == 8:
@@ -1536,36 +1738,34 @@ def _check_values(
             sample, feature = _first(block > _INT64_MAX)
             raise ValueError(
                 f"layer {name!r} has a value above 2**63 - 1 ({block[sample, feature]}) "
-                f"at {_where(ids, group, sample, feature)}; integer layers must be at "
-                "most 2**63 - 1, the largest int64"
+                f"at {where(sample, feature)}; integer layers must be at most "
+                "2**63 - 1, the largest int64"
             )
     elif name in _NON_NEGATIVE_LAYERS and block.dtype.kind != "u" and block.min() < 0:
         sample, feature = _first(block < 0)
         raise ValueError(
             f"layer {name!r} has a negative value ({block[sample, feature]}) at "
-            f"{_where(ids, group, sample, feature)}; it must be non-negative"
+            f"{where(sample, feature)}; it must be non-negative"
         )
     if n_cells is None:
         return
-    cells = n_cells[:, group]
+    cells = n_cells[:, group] if samples is None else n_cells[samples, group]
     if name == "detected":
         over = np.flatnonzero(block.max(axis=1) > cells)
         if over.size:
             sample = int(over[0])
             feature = int(np.argmax(block[sample] > cells[sample]))
             raise ValueError(
-                f"layer 'detected' exceeds n_cells at "
-                f"{_where(ids, group, sample, feature)}: {block[sample, feature]} "
-                f"cells detected but {cells[sample]} pooled"
+                f"layer 'detected' exceeds n_cells at {where(sample, feature)}: "
+                f"{block[sample, feature]} cells detected but {cells[sample]} pooled"
             )
     empty = np.flatnonzero(cells == 0)
     if empty.size and block[empty].any():
         row, feature = _first(block[empty] != 0)
         sample = int(empty[row])
         raise ValueError(
-            f"layer {name!r} is {block[sample, feature]} at "
-            f"{_where(ids, group, sample, feature)}, where n_cells is 0; an entry "
-            "without cells must be zero in every layer"
+            f"layer {name!r} is {block[sample, feature]} at {where(sample, feature)}, "
+            "where n_cells is 0; an entry without cells must be zero in every layer"
         )
 
 
@@ -1702,6 +1902,79 @@ def _positions(
 
 def _take_rows(table: Table, positions: np.ndarray | None) -> Table:
     return table if positions is None else table.take(positions)
+
+
+def _take(
+    block: np.ndarray, samples: np.ndarray | None, features: np.ndarray | None
+) -> np.ndarray:
+    """Return the rows ``samples`` and columns ``features`` of a block (None: all).
+
+    With a selection, the result is a new C-contiguous array.
+    """
+    taken: np.ndarray
+    if features is None:
+        taken = block if samples is None else block[samples]
+    elif samples is None:
+        # numpy lays out block[:, features] in Fortran order; take gives C order.
+        taken = np.take(block, features, axis=1)
+    else:
+        taken = block[np.ix_(samples, features)]
+    return taken
+
+
+def _compose(
+    positions: np.ndarray | None, selected: np.ndarray | None
+) -> np.ndarray | None:
+    """Return the source positions of the ``selected`` positions of a derived axis.
+
+    The derived axis holds the source positions ``positions``, None for the same
+    positions as the source.
+    """
+    if positions is None:
+        return selected
+    return positions if selected is None else positions[selected]
+
+
+def _at(positions: np.ndarray | None, index: int) -> int:
+    """Return the position that entry ``index`` of a block stands for."""
+    return index if positions is None else int(positions[index])
+
+
+def _increasing(
+    positions: np.ndarray | None,
+) -> tuple[slice | np.ndarray, np.ndarray | None]:
+    """Return the distinct positions in increasing order, and how to reorder them.
+
+    For None, every position, the first value is ``slice(None)``. The second gives
+    where to take each of ``positions`` from the distinct ones, or is None when they
+    are already in place.
+    """
+    if positions is None:
+        return slice(None), None
+    distinct, inverse = np.unique(positions, return_inverse=True)
+    if distinct.size == positions.size and np.array_equal(distinct, positions):
+        return distinct, None
+    return distinct, inverse
+
+
+def _length(key: slice | np.ndarray, whole: int) -> int:
+    return whole if isinstance(key, slice) else key.size
+
+
+def _every_if_none(positions: np.ndarray | None) -> slice | np.ndarray:
+    return slice(None) if positions is None else positions
+
+
+def _reads_new_arrays(source: Any) -> bool:
+    """Whether every read of a lazy layer's source returns a new array of its own.
+
+    The cube can keep such an array without a copy. This is true of ``ZarrArray``,
+    the reader of cube files, whose reads are new arrays in native byte order that
+    own their memory.
+    """
+    from ..io.zarr import ZarrArray  # imported here: cytepool.io imports this module
+
+    return type(source) is ZarrArray
 
 
 def _kept_ids(
