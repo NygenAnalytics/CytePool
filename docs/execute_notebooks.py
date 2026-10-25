@@ -1,14 +1,18 @@
 """Execute documentation notebooks and save their outputs in place.
 
 Each notebook runs from a fresh kernel in a temporary working directory. On success it
-is saved with its outputs and three metadata entries: ``executed_at`` (UTC, when the
-run finished), ``execution_seconds`` (its wall time) and ``executed_code_sha256`` (the
+is saved with its outputs and four metadata entries: ``executed_at`` (UTC, when the
+run finished), ``execution_seconds`` (its wall time), ``executed_code_sha256`` (the
 fingerprint of the code cells it ran, which the site build and the tests compare with
-the code). A failing cell raises and leaves the saved notebook as it was.
+the code) and ``executed_with`` (the version of CytePool that ran it). A failing cell
+raises and leaves the saved notebook as it was.
 
 With ``--check``, notebooks run the same way but are not saved: the command fails when
 the text they print differs from the saved outputs, as it does when a change to the
-package changed their results. Figures and standard error are not compared.
+package changed their results. Figures and standard error are not compared, and
+neither is CytePool's own version, which changes with every commit of a development
+version and which a page can print, for example in a cube's history: the saved text is
+compared with the version that ran it replaced by the version running now.
 
 Usage, from the repository root::
 
@@ -29,6 +33,7 @@ from pathlib import Path
 import nbformat
 from nbclient import NotebookClient
 
+import cytepool
 from build_docs import SOURCE, check_execution, check_figures, code_fingerprint
 
 TIMEOUT_SECONDS = 600
@@ -44,7 +49,12 @@ def notebook_path(page: str) -> Path:
 
 def run(notebook: nbformat.NotebookNode) -> float:
     """Clear a notebook's outputs and execute it in place; return its wall time."""
-    for key in ("executed_at", "execution_seconds", "executed_code_sha256"):
+    for key in (
+        "executed_at",
+        "execution_seconds",
+        "executed_code_sha256",
+        "executed_with",
+    ):
         notebook.metadata.pop(key, None)
     for cell in notebook.cells:
         if cell.cell_type == "code":
@@ -72,6 +82,7 @@ def execute(path: Path) -> float:
     notebook.metadata["executed_at"] = datetime.now(UTC).isoformat(timespec="seconds")
     notebook.metadata["execution_seconds"] = round(seconds, 1)
     notebook.metadata["executed_code_sha256"] = code_fingerprint(notebook)
+    notebook.metadata["executed_with"] = cytepool.__version__
     relative = path.relative_to(SOURCE).as_posix()
     check_execution(notebook, relative)
     if path.read_text() != source:
@@ -103,19 +114,33 @@ def printed_text(notebook: nbformat.NotebookNode) -> list[str]:
     return texts
 
 
+def differences(
+    saved: list[str], fresh: list[str], saved_version: str | None, version: str
+) -> list[str]:
+    """The code cells whose printed text differs, other than in CytePool's version.
+
+    ``saved_version`` is the version that ran the saved notebook (None if it was
+    not recorded) and ``version`` the one that ran it again.
+    """
+    return [
+        f"code cell {number}: saved {old!r}, now {new!r}"
+        for number, (old, new) in enumerate(zip(saved, fresh, strict=True), start=1)
+        if (old.replace(saved_version, version) if saved_version else old) != new
+    ]
+
+
 def check(path: Path) -> list[str]:
     """Execute a copy of a notebook; return the code cells whose text differs."""
     saved = nbformat.read(path, as_version=4)
     check_execution(saved, path.relative_to(SOURCE).as_posix())
     fresh = copy.deepcopy(saved)
     run(fresh)
-    return [
-        f"code cell {number}: saved {old!r}, now {new!r}"
-        for number, (old, new) in enumerate(
-            zip(printed_text(saved), printed_text(fresh), strict=True), start=1
-        )
-        if old != new
-    ]
+    return differences(
+        printed_text(saved),
+        printed_text(fresh),
+        saved.metadata.get("executed_with"),
+        cytepool.__version__,
+    )
 
 
 def main() -> None:

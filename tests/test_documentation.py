@@ -332,6 +332,32 @@ def test_prose_can_change_without_executing_again() -> None:
     assert build_docs.code_fingerprint(notebook) != fingerprint
 
 
+def test_output_checks_ignore_only_the_version_of_cytepool_that_ran_a_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The runner imports nbclient, a documentation dependency.
+    pytest.importorskip("nbclient")
+    monkeypatch.syspath_prepend(str(ROOT / "docs"))
+    runner = importlib.import_module("execute_notebooks")
+    saved = [
+        "Built by from_cells (CytePool 0.1.dev24+gabc) from 9 cells\n",
+        "t = 4.2\n",
+    ]
+    fresh = [
+        "Built by from_cells (CytePool 0.1.dev31+gdef) from 9 cells\n",
+        "t = 4.2\n",
+    ]
+
+    # A page run by another development version prints the same text otherwise.
+    assert runner.differences(saved, fresh, "0.1.dev24+gabc", "0.1.dev31+gdef") == []
+    # Any other change is reported, cell by cell.
+    changed = [fresh[0], "t = 4.3\n"]
+    reported = runner.differences(saved, changed, "0.1.dev24+gabc", "0.1.dev31+gdef")
+    assert [line.split(":")[0] for line in reported] == ["code cell 2"]
+    # Without a recorded version, a different version is a difference.
+    assert len(runner.differences(saved, fresh, None, "0.1.dev31+gdef")) == 1
+
+
 def test_every_public_module_is_in_the_api_reference() -> None:
     documented = {
         name

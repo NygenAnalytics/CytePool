@@ -335,12 +335,31 @@ def _refuse_dropped_random_effects(
     raise ValueError(_random_effects_refusal(design, function, reason))
 
 
+def _refuse_random_effects(design: Any, function: str) -> None:
+    """Refuse a fit of fixed effects only for a ``Design`` with random effects.
+
+    Unlike :func:`_refuse_dropped_random_effects`, for functions that take no
+    ``block=`` and ``correlation=``, so that every random effect would be dropped.
+
+    Raises:
+        ValueError: If ``design`` is a ``Design`` with random effects.
+    """
+    if isinstance(design, Design) and design.random:
+        raise ValueError(_random_effects_refusal(design, function, "", block=False))
+
+
 def _is_random_intercept(effect: RandomEffect) -> bool:
     return effect.effects.intercept and not effect.effects.terms
 
 
-def _random_effects_refusal(design: Design, function: str, reason: str) -> str:
-    """Why a fit refuses the random effects of a design, and what it can fit now."""
+def _random_effects_refusal(
+    design: Design, function: str, reason: str, *, block: bool = True
+) -> str:
+    """Why a fit refuses the random effects of a design, and what it can fit now.
+
+    ``block`` says whether the function fits a random intercept with a known
+    correlation through ``block=`` and ``correlation=``.
+    """
     effects = design.random
     listed = " + ".join(str(effect) for effect in effects)
     noun = "random effect" if len(effects) == 1 else "random effects"
@@ -364,7 +383,7 @@ def _random_effects_refusal(design: Design, function: str, reason: str) -> str:
             f"{term} in the formula when the conditions compared vary within each "
             f"{group} (left out, the samples of a {group} count as independent)"
         ]
-        if intercept:
+        if intercept and block:
             labels = (
                 f"block=design.samples[{group!r}]"
                 if single
@@ -390,11 +409,16 @@ def _random_effects_refusal(design: Design, function: str, reason: str) -> str:
         if len(options) == 1
         else ("; ".join(options[:-1]) + "; or, " + options[-1])
     )
-    return (
+    fits = (
         f"{function} fits fixed effects and, through block= and correlation=, one "
-        "random intercept with a known correlation, so it would drop the "
-        f"{noun} {listed} of this design{reason}. Fitting random effects (mixed "
-        f"models) is planned but not available yet. What it can fit now: {fitted}."
+        "random intercept with a known correlation"
+        if block
+        else f"{function} fits fixed effects only"
+    )
+    return (
+        f"{fits}, so it would drop the {noun} {listed} of this design{reason}. Fitting "
+        "random effects (mixed models) is planned but not available yet. What it can "
+        f"fit now: {fitted}."
     )
 
 

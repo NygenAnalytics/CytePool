@@ -221,6 +221,18 @@ def _normalization(**options: Any) -> Callable[[Context], dict[str, Any]]:
     return lambda context: {"counts": COUNTS, **options}
 
 
+def _differential_expression(context: Context) -> dict[str, Any]:
+    """A bulk cube of COUNTS, a design matched to its samples, and options."""
+    return {
+        "cube": from_bulk(COUNTS, samples={"sample_id": SAMPLE_TABLE["sample_id"]}),
+        "design": Design(SAMPLE_TABLE, "~ condition", levels=LEVELS),
+        "groups": ["bulk"],
+        "contrasts": {"stim": [0.0, 1.0]},
+        "min_cells": 10,
+        "expression_filter": {"min_count": 5},
+    }
+
+
 TABLE = Table({"x": [1.0, 2.0], "s": ["a", "b"]})
 NORM_FACTORS = [1.0, 1.1, 0.9, 1.0]
 LIBRARY_SIZES = COUNTS.sum(axis=1).astype(float)
@@ -650,6 +662,38 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"x": "NaN"},
         options=("df",),
     ),
+    # Differential expression. min_cells and n_threads go through operator.index,
+    # which reads a 0-d masked integer.
+    "cytepool.differential_expression.limma_voom": Entry(
+        lambda c: {**_differential_expression(c), "span": 0.6, "n_threads": 1},
+        {
+            "contrasts": None,
+            "groups": None,
+            "min_cells": None,
+            "expression_filter": None,
+            "n_threads": None,
+        },
+        options=("normalization", "span", "robust", "contrast_standard_errors"),
+        objects=("cube", "design"),
+        keys={"contrasts": "stim", "expression_filter": "min_count"},
+    ),
+    # Contrasts given as expressions.
+    "cytepool.differential_expression.limma_voom[expressions]": Entry(
+        lambda c: {**_differential_expression(c), "contrasts": ["conditionstim"]},
+        {"contrasts": None},
+    ),
+    "cytepool.differential_expression.limma_trend": Entry(
+        _differential_expression,
+        {
+            "contrasts": None,
+            "groups": None,
+            "min_cells": None,
+            "expression_filter": None,
+        },
+        options=("normalization", "prior_count", "robust"),
+        objects=("cube", "design"),
+        keys={"contrasts": "stim", "expression_filter": "min_count"},
+    ),
 }
 # Every argument of the distribution and special functions is an array, with NaN
 # for missing values; values outside a domain give NaN, so any numbers are valid.
@@ -696,6 +740,15 @@ NO_ARRAY_INPUT = {
     "cytepool.io.zarr.write_group": (
         ("path", "attributes"),
         "a path, and attributes written as JSON, which cannot hold an array",
+    ),
+    "cytepool.differential_expression.DifferentialExpressionResult": (
+        ("method", "contrasts", "summary", "samples", "tables", "provenance"),
+        "a method name, Contrasts and Tables, which were checked when they were "
+        "built, and a record kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.differential_expression.DifferentialExpressionResult.table": (
+        ("group", "contrast"),
+        "a group id and a contrast name, looked up",
     ),
 }
 

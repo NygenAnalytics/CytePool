@@ -21,13 +21,13 @@ what is planned.
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, for a weighted linear model (limma-voom) | limma |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
+| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result | limma, edgeR |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
 
 ## Planned
 
 These are not implemented yet:
 
-- A complete differential-expression workflow that runs on a cube
 - Negative binomial models (edgeR quasi-likelihood, DESeq2-style tests) and dispersion
   estimation
 - Mixed models (dream-style fits, variance partitioning). A design can describe random
@@ -88,13 +88,21 @@ These are not implemented yet:
   genes.
 - `voom` normalizes by library-size factors only, and fits its trend without prior
   weights or a block correlation; `voomWithQualityWeights` and `voomLmFit` are not
-  implemented. It needs a design of full column rank (limma drops aliased columns), and
-  it raises an error where limma returns values without meaning: for a sample whose
-  library size is zero, or a trend that is not positive where weights are read.
+  implemented. It needs a design of full column rank (limma drops aliased columns;
+  `limma_voom` fits a group's column space), and it raises an error where limma returns
+  values without meaning: for a sample whose library size is zero, or a trend that is
+  not positive where weights are read.
 - `voom` chooses the span of its trend from the number of genes, as limma does by
   default since limma 3.66, and limma 3.60 to 3.65 do with `adaptive.span = TRUE`.
   Their default, and that of earlier versions, is a span of 0.5: pass `span=0.5` to
   reproduce it.
+- `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
+  is refused, and there is no `duplicateCorrelation`. Normalization factors are TMM or
+  none. In a group whose design is rank deficient they test every contrast the
+  group's samples can estimate, including those that weigh an aliased column, which
+  limma's `contrasts.fit` refuses, and they report the contrasts that cannot be
+  estimated, which limma either refuses or, when they weigh no aliased column,
+  computes with a changed meaning.
 - numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
   are refused with a `TypeError` that names the argument, because numpy drops the
   mask when it converts one and the masked entries would be read as data. Where an
