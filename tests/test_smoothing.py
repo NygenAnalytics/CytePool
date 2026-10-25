@@ -3,7 +3,10 @@
 Reference values in ``tests/data/smoothing`` come from R's ``stats::lowess``
 and ``splines::ns``, written by ``validation/smoothing.py``. The span rule is
 checked here against values derived by hand, and in ``tests/test_voom.py``
-against limma's ``chooseLowessSpan``.
+against limma's ``chooseLowessSpan``. The weighted LOWESS behind the trend of the
+likelihood estimator is checked here against values derived by hand from its rules,
+and in ``tests/test_empirical_bayes.py`` against limma's ``weightedLowess``, directly
+and through the trend.
 """
 
 from pathlib import Path
@@ -12,7 +15,13 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.stats.smoothing import choose_lowess_span, lowess, natural_spline_basis
+from cytepool.stats.smoothing import (
+    _anchor_spacing,
+    _weighted_lowess,
+    choose_lowess_span,
+    lowess,
+    natural_spline_basis,
+)
 
 DATA = Path(__file__).parent / "data" / "smoothing"
 LOWESS_CASES = (
@@ -539,3 +548,93 @@ def test_natural_spline_basis_needs_no_x_when_knots_are_given() -> None:
     np.testing.assert_array_equal(
         natural_spline_basis(x, knots=0.5), natural_spline_basis(x, knots=[0.5])
     )
+
+
+def test_weighted_lowess_of_three_distinct_values_gives_group_means() -> None:
+    # With span 1 the window of each value reaches the farthest one, whose tricube
+    # weight is zero: the line through two groups passes through their weighted
+    # means, and the middle group is alone. So every point gets the weighted mean
+    # of its group, as in limma's weightedLowess.
+    rng = np.random.default_rng(1)
+    x = np.repeat([0.0, 1.0, 2.0], 30)[rng.permutation(90)]
+    y = rng.normal(size=90)
+    w = rng.uniform(0.1, 2.0, 90)
+    fitted = _weighted_lowess(x, y, w, 1.0)
+    for level in (0.0, 1.0, 2.0):
+        group = x == level
+        mean = np.sum(w[group] * y[group]) / np.sum(w[group])
+        np.testing.assert_allclose(fitted[group], mean, rtol=1e-13)
+
+
+@pytest.mark.parametrize("span", [0.2, 0.5, 1.0])
+def test_weighted_lowess_reproduces_a_line(span: float) -> None:
+    # Weighted least squares fits a line exactly, and so does linear interpolation
+    # between anchors, whatever the weights and the window: this checks the
+    # arithmetic of the local fits, not the choice of windows or anchors.
+    rng = np.random.default_rng(2)
+    x = np.r_[rng.uniform(0.0, 10.0, 600), 3.0, 3.0, 3.0]
+    w = rng.uniform(0.1, 3.0, x.size)
+    np.testing.assert_allclose(
+        _weighted_lowess(x, 2.0 - 0.5 * x, w, span), 2.0 - 0.5 * x, atol=1e-12
+    )
+
+
+def test_weighted_lowess_window_of_ties_holds_every_tie() -> None:
+    # Windows grow by whole groups of tied points, so a window that reaches its
+    # weight within the points tied with its anchor holds all of them; its radius
+    # is zero, below 1e-7, so the fit is their prior-weighted mean (2.2, and
+    # 8.5 / 6.5 for the ties at x = 2 below).
+    y = np.array([1.0, 2.0, 4.0, 0.5, 3.0])
+    w = np.array([1.0, 2.0, 0.5, 1.0, 3.0])
+    np.testing.assert_allclose(_weighted_lowess(np.full(5, 2.0), y, w, 0.3), 2.2)
+    x = np.array([1.0, 2.0, 2.0, 2.0, 2.0, 3.0])
+    fitted = _weighted_lowess(
+        x, np.r_[0.0, y], np.r_[1.0, 2.0, 0.5, 1.0, 3.0, 1.0], 0.3
+    )
+    np.testing.assert_allclose(fitted, [0.0, *[8.5 / 6.5] * 4, 3.0], rtol=1e-15)
+
+
+def test_weighted_lowess_narrow_windows_give_prior_weighted_means() -> None:
+    # Span 0.5 of three unit weights: each window holds a point and one neighbour,
+    # the right one when both are as near. Windows narrower than 1e-7 give the
+    # prior-weighted mean of their points: (0 + 1) / 2, then (1 + 5) / 2 twice.
+    # Spread 2^30 times wider, the neighbour at the window's edge gets a tricube
+    # weight of zero, and each point keeps its own value.
+    a = 2.0**-25  # about 3e-8
+    x = np.array([0.0, a, 2.0 * a])
+    y = np.array([0.0, 1.0, 5.0])
+    w = np.ones(3)
+    np.testing.assert_array_equal(_weighted_lowess(x, y, w, 0.5), [0.5, 3.0, 3.0])
+    np.testing.assert_array_equal(_weighted_lowess(x * 2.0**30, y, w, 0.5), y)
+
+
+def test_weighted_lowess_fits_a_mean_where_x_barely_varies() -> None:
+    # With span 1, the window of the first point holds the three, at distances 0, s
+    # and 2s = h: tricube weights 1, (7/8)^3 and 0. The fit there is the line
+    # through the first two points, which passes through the first (0), unless
+    # the weighted sum of squares of x about its mean, w1 w2 / (w1 + w2) s^2, is
+    # below 1e-7, when it is their weighted mean. The bound is absolute, so it
+    # depends on the scale of the weights as well as on s.
+    second = 2.0 * (7.0 / 8.0) ** 3
+    mean = second / (1.0 + second)
+    sum_of_squares = second / (1.0 + second)  # times s^2 and the weights' scale
+    y = np.array([0.0, 1.0, 5.0])
+    for s, scale, expected in ((3e-4, 1.0, mean), (5e-4, 1.0, 0.0), (3e-4, 10.0, 0.0)):
+        assert (sum_of_squares * s * s * scale < 1e-7) == (expected == mean)
+        x = np.array([0.0, s, 2.0 * s])
+        w = scale * np.array([1.0, 2.0, 1.5])
+        assert _weighted_lowess(x, y, w, 1.0)[0] == pytest.approx(expected, abs=1e-12)
+
+
+def test_anchor_spacing_leaves_out_large_gaps() -> None:
+    # delta solves sum(min(gaps, delta)) = npts delta (found by probing limma): for
+    # 1,000 equally spaced points it is the range over 200; for two clusters of
+    # 150 points 1 apart and a gap of 1,001, 298 / 199, as limma's anchors show.
+    assert _anchor_spacing(np.arange(1000.0), 200) == 999.0 / 200.0
+    clusters = np.r_[np.arange(1.0, 151.0), np.arange(1151.0, 1301.0)]
+    assert _anchor_spacing(clusters, 200) == 298.0 / 199.0
+    # every distinct value is an anchor up to npts of them, ties counted once
+    assert _anchor_spacing(np.repeat(np.arange(150.0), 3), 200) == 0.0
+    # with npts + 1 values, the smallest gap: one pair shares an anchor
+    x = np.sort(np.random.default_rng(3).uniform(0.0, 1.0, 201))
+    assert _anchor_spacing(x, 200) == np.min(np.diff(x))

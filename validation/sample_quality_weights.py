@@ -22,8 +22,8 @@ Designs come from one sample table through R's ``model.matrix`` and CytePool's
 largest difference in one output of a case: the sample weights; the log2 CPM ``E``;
 the weights (limma's ``voom`` returns the trend's alone, which are multiplied by the
 prior weights first); the trend voom saves with ``save.plot = TRUE``; the chosen span;
-or the moderated t and p after ``lmFit``, ``contrasts.fit`` and ``eBayes`` (with
-``legacy = TRUE``, CytePool's prior estimator) against ``fit_linear_model``,
+or the moderated t and p after ``lmFit``, ``contrasts.fit`` and ``eBayes`` (with its
+default prior estimator, which CytePool's default follows) against ``fit_linear_model``,
 ``contrasts_fit(method="limma")`` and ``moderated_statistics``. Differences are
 relative, except for E, the trend's x and t, scaled by max(|reference|, 1); the
 trend's y, by max(|reference|, its median); and p, by max(p, 1e-300) max(1, |log p|).
@@ -138,8 +138,9 @@ for (case in readLines(file.path(root, "cases.txt"))) {
       # makeContrasts renames (Intercept) in its row names, with a warning.
       if (length(o$contrasts)) fit <- contrasts.fit(fit, suppressWarnings(
         makeContrasts(contrasts = unlist(o$contrasts), levels = X)))
-      # Zero weights make the residual df unequal, where eBayes' default differs.
-      eb <- suppressWarnings(eBayes(fit, legacy = TRUE))
+      # The default prior estimator, as CytePool's: zero weights make the residual
+      # df unequal, where it is the likelihood estimator (fitFDistUnequalDF1).
+      eb <- suppressWarnings(eBayes(fit))
       wr(dir, "t", eb$t); wr(dir, "p.value", eb$p.value)
     }
   })

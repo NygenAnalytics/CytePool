@@ -18,11 +18,11 @@ This page summarises the tables the scripts printed when they were run against t
 package in this revision of the repository: on **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
-`sample_quality_weights.py`, `negative_binomial_fits.py`, `differential_expression.py`,
-`differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
-`gene_set_tests.py` and `composition_tests.py`, and for `design.py` and
-`empirical_bayes.py`, which printed the same tables again after changes to the code
-they check; and on **2026-10-24** for the others, with the
+`empirical_bayes.py`, `sample_quality_weights.py`, `negative_binomial_fits.py`,
+`differential_expression.py`, `differential_expression_options.py`,
+`interferon_stimulated_pbmcs.py`, `gene_set_tests.py` and `composition_tests.py`, and
+for `design.py`, which printed the same table again after changes to the code it
+checks; and on **2026-10-24** for the others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -43,7 +43,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
 | [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
-| [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
+| [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 150 | 146 pass, 4 deliberate differences | 4.8 s | 195 MiB |
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
@@ -52,7 +52,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,195** | **1,063 pass, none failed; 81 information, 50 deliberate differences, 1 control** | | |
+| **All** | | | **1,272** | **1,136 pass, none failed; 81 information, 54 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -504,9 +504,9 @@ running limma as a black box: the starting point, the prior's terms in the score
 the information, the exact REML information of Smyth (2002), and the criterion that
 stops the iterations, including the early stop where it rises. The weights that limma's `voom` returns with prior weights are
 the trend's alone; CytePool's are those times the prior weights, which the comparison
-multiplies in. `eBayes` runs with `legacy = TRUE`, CytePool's estimator of the prior:
-zero weights make the residual degrees of freedom unequal, where limma's default
-estimator differs. Deliberate differences:
+multiplies in. `eBayes` runs with its default estimator of the prior, which
+CytePool's default follows: where zero weights make the residual degrees of freedom
+unequal, that is the likelihood estimator. Deliberate differences:
 
 - `var.design` and `var.group` together: limma uses `var.group`; CytePool refuses the
   two.
@@ -586,38 +586,76 @@ large counts, and 2e-3 with a dispersion of 2e-5. Deliberate differences:
 ## Empirical Bayes moderation
 
 [`validation/empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py)
-compares `moderated_statistics`, `treat`, `squeeze_variances`, `fit_f_distribution`
-and `fit_f_distribution_robust` with limma's `eBayes`, `treat`, `squeezeVar`,
-`fitFDist` and `fitFDistRobustly`, all with `legacy = TRUE`. Linear model cases (2,000
-genes, 6 to 40 samples) are fitted by `lmFit` in R and `fit_linear_model` here, then
-moderated with a constant prior, a trend, robustly, and with both; they include
-several contrasts, some linearly dependent, hypervariable genes, an infinite prior
-df, missing values, observation weights, an all-zero contrast and as few as two genes.
-Variance cases call the estimators directly on 2 to 2,000 variances, with and without
-a covariate, few distinct or infinite covariate values, zero, missing and unusable
-variances, planted outliers with equal and unequal df, and infinite robust prior df.
-TREAT tests a fold change of 1.2. Reference: R 4.4.3, limma 3.62.1.
+compares `moderated_statistics`, `treat`, `squeeze_variances`, `fit_f_distribution`,
+`fit_f_distribution_robust` and `fit_f_distribution_likelihood` with limma's `eBayes`,
+`treat`, `squeezeVar`, `fitFDist`, `fitFDistRobustly` and `fitFDistUnequalDF1`, with
+limma's `legacy` argument TRUE (the method of moments, `prior_estimator="moments"`),
+FALSE (the likelihood estimator, `"likelihood"`) or NULL (limma's default,
+`prior_estimator=None`, which takes the likelihood estimator when the residual df differ
+between genes). Linear model cases (2,000 genes, 6 to 40 samples) are fitted by `lmFit`
+in R and `fit_linear_model` here, then moderated with a constant prior, a trend,
+robustly, and with both; they include several contrasts, some linearly dependent,
+hypervariable genes, an infinite prior df, missing values, observation weights (some of
+them zero), genes without residual df, an all-zero contrast, and 1 to 25 genes, which
+with one or two genes are not moderated (some of them all zero). Variance cases call
+the estimators directly on 2 to 6,000 variances, with and without a covariate, few
+distinct or infinite covariate values, zero, missing and unusable variances, fractional
+df from 0.05, prior weights, planted outliers with equal and unequal df, variances that
+vary less or more than any prior df explains, infinite robust prior df, three to five
+trended variances, two variances above zero among zeros, and covariates on scales of
+1e-5 and 1e-9. The weighted LOWESS of the likelihood estimator's trend is also compared
+with limma's `weightedLowess`. TREAT tests a fold change of 1.2. Reference: R 4.4.3,
+limma 3.62.1.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
-| t, p, B, F and its p-value, priors, posterior variances, total df and `var.prior`, with constant and trend priors | `eBayes`, `treat` | 6.8e-13 | 1e-10 | 16 pass |
+| t, p, B, F and its p-value, priors, posterior variances, total df and `var.prior`, with constant and trend priors, `legacy = TRUE` | `eBayes`, `treat` | 6.8e-13 | 1e-10 | 16 pass |
 | The same with robust priors | `eBayes`, `treat` | 5.1e-8 | 1e-6 | 7 pass |
-| Missing values and observation weights, constant and trend priors | `eBayes`, `treat`; the exact F against limma's F of group means | 1.8e-13 | 1e-10 | 3 pass |
-| Missing values and observation weights, robust priors | as above | 3.0e-11 | 1e-6 | 3 pass |
+| One or two genes, not moderated, some of them all zero: NaN t-statistics and an infinite `var.prior` where limma gives them, with every option set | `eBayes`, `treat` | 1.3e-14 | 1e-10, robust 1e-6 | 12 pass |
+| Missing values and observation weights, constant and trend priors, `legacy = TRUE` | `eBayes`, `treat`; the exact F against limma's F of group means | 1.8e-13 | 1e-10 | 3 pass |
+| Missing values and observation weights, robust priors, `legacy = TRUE` | as above | 3.0e-11 | 1e-6 | 3 pass |
+| Missing values, zero observation weights and genes without residual df, by default (the likelihood estimator), constant and trend priors | `eBayes`, `treat`, `legacy = NULL` | 1.4e-12 | 1e-6 | 6 pass |
+| The same with robust priors, every gene with residual df | as above | 2.1e-12 | 1e-6 | 5 pass |
+| The likelihood estimator on equal residual df | `eBayes`, `treat`, `legacy = FALSE` | 2.8e-9 | 1e-6 | 3 pass |
 | Every component of `squeezeVar` and `fitFDist` | `squeezeVar`, `fitFDist` | 3.1e-13 | 1e-10 | 24 pass |
 | Every component of `fitFDistRobustly`, with two choices of Winsorized tails | `squeezeVar`, `fitFDistRobustly` | 8.4e-8 | 1e-6 | 20 pass |
+| Every component of `fitFDistUnequalDF1` and `squeezeVar`, with a constant prior and a trend, prior weights, fractional df, zero, missing and unusable variances | `squeezeVar`, `fitFDistUnequalDF1`, `legacy = FALSE` | 2.7e-12 | 1e-6 | 18 pass |
+| The same with `robust = TRUE`, every variance usable and no prior weights | as above | 4.6e-12 | 1e-6 | 8 pass |
+| Trends through three to five variances (a weighted straight line through at most four), two variances above zero among zeros (a constant prior, not robust), and covariates on scales of 1e-5 and 1e-9; constant and robust | as above | 2.6e-13 | 1e-6 | 13 pass |
+| The weighted LOWESS of the trend: ties, windows narrower than 1e-7, windows whose x barely vary, two distant clusters, the trend's weights | `weightedLowess` | 1.1e-15 | 1e-10 | 5 pass |
+| Robust likelihood fits with unusable variances or genes without residual df, against limma's fits of the usable features alone (the controls of the deliberate difference below) | `fitFDistUnequalDF1`, `eBayes` | 1.4e-12 | 1e-6 | 3 pass |
+| Robust likelihood fits with genes without residual df, unusable variances or prior weights | `eBayes`, `squeezeVar`, `fitFDistUnequalDF1` | 0.39 (B-statistics), 0.086 (prior variance) | n/a | 4 deliberate differences |
 
 Each row gives the largest difference over all outputs of a case. Differences are
 relative, except for t, B, F and outlier probabilities, scaled by
 max(\|reference\|, 1), and p-values, scaled by max(p, 1e-300) max(1, \|log p\|):
-about the error in log p relative to \|log p\|. The robust estimator is in the close
-tier because limma solves its Winsorized moment equation only to a tolerance.
-Deliberate differences, none of which is a failing check:
+about the error in log p relative to \|log p\|. NaN and infinite values must be in the
+same places, and a prior given as one value must be one value in both. The robust
+moment estimator is in the close tier because limma solves its Winsorized moment
+equation only to a tolerance. The likelihood estimator is in the close tier too: both
+programs search the prior df by the same steps of Brent's method, which stop at a
+tolerance, and agree to about 1e-12; the largest difference, 2.8e-9, is where the
+likelihood barely changes near the largest prior df searched, so that rounding can
+move the steps. Beyond these checks, with residual df of 1e7 and more limma's
+likelihood loses precision: its prior df differed from CytePool's by up to 1e-5 at 1e7
+and 5e-2 at 1e12, where CytePool's agreed with the likelihood computed to 60 digits.
+Deliberate differences:
 
-- The prior is estimated by limma's moment estimator, its `legacy = TRUE`. From limma
-  3.62.0 (3.61.8 in development), `eBayes` uses another estimator by default when the
-  residual degrees of freedom differ between genes (`fitFDistUnequalDF1`); when they
-  are all equal, its default is the moment estimator too.
+- The robust likelihood estimator leaves the genes without a usable variance out of its
+  test for outliers. limma 3.62.1 counts them there, a missing variance as a zero one,
+  which becomes an outlier and lowers the adjusted tail probabilities of the other
+  genes. With 40 of 2,000 genes without residual df, limma's robust prior df were 11.5%
+  larger with a constant prior, where limma also gave 45 genes smaller prior df as
+  outliers and CytePool gives every gene the same, and 6% to 10% larger with a trend.
+  The control rows show that without a trend CytePool's fit equals limma's of the usable
+  features alone. `fit_f_distribution_likelihood` also keeps prior weights in its second
+  robust fit, which limma's drops.
+- `fit_f_distribution_likelihood` raises an error where fewer than two usable variances
+  are above zero, where limma returns NA. With exactly two above zero both fit a
+  constant prior, but limma returns NaN when some other variances are not usable,
+  which CytePool leaves out. It moves infinite covariates one unit beyond the finite
+  range, as `fit_f_distribution` and limma's `fitFDist` do, where `fitFDistUnequalDF1`
+  returns NaN.
 - The moderated F-statistic of a fit with missing values or observation weights is
   exact by default; `f_statistic="limma"` gives limma's approximation, which the
   `eBayes` rows compare. The exact F has no limma counterpart, so it is checked

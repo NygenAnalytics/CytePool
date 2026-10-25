@@ -1,9 +1,10 @@
 """Tests for empirical Bayes moderation of feature-wise variances.
 
 Reference values in ``tests/data/empirical_bayes`` come from limma's ``eBayes``,
-``treat``, ``squeezeVar``, ``fitFDist`` and ``fitFDistRobustly`` (``legacy=TRUE``),
-written by ``validation/empirical_bayes.py``. The other tests check properties that a
-wrong implementation would break: limits, invariances and closed forms.
+``treat``, ``squeezeVar``, ``fitFDist``, ``fitFDistRobustly`` and ``fitFDistUnequalDF1``,
+with ``legacy`` TRUE, FALSE or NULL, and from its ``weightedLowess``, written by
+``validation/empirical_bayes.py``. The other tests check properties that a wrong
+implementation would break: limits, invariances and closed forms.
 """
 
 import warnings
@@ -18,6 +19,7 @@ from cytepool.stats import distributions
 from cytepool.stats.empirical_bayes import (
     ModeratedFit,
     fit_f_distribution,
+    fit_f_distribution_likelihood,
     fit_f_distribution_robust,
     moderated_statistics,
     squeeze_variances,
@@ -28,6 +30,7 @@ from cytepool.stats.linear_models import (
     contrasts_fit,
     fit_linear_model,
 )
+from cytepool.stats.smoothing import _weighted_lowess
 from cytepool.stats.special import digamma
 
 DATA = Path(__file__).parent / "data" / "empirical_bayes"
@@ -37,11 +40,34 @@ EXACT = 1e-10
 # everything downstream of it as close.
 CLOSE = 1e-6
 LFC = float(np.log2(1.2))
-RUNS = {
+OPTIONS = {
     "constant": (False, False),
     "trend": (True, False),
     "robust": (False, True),
     "trend_robust": (True, True),
+}
+# Option sets of the model cases: trend, robust and the prior estimator, which is
+# limma's legacy = TRUE ("moments"), FALSE ("likelihood") or NULL (None).
+RUNS: dict[str, tuple[bool, bool, str | None]] = {
+    name: (*options, "moments") for name, options in OPTIONS.items()
+}
+for _suffix, _estimator in (("default", None), ("likelihood", "likelihood")):
+    RUNS |= {f"{n}_{_suffix}": (*o, _estimator) for n, o in OPTIONS.items()}
+# Option sets of the variance cases: robust, the estimator and the Winsorized tails.
+VARIANCE_RUNS: dict[str, tuple[bool, str, tuple[float, float]]] = {
+    "moments": (False, "moments", (0.05, 0.1)),
+    "robust": (True, "moments", (0.05, 0.1)),
+    "robust_wide": (True, "moments", (0.1, 0.2)),
+    "likelihood": (False, "likelihood", (0.05, 0.1)),
+    "likelihood_robust": (True, "likelihood", (0.05, 0.1)),
+}
+# Runs where CytePool deliberately differs from limma: robust likelihood fits leave
+# out variances that are not usable, and keep prior weights in their second fit.
+DIFFERS = {
+    ("no_residual_df", "robust_default"),
+    ("no_residual_df", "trend_robust_default"),
+    ("prior_weights", "likelihood_robust"),
+    ("robust_unusable", "likelihood_robust"),
 }
 MODEL_CASES = (
     "two_groups",
@@ -55,6 +81,12 @@ MODEL_CASES = (
     "3_genes",
     "5_genes",
     "25_genes",
+    "1_gene_without_variation",
+    "2_genes_one_without_variation",
+    "2_genes_without_variation",
+    "missing_values_all_df",
+    "zero_weights",
+    "no_residual_df",
 )
 VARIANCE_CASES = (
     "sizes_2",
@@ -84,6 +116,26 @@ VARIANCE_CASES = (
     "robust_moments_infinite",
     "robust_infinite_unequal_df",
     "robust_infinite_trend",
+    "fractional_df",
+    "prior_weights",
+    "robust_unusable",
+    "large_trend",
+    "flat_likelihood",
+    "heavy_tails",
+    "few_trended_3",
+    "few_trended_4",
+    "few_trended_5",
+    "few_trended_missing",
+    "two_positive",
+    "flat_covariate",
+    "narrow_covariate",
+)
+WEIGHTED_LOWESS_CASES = (
+    "ties",
+    "narrow_windows",
+    "flat_windows",
+    "two_clusters",
+    "trend_weights",
 )
 # p-values are compared relative to max(p, 1e-300) max(1, |log p|), about the error
 # in log p relative to |log p|: an error in the prior df moves a p-value in the far
@@ -140,6 +192,10 @@ def assert_agrees(
 def check(case: str, run: str, key: str, ours: Any, tolerance: float) -> None:
     floor = 1.0 if key in STATISTICS else 1e-300 if key in PROBABILITIES else 0.0
     shape = np.shape(ours) if np.ndim(ours) else (1,)
+    if not key.endswith("df2.shrunk"):  # always one per feature here
+        # One value where limma reports one, one per feature where it reports more.
+        single = reference(case)[f"limma {run} {key}"].size == 1
+        assert single == (np.size(ours) == 1), (key, np.shape(ours))
     desired = limma(case, run, key, shape)
     assert_agrees(ours, desired, tolerance, floor, log_scaled=key in PROBABILITIES)
 
@@ -156,20 +212,40 @@ def model_fit(case: str) -> LinearModelFit:
 
 @cache
 def moderated(case: str, run: str, f_statistic: str = "limma") -> ModeratedFit:
-    trend, robust = RUNS[run]
+    trend, robust, estimator = RUNS[run]
     return moderated_statistics(
-        model_fit(case), trend=trend, robust=robust, f_statistic=f_statistic
+        model_fit(case),
+        trend=trend,
+        robust=robust,
+        f_statistic=f_statistic,
+        prior_estimator=estimator,  # type: ignore[arg-type]
     )
 
 
-MODEL_RUNS = [(case, run) for case in MODEL_CASES for run in runs(case)]
-VARIANCE_RUNS = [(case, run) for case in VARIANCE_CASES for run in runs(case)]
+def tolerance_of(run: str) -> float:
+    # The robust moment estimator and the likelihood estimator are iterative.
+    _, robust, estimator = RUNS[run]
+    return CLOSE if robust or estimator != "moments" else EXACT
+
+
+MODEL_RUNS = [
+    (case, run)
+    for case in MODEL_CASES
+    for run in runs(case)
+    if (case, run) not in DIFFERS
+]
+HYPERPARAMETER_RUNS = [
+    (case, run)
+    for case in VARIANCE_CASES
+    for run in runs(case)
+    if (case, run) not in DIFFERS
+]
 
 
 @pytest.mark.parametrize(("case", "run"), MODEL_RUNS)
 def test_moderated_statistics_match_limma(case: str, run: str) -> None:
     eb = moderated(case, run)
-    tolerance = CLOSE if RUNS[run][1] else EXACT
+    tolerance = tolerance_of(run)
     for key, ours in (
         ("s2.prior", eb.prior_variance),
         ("df.prior", eb.prior_df),
@@ -187,10 +263,16 @@ def test_moderated_statistics_match_limma(case: str, run: str) -> None:
 
 @pytest.mark.parametrize(("case", "run"), MODEL_RUNS)
 def test_treat_matches_limma(case: str, run: str) -> None:
-    trend, robust = RUNS[run]
+    trend, robust, estimator = RUNS[run]
     fit = model_fit(case)
-    result = treat(fit, lfc=LFC, trend=trend, robust=robust)
-    tolerance = CLOSE if robust else EXACT
+    result = treat(
+        fit,
+        lfc=LFC,
+        trend=trend,
+        robust=robust,
+        prior_estimator=estimator,  # type: ignore[arg-type]
+    )
+    tolerance = tolerance_of(run)
     check(case, run, "treat.p", result.p_value, tolerance)
     # limma reports t = 0 where a coefficient is NaN; it is NaN here
     nan = np.isnan(fit.coefficients)
@@ -208,18 +290,17 @@ def test_exact_f_statistics_match_limma_on_group_means(case: str, run: str) -> N
     # coded, and with group means as coefficients limma's correlation matrix is
     # every gene's own; limma's F of that coding is the exact F-statistic.
     exact = moderated(case, run, "exact")
-    tolerance = CLOSE if RUNS[run][1] else EXACT
+    tolerance = tolerance_of(run)
     check(case, run, "means.F", exact.f_statistic, tolerance)
     check(case, run, "means.F.p.value", exact.f_p_value, tolerance)
     approximate = moderated(case, run)
     assert np.nanmax(np.abs(exact.f_statistic / approximate.f_statistic - 1)) > 1e-3
 
 
-@pytest.mark.parametrize(("case", "run"), VARIANCE_RUNS)
+@pytest.mark.parametrize(("case", "run"), HYPERPARAMETER_RUNS)
 def test_hyperparameters_match_limma(case: str, run: str) -> None:
     data = reference(case)
-    tails = (0.1, 0.2) if run == "robust_wide" else (0.05, 0.1)
-    robust = run != "moments"
+    robust, estimator, tails = VARIANCE_RUNS[run]
     covariate = data.get("covariate")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -229,8 +310,18 @@ def test_hyperparameters_match_limma(case: str, run: str) -> None:
             covariate=covariate,
             robust=robust,
             winsor_tail_p=tails,
+            prior_estimator=estimator,  # type: ignore[arg-type]
         )
-        if robust:
+        if estimator == "likelihood":
+            fit = fit_f_distribution_likelihood(
+                data["v"],
+                data["d"],
+                covariate=covariate,
+                prior_weights=data.get("pw"),
+                robust=robust,
+            )
+            parts = dict(zip(("scale", "df2", "df2.shrunk", "df2.outlier"), fit))
+        elif robust:
             fit = fit_f_distribution_robust(
                 data["v"], data["d"], covariate=covariate, winsor_tail_p=tails
             )
@@ -245,7 +336,7 @@ def test_hyperparameters_match_limma(case: str, run: str) -> None:
         else:
             moments = fit_f_distribution(data["v"], data["d"], covariate=covariate)
             parts = {"scale": moments.scale, "df2": moments.df2}
-    tolerance = CLOSE if robust else EXACT
+    tolerance = CLOSE if robust or estimator == "likelihood" else EXACT
     check(case, run, "var.post", squeezed.posterior_variance, tolerance)
     check(case, run, "var.prior", squeezed.prior_variance, tolerance)
     check(case, run, "df.prior", squeezed.prior_df, tolerance)
@@ -378,17 +469,23 @@ def test_exact_f_statistic_is_invariant_to_coding_and_matches_group_means() -> N
     np.testing.assert_allclose(exact.f_statistic, limma_f.f_statistic, rtol=1e-13)
 
 
-@pytest.mark.parametrize("run", list(RUNS))
+# Each option set with each estimator named.
+EXPLICIT_RUNS = [run for run in RUNS if not run.endswith("_default")]
+
+
+def options(run: str) -> dict[str, Any]:
+    trend, robust, estimator = RUNS[run]
+    return {"trend": trend, "robust": robust, "prior_estimator": estimator}
+
+
+@pytest.mark.parametrize("run", EXPLICIT_RUNS)
 def test_results_do_not_depend_on_the_order_of_features(run: str) -> None:
     data = reference("two_groups")
-    trend, robust = RUNS[run]
     order = np.random.default_rng(5).permutation(data["y"].shape[0])
     permuted = moderated_statistics(
-        fit_linear_model(data["y"][order].T, data["X"]), trend=trend, robust=robust
+        fit_linear_model(data["y"][order].T, data["X"]), **options(run)
     )
-    eb = moderated_statistics(
-        fit_linear_model(data["y"].T, data["X"]), trend=trend, robust=robust
-    )
+    eb = moderated_statistics(fit_linear_model(data["y"].T, data["X"]), **options(run))
     for name in ("posterior_variance", "df_total", "t", "p_value", "lods"):
         np.testing.assert_allclose(
             getattr(permuted, name), getattr(eb, name)[order], rtol=1e-10
@@ -398,21 +495,17 @@ def test_results_do_not_depend_on_the_order_of_features(run: str) -> None:
     )
 
 
-@pytest.mark.parametrize("run", list(RUNS))
+@pytest.mark.parametrize("run", EXPLICIT_RUNS)
 def test_rescaling_the_data_rescales_the_variances(run: str) -> None:
     # Multiplying expression by c multiplies variances by c^2 (and the mean
     # expression, the trend covariate, by c); the tests do not change.
     data = reference("two_groups")
-    trend, robust = RUNS[run]
-    eb = moderated_statistics(
-        fit_linear_model(data["y"].T, data["X"]), trend=trend, robust=robust
-    )
+    eb = moderated_statistics(fit_linear_model(data["y"].T, data["X"]), **options(run))
     # stdev_coef_lim bounds standard deviations in the units of the data
     scaled = moderated_statistics(
         fit_linear_model(4.0 * data["y"].T, data["X"]),
-        trend=trend,
-        robust=robust,
         stdev_coef_lim=(0.4, 16.0),
+        **options(run),
     )
     np.testing.assert_allclose(
         scaled.posterior_variance, 16.0 * eb.posterior_variance, rtol=1e-10
@@ -426,12 +519,10 @@ def test_features_without_observations_do_not_change_the_others() -> None:
     # limma's eBayes(trend=TRUE) stops on the NaN mean of such a feature.
     data = reference("two_groups")
     y = np.vstack([data["y"], np.full((1, data["y"].shape[1]), np.nan)])
-    for trend, robust in RUNS.values():
-        eb = moderated_statistics(
-            fit_linear_model(y.T, data["X"]), trend=trend, robust=robust
-        )
+    for run in EXPLICIT_RUNS:
+        eb = moderated_statistics(fit_linear_model(y.T, data["X"]), **options(run))
         base = moderated_statistics(
-            fit_linear_model(data["y"].T, data["X"]), trend=trend, robust=robust
+            fit_linear_model(data["y"].T, data["X"]), **options(run)
         )
         assert np.isnan(eb.t[-1]).all() and np.isnan(eb.f_statistic[-1])
         # the fit with a missing feature takes another linear model code path
@@ -478,6 +569,30 @@ def test_at_most_two_variances_are_not_moderated() -> None:
         assert squeezed.prior_df == 0.0
         np.testing.assert_array_equal(squeezed.posterior_variance, v)
         np.testing.assert_array_equal(squeezed.prior_variance, v)
+
+
+def test_one_or_two_features_with_zero_variance_give_nan_not_an_error() -> None:
+    # One or two features are not moderated, so an all-zero feature keeps a zero
+    # prior variance: its t-statistic is 0 / 0. Without a finite t-statistic the
+    # coefficients' prior variance is limma's default, the reciprocal of the first
+    # prior variance: 1 / 0, infinite. limma 3.62.1 gives these values; the
+    # *_without_variation fixtures check every output against it.
+    one = fit_linear_model(np.zeros((3, 1)), np.ones((3, 1)))
+    y = np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]])
+    two = fit_linear_model(y, np.ones((3, 1)))
+    for trend in (False, True):
+        for robust in (False, True):
+            eb = moderated_statistics(one, trend=trend, robust=robust)
+            assert np.isnan(eb.t).all() and np.isnan(eb.lods).all()
+            np.testing.assert_array_equal(eb.prior_variance, 0.0)
+            assert eb.prior_df == 0.0
+            np.testing.assert_array_equal(eb.coefficient_prior_variance, np.inf)
+            eb = moderated_statistics(two, trend=trend, robust=robust)
+            # The second feature keeps its own variance, 1 on 2 df: t = sqrt(3).
+            assert np.isnan(eb.t[0, 0])
+            assert eb.t[1, 0] == pytest.approx(np.sqrt(3.0), rel=1e-14)
+            assert np.isfinite(eb.coefficient_prior_variance).all()
+            assert treat(one, trend=trend, robust=robust).p_value[0, 0] == 1.0
 
 
 def test_one_usable_variance_gives_zero_prior_df() -> None:
@@ -562,11 +677,185 @@ def test_robust_fit_of_few_features_is_the_moment_fit() -> None:
     assert np.isfinite(wide.tail_p_value).all()
 
 
+def test_default_estimator_follows_limmas_rule_for_fits() -> None:
+    # Equal residual df: the method of moments, bit for bit, as limma's eBayes with
+    # its default legacy = NULL; unequal residual df: the likelihood estimator.
+    fit = model_fit("two_groups")
+    default = moderated_statistics(fit, trend=True)
+    moments = moderated_statistics(fit, trend=True, prior_estimator="moments")
+    assert default.prior_estimator == moments.prior_estimator == "moments"
+    for name in ("prior_variance", "prior_df", "posterior_variance", "t", "lods"):
+        np.testing.assert_array_equal(getattr(default, name), getattr(moments, name))
+    unequal = model_fit("missing_values_all_df")
+    assert np.unique(unequal.df_residual).size > 1
+    default = moderated_statistics(unequal, robust=True)
+    likelihood = moderated_statistics(
+        unequal, robust=True, prior_estimator="likelihood"
+    )
+    assert default.prior_estimator == "likelihood"
+    np.testing.assert_array_equal(default.t, likelihood.t)
+    assert treat(unequal).prior_estimator == "likelihood"
+    assert treat(unequal, prior_estimator="moments").prior_estimator == "moments"
+    assert "prior_estimator='likelihood'" in repr(default)
+
+
+def test_default_estimator_compares_the_positive_df_exactly() -> None:
+    # limma's legacy = NULL (found by probing): df of zero do not count, the df of a
+    # missing variance does, and any difference in the df counts.
+    v = 0.4 * np.random.default_rng(12).f(4.0, 8.0, 40)
+
+    def estimator_of(variances: np.ndarray, df: np.ndarray) -> str:
+        chosen = squeeze_variances(variances, df).prior_df
+        moments = squeeze_variances(variances, df, prior_estimator="moments")
+        likelihood = squeeze_variances(variances, df, prior_estimator="likelihood")
+        assert moments.prior_df != likelihood.prior_df
+        assert chosen in (moments.prior_df, likelihood.prior_df)
+        return "moments" if chosen == moments.prior_df else "likelihood"
+
+    d = np.full(40, 4.0)
+    assert estimator_of(v, d) == "moments"
+    assert estimator_of(v, np.r_[np.zeros(3), d[3:]]) == "moments"
+    assert estimator_of(np.r_[np.nan, v[1:]], np.r_[3.0, d[1:]]) == "likelihood"
+    assert estimator_of(v, np.r_[4.0 + 1e-12, d[1:]]) == "likelihood"
+    # A df below 1e-15 counts before it is set to zero for the fit.
+    assert estimator_of(v, np.r_[1e-16, d[1:]]) == "likelihood"
+
+
+def test_likelihood_search_ends_where_limmas_does() -> None:
+    # limma searches d0 by R's optimize over v = d0 / (d0 + 2) in [1/2, 0.9998]
+    # (found by probing). When the likelihood keeps rising towards an end, the golden
+    # section steps stop where limma 3.62.1 stops for every such input it was given:
+    # at d0 = 2.0003664572957871 and d0 = 8134.8447803826621.
+    rng = np.random.default_rng(0)
+    spread = 0.5 * rng.f(20.0, 0.3, 1000)
+    assert fit_f_distribution_likelihood(spread, 20.0).df2 == 2.0003664572957871
+    narrow = 0.5 * np.exp(rng.normal(0.0, 0.01, 1000))
+    assert fit_f_distribution_likelihood(narrow, 4.0).df2 == 8134.8447803826621
+
+
+def test_variances_that_are_not_usable_do_not_change_the_likelihood_fit() -> None:
+    # Missing variances, df of zero or below 0.01, and zero prior weights take no
+    # part in the fit, robust or not, nor in a trend when their covariate is NaN.
+    rng = np.random.default_rng(4)
+    d = rng.choice([2.0, 3.0, 6.0], 300)
+    v = 0.5 * rng.f(d, 6.0)
+    v[:6] *= 30.0
+    more_v = np.r_[v, np.nan, 0.7, 0.2, 0.9]
+    more_d = np.r_[d, 4.0, 0.0, 0.005, 3.0]
+    weights = np.r_[np.ones(300), 1.0, 1.0, 1.0, 0.0]
+    for robust in (False, True):
+        base = fit_f_distribution_likelihood(v, d, robust=robust)
+        more = fit_f_distribution_likelihood(
+            more_v, more_d, prior_weights=weights, robust=robust
+        )
+        assert more.scale == base.scale and more.df2 == base.df2
+        np.testing.assert_array_equal(more.df2_shrunk[:300], base.df2_shrunk)
+        np.testing.assert_array_equal(more.df2_shrunk[300:], base.df2)
+        np.testing.assert_array_equal(more.df2_outlier, base.df2_outlier)
+    assert np.isfinite(base.df2_outlier)  # the robust fit found outliers
+    z = rng.uniform(0.0, 10.0, 300)
+    base = fit_f_distribution_likelihood(v, d, covariate=z, robust=True)
+    more = fit_f_distribution_likelihood(
+        np.r_[v, np.nan, 0.7, 0.2],
+        np.r_[d, 4.0, 0.005, 3.0],
+        covariate=np.r_[z, np.nan, np.nan, np.nan],
+        prior_weights=np.r_[np.ones(302), 0.0],
+        robust=True,
+    )
+    assert more.df2 == base.df2
+    np.testing.assert_array_equal(more.scale[:300], base.scale)
+    assert np.isnan(more.scale[300:]).all()
+
+
+def test_robust_likelihood_fit_leaves_out_variances_that_are_not_usable() -> None:
+    # limma 3.62.1 enters them as zero variances; its fit of the usable variances
+    # alone is CytePool's fit of all of them.
+    data = reference("robust_unusable")
+    fit = fit_f_distribution_likelihood(data["v"], data["d"], robust=True)
+    keep = ~np.isnan(data["v"]) & (data["d"] >= 0.01)
+    assert not keep.all()
+    run = "likelihood_robust"
+    check("robust_unusable", run, "usable scale", fit.scale, CLOSE)
+    check("robust_unusable", run, "usable df2", fit.df2, CLOSE)
+    check("robust_unusable", run, "usable df2.shrunk", fit.df2_shrunk[keep], CLOSE)
+    check("robust_unusable", run, "usable df2.outlier", fit.df2_outlier, CLOSE)
+    np.testing.assert_array_equal(fit.df2_shrunk[~keep], fit.df2)
+    assert abs(fit.df2 / limma("robust_unusable", run, "df2", (1,))[0] - 1) > 1e-3
+
+
+def test_robust_likelihood_fit_without_outliers_is_the_first_fit() -> None:
+    v = 0.5 * distributions.f_ppf((np.arange(200) + 0.5) / 200, 4.0, 10.0)
+    plain = fit_f_distribution_likelihood(v, 4.0)
+    robust = fit_f_distribution_likelihood(v, 4.0, robust=True)
+    assert (robust.scale, robust.df2) == (plain.scale, plain.df2)
+    assert np.isnan(robust.df2_outlier) and np.isnan(plain.df2_outlier)
+    np.testing.assert_array_equal(robust.df2_shrunk, plain.df2)
+
+
+def test_robust_fit_without_genes_lacking_residual_df_is_limmas_of_the_others() -> None:
+    # The deliberate difference: genes without residual df take no part in the
+    # robust likelihood estimator's test for outliers, where limma counts them. With
+    # a constant prior, CytePool's robust moderation of all genes is then limma's of
+    # the other genes alone, and differs from limma's of all genes.
+    case, run = "no_residual_df", "robust_default"
+    eb = moderated(case, run)
+    keep = reference(case)["keep"] == 1
+    assert not keep.all() and eb.prior_estimator == "likelihood"
+    prior_df = eb.prior_df[keep] if np.ndim(eb.prior_df) else eb.prior_df
+    for key, ours in (
+        ("s2.prior", eb.prior_variance),
+        ("df.prior", prior_df),
+        ("s2.post", eb.posterior_variance[keep]),
+        ("df.total", eb.df_total[keep]),
+        ("t", eb.t[keep]),
+        ("p.value", eb.p_value[keep]),
+    ):
+        check(case, run, f"usable {key}", ours, CLOSE)
+    everything = reference(case)[f"limma {run} df.prior"]
+    everything = everything[keep] if everything.size > 1 else everything
+    assert np.max(np.abs(np.asarray(prior_df) / everything - 1.0)) > 1e-3
+
+
+@pytest.mark.parametrize("case", WEIGHTED_LOWESS_CASES)
+def test_trend_smoother_matches_limmas_weighted_lowess(case: str) -> None:
+    # Ties, windows narrower than 1e-7, windows whose x barely vary, two distant
+    # clusters, and weights from 1e-8 to 100 as in the trend. The local fits are
+    # closed forms, compared relative to max(|value|, 1).
+    data = reference(f"weighted_lowess_{case}")
+    x, y, w = data["lowess_x"], data["lowess_y"], data["lowess_w"]
+    fitted = _weighted_lowess(x, y, w, float(data["span"][0]))
+    assert_agrees(fitted, data["limma weighted_lowess fitted"], EXACT, floor=1.0)
+
+
+def test_two_variances_above_zero_give_a_constant_fit_without_robust_stage() -> None:
+    # As limma's fitFDistUnequalDF1 (found by probing; the two_positive fixture
+    # checks it against limma): with two usable variances above zero, the others
+    # zero, the location is constant whatever the covariate, and a robust fit is the
+    # first fit. Variances that are not usable change neither, where limma returns
+    # NaN.
+    v = np.r_[0.5, 0.9, np.zeros(10)]
+    d = np.r_[4.0, 2.0, np.full(10, 3.0)]
+    z = np.arange(12.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # mostly zero variances
+        plain = fit_f_distribution_likelihood(v, d)
+        for robust in (False, True):
+            fit = fit_f_distribution_likelihood(v, d, covariate=z, robust=robust)
+            np.testing.assert_array_equal(fit.scale, plain.scale)
+            assert fit.df2 == plain.df2 and np.isnan(fit.df2_outlier)
+        more = fit_f_distribution_likelihood(
+            np.r_[v, np.nan, 0.3], np.r_[d, 3.0, 0.004], covariate=np.r_[z, np.nan, 5.0]
+        )
+    np.testing.assert_array_equal(more.scale, plain.scale)
+    assert more.df2 == plain.df2
+
+
 def test_fit_object_fields_are_read_only() -> None:
     eb = moderated("two_groups", "trend")
     with pytest.raises(ValueError, match="read-only"):
         eb.t[0, 0] = 1.0
     assert "n_features=100" in repr(eb) and "prior_df=" in repr(eb)
+    assert "prior_estimator='moments'" in repr(eb)
     assert "lfc=" in repr(treat(model_fit("two_groups")))
 
 
@@ -668,10 +957,88 @@ FIT_DATA = reference("two_groups")
             ([0.1, 0.2, 0.3], 4.0),
             {"prior_estimator": "unequal"},
             ValueError,
-            "fitFDistUnequalDF1",
+            "prior_estimator must be 'moments'.*'likelihood'.*or None",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, 0.2, 0.3], 4.0),
+            {"prior_weights": [1.0, -1.0, 1.0]},
+            ValueError,
+            "prior_weights must be finite and non-negative",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, 0.2, 0.3], 4.0),
+            {"prior_weights": [1.0, np.nan, 1.0]},
+            ValueError,
+            "prior_weights must be finite",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, 0.2, 0.3], 4.0),
+            {"prior_weights": [1.0, 1.0]},
+            ValueError,
+            "one value per variance",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, 0.2, 0.3], 4.0),
+            {"robust": "yes"},
+            TypeError,
+            "robust must be a bool",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, np.nan, 0.3], [4.0, 4.0, 0.005]),
+            {},
+            ValueError,
+            "at least two usable variances above zero .* got 1",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, 0.2, 0.3], 4.0),
+            {"prior_weights": [0.0, 0.0, 1.0]},
+            ValueError,
+            "at least two usable variances above zero .* got 1",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.5, 0.0, 0.0, 0.0], 4.0),
+            {},
+            ValueError,
+            "at least two usable variances above zero .* got 1",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.0, 0.0, 0.0], 4.0),
+            {},
+            ValueError,
+            "at least two usable variances above zero .* got 0",
+        ),
+        (
+            fit_f_distribution_likelihood,
+            ([0.1, 0.2, 0.3], [4.0, 4.0, 0.005]),
+            {"covariate": [1.0, np.nan, 2.0]},
+            ValueError,
+            "NaN only where the variance is NaN, has fewer than 0.01 degrees",
+        ),
+        (
+            squeeze_variances,
+            ([0.1, np.nan, np.nan, 0.2], [4.0, 4.0, 3.0, 0.0]),
+            {},
+            ValueError,
+            "squeezeVar stops here",
+        ),
+        (
+            squeeze_variances,
+            ([0.5, 0.0, 0.0, 0.0], [4.0, 4.0, 5.0, 3.0]),
+            {},
+            ValueError,
+            "above zero .* got 1; limma's fitFDistUnequalDF1 returns NA",
         ),
     ],
 )
+@pytest.mark.filterwarnings("ignore:more than half of the variances:RuntimeWarning")
 def test_hyperparameter_functions_reject_invalid_input(
     function: Any,
     arguments: tuple[Any, ...],
@@ -722,6 +1089,13 @@ def test_hyperparameter_functions_reject_invalid_input(
         (treat, {"fc": -1.0}, ValueError, "positive and finite"),
         (treat, {"lfc": np.nan}, ValueError, "finite"),
         (treat, {"robust": "yes"}, TypeError, "robust must be a bool"),
+        (treat, {"prior_estimator": "fitFDist"}, ValueError, "prior_estimator must"),
+        (
+            moderated_statistics,
+            {"prior_estimator": True},
+            ValueError,
+            "prior_estimator must be 'moments'",
+        ),
     ],
 )
 def test_statistics_reject_invalid_input(
