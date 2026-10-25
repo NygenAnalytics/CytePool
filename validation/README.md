@@ -27,6 +27,10 @@ tier, and a few use a bound derived for their case.
   statsmodels or zarr; each script lists what it imports at the top.
 - R 4.4 or newer with the Bioconductor and CRAN packages a script names. Set `RSCRIPT`
   to the `Rscript` executable when it is not on `PATH`.
+- `interferon_stimulated_pbmcs.py` runs on published data: on its first run it
+  downloads 77 MB from GEO (series GSE96583) into a cache directory outside the
+  repository, and it checks the SHA-256 of every file before reading it. Its docstring
+  says where the files go and how to choose another directory.
 
 Run a script from the repository root, against the working tree:
 

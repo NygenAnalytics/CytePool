@@ -17,13 +17,13 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-25** for the five scripts on
 cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`
-and `cube_fingerprints.py`), for `linear_models.py`, `voom.py` and
-`differential_expression.py`, and for `design.py` and `empirical_bayes.py`, which
-printed the same tables again after changes to the code they check; and on
-**2026-10-24** for the others, with the reference versions given in each section.
-Every script exited without a failure. Each row below is a family of checks: it
-gives the number of printed checks it covers and the largest difference among them.
-Run a script to see every check.
+and `cube_fingerprints.py`), for `linear_models.py`, `voom.py`,
+`differential_expression.py` and `interferon_stimulated_pbmcs.py`, and for
+`design.py` and `empirical_bayes.py`, which printed the same tables again after
+changes to the code they check; and on **2026-10-24** for the others, with the
+reference versions given in each section. Every script exited without a failure.
+Each row below is a family of checks: it gives the number of printed checks it
+covers and the largest difference among them. Run a script to see every check.
 
 ## Summary
 
@@ -41,13 +41,18 @@ Run a script to see every check.
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
+| [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **735** | **697 pass, none failed; 21 information, 16 deliberate differences, 1 control** | | |
+| **All** | | | **776** | **714 pass, none failed; 45 information, 16 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
-`time` on the machine described under [](#validation-timings).
+`time` on the machine described under [](#validation-timings). For
+`interferon_stimulated_pbmcs.py`, the run time is with its data downloaded already,
+and the peak memory is the largest that the script measured itself: it restarts the
+peak of its own process before it runs `limma_voom`, which hides the earlier, higher
+peak from GNU `time`.
 
 ## How to read the tables
 
@@ -518,6 +523,135 @@ Deliberate differences, in the NK cells of both paired cases:
   against donor D6, the values of the third row of the table; CytePool reports it as
   not estimable.
 
+## Differential expression on published data
+
+[`validation/interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py)
+runs the whole path from cells to differential-expression tables on published
+single-cell data, and compares it with limma on the same pseudobulk counts. The data
+are batch 2 of GEO series
+[GSE96583](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) (Kang et al.
+2018, *Nature Biotechnology* 36, 89-94): peripheral blood mononuclear cells (PBMCs) of
+8 lupus patients, each split into an untreated culture and one stimulated with
+interferon-beta for 6 hours, sequenced with 10x Genomics, the cells assigned to their
+donors by genotype. The script downloads the three files it needs (77 MB) into a cache
+directory outside the repository and checks their SHA-256 checksums. It reads them as
+data, without extracting the archive, and stops if a fact it relies on fails: the
+dimensions of the two count matrices, the gene identifiers, the number of cells of
+each type, and the rule that joins each cell to the published cell table by its
+condition and barcode (every cell matches one row and every row one cell; nothing is
+joined by position).
+
+`from_cells` pools the 24,673 singlets that have a cell type into a cube of 16 samples
+(8 donors, control and stimulated) x 8 cell types x 35,635 genes, keyed by Ensembl id
+with symbols, and its counts are checked against sums of the cells that scipy computes
+independently. `limma_voom` then tests stimulated against control in every cell type,
+with the paired design `~ donor + condition` and its defaults: samples with fewer than
+10 cells (`min_cells`) are left out, then come `filterByExpr`, TMM and voom, whose
+LOWESS span is chosen from the number of genes tested by limma's `chooseLowessSpan`
+rule, as limma's voom does by default since limma 3.66. R runs the limma User's Guide
+workflow on the counts, samples and cell numbers exported from the cube: the same
+`min_cells` rule, then `filterByExpr`, `calcNormFactors`, `voom`, `lmFit`,
+`contrasts.fit`, `eBayes` and `topTable(sort.by = "none")`, all with R's defaults
+except two settings that differ between limma versions: voom gets the span that the
+cell type's record in the CytePool result gives, with `adaptive.span = FALSE`, and
+`eBayes` gets `legacy = TRUE`. R also computes `chooseLowessSpan` of the number of
+genes tested, the span its voom would choose itself, and that span must be the same.
+Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0; CytePool ran with Python 3.13.12,
+numpy 2.5.4 and numba 0.68.0, and scipy 1.18.1 read the count matrices.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Counts of the 16 samples x 8 cell types x 35,635 genes of the cube | sums of the cells, by scipy | 0 counts differ | 0 | 1 pass |
+| Samples used, genes tested, aliased columns, residual and prior df, and voom's span, in the 8 cell types | `filterByExpr`, `lmFit`, `eBayes`, `chooseLowessSpan` | 0 mismatches | 0 | 8 pass |
+| logFC, AveExpr, t, P.Value, adj.P.Val and B of every gene tested in the 8 cell types | `topTable` | 6.6e-13 | 1e-10 | 8 pass |
+| Per cell type: genes tested and called, the interferon response, the negative control (tables below) | MSigDB, none | n/a | n/a | 24 information |
+
+Differences are scaled as in the section above. The dendritic cells are fitted without
+2 of the 16 samples, and the megakaryocytes without 4, among them both samples of donor
+107: that donor's column of the design is then zero, and both programs leave it out of
+the fit.
+
+The recovery of a pre-specified list of interferon-stimulated genes is measured with
+MSigDB's Hallmark
+[interferon-alpha response](https://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_INTERFERON_ALPHA_RESPONSE.html)
+gene set (97 genes, MSigDB v2026.2.Hs; Liberzon et al. 2015, *Cell Systems* 1,
+417-425; CC BY 4.0), matched to the data by symbol; two of its genes have earlier
+symbols in the data, FAM46A for TENT5A and WARS for WARS1. Up and down are calls at a
+5% false discovery rate:
+
+| Cell type | Cells | Samples used (left out) | Genes tested | voom span | Up | Down | Hallmark genes tested | Up | Down | Median log2 fold change |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| B cells | 2,573 | 16 (0) | 2,768 | 0.484 | 498 | 399 | 76 | 73 | 2 | 2.73 |
+| CD14+ monocytes | 5,385 | 16 (0) | 5,125 | 0.450 | 1,619 | 1,549 | 92 | 89 | 3 | 3.26 |
+| CD4 T cells | 10,389 | 16 (0) | 6,295 | 0.440 | 991 | 826 | 86 | 82 | 1 | 2.41 |
+| CD8 T cells | 2,042 | 16 (0) | 1,453 | 0.528 | 233 | 147 | 55 | 54 | 0 | 2.51 |
+| Dendritic cells | 432 | 14 (2) | 2,281 | 0.496 | 454 | 285 | 76 | 68 | 0 | 3.27 |
+| FCGR3A+ monocytes | 1,599 | 16 (0) | 2,947 | 0.480 | 814 | 663 | 84 | 82 | 1 | 2.42 |
+| Megakaryocytes | 260 | 12 (4) | 704 | 0.590 | 63 | 16 | 48 | 35 | 0 | 2.48 |
+| NK cells | 1,993 | 16 (0) | 2,292 | 0.496 | 374 | 300 | 68 | 66 | 0 | 2.13 |
+
+In the six cell types with all 16 samples, 95% to 98% of the Hallmark genes tested are
+called up, with median log2 fold changes of 2.1 to 3.3, that is 4 to 10 times the
+expression of the controls; in the dendritic cells and megakaryocytes, with fewer cells
+and samples, 89% and 73% are. The only Hallmark genes called down are IL4R, in four
+cell types, CD74 in the B cells, and PROCR and IFI30 in the CD14+ monocytes.
+
+The response to interferon is so large that recovering it says little about error
+control; a negative control, which needs no reference, does. In each cell type, the
+control samples that its fit used are split into two halves in every possible way,
+each split once, and every split is fitted with `~ split`, so that a call compares
+donors, not conditions: 35 splits of 4 against 4 samples, or 10 splits of 3 against 3
+in the dendritic cells and megakaryocytes, where 2 control samples have fewer than 10
+cells. If the donors did not differ, the Benjamini-Hochberg procedure at a 5% false
+discovery rate would make any call in an analysis with a probability of at most about
+5%, so in about 12 of these 230 analyses or fewer.
+
+| Cell type | Splits | Splits with calls | Calls | Most in one split | Genes called in more than one split |
+| --- | --- | --- | --- | --- | --- |
+| B cells | 35 | 4 | 4 | 1 | none |
+| CD14+ monocytes | 35 | 1 | 6 | 6 | none |
+| CD4 T cells | 35 | 7 | 123 | 44 | OASL, LMNA, DDIT4, ANXA2R (3 splits); YIPF5, FBLN5, RGS1, TPRG1, CD27, C16orf54, SCML4, NUCB2, SUN2, PASK, FASLG, FAM46C (2) |
+| CD8 T cells | 35 | 5 | 13 | 6 | TMSB10 (2) |
+| Dendritic cells | 10 | 2 | 2 | 1 | none |
+| FCGR3A+ monocytes | 35 | 2 | 5 | 3 | none |
+| Megakaryocytes | 10 | 0 | 0 | 0 | none |
+| NK cells | 35 | 2 | 3 | 2 | none |
+
+23 of the 230 analyses made a call, 156 calls in all, and most of them follow
+differences between the donors. Of the five splits that put donors 1244, 1256 and 1488
+in one group with a fourth donor, the three in which that donor is 1016, 1039 or 107
+make 117 calls in the CD4 T cells, among them genes of regulatory and memory T cells
+(TIGIT, TNFRSF4, TNFRSF18, FASLG, LMNA, RGS1), which suggests that the CD4 T cells of
+these donors differ in composition. The split of donors 101, 107, 1244 and 1488 against
+the others calls interferon-stimulated genes (ISG15, IFI6, IFIT1, IFIT3, LY6E, IFITM3)
+in the monocytes and the CD4 T cells of the untreated cultures, consistent with lupus
+patients differing in interferon activity. Apart from those three CD4 T splits, no
+analysis makes more than 6 calls. The donors appear to be all female, so sex does not
+divide them: XIST is counted in all 16 samples, and none of the Y-chromosome genes
+RPS4Y1, DDX3Y, KDM5D, UTY and EIF1AY in any.
+
+The script times each part on the machine described under [](#validation-timings),
+with numba, OpenMP, OpenBLAS and MKL limited to 2 threads, the data downloaded already
+and numba's cache of compiled routines filled:
+
+| Part | Seconds |
+| --- | --- |
+| Reading and checking the files, and keeping the 24,673 singlets with a cell type | 1.30 |
+| `from_cells`: 24,673 cells x 35,635 genes (14.2 million stored counts) into the cube | 0.24 |
+| `limma_voom` on the 8 cell types, first call in the process | 0.32 |
+| `limma_voom` on the 8 cell types, second call | 0.26 |
+| R: the limma workflow on the 8 cell types, from the counts in memory | 1.42 |
+| The negative control: `limma_voom` on the 230 splits, one cell type each | 3.61 |
+
+With an empty numba cache, as after installing or changing the package, the first call
+of `limma_voom` compiles its routines too, and took 17 s in a run with
+`NUMBA_CACHE_DIR` set to an empty directory; later processes load them from the cache.
+The Python process held at most 617 MiB while it read the files and pooled the
+cells. Once the cell-level matrices were released it held 232 MiB, and while
+`limma_voom` ran at most 252 MiB, so the analysis of the 8 cell types added
+20 MiB to a process that held the cube; from then to the end, with the negative
+control and the export to R, it held at most 321 MiB. R peaked at 227 MiB.
+
 ## Distributions and special functions
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
@@ -669,6 +803,9 @@ python validation/linear_models.py --benchmark
 python validation/empirical_bayes.py
 python validation/voom.py
 python validation/differential_expression.py
+# Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583
+# unless --data or GSE96583_DATA names another directory outside the repository.
+python validation/interferon_stimulated_pbmcs.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python \
