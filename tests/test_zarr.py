@@ -123,11 +123,42 @@ def test_reads_the_arrays_zarr_python_wrote(
     keys = [-1, (slice(1, 4), slice(None, None, -1)), (Ellipsis, 1), (slice(4, 0, -3),)]
     for key in keys:
         assert_same_bits(array[key], values[key])
+    rows, columns = [4, 0, 3, 3], [False, True, True]  # unsorted rows, one repeated
+    assert_same_bits(array.oindex[rows, columns], values[np.ix_(rows, [1, 2])])
     # Some chunks equal the fill value, so zarr-python did not store them.
     stored = [p for p in path.rglob("*") if p.is_file() and p.name != "zarr.json"]
     chunk_shape = document["chunk_grid"]["configuration"]["chunk_shape"]
     grid = [math.ceil(n / c) for n, c in zip(document["shape"], chunk_shape)]
     assert 0 < len(stored) < math.prod(grid)
+
+
+def test_orthogonal_selections_read_what_zarr_python_read() -> None:
+    # validation/cube_reads.py had zarr-python write small.zarr (int32 of shape
+    # (3, 5, 11) in chunks of (2, 2, 4), fill value 7, gzip) and saved what its
+    # Array.oindex read for each key of keys.json: positions in any order, repeated
+    # and negative, a mask, slices, integers and an empty selection.
+    fixtures = Path(__file__).parent / "data" / "cube_reads"
+    array = open_array(fixtures / "small.zarr")
+    keys = json.loads((fixtures / "keys.json").read_text())
+    with np.load(fixtures / "oindex.npz") as data:
+        expected = dict(data)
+    assert len(keys) == len(expected) == 7
+
+    def index(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return item
+        if "slice" in item:
+            return slice(*item["slice"])
+        if "mask" in item:
+            return np.array(item["mask"], dtype=bool)
+        return np.array(item["positions"], dtype=np.int64)
+
+    for number, key in enumerate(keys):
+        result = array.oindex[tuple(index(item) for item in key)]
+        assert_same_bits(result, expected[f"key {number}"])
+    # The last key lies in the one chunk zarr-python left unstored: the fill value.
+    assert not (fixtures / "small.zarr" / "c" / "1" / "1" / "1").exists()
+    assert (expected["key 6"] == 7).all()
 
 
 # Selections against numpy.
@@ -171,6 +202,8 @@ def test_integer_and_slice_selections_match_numpy(
     result, expected_result = array[key], values[key]
     assert type(result) is type(expected_result)  # a numpy scalar for (1, 2, 0)
     assert_same_bits(result, expected_result)
+    # A new array, which owns its memory, so a read-only flag set on it holds.
+    assert not isinstance(result, np.ndarray) or result.flags.owndata
 
 
 def test_reads_open_only_the_chunks_a_selection_touches(
@@ -194,10 +227,11 @@ def test_reads_open_only_the_chunks_a_selection_touches(
 def test_selection_errors(grid: tuple[Any, np.ndarray]) -> None:
     array, _ = grid
     for key, error, message in [
-        ([0, 1], TypeError, "integers, slices and '...', not list"),
+        ([0, 1], TypeError, "integers, slices and '...', not list; use array.oindex"),
         (np.array([0, 1]), TypeError, "not ndarray"),
         (None, TypeError, "not NoneType"),
-        (True, TypeError, "not booleans"),
+        (True, TypeError, "not booleans; use array.oindex"),
+        (np.array([True, False]), TypeError, "not booleans; use array.oindex"),
         ((0, 0, 0, 0), IndexError, "the array has 3 dimensions but 4 were indexed"),
         ((7,), IndexError, "index 7 is out of bounds for axis 0 with size 7"),
         ((0, -9), IndexError, "index -9 is out of bounds for axis 1 with size 8"),
@@ -209,6 +243,84 @@ def test_selection_errors(grid: tuple[Any, np.ndarray]) -> None:
     with pytest.raises(ValueError, match="cannot be converted without a copy"):
         np.asarray(array, copy=False)
     assert np.asarray(array, dtype=np.float64).dtype == np.float64
+
+
+# Orthogonal selections against numpy. With a single array index, numpy's indexing
+# selects the same elements in the same order as orthogonal indexing; with several,
+# numpy.ix_ forms every combination.
+
+MASK = np.array([True, False, False, True, True, False, False, True])  # axis 1
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ([3, 0, 6], lambda v: v[[3, 0, 6]]),  # unsorted, across row chunks
+        ((slice(None), [7, 1, 1, 4]), lambda v: v[:, [7, 1, 1, 4]]),  # repeated
+        ((Ellipsis, [-1, 0]), lambda v: v[..., [-1, 0]]),  # counted from the end
+        ((2, MASK), lambda v: v[2][MASK]),
+        (
+            (slice(None), MASK, [True, False, True]),
+            lambda v: v[np.ix_(range(7), np.flatnonzero(MASK), [0, 2])],
+        ),
+        (([6, 0], [5, 2], [2, 0]), lambda v: v[np.ix_([6, 0], [5, 2], [2, 0])]),
+        (
+            (np.array([1, 4]), slice(1, 7, 2), np.array([1])),
+            lambda v: v[np.ix_([1, 4], [1, 3, 5], [1])],
+        ),
+        ((slice(None, None, -1), [2, 0]), lambda v: v[::-1][:, [2, 0]]),
+        ((np.array([6, 0], dtype=np.uint64), 3), lambda v: v[[6, 0], 3]),
+        ((1, 2, [0, 2]), lambda v: v[1, 2, [0, 2]]),
+        ((np.array(3), [1]), lambda v: v[3, [1]]),  # a 0-d array is an integer
+        ((1, 2, 0), lambda v: v[1, 2, 0]),  # every axis an integer: a numpy scalar
+        (([],), lambda v: v[np.array([], dtype=int)]),
+        ((slice(None), np.array([], dtype=np.int8), 1), lambda v: v[:, [], 1]),
+    ],
+)
+def test_orthogonal_selections_match_numpy(
+    grid: tuple[Any, np.ndarray], key: Any, expected: Any
+) -> None:
+    array, values = grid
+    result, reference = array.oindex[key], expected(values)
+    assert type(result) is type(reference)
+    assert_same_bits(result, reference)
+    assert not isinstance(result, np.ndarray) or result.flags.owndata
+
+
+def test_orthogonal_reads_open_each_chunk_they_need_once(
+    grid: tuple[Any, np.ndarray],
+) -> None:
+    array, values = grid
+    root = array.path / "c"
+    with opened_files() as opened:
+        block = array.oindex[[6, 0, 5, 1], [7, 1, 1], 2]
+    assert_same_bits(block, values[np.ix_([6, 0, 5, 1], [7, 1, 1], [2])][:, :, 0])
+    # Rows 6, 0, 5 and 1 lie in the row chunks 3, 0 and 2, columns 7 and 1 in the
+    # column chunks 2 and 0, and position 2 of the last axis in its chunk 1.
+    expected = {root / str(i) / str(j) / "1" for i in (0, 2, 3) for j in (0, 2)}
+    assert sorted(map(Path, opened)) == sorted(expected)  # each chunk once
+    with opened_files() as opened:
+        assert array.oindex[[], 0].shape == (0, 3)
+    assert opened == []
+
+
+def test_orthogonal_selection_errors(grid: tuple[Any, np.ndarray]) -> None:
+    array, _ = grid
+    for key, error, message in [
+        ([[0, 1]], IndexError, r"1-D arrays, but axis 0 got one of shape \(1, 2\)"),
+        ((0, np.ones(7, dtype=bool)), IndexError, "axis 1 needs 8 values, got 7"),
+        ([0.5], TypeError, "axis 0 got values of dtype float64"),
+        ((0, [8]), IndexError, "index 8 is out of bounds for axis 1 with size 8"),
+        ((0, [-9]), IndexError, "index -9 is out of bounds for axis 1 with size 8"),
+        ((0, np.array([2**63], dtype=np.uint64)), IndexError, "index 922337"),
+        ((0, (1, 2)), TypeError, "as lists or numpy arrays, not tuple"),
+        (True, TypeError, "not a single boolean"),
+        ((np.array(True), 0), TypeError, "not a single boolean"),
+        (None, TypeError, "not NoneType"),
+        (([0], [0], [0], [0]), IndexError, "3 dimensions but 4 were indexed"),
+    ]:
+        with pytest.raises(error, match=message):
+            array.oindex[key]
 
 
 # Writing: the bytes the specification defines.
@@ -464,27 +576,41 @@ def test_zero_dimensional_chunk_keys(tmp_path: Path, encoding: str, key: str) ->
 
 
 def test_compressor_chains_and_gzip_members(tmp_path: Path) -> None:
-    raw = np.array([1, 2, 3, 4], dtype="<i4").tobytes()
+    small = np.array([1, 2, 3, 4], dtype="<i4")
+    # 1 MiB that gzip barely compresses, so that every step of a chain decodes more
+    # than one piece of 256 KiB.
+    large = np.random.default_rng(3).integers(0, 2**31, 2**18).astype("<i4")
+    raw, wide = small.tobytes(), large.tobytes()
     gzip_codec = {"name": "gzip", "configuration": {"level": 1}}
-    fields = {"shape": [4], "data_type": "int32", "chunk_grid": regular([4])}
+    twice = [LITTLE, gzip_codec, gzip_codec]
     cases = [
         # Two members in one stream, as RFC 1952 allows.
         (
             "members",
+            small,
             [LITTLE, gzip_codec],
             gzip.compress(raw[:6]) + gzip.compress(raw[6:]),
         ),
-        ("twice", [LITTLE, gzip_codec, gzip_codec], gzip.compress(gzip.compress(raw))),
-        ("short", [LITTLE, "gzip"], gzip.compress(raw)),  # a codec given by name
+        ("twice", small, twice, gzip.compress(gzip.compress(raw))),
+        ("short", small, [LITTLE, "gzip"], gzip.compress(raw)),  # a codec given by name
+        ("twice, 1 MiB", large, twice, gzip.compress(gzip.compress(wide, 1), 1)),
     ]
     if zstd is not None:
         chain = [LITTLE, gzip_codec, {"name": "zstd", "configuration": {"level": 0}}]
-        cases.append(("zstd", chain, zstd.compress(gzip.compress(raw))))
-    for name, codecs, data in cases:
+        cases.append(("zstd", small, chain, zstd.compress(gzip.compress(raw))))
+        cases.append(
+            ("zstd, 1 MiB", large, chain, zstd.compress(gzip.compress(wide, 1)))
+        )
+    for name, values, codecs, data in cases:
+        fields = {
+            "shape": [values.size],
+            "data_type": "int32",
+            "chunk_grid": regular([values.size]),
+        }
         path = make_array(
             tmp_path / name, codecs=codecs, chunks={"c/0": data}, **fields
         )
-        assert np.asarray(open_array(path)).tolist() == [1, 2, 3, 4], name
+        assert_same_bits(np.asarray(open_array(path)), values)
 
 
 def test_fields_marked_must_understand_false_are_ignored(tmp_path: Path) -> None:
@@ -759,6 +885,36 @@ def test_decoding_stops_just_past_the_size_of_a_chunk(
     assert bounded_peak(lambda: open_array(path)[0], message) < 2**20
 
 
+@pytest.mark.parametrize("codec", ["gzip", pytest.param("zstd", marks=needs_zstd)])
+@pytest.mark.parametrize("content", ["zeros", "random bytes"])
+def test_decoding_holds_the_chunk_and_about_1_mib_besides(
+    tmp_path: Path, codec: str, content: str
+) -> None:
+    # A chunk of 4 MiB that compresses as well as data can, or not at all. Holding
+    # the whole compressed file, or output decoded in one piece, would take at least
+    # two chunks; decoding reads the file and returns output in pieces of 256 KiB.
+    # tracemalloc sees Python's memory only: libzstd's window, outside it, is held as
+    # well (the module documentation says how much).
+    size = 2**22
+    raw = bytes(size) if content == "zeros" else np.random.default_rng(11).bytes(size)
+    if codec == "gzip":  # level 0 stores incompressible data as it is, quickly
+        packed = gzip.compress(raw, compresslevel=1 if content == "zeros" else 0)
+    else:
+        packed = zstd.compress(raw, 1)
+    fields = {"shape": [size], "data_type": "uint8", "chunk_grid": regular([size])}
+    codecs = [{"name": "bytes"}, codec]
+    path = make_array(tmp_path / "a", codecs=codecs, chunks={"c/0": packed}, **fields)
+    array = open_array(path)
+    tracemalloc.start()
+    try:
+        value = array[size // 2]
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert value == raw[size // 2]
+    assert peak < size + 2**21
+
+
 def test_every_decoding_step_and_the_file_read_are_bounded(tmp_path: Path) -> None:
     fields = {"shape": [2], "data_type": "int32", "chunk_grid": regular([2])}
     # The outer of two gzip steps decodes to 4 MiB; a valid inner stream for a chunk
@@ -932,18 +1088,26 @@ def test_inodes_count_only_on_the_same_device() -> None:
     assert not same(stamp, (6, 100, 513, 10**18))
 
 
+@pytest.mark.parametrize("compression", ["gzip", None])
+@pytest.mark.parametrize("change", ["grew", "shrank", "was empty"])
 def test_a_chunk_that_changes_while_it_is_read_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compression: Any, change: str
 ) -> None:
-    write_array(tmp_path / "a", np.arange(4, dtype=np.int64), chunks=(4,))
+    values = np.arange(4, dtype=np.int64)
+    write_array(tmp_path / "a", values, chunks=(4,), compression=compression)
     array = open_array(tmp_path / "a")
+    chunk = tmp_path / "a" / "c" / "0"
+    if change == "shrank":  # a byte shorter than its size when it was opened
+        chunk.write_bytes(chunk.read_bytes()[:-1])
     fstat = os.fstat
 
-    def shrunk(descriptor: int) -> Any:  # the file grew after its size was taken
-        status = fstat(descriptor)
-        return type("Status", (), {"st_size": status.st_size - 1})()
+    def size_when_opened(descriptor: int) -> Any:
+        # The file grew or shrank by a byte after its size was taken, or was empty.
+        size = fstat(descriptor).st_size
+        recorded = {"grew": size - 1, "shrank": size + 1, "was empty": 0}[change]
+        return type("Status", (), {"st_size": recorded})()
 
-    monkeypatch.setattr(zarr_module.os, "fstat", shrunk)
+    monkeypatch.setattr(zarr_module.os, "fstat", size_when_opened)
     with pytest.raises(ValueError, match="changed while it was being read"):
         array[0]
 
