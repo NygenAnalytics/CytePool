@@ -2,13 +2,16 @@
 
 Reference values in ``tests/data/voom`` come from limma's ``voom`` (after edgeR's
 ``calcNormFactors`` in the cases with TMM factors) and, downstream, from ``lmFit``,
-``contrasts.fit`` and ``eBayes``; ``validation/voom.py`` writes them. Designs are
-built from each case's sample table, by R's ``model.matrix`` for the reference and by
-``Design`` here. The other tests check properties that a wrong implementation would
-break: invariances, closed forms and the documented edge cases.
+``contrasts.fit`` and ``eBayes``, and from limma's ``chooseLowessSpan``;
+``validation/voom.py`` writes them. The cases named ``adaptive_*`` choose the span
+from the number of genes (limma's ``adaptive.span = TRUE``); the others fix it.
+Designs are built from each case's sample table, by R's ``model.matrix`` for the
+reference and by ``Design`` here. The other tests check properties that a wrong
+implementation would break: invariances, closed forms and the documented edge cases.
 """
 
 import contextlib
+import dataclasses
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -20,6 +23,7 @@ from cytepool.design import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
+from cytepool.stats.smoothing import choose_lowess_span
 from cytepool.stats.voom import VoomResult, voom
 
 DATA = Path(__file__).parent / "data" / "voom"
@@ -45,8 +49,18 @@ CASES = (
     "non_integer",
     "no_replication",
     "two_genes",
+    # Spans chosen from the number of genes: 1 up to 50 genes. About a fifth of the
+    # 30, 51 and 120 genes have no counts, and count all the same.
+    "adaptive_two_genes",
+    "adaptive_30_genes",
+    "adaptive_51_genes",
+    "adaptive_120_genes",
+    "adaptive_group_means_tmm",
+    "adaptive_groups_covariate_tmm",
+    "adaptive_no_replication",
 )
-WITH_TREND = tuple(case for case in CASES if case != "no_replication")
+WITH_TREND = tuple(case for case in CASES if not case.endswith("no_replication"))
+ADAPTIVE = tuple(case for case in CASES if case.startswith("adaptive_"))
 TWO_GROUPS = np.column_stack([np.ones(6), np.repeat([0.0, 1.0], 3)])
 
 
@@ -86,16 +100,18 @@ def run_voom(case: str) -> VoomResult:
         norm_factors = tmm_factors(data["counts"], library_sizes=library_sizes)
     expected = (
         pytest.warns(RuntimeWarning, match="no residual degrees of freedom")
-        if case == "no_replication"
+        if case.endswith("no_replication")
         else contextlib.nullcontext()
     )
+    # Cases without a span choose it from the number of genes, as limma did.
+    span = float(data["span"]) if "span" in data else None
     with expected:
         return voom(
             data["counts"],
             design_of(case),
             library_sizes=library_sizes,
             norm_factors=norm_factors,
-            span=float(data["span"]),
+            span=span,
         )
 
 
@@ -187,13 +203,60 @@ def test_moderated_statistics_of_the_weighted_fit_match_limma(case: str) -> None
     )
 
 
+@pytest.mark.parametrize("case", ADAPTIVE)
+def test_chosen_span_matches_limma(case: str) -> None:
+    """limma returns the span it chose, and none when no trend is fitted."""
+    data = fixture(case)
+    result = run_voom(case)
+    if "limma span" in data:
+        # A closed form: limma's to the last bit on the validation inputs.
+        np.testing.assert_allclose(result.span, data["limma span"][0], rtol=1e-10)
+    else:
+        assert case.endswith("no_replication") and np.isnan(result.span)
+
+
+def test_span_rule_matches_limmas_choose_lowess_span() -> None:
+    """choose_lowess_span against chooseLowessSpan over 0 to 1e9 points with limma's
+    settings, and over other settings of small.n, min.span and power."""
+    data = fixture("span_rule")
+    spans = [
+        choose_lowess_span(int(n), small_n=int(small_n), min_span=lower, power=rate)
+        for n, small_n, lower, rate in data["settings"]
+    ]
+    # A closed form: limma's to the last bit on the validation inputs.
+    np.testing.assert_allclose(spans, data["limma"], rtol=1e-10)
+    assert data["settings"][:, 0].max() == 1e9 and len(spans) > 300
+
+
+def test_default_span_is_chosen_from_every_feature() -> None:
+    """The default is the span of the rule for the number of features, those
+    without counts included, as in limma: 51 features give a span below 1,
+    although at most 50 of them enter the trend, which alone would give 1."""
+    data = fixture("adaptive_51_genes")
+    counts, design = data["counts"], design_of("adaptive_51_genes")
+    in_trend = int(counts.any(axis=0).sum())
+    assert counts.shape[1] == 51 and in_trend <= 50
+    span = choose_lowess_span(51)
+    assert span < 1.0 and choose_lowess_span(in_trend) == 1.0
+
+    chosen = voom(counts, design)
+    given = voom(counts, design, span=span)
+    assert chosen.span == span
+    np.testing.assert_array_equal(chosen.weights, given.weights)
+    np.testing.assert_array_equal(chosen.sqrt_sd_trend, given.sqrt_sd_trend)
+    # The span matters: the weights of a span of 1 are not those.
+    assert not np.allclose(voom(counts, design, span=1.0).weights, chosen.weights)
+
+
 def test_counts_to_moderated_statistics_with_a_design_and_named_contrasts() -> None:
-    """The whole workflow on public objects, with the default (exact) contrasts.
+    """The whole workflow on public objects, with the defaults: the span chosen
+    from the number of genes, and exact contrasts.
 
     The coefficients of a group-means design are uncorrelated in every feature's
     weighted fit, so the exact standard errors of their contrasts are also limma's.
     """
-    data = fixture("group_means_tmm")
+    case = "adaptive_group_means_tmm"
+    data = fixture(case)
     counts = data["counts"]
     design = Design(
         {"group": data["samples group"]},
@@ -206,7 +269,8 @@ def test_counts_to_moderated_statistics_with_a_design_and_named_contrasts() -> N
     moderated = moderated_statistics(contrasted)
     assert contrasted.coefficient_names == ("BvsA", "CvsB")
     assert contrasted.exact_standard_errors
-    case = "group_means_tmm"
+    # A closed form: limma's to the last bit on the validation inputs.
+    np.testing.assert_allclose(result.span, data["limma span"][0], rtol=1e-10)
     np.testing.assert_allclose(
         moderated.t, limma_matrix(case, "t", 2), rtol=1e-10, atol=1e-10
     )
@@ -218,6 +282,8 @@ def test_no_replication_gives_unit_weights_and_no_trend() -> None:
     np.testing.assert_array_equal(result.weights, 1.0)
     assert np.isnan(result.sqrt_sd).all() and np.isnan(result.sqrt_sd_trend).all()
     assert not np.isnan(result.mean_log_count).all()
+    # No trend, so no span, although one was given.
+    assert float(fixture("no_replication")["span"]) == 0.5 and np.isnan(result.span)
 
 
 def test_scaling_library_sizes_plus_one_shifts_log_cpm_and_keeps_weights() -> None:
@@ -288,14 +354,15 @@ def test_reparametrised_design_gives_the_same_trend_and_weights() -> None:
 def test_features_without_counts_leave_the_others_unchanged() -> None:
     """Features without counts are left out of the trend. With equal library sizes
     their fitted log2 counts are log2(0.5), below every feature with counts, so
-    their weights come from the lower end of the curve."""
+    their weights come from the lower end of the curve. The span is fixed: the
+    default would count the features without counts too."""
     counts = fixture("two_groups")["counts"]
     counts = counts[:, counts.any(axis=0)]
     sizes = np.full(6, 2e6)
-    base = voom(counts, TWO_GROUPS, library_sizes=sizes)
+    base = voom(counts, TWO_GROUPS, library_sizes=sizes, span=0.5)
     zero = np.array([0, 5, counts.shape[1] + 2])
     padded = np.insert(counts, zero - np.arange(3), 0.0, axis=1)
-    result = voom(padded, TWO_GROUPS, library_sizes=sizes)
+    result = voom(padded, TWO_GROUPS, library_sizes=sizes, span=0.5)
     others = np.setdiff1d(np.arange(padded.shape[1]), zero)
     np.testing.assert_allclose(result.weights[:, others], base.weights, rtol=1e-12)
     np.testing.assert_allclose(result.sqrt_sd[others], base.sqrt_sd, rtol=1e-12)
@@ -336,7 +403,9 @@ def test_result_is_read_only_with_a_summary() -> None:
     result = run_voom("two_genes")
     with pytest.raises(ValueError, match="read-only"):
         result.weights[0, 0] = 1.0
-    assert repr(result) == "VoomResult(n_samples=6, n_features=2, features_in_trend=2)"
+    assert repr(result) == (
+        "VoomResult(n_samples=6, n_features=2, features_in_trend=2, span=0.5)"
+    )
     with pytest.raises(ValueError, match="effective_library_sizes must have shape"):
         VoomResult(
             result.log_cpm,
@@ -345,7 +414,25 @@ def test_result_is_read_only_with_a_summary() -> None:
             result.mean_log_count,
             result.sqrt_sd,
             result.sqrt_sd_trend,
+            result.span,
         )
+
+
+@pytest.mark.parametrize(
+    ("span", "error", "message"),
+    [
+        (0.0, ValueError, r"span must be in \(0, 1\], or NaN when no trend"),
+        (1.5, ValueError, r"span must be in \(0, 1\], or NaN when no trend"),
+        ("0.5", TypeError, "span must be a real number, got str"),
+        (None, TypeError, "span must be a real number, got NoneType"),
+    ],
+)
+def test_result_refuses_an_invalid_span(span: Any, error: type, message: str) -> None:
+    result = run_voom("two_genes")
+    with pytest.raises(error, match=message):
+        dataclasses.replace(result, span=span)
+    # NaN marks a result without a trend.
+    assert np.isnan(dataclasses.replace(result, span=np.nan).span)
 
 
 # Counts of 8 genes in 4 samples whose LOWESS trend is negative at its upper end;
@@ -387,8 +474,8 @@ SATURATED = np.eye(6)
         (COUNTS, TWO_GROUPS, {"span": 0.0}, ValueError, r"in \(0, 1\]"),
         (COUNTS, TWO_GROUPS, {"span": 1.5}, ValueError, r"in \(0, 1\]"),
         (COUNTS, TWO_GROUPS, {"span": np.nan}, ValueError, r"in \(0, 1\]"),
-        (COUNTS, TWO_GROUPS, {"span": "0.5"}, TypeError, "real number"),
-        (COUNTS, TWO_GROUPS, {"span": True}, TypeError, "real number"),
+        (COUNTS, TWO_GROUPS, {"span": "0.5"}, TypeError, "real number, or None"),
+        (COUNTS, TWO_GROUPS, {"span": True}, TypeError, "real number, or None"),
         (FEATURE, TWO_GROUPS, {}, ValueError, "at least two features, got 1"),
         # One feature is an error without replication too, as in limma.
         (FEATURE, SATURATED, {}, ValueError, "at least two features, got 1"),
@@ -402,7 +489,7 @@ SATURATED = np.eye(6)
         (
             NEGATIVE_TREND,
             TWO_GROUPS[[0, 1, 3, 4]],
-            {},
+            {"span": 0.5},
             ValueError,
             "trend falls to -0.442",
         ),

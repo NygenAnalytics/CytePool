@@ -19,6 +19,8 @@ language = "en"
 # The docstrings describe the types and shapes of arguments in words, so the
 # signatures show names and defaults only.
 autodoc_typehints = "none"
+# Show defaults as the source writes them, such as ``1 / 3``, not as their values.
+autodoc_preserve_defaults = True
 autodoc_member_order = "bysource"
 autodoc_default_options = {"members": True}
 napoleon_google_docstring = True
