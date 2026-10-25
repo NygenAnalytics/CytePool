@@ -21,9 +21,9 @@ cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
 `negative_binomial_fits.py`, `differential_expression.py`,
 `differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
-`gene_set_tests.py`, `rotation_gene_set_tests.py` and `composition_tests.py`, and for
-`design.py`, which printed the same table again after changes to the code it checks;
-and on **2026-10-24** for the others, with the
+`gene_set_tests.py`, `rotation_gene_set_tests.py`, `composition_tests.py` and
+`meta_analysis.py`, and for `design.py`, which printed the same table again after
+changes to the code it checks; and on **2026-10-24** for the others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -53,9 +53,10 @@ covers and the largest difference among them. Run a script to see every check.
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
+| [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,510** | **1,319 pass, none failed; 112 information, 78 deliberate differences, 1 control** | | |
+| **All** | | | **1,585** | **1,371 pass, none failed; 132 information, 81 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -981,7 +982,7 @@ Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
 | Samples used, features tested, coefficients that cannot be estimated, contrasts tested (other than the deliberate differences), voom's span, residual and prior df, in the 12 fitted groups | `filterByExpr`, `voom`, `lmFit`, `contrasts.fit`, `eBayes` | 0 mismatches | 0 | 12 pass |
-| logFC, AveExpr, t, P.Value, adj.P.Val and B of every contrast both programs compute | `topTable` | 6.3e-13 | 1e-10 | 9 pass |
+| logFC, AveExpr, t, P.Value, adj.P.Val and B of every contrast both programs compute, and the moderated standard error of logFC (`sqrt(s2.post) * stdev.unscaled`) | `topTable`, `eBayes` | 6.3e-13 | 1e-10 | 9 pass |
 | The same with robust moderation | `topTable` | 1.0e-13 | 1e-6 | 3 pass |
 | `D2_vs_D6` in the NK cells, which limma refuses, against limma's values for `D2_vs_D1`, which there estimate the same difference | `topTable` | 2.8e-13 | 1e-10 | 2 pass |
 | DC cells, without residual degrees of freedom: both programs refuse every contrast | `eBayes` | both refuse | n/a | 2 pass |
@@ -1267,6 +1268,78 @@ arctan2(sqrt(x), sqrt(N - x)), equal to speckle's formulas but without the
 cancellation in 1 - q and the loss of digits of arcsin near 1; on these data the two
 agree to rounding.
 
+## Meta-analysis
+
+[`validation/meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py)
+compares `meta_analysis` with metafor's `rma.uni`, run feature by feature in R on the
+same simulated effects and standard errors (seed 20261028), for the fixed-effect model
+(`method = "EE"`) and the DerSimonian-Laird, REML and Paule-Mandel estimators of the
+between-study variance, each with z-tests and with the Knapp-Hartung adjustment
+(`test = "knha"`). The ten cases have 120 features each: 3 studies without and with
+large heterogeneity; 30 studies without and with heterogeneity; 2 studies; 5 studies,
+one with a standard error 1,000 times the others'; 4 studies, one imprecise and far
+from the others; 8 studies with 30% of the values missing (NaN in the effect, the
+standard error or both), three features measured by one study and two by none;
+features of 4 studies whose between-study variance is at zero although the Hedges
+estimate, from which metafor's REML starts, is positive; and 5 studies whose standard
+errors are 1e-9 to 4e-9 for effects of spread 1. metafor runs its iterative estimators
+to convergence, REML with `control = list(threshold = 1e-13, maxiter = 10000)` and
+Paule-Mandel with `control = list(tol = 1e-14, maxiter = 10000)`, and, for
+information, with their defaults. Then three cohorts of 5, 4 and 6 donors, each sampled
+before and after a stimulation (seed 20261029), are simulated as pseudobulk counts:
+the first has T, B and NK cells and 400 genes, the second too few NK cells to fit them,
+10% fewer genes, 20 genes of its own and its genes in shuffled order, the third no NK
+cells and 10% fewer genes, and 30% of the changes differ between cohorts. `limma_voom`
+tests the stimulation in every cohort; R merges the cohorts' tables by gene id, runs
+`rma.uni` on every gene that enough cohorts tested and adjusts the p-values with
+`p.adjust(method = "BH")`, and `differential_expression_meta_analysis` is compared with
+its results. Reference: R 4.4.3, metafor 5.0.1, jsonlite 2.0.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Fixed effect and DerSimonian-Laird, with z-tests and Knapp-Hartung, in the 10 cases: estimate, standard error, statistic, p-value, confidence limits, tau², Q and its p-value, I², H² and the number of studies | `rma.uni` | 2.3e-13 | 1e-10 | 20 pass |
+| REML and Paule-Mandel, the same | `rma.uni` | 3.4e-10 | 1e-6 | 20 pass |
+| REML where the restricted likelihood has a higher maximum than metafor's estimate | `rma.uni`, `logLik` | 2 of 120 features, restricted log-likelihood higher by up to 0.023 | n/a | 1 deliberate difference |
+| REML and Paule-Mandel against metafor's default control | `rma.uni` | 6.8e-2 | n/a | 20 information |
+| Meta-analyses of the cohorts' tables by cell type: REML and z-tests, DerSimonian-Laird and Knapp-Hartung, Paule-Mandel and z-tests (genes of 2 cohorts or more), and the fixed effect (every gene) | `rma.uni`, `p.adjust` | 6.0e-11 | 1e-10 (fixed, DerSimonian-Laird), 1e-6 | 9 pass |
+| One study with the Knapp-Hartung adjustment | `rma.uni` | both give the z-test, metafor with a warning | 1e-10 | 1 pass |
+| A Paule-Mandel estimate above metafor's search interval: against metafor with `tau2.max = 1e6`, and with its default, where it stops | `rma.uni` | 1.7e-15 | 1e-6 | 1 pass, 1 deliberate difference |
+| Zero and infinite standard errors, which CytePool refuses | `rma.uni` | metafor stops for an infinite one, and for a zero one with the fixed effect, DerSimonian-Laird and Paule-Mandel; with REML it fits without Q, I² and H² | n/a | 1 pass, 1 deliberate difference |
+
+Differences are scaled by max(\|reference\|, 1), and p-values by
+max(p, 1e-300) max(1, \|log p\|); I² is compared in percent, as metafor reports it
+(CytePool reports a proportion), and the number of studies must be equal. A row covers
+both tests of one case and method. The REML rows' largest differences, near 1e-10, are
+in I²: metafor stops when tau² changes by less than its threshold of 1e-13, which I² in
+percent multiplies by 100 / (tau² + s²), s² the typical within-study variance; tau²
+itself agrees to 3.3e-13. In one feature of 30 studies metafor's Fisher scoring does
+not converge, oscillating, and the remedy its help page suggests, `stepadj = 0.5`,
+converges to CytePool's value. With its defaults metafor stops REML when tau² changes by
+less than 1e-5 and Paule-Mandel at `uniroot`'s tolerance, about 1.2e-4 on tau²: its
+estimates then differ by up to 3e-5 in tau², and the largest scaled difference, 6.8e-2,
+is in I² in percent. Deliberate differences:
+
+- The REML estimate is the largest maximum of the restricted likelihood. Where an
+  imprecise study lies far from precise ones that agree, the likelihood can have two
+  maxima, as it has in 9 of the 120 features of that case. metafor's Fisher scoring from
+  the Hedges estimate converges to one of them, and it sets tau² to zero, with the
+  warning that Fisher scoring "may have gotten stuck at a local maximum", where the
+  likelihood is higher at zero (found by probing). In 2 of those 9 features the other
+  maximum is higher, by up to 0.023 in restricted log-likelihood, as metafor's own
+  `logLik` at the two estimates shows; they are left out of that case's REML row.
+- metafor's Paule-Mandel search stops with an error ("Value of 'tau2.max' too low")
+  when the root lies above max(100, 10 mad(y)²): for effects of -40, 0, 0, 0 and 40,
+  whose median absolute deviation is 0, that bound is 100 and the root is 799. CytePool
+  has no such limit.
+- A zero standard error: metafor's fixed-effect, DerSimonian-Laird and Paule-Mandel
+  fits stop, its REML fit returns estimates without Q, I² and H²; CytePool refuses it,
+  and an infinite one, which metafor refuses too.
+
+Where the Hedges estimate is positive but the restricted likelihood is largest at zero,
+CytePool's REML estimate is zero; metafor's step halving approaches zero and stops near
+its threshold, at about 1e-6 by default. With standard errors 1e-8 of the spread of the
+effects, the two programs agree to 1.5e-14.
+
 ## Distributions and special functions
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
@@ -1454,6 +1527,7 @@ python validation/differential_expression_options.py
 # unless --data or GSE96583_DATA names another directory outside the repository.
 python validation/interferon_stimulated_pbmcs.py
 RSCRIPT=$REF/r-speckle/bin/Rscript python validation/composition_tests.py
+RSCRIPT=$REF/r-metafor/bin/Rscript python validation/meta_analysis.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python \
@@ -1496,6 +1570,14 @@ jsonlite 2.0.0, from conda-forge:
 ```bash
 conda create -p $REF/r-mixed -c conda-forge r-base=4.4.3 r-lme4=2.0_6 \
     r-lmertest=3.2_1 r-numderiv=2016.8_1.1 r-jsonlite=2.0.0
+```
+
+metafor 5.0.1 (CRAN), which `meta_analysis.py` runs, has one too, with R 4.4.3 and
+jsonlite 2.0.0:
+
+```bash
+conda create -p $REF/r-metafor -c conda-forge r-base=4.4.3 r-metafor=5.0.1 \
+    r-jsonlite=2.0.0
 ```
 
 The Python environments use Python 3.13.12. scanpy has its own environment, and

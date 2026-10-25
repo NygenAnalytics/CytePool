@@ -26,7 +26,8 @@ coefficients limma cannot estimate, the contrasts tested by one program only (ot
 than the deliberate differences), voom's span and the residual and prior degrees of
 freedom; one
 gives the largest difference in logFC, AveExpr, t, P.Value, adj.P.Val and B over the
-contrasts both compute, scaled by max(|reference|, 1), and for p-values by
+contrasts both compute, and in the moderated standard error of logFC,
+``sqrt(s2.post) * stdev.unscaled``, scaled by max(|reference|, 1), and for p-values by
 max(p, 1e-300) max(1, |log p|). Tiers: exact (1e-10); close (1e-6) with robust
 moderation, which limma solves only to a tolerance. limma-voom runs with
 ``contrast_standard_errors="limma"``, except in the robust case, whose contrasts are
@@ -68,7 +69,8 @@ FIXTURE_DIRECTORY = (
 )
 EXACT = 1e-10
 CLOSE = 1e-6
-# topTable's columns and CytePool's, in the same order.
+# topTable's columns and CytePool's, in the same order, then the moderated standard
+# error of logFC, sqrt(s2.post) * stdev.unscaled from eBayes.
 COLUMNS = {
     "logFC": "log2_fold_change",
     "AveExpr": "average_log2_cpm",
@@ -76,6 +78,7 @@ COLUMNS = {
     "P.Value": "p_value",
     "adj.P.Val": "adjusted_p_value",
     "B": "b_statistic",
+    "SE": "standard_error",
 }
 
 R_SCRIPT = r"""
@@ -151,8 +154,9 @@ for (case in readLines(file.path(root, "cases.txt"))) {
         step <- "eBayes"
         eb <- eBayes(cf, trend = set$method == "trend", robust = set$robust)
         tt <- topTable(eb, coef = 1, number = Inf, sort.by = "none")
-        wr(as.matrix(tt[, c("logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B")]),
-           out, sprintf("contrast%d.bin", j - 1))
+        se <- sqrt(eb$s2.post) * eb$stdev.unscaled[, 1]
+        wr(cbind(as.matrix(tt[, c("logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B")]),
+                 se), out, sprintf("contrast%d.bin", j - 1))
         wr(eb$df.prior, out, "df_prior.bin")
       })
       if (!is.null(error)) {
@@ -360,7 +364,7 @@ def _read_group(directory, design):
             out["contrasts"][name] = (directory / f"contrast{j}_error.txt").read_text()
         elif (directory / f"contrast{j}.bin").exists():
             values = np.fromfile(directory / f"contrast{j}.bin", dtype="<f8")
-            out["contrasts"][name] = values.reshape(6, -1)
+            out["contrasts"][name] = values.reshape(len(COLUMNS), -1)
     return out
 
 

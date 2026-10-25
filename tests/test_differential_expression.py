@@ -45,6 +45,8 @@ STATISTICS = {
     "p_value": 3,
     "adjusted_p_value": 4,
     "b_statistic": 5,
+    # limma's sqrt(s2.post) * stdev.unscaled, the moderated standard error of logFC.
+    "standard_error": 6,
 }
 CONTRASTS = {
     "stim_vs_ctrl": "conditionstim",
