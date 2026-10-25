@@ -15,9 +15,9 @@ they compare bit for bit), runs CytePool, prints a table with one row per check,
 exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
-package in this revision of the repository: on **2026-10-25** for the five scripts on
-cubes and cube files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`
-and `cube_fingerprints.py`), for `linear_models.py`, `voom.py`,
+package in this revision of the repository: on **2026-10-25** for the six scripts on
+cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
+`cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
 `sample_quality_weights.py`, `differential_expression.py` and
 `interferon_stimulated_pbmcs.py`, and for
 `design.py` and `empirical_bayes.py`, which printed the same tables again after
@@ -35,6 +35,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py) | Cube files | zarr-python 3.4.1 | 7 | 7 pass | 3.1 s | 146 MiB |
 | [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 46 s | 500 MiB |
 | [`cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py) | Cube fingerprints | the documented encoding, with zarr-python 3.4.1 | 7 | 7 pass | 4.4 s | 122 MiB |
+| [`anndata_conversion.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/anndata_conversion.py) | AnnData and MuData | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | 18 | 18 pass | 1 min 5 s | 1,483 MiB |
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
@@ -46,7 +47,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **865** | **797 pass, none failed; 45 information, 22 deliberate differences, 1 control** | | |
+| **All** | | | **883** | **815 pass, none failed; 45 information, 22 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -213,6 +214,48 @@ Before this run, the script was run against CytePool with five deliberate mistak
 written after the text, every float of the normalization hashed as a float64, and
 reads of whole groups in another order (pooled samples) left unchecked. The first four
 each made five checks fail, and the last one the check of the changed files.
+
+## AnnData and MuData
+
+[`validation/anndata_conversion.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/anndata_conversion.py)
+simulates 18,914 cells x 1,500 genes (8 samples x 10 cell types, with an empty sample
+x cell type entry, entries with one and two cells, and genes never detected; seed
+20261025), with a condition for each sample and a lineage for each cell type, and
+runs scanpy, decoupler and LIANA on them, each in its own environment. CytePool
+imports what each tool made and compares the cube with the one `from_cells` builds
+from the same cells; it then exports cubes and reads them back. Reference: scanpy
+1.12.4 and decoupler 2.2.0, each with anndata 0.13.4 and pandas 3.1.0; LIANA 1.10.0
+with decoupler 2.2.0, mudata 0.4.1, anndata 0.13.4 and pandas 2.3.3 (LIANA requires
+pandas 2); Python 3.13.12. CytePool ran with numpy 2.5.4, numba 0.68.0, anndata
+0.13.4, mudata 0.4.1 and pandas 3.1.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| `from_anndata` of `scanpy.get.aggregate` (`sum` and `count_nonzero` of the counts): counts, detected cells, cell numbers, and the fingerprint | `from_cells` | 0; identical fingerprint | 0 | 2 pass |
+| The same with scanpy's sums of log-normalized values, of their squares and of normalized values | `from_cells` | 6.4e-16 | 1e-10 | 1 pass |
+| `from_anndata` of `decoupler.pp.pseudobulk`: counts, detected cells from its fractions times its cell numbers, cell numbers, and the condition and lineage read from its `obs`; and after `decoupler.pp.filter_by_expr` kept 1,355 of the 1,500 genes | `from_cells`, the same genes, and the simulated metadata | 0; identical tables and fingerprint | 0 | 3 pass |
+| `from_mudata` of LIANA's `adata_to_views`, with the cells' crosstab as cell numbers: counts, detected cells, cell numbers, and the fingerprint | `from_cells` | 0; identical fingerprint | 0 | 2 pass |
+| scanpy's means and variances; decoupler with `mode="mean"` and `mode="median"`; LIANA's views with `mode="median"`, and without cell numbers | refused, each with its reason | 5 of 5 refused | all | 5 pass |
+| `to_anndata` against scanpy's rows and sums, `to_mudata` against LIANA's modalities, and scanpy aggregating the export by condition against `Cube.collapse_samples` | scanpy, LIANA | 0; identical | 0 | 3 pass |
+| Round trips of 4 cubes (every layer; merged, pooled and selected; bulk; tables of every column type, with columns without any value, names anndata does not write as they are, and a sample and a group without cells) through AnnData and MuData, in memory and through `.h5ad`, `.zarr` and `.h5mu` files | the exported cube | 24 of 24 fingerprints kept | all | 1 pass |
+| The same files, read and written again by anndata and mudata under pandas 2 | the exported cube | 12 of 12 fingerprints kept | all | 1 pass |
+
+A cube's layers are sums, so an import takes only what is a sum or gives one exactly.
+Integer layers match exactly: scanpy and decoupler store sums of whole numbers as
+float64, which CytePool turns back into the integers that `from_cells` gives, and
+decoupler's fractions of detecting cells times its cell numbers are whole numbers to
+within the precision of the fractions, so rounding recovers the counts exactly.
+Means, variances and medians are refused; every tool that gives them gives sums too.
+The refusals do not depend on the tool saying what it computed, which neither
+decoupler nor LIANA records: decoupler computes `psbulk_counts` from the summed
+counts whatever its mode (found by probing), so means add up to it divided by the
+cells of their row, and a sum is positive exactly where a cell detects the feature,
+which medians are not. `X` may add up to less than `psbulk_counts`, as after
+`filter_by_expr`. LIANA 1.10 keeps cell numbers only under the column name of
+decoupler 1, so its views carry none, and an entry without cells cannot be told from
+a missing profile: the import refuses them until cell numbers are given. decoupler
+gives its row without cells the metadata of another row (found by probing); CytePool
+reads a column as sample or cell-type metadata from the rows with cells.
 
 ## Normalization and filtering
 
@@ -812,6 +855,17 @@ a first run, building all five layers:
 
 The peak resident memory of that whole run was 1,725 MiB, in its largest process.
 
+`anndata_conversion.py` timed each conversion of a cube of counts and detected cells
+of 20 cell types x 50 samples x 20,000 genes (one call; `to_anndata` includes
+computing the fingerprint, which the cube then keeps):
+
+| Conversion | Seconds |
+| --- | --- |
+| `to_anndata` | 0.278 |
+| `from_anndata` | 0.087 |
+| `to_mudata` | 0.729 |
+| `from_mudata` | 0.251 |
+
 `linear_models.py --benchmark` on 20,000 genes x 200 samples (limma's time as R
 measured it, CytePool's the median of three runs after a warm-up), with a peak
 resident memory of 479 MiB in the largest process of the run. The scenarios with
@@ -883,6 +937,9 @@ REFERENCE_PYTHON=$REF/python/bin/python $REF/python3.14/bin/python \
     validation/cube_files.py
 python validation/cube_reads.py
 python validation/cube_fingerprints.py
+SCANPY_PYTHON=$REF/python-scanpy/bin/python DECOUPLER_PYTHON=$REF/python/bin/python \
+    LIANA_PYTHON=$REF/python-liana/bin/python \
+    $REF/python-anndata/bin/python validation/anndata_conversion.py
 ```
 
 Here `python` is `$REF/python/bin/python`, the environment below. With
@@ -912,6 +969,18 @@ uv pip install --python $REF/python-scanpy/bin/python scanpy==1.12.4 \
     numpy==2.5.4 numba==0.68.0 scipy==1.18.1 pandas==3.1.0 anndata==0.13.4
 uv venv $REF/python3.14 --python 3.14.4
 uv pip install --python $REF/python3.14/bin/python numpy==2.5.4 numba==0.68.0
+```
+
+`anndata_conversion.py` runs CytePool in an environment with mudata, and LIANA in
+one of its own, since LIANA requires pandas 2:
+
+```bash
+uv venv $REF/python-anndata --python 3.13.12
+uv pip install --python $REF/python-anndata/bin/python numpy==2.5.4 numba==0.68.0 \
+    scipy==1.18.1 pandas==3.1.0 anndata==0.13.4 mudata==0.4.1 zarr==3.4.1 \
+    h5py==3.16.0
+uv venv $REF/python-liana --python 3.13.12
+uv pip install --python $REF/python-liana/bin/python liana==1.10.0 decoupler==2.2.0
 ```
 
 The reference packages run only as separate programs that produce outputs to compare

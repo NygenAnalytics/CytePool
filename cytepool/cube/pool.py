@@ -377,24 +377,32 @@ def from_bulk(
             f"column {column}; integer counts must be at most 2**63 - 1, the largest "
             "int64"
         )
-    whole = array.dtype.kind in "iu" or bool(
-        largest < _COUNT_LIMIT and np.all(array == np.floor(array))
-    )
-    if not whole:
-        dtype: type = np.float64
-    elif largest <= int(_UINT32_MAX):
-        dtype = np.uint32
-    else:
-        dtype = np.uint64
     n_samples, n_features = array.shape
     return Cube(
-        {"counts": array.astype(dtype)[None]},
+        {"counts": array.astype(_count_dtype(array, largest))[None]},
         samples=_ids_or_table(samples, n_samples, "samples", "sample_id"),
         groups={"group_id": [BULK_GROUP]},
         features=_ids_or_table(features, n_features, "features", "feature_id"),
         provenance={"source": record, "construction": construction},
         copy=False,
     )
+
+
+def _count_dtype(counts: np.ndarray, largest: Any) -> type:
+    """Return the dtype of a counts layer that holds these counts exactly.
+
+    ``counts`` are non-negative and finite, integers at most 2**63 - 1, and
+    ``largest`` is their largest value (0 when there are none). The dtype is uint32
+    when every count is a whole number up to 2**32 - 1, uint64 for larger whole
+    numbers, and float64 when a count is not a whole number or, for float input,
+    is at least 2**53, beyond which float64 does not hold every whole number.
+    """
+    whole = counts.dtype.kind in "iu" or bool(
+        largest < _COUNT_LIMIT and np.all(counts == np.floor(counts))
+    )
+    if not whole:
+        return np.float64
+    return np.uint32 if largest <= int(_UINT32_MAX) else np.uint64
 
 
 # The compiled pooling routine.
@@ -1114,10 +1122,15 @@ def _axis_codes(
     table: Any,
     table_name: str,
     id_column: str,
+    unit: str = "cell",
 ) -> tuple[np.ndarray, Table, bool]:
     """Return the position of every cell's label on an axis, the axis table, and
-    whether the labels were integers."""
-    codes, distinct, integers = _factorize(labels, name, n_cells)
+    whether the labels were integers.
+
+    ``unit`` names what holds the labels in messages: a cell, or a row of a table
+    of profiles that already pools cells.
+    """
+    codes, distinct, integers = _factorize(labels, name, n_cells, unit)
     if table is None:
         ids = np.empty(len(distinct), dtype=object)
         ids[:] = distinct
@@ -1130,7 +1143,7 @@ def _axis_codes(
         if position is None:
             first = int(np.argmax(codes == code))
             raise ValueError(
-                f"the label {label!r} of cell {first} in {name} is not in "
+                f"the label {label!r} of {unit} {first} in {name} is not in "
                 f"{table_name}[{id_column!r}]; every label needs a row"
             )
         positions[code] = position
@@ -1138,13 +1151,13 @@ def _axis_codes(
 
 
 def _factorize(
-    labels: Any, name: str, n_cells: int
+    labels: Any, name: str, n_cells: int, unit: str = "cell"
 ) -> tuple[np.ndarray, list[str], bool]:
     """Return the code of every cell's label, the sorted distinct labels, and
     whether the labels are integers.
 
     Codes index the returned labels. Integer labels sort in numeric order and become
-    their decimal text.
+    their decimal text. ``unit`` names what holds the labels in messages.
     """
     categorical = _categorical_parts(labels)
     if categorical is not None:
@@ -1153,7 +1166,7 @@ def _factorize(
         array = unmasked_array(labels, name)
         if array.ndim != 1:
             raise ValueError(
-                f"{name} must be 1-D, one label per cell, got shape {array.shape}"
+                f"{name} must be 1-D, one label per {unit}, got shape {array.shape}"
             )
         if array.dtype.kind == "U" and not isinstance(labels, np.ndarray):
             # numpy turns a sequence that mixes text with NaN or numbers into text
@@ -1188,12 +1201,12 @@ def _factorize(
     codes = np.asarray(codes, dtype=np.int64).reshape(-1)
     if codes.size != n_cells:
         raise ValueError(
-            f"{name} must hold one label per cell: counts has {n_cells} rows, "
+            f"{name} must hold one label per {unit}: counts has {n_cells} rows, "
             f"{name} has {codes.size} labels"
         )
     if codes.size and codes.min() < 0:  # a categorical's code for a missing value
         raise ValueError(
-            f"{name} has a missing label at cell {int(np.argmax(codes < 0))}"
+            f"{name} has a missing label at {unit} {int(np.argmax(codes < 0))}"
         )
     used = np.unique(codes)
     if used.size < len(values):  # a categorical with unused categories
@@ -1215,11 +1228,11 @@ def _factorize(
             or type(value).__name__ in ("NAType", "NaTType")
             or (isinstance(value, float) and math.isnan(value))
         ):
-            raise ValueError(f"{name} has a missing label at cell {first}")
+            raise ValueError(f"{name} has a missing label at {unit} {first}")
         if isinstance(value, str):
-            raise ValueError(f"{name} has an empty label at cell {first}")
+            raise ValueError(f"{name} has an empty label at {unit} {first}")
         raise TypeError(
-            f"{name} must hold text or integer labels; cell {first} has "
+            f"{name} must hold text or integer labels; {unit} {first} has "
             f"{type(value).__name__} {value!r}"
         )
     if len(kinds) > 1:

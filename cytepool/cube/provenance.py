@@ -8,16 +8,18 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
 ``Cube.history()`` and ``describe_provenance`` read a record back in plain terms.
 
 ``source``:
-    The caller's record of where the data came from, given to ``from_cells`` or
-    ``from_bulk`` as ``source``: for example a dataset identity, references to the
+    The caller's record of where the data came from, given to ``from_cells``,
+    ``from_bulk``, ``from_anndata`` or ``from_mudata`` (``cytepool.io.anndata``) as
+    ``source``: for example a dataset identity, references to the
     exporter's artifacts (such as frozen cell memberships, which stay in the
     exporter's files) and the exporter's settings. CytePool stores it as JSON, as
     it was given, does not interpret it, and reports its references as unresolved:
     following them needs the tool that wrote them. Null when no record was given.
 
 ``construction``:
-    How the cube was built: ``function`` (``"from_cells"`` or ``"from_bulk"``),
-    ``cytepool_version``, and the function's settings. ``from_cells`` records
+    How the cube was built: ``function`` (``"from_cells"``, ``"from_bulk"``,
+    ``"from_anndata"`` or ``"from_mudata"``), ``cytepool_version``, and the
+    function's settings. ``from_cells`` records
 
     - ``n_cells``: the number of cells pooled (the cells of each sample and group
       are the cube's ``n_cells``);
@@ -37,6 +39,27 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
     ``from_bulk`` records ``samples`` and ``features``, where their ids came from:
     ``"table"``, ``"ids"``, ``"data_frame_index"`` (samples) or
     ``"data_frame_columns"`` (features), or ``"positions"``.
+
+    ``from_anndata`` and ``from_mudata``, reading data that CytePool did not
+    export, record
+
+    - ``layout``: the layout that CytePool recognised in the data, which chose the
+      sources that ``layers`` did not name: ``"scanpy.get.aggregate"``,
+      ``"decoupler.pp.pseudobulk"`` or ``"liana.multi.adata_to_views"``, or
+      ``"given"`` for data of no layout it recognises;
+    - ``rows``: the number of profiles read, and for ``from_mudata``
+      ``modalities``, the modality names;
+    - ``layers``: each cube layer with its source, ``"X"`` or a layer name;
+    - ``n_cells``: where the cell numbers came from: an ``obs`` column, ``"table"``
+      (a table of samples x groups), ``"uns['psbulk_stats']"`` (LIANA's
+      statistics) or null (none);
+    - ``samples`` and ``groups``, as ``from_cells`` records them;
+    - ``obs_columns``: the metadata read into the tables, null when the tables were
+      given. ``from_anndata`` gives the ``obs`` columns placed in the sample table
+      and in the group table, and those left out, as ``{"samples": [...],
+      "groups": [...], "left_out": [...]}``, and records the label columns as
+      ``sample_column`` and ``group_column``; ``from_mudata`` lists the columns of
+      the MuData's ``obs`` placed in the sample table.
 
 ``operations``:
     The operations that derived the cube, oldest first. Each is an object with
@@ -67,6 +90,11 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
       kept as they are.
     - ``collapse_samples``: ``by``, the sample column, and ``membership``, the id of
       each new sample with the ids of the samples it sums, in the input's order.
+    - ``from_anndata`` and ``from_mudata``: the import of an AnnData or MuData that
+      CytePool exported, whose provenance the cube continues. ``input`` is the
+      fingerprint that the export stored, which the cube's own fingerprint equals
+      unless the data were changed in between, and ``source`` the caller's record,
+      or null.
 """
 
 import json
@@ -94,6 +122,8 @@ _ORIGINS = {
     "data_frame_index": "the index of the counts data frame",
     "data_frame_columns": "the columns of the counts data frame",
 }
+# The functions that read cubes from scverse's data structures.
+_IMPORTS = {"from_anndata": "an AnnData", "from_mudata": "a MuData"}
 _LIBRARY_SIZES = {
     "cell_totals": "the total count of each cell",
     "given": "given for each cell (library_sizes)",
@@ -183,11 +213,21 @@ def _construction_lines(construction: Any) -> list[str]:
         header += f" (CytePool {version})"
     if function == "from_cells" and isinstance(settings.get("n_cells"), int):
         header += f" from {settings.pop('n_cells'):,} cells"
+    if function in _IMPORTS and isinstance(settings.get("rows"), int):
+        header += f" from {settings.pop('rows'):,} profiles of {_IMPORTS[function]}"
+        layout = settings.get("layout")
+        if isinstance(layout, str):
+            del settings["layout"]
+            header += (
+                ", with the sources given"
+                if layout == "given"
+                else f", in the layout of {layout}"
+            )
     lines = [header + ":"]
     for axis in ("samples", "groups"):
         value = settings.get(axis)
         if (
-            function == "from_cells"
+            (function == "from_cells" or function in _IMPORTS)
             and isinstance(value, dict)
             and value.get("order") in _ORDERS
             and value.get("labels") in ("text", "integers")
@@ -208,6 +248,10 @@ def _construction_lines(construction: Any) -> list[str]:
     if isinstance(layers, list) and all(isinstance(name, str) for name in layers):
         del settings["layers"]
         lines.append(f"  layers: {', '.join(layers)}")
+    elif isinstance(layers, dict) and all(isinstance(s, str) for s in layers.values()):
+        del settings["layers"]
+        sources = (f"{name} from {source!r}" for name, source in layers.items())
+        lines.append(f"  layers: {', '.join(sources)}")
     target, sizes = settings.get("target_sum"), settings.get("library_sizes")
     if (
         isinstance(target, int | float)
@@ -233,11 +277,18 @@ def _operation_lines(number: int, operation: Any) -> list[str]:
         header += f" by {fields.pop('by')!r}"
     if "input" in fields:
         found = fields.pop("input")
-        header += (
-            ", applied to a cube whose fingerprint was not recorded"
-            if found is None
-            else f", applied to the cube {found if isinstance(found, str) else _json(found)}"
-        )
+        named = found if isinstance(found, str) else _json(found)
+        if name in _IMPORTS:
+            header += (
+                f", reading {_IMPORTS[name]} that CytePool exported from the cube "
+                f"{named}"
+            )
+            if fields.get("source", False) is None:
+                del fields["source"]
+        elif found is None:
+            header += ", applied to a cube whose fingerprint was not recorded"
+        else:
+            header += f", applied to the cube {named}"
     lines = [header]
     if name == "select":
         for axis in ("samples", "groups", "features"):

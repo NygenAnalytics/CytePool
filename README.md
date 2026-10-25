@@ -15,6 +15,7 @@ what is planned.
 | Pseudobulk cubes | `Cube` (additive layers per sample, group and feature; merging groups; pooling samples; lazy layers, read as a selection needs them), `from_cells` (dense or CSR counts), `from_bulk` | scanpy, decoupler |
 | Provenance and fingerprints | A record of each cube's source (the caller's record, kept unchanged), of the settings that built it and of what each operation kept, merged or pooled, with the fingerprint of the cube it was applied to; `Cube.history()` reads it back. A content fingerprint (SHA-256, documented encoding) of the tables, cell numbers, normalization and layers | a reimplementation of the documented encoding, zarr-python |
 | Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer; stored digests, checked when a file is opened and when a read covers a whole group) | zarr-python |
+| AnnData and MuData | `to_anndata`, `from_anndata`, `to_mudata`, `from_mudata` (optional extras `anndata` and `mudata`): cubes to and from the long AnnData of `scanpy.get.aggregate` and `decoupler.pp.pseudobulk` and the MuData of LIANA's `adata_to_views`, whose layouts are recognised; an import takes sums and counts of cells, refuses means, and gives a cube exported and read back with the same fingerprint | scanpy, decoupler, LIANA, anndata, mudata |
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
@@ -115,6 +116,23 @@ These are not implemented yet:
   limma's `contrasts.fit` refuses, and they report the contrasts that cannot be
   estimated, which limma either refuses or, when they weigh no aliased column,
   computes with a changed meaning.
+- `from_anndata` and `from_mudata` take only sums and counts of cells: means,
+  variances and medians, which `scanpy.get.aggregate` and `decoupler.pp.pseudobulk`
+  can give, are refused, and counts are checked against the cells that detect each
+  feature. A combination of sample and cell type without a row needs cell numbers to
+  become an entry without cells, and a row removed after pooling (decoupler's
+  `filter_samples`, LIANA's `min_cells`) becomes one too, so its cells are missing
+  when groups are merged or samples pooled: import before filtering. LIANA's
+  `adata_to_views` keeps no cell numbers with decoupler 2, so its views need them
+  given, for example as a crosstab of the cells' labels.
+- `to_anndata` and `to_mudata` leave `X` empty and write every layer under its own
+  name. anndata cannot write datetime or timedelta columns, text columns without any
+  value, or column names with `/`, so the exports write them as ISO 8601 text,
+  integers, NaN and names with `_`; the record in `uns` restores them on import. A
+  MuData file cannot store a modality whose name holds `/` or is `.` or `..`. The
+  tests of these
+  conversions are skipped on Python 3.15, for which h5py and numcodecs, which
+  anndata needs, have no wheels yet.
 - numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
   are refused with a `TypeError` that names the argument, because numpy drops the
   mask when it converts one and the masked entries would be read as data. Where an

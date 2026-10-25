@@ -27,6 +27,7 @@ Nothing is released yet, and the interface may still change.
 | --- | --- | --- |
 | Pseudobulk cubes | [`Cube`, `from_cells`, `from_bulk`](/api/cubes.html) | scanpy, decoupler |
 | Cube files | [`write_cube`, `read_cube`](/api/cube_files.html) | zarr-python |
+| AnnData and MuData | [`to_anndata`, `from_anndata`, `to_mudata`, `from_mudata`](/api/anndata.html) | scanpy, decoupler, LIANA |
 | Normalization and filtering | [TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression`](/api/normalization.html) | edgeR, DESeq2 |
 | Designs | [Model matrices from R formulas, named contrasts, design checks](/api/designs.html) | R, limma, lme4 |
 | Linear models | [Ordinary, weighted and generalised least squares for every gene, contrasts](/api/linear_models.html) | limma |

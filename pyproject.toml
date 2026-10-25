@@ -34,7 +34,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Converting cubes to and from AnnData (cytepool.io.anndata). anndata 0.13 is the
+# first that writes the strings of pandas 3, and works with pandas 2.3 too.
+anndata = ["anndata>=0.13"]
+# The same, and to and from MuData. mudata 0.3.0 does not import with anndata 0.11
+# or newer, and 0.4.0 cannot read the MuData files that LIANA writes.
+mudata = ["anndata>=0.13", "mudata>=0.3.1,!=0.4.0"]
 test = [
+    # anndata needs h5py and numcodecs, which have no wheels for Python 3.15 yet; the
+    # tests that need anndata or mudata are skipped without them.
+    "anndata>=0.13; python_version < '3.15'",
+    "mudata>=0.3.1,!=0.4.0; python_version < '3.15'",
     "pandas>=2.2",
     "pytest>=8",
     "scipy>=1.13",
