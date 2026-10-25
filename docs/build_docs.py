@@ -5,10 +5,15 @@ notebook is checked (executed, unchanged since, free of errors) and its figures 
 their descriptions as alternative text. ``myst build --html`` then renders the site,
 and the Sphinx API reference, built beforehand into ``docs/build/api``, is copied
 into it under ``api/``, where the site's links to ``/api/...`` point.
+
+A site served below a path, as docs.nygen.io/CytePool/ is, is built with that path in
+``BASE_URL`` (``BASE_URL=/CytePool``). MyST puts it before the links of the pages, and
+``stage_site`` puts it before the links of the table of contents, which MyST leaves.
 """
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -83,6 +88,27 @@ def check_figures(notebook: dict[str, Any], page: str) -> None:
             )
 
 
+def toc_with_base_url(
+    entries: list[dict[str, Any]], base_url: str
+) -> list[dict[str, Any]]:
+    """Return a copy of a MyST table of contents with ``base_url`` before every link
+    to a path of the site, such as ``/api/index.html``.
+
+    Links to other sites, links that name a host (``//...``) and relative links are
+    kept as they are.
+    """
+    result = []
+    for entry in entries:
+        entry = dict(entry)
+        url = entry.get("url")
+        if isinstance(url, str) and url.startswith("/") and not url.startswith("//"):
+            entry["url"] = base_url + url
+        if "children" in entry:
+            entry["children"] = toc_with_base_url(entry["children"], base_url)
+        result.append(entry)
+    return result
+
+
 def toc_files(entries: list[dict[str, Any]]) -> list[str]:
     """Return the files of a MyST table of contents, depth first."""
     files = []
@@ -115,6 +141,10 @@ def stage_site() -> Path:
     if kept.is_dir():
         themes.parent.mkdir()
         kept.rename(themes)
+    base_url = os.environ.get("BASE_URL", "").rstrip("/")
+    if base_url:
+        config["project"]["toc"] = toc_with_base_url(config["project"]["toc"], base_url)
+        (SITE / "myst.yml").write_text(yaml.safe_dump(config, sort_keys=False))
     for page in toc_files(config["project"]["toc"]):
         if not page.endswith(".ipynb"):
             continue
