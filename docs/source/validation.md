@@ -19,7 +19,7 @@ package in this revision of the repository: on **2026-10-25** for the six script
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
-`negative_binomial_fits.py`, `differential_expression.py`,
+`negative_binomial_fits.py`, `quasi_likelihood.py`, `differential_expression.py`,
 `differential_expression_options.py`, `dream.py`, `interferon_stimulated_pbmcs.py`,
 `gene_set_tests.py`, `rotation_gene_set_tests.py`, `composition_tests.py` and
 `meta_analysis.py`, and for `design.py`, which printed the same table again after
@@ -45,6 +45,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
 | [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
+| [`quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py) | Quasi-likelihood F-tests | edgeR 4.4.0, limma 3.62.1, mpmath 1.3.0 | 223 | 210 pass, 13 deliberate differences | 5.1 s | 186 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 150 | 146 pass, 4 deliberate differences | 4.8 s | 195 MiB |
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
@@ -57,7 +58,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,648** | **1,424 pass, none failed; 137 information, 86 deliberate differences, 1 control** | | |
+| **All** | | | **1,871** | **1,634 pass, none failed; 137 information, 99 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -686,6 +687,73 @@ large counts, and 2e-3 with a dispersion of 2e-5. Deliberate differences:
   2e-5, its deviances, and the fits of genes whose maximum lies at infinity, differ by
   up to 0.97 and 1.2e-3. From a dispersion times the mean of 1e6 it uses the limit of
   the gamma distribution, which gives zero counts 1.6 to 2.6 times their deviance.
+
+## Quasi-likelihood F-tests
+
+[`validation/quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py)
+compares `fit_quasi_likelihood` and `quasi_likelihood_f_test` with edgeR's `glmQLFit`
+and `glmQLFTest` (edgeR 4.4's default, `legacy = FALSE`), `common_dispersion` with
+`estimateGLMCommonDisp` and `dispCoxReid`, `average_log_cpm` with `aveLogCPM`, and
+`negative_binomial_unit_deviance_moments` with sums at 30 digits in mpmath and the
+gamma limit. The counts are simulated from fixed seeds, with a dispersion for each
+gene, in 14 cases of 1,000 genes and 8 or 9 samples, with genes without counts and
+groups whose counts are all zero planted in most: two groups with TMM factors; three
+groups and a covariate with several contrasts and a joint test; a paired design;
+robust priors with and without genes that have no counts; small counts; a dispersion
+given below the true one, so that the average quasi-dispersion is well above 1; prior
+weights; trended dispersions; no trend; a trend in another covariate; offsets per
+observation; Poisson counts; and a test that both programs refuse. R runs with its
+address space capped at 8 GB. Reference: R 4.4.3, edgeR 4.4.0, limma 3.62.1, mpmath
+1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Share of genes the dispersion comes from | `glmQLFit` | 0 | 0 | 9 pass |
+| NB dispersion | `glmQLFit`; `dispCoxReid(tol = 1e-12)` on the same genes | 8.7e-6; 8.9e-7 (6.5e-6 for designs that are not one-way layouts) | 1e-4; 1e-6 (1e-5) | 18 pass |
+| Common dispersion, with prior weights and a systematic subset | `estimateGLMCommonDisp`; `dispCoxReid(tol = 1e-12)` | 8.1e-6; 4.6e-7 | 1e-4; 1e-6 | 5 pass |
+| Average log CPM in four settings | `aveLogCPM` | 3.3e-12 | 1e-6 | 1 pass |
+| Moments of the unit deviance at 41 points, and at a mean of 1e14 | mpmath at 30 digits; the gamma limit | 1.7e-14 | 1e-11 | 2 pass |
+| Average quasi-dispersion | `glmQLFit` | 2.1e-3 | 1e-2 | 14 pass |
+| Adjusted deviances and residual df | `glmQLFit` | 3.3e-3 | 5e-3 | 14 pass |
+| Prior and posterior quasi-dispersions; prior df | `glmQLFit` | 1.4e-3 where the average quasi-dispersions agree, 5.6e-3 where they differ; 9.8e-3 | 5e-3, 1e-2; 2e-2 | 26 pass |
+| The prior and posterior that `squeeze_variances` gives edgeR's own adjusted deviances | `glmQLFit`, `squeezeVar` | 4.7e-8 | 1e-6 | 13 pass |
+| Leverages, those of fitted values that tend to zero included | `glmQLFit` | 2.8e-7 for one-way layouts at the same working dispersion; 8.7e-5 | 1e-6; 1e-3 | 14 pass |
+| logCPM | `glmQLFTest` | 2.8e-12 at a given dispersion; 2.7e-7 at an estimated one | 1e-6; 1e-5 | 16 pass |
+| logFC | `glmQLFTest` | 4.7e-7 for one-way layouts at the same working dispersion; 2.0e-4 | 1e-6; 1e-3 | 16 pass |
+| Likelihood ratio statistic (F times the posterior quasi-dispersion and its df) | `glmQLFTest` | 8.5e-10 at the same dispersion; 8.9e-6 at dispersions estimated by both; 4.5e-3 where the averages differ | 1e-6; 1e-4; 1e-2 | 16 pass |
+| F; PValue and FDR; df.total | `glmQLFTest`, `topTags` | 2.6e-3; 3.9e-3 of \|log10 p\|; 9.8e-3 | 5e-3; 5e-3; 2e-2 | 45 pass |
+| A test that leaves the null model without a coefficient | `glmQLFTest` | both raise | n/a | 1 pass |
+| Deliberate differences, listed below | `glmQLFit`, `glmQLFTest`, `squeezeVar` | 6 rows of the robust prior with genes without counts; the first gene's logCPM with offsets per observation; 6 rows of edgeR's moments | n/a | 13 deliberate differences |
+
+Three differences set the tolerances, and the script isolates each. edgeR approximates
+the mean and variance of the unit deviance: the scale s implied by its unit matrices
+is off by up to 7.6e-4, 1.2e-3 and 1.3e-2 at dispersions of 0.01, 0.2 and 1, and the
+degrees of freedom k by up to 2.0e-4, 1.3e-4 and 4.0e-3, where CytePool's sums are
+exact. The adjusted deviances, quasi-dispersions and F-statistics therefore agree to
+about 3e-3, the average quasi-dispersion to 2.1e-3, and the prior df, which maximizes
+a likelihood that is flat at large values, to 9.8e-3. The prior and posterior that
+`squeeze_variances` computes from edgeR's own adjusted deviances agree with edgeR's to
+4.7e-8, so the moments are the only cause. Where the average quasi-dispersions differ,
+so do the working dispersions of the fits, and with them the quasi-dispersions,
+leverages, log fold changes and likelihood ratios, by about 1e-4 to 6e-3. edgeR's
+search for the Cox-Reid dispersion stops within its tolerance of 1e-5, and
+`dispCoxReid(tol = 1e-12)` on the same genes agrees with CytePool to 8.9e-7. edgeR's
+Levenberg fits stop short of the maximum (see Negative binomial models above), so log
+fold changes of designs that are not one-way layouts agree to about 2e-4, and their
+fitted values that tend to zero stop near 1e-8, far above CytePool's; both report the
+leverages of the limit for these. Deliberate differences:
+
+- The robust prior with genes that have no counts: limma counts their missing
+  quasi-dispersions as zero variances in its tests for outliers, which lowers the
+  outlier probabilities of the others and, here, changes which genes are outliers;
+  CytePool tests only the genes with residual degrees of freedom, as its
+  `fit_f_distribution_likelihood` does (see Empirical Bayes moderation below). Without
+  such genes the two agree.
+- With offsets per observation, edgeR's `aveLogCPM` gives the first gene a value that
+  does not depend on its offsets, minus infinity for a gene without counts. The case
+  gives the first gene no counts, a dispersion and no trend, so that the value enters
+  nothing else, and every other gene is compared.
+- The moments of the unit deviance, as above: CytePool's are exact.
 
 ## Empirical Bayes moderation
 
@@ -1613,6 +1681,7 @@ python validation/rotation_gene_set_tests.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py
+python validation/quasi_likelihood.py
 python validation/differential_expression.py
 python validation/differential_expression_options.py
 # Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583

@@ -56,6 +56,7 @@ from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 from cytepool.stats.multiple_testing import adjust_p_values
+from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.voom import voom_with_quality_weights
 from cytepool.table import Table
@@ -373,6 +374,9 @@ def _meta_analysis_arguments(context: Context) -> dict[str, Any]:
 TABLE = Table({"x": [1.0, 2.0], "s": ["a", "b"]})
 NORM_FACTORS = [1.0, 1.1, 0.9, 1.0]
 LIBRARY_SIZES = COUNTS.sum(axis=1).astype(float)
+# Counts that vary more than Poisson counts between replicates, so that a common
+# dispersion has a maximum inside its search interval.
+OVERDISPERSED = COUNTS * np.array([[1.0], [2.0], [1.0], [3.0]])
 
 ENTRY_POINTS: dict[str, Entry] = {
     # Tables.
@@ -887,6 +891,123 @@ ENTRY_POINTS: dict[str, Entry] = {
         lambda c: {"counts": COUNTS, "means": COUNTS + 1.0, "dispersion": 0.1},
         {"counts": None, "means": None, "dispersion": None},
     ),
+    # Quasi-likelihood fits and tests (edgeR's glmQLFit and glmQLFTest).
+    "cytepool.stats.quasi_likelihood.average_log_cpm": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "library_sizes": LIBRARY_SIZES,
+            "norm_factors": NORM_FACTORS,
+            "weights": np.full((4, 8), 2.0),
+            "dispersion": np.full(8, 0.1),
+            "prior_count": 1.0,
+        },
+        {
+            "counts": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "weights": None,
+            "dispersion": None,
+        },
+        options=("prior_count",),
+    ),
+    "cytepool.stats.quasi_likelihood.average_log_cpm[offsets]": Entry(
+        lambda c: {"counts": COUNTS, "offsets": np.log(LIBRARY_SIZES)},
+        {"offsets": None},
+    ),
+    "cytepool.stats.quasi_likelihood.common_dispersion": Entry(
+        lambda c: {
+            "counts": OVERDISPERSED,
+            "design": DESIGN,
+            "library_sizes": LIBRARY_SIZES,
+            "norm_factors": NORM_FACTORS,
+            "weights": np.full((4, 8), 2.0),
+            "interval": [0.01, 2.0],
+            "min_row_sum": 1.0,
+            "subset": 100,
+            "coefficient_names": ["a", "b"],
+            "max_iterations": 50,
+            "n_threads": 1,
+        },
+        {
+            "counts": None,
+            "design": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "weights": None,
+            "interval": None,
+            "coefficient_names": None,
+            "n_threads": None,
+        },
+        options=("min_row_sum", "subset", "max_iterations"),
+    ),
+    "cytepool.stats.quasi_likelihood.common_dispersion[offsets]": Entry(
+        lambda c: {
+            "counts": OVERDISPERSED,
+            "design": DESIGN,
+            "offsets": np.log(LIBRARY_SIZES),
+            "interval": [0.01, 2.0],
+        },
+        {"offsets": None},
+    ),
+    "cytepool.stats.quasi_likelihood.fit_quasi_likelihood": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": DESIGN,
+            "dispersion": np.full(8, 0.1),
+            "library_sizes": LIBRARY_SIZES,
+            "norm_factors": NORM_FACTORS,
+            "weights": np.full((4, 8), 2.0),
+            "trend": np.linspace(1.0, 2.0, 8),
+            "robust": False,
+            "prior_count": 0.5,
+            "coefficient_names": ["a", "b"],
+            "max_iterations": 50,
+            "n_threads": 1,
+        },
+        {
+            "counts": None,
+            "design": None,
+            "dispersion": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "weights": None,
+            "trend": "NaN",
+            "coefficient_names": None,
+            "n_threads": None,
+        },
+        options=("robust", "prior_count", "max_iterations"),
+    ),
+    "cytepool.stats.quasi_likelihood.fit_quasi_likelihood[offsets]": Entry(
+        lambda c: {
+            "counts": COUNTS + np.array([[0], [0], [0], [40]]),
+            "design": DESIGN,
+            "offsets": np.log(LIBRARY_SIZES),
+            "top_proportion": 1.0,
+        },
+        {"offsets": None},
+        options=("top_proportion",),
+    ),
+    "cytepool.stats.quasi_likelihood.negative_binomial_unit_deviance_moments": Entry(
+        lambda c: {"means": COUNTS + 1.0, "dispersion": 0.1},
+        {"means": None, "dispersion": None},
+    ),
+    "cytepool.stats.quasi_likelihood.quasi_likelihood_f_test": Entry(
+        lambda c: {
+            "fit": fit_quasi_likelihood(COUNTS, DESIGN, dispersion=0.1),
+            "contrasts": np.array([0.0, 1.0]),
+            "names": ["b"],
+        },
+        {"contrasts": None, "names": None},
+        objects=("fit",),
+    ),
+    "cytepool.stats.quasi_likelihood.quasi_likelihood_f_test[coefficients]": Entry(
+        lambda c: {
+            "fit": fit_quasi_likelihood(COUNTS, DESIGN, dispersion=0.1),
+            "coefficients": [1],
+        },
+        {"coefficients": None},
+        objects=("fit",),
+    ),
     "cytepool.stats.empirical_bayes.fit_f_distribution": Entry(
         lambda c: {
             "variances": c.fit.sigma**2,
@@ -1349,6 +1470,9 @@ RECORDS = {
     "cytepool.stats.mixed_models.MixedModelFit",
     "cytepool.meta_analysis.MetaAnalysisFit",
     "cytepool.stats.dream.ModeratedFixedEffectTests",
+    "cytepool.stats.quasi_likelihood.QuasiLikelihoodFit",
+    "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",
+    "cytepool.stats.quasi_likelihood.UnitDevianceMoments",
 }
 
 # Callables that modules with __all__ define but do not export.

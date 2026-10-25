@@ -305,7 +305,8 @@ def fit_negative_binomial_model(
 
     Every gene is fitted with the same design, with its own dispersions, offsets and
     weights; the module description gives the model and the methods. The dispersions
-    are taken as known. CytePool does not estimate them yet: give estimates, or a
+    are taken as known: give estimates, such as
+    :func:`~cytepool.stats.quasi_likelihood.common_dispersion`, or a
     value from similar data (edgeR's User's Guide gives biological coefficients of
     variation of 0.4 for human samples, 0.1 for genetically identical model organisms
     and 0.01 for technical replicates; the dispersion is their square).
