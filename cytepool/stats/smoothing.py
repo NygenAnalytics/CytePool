@@ -49,6 +49,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
+from cytepool._masked_arrays import Missing, reject_masked, unmasked_array
 
 __all__ = ["lowess", "natural_spline_basis"]
 
@@ -106,8 +107,8 @@ def lowess(
         returned unchanged.
 
     Raises:
-        TypeError: If an input is not real-valued, or ``iterations`` is not
-            an integer.
+        TypeError: If an input is not real-valued or is a numpy masked array, or
+            ``iterations`` is not an integer.
         ValueError: If ``x`` and ``y`` are not 1-D of the same non-zero
             length or are not finite, ``span`` is not positive and finite,
             ``iterations`` is negative, or ``delta`` is negative or not
@@ -212,14 +213,17 @@ def natural_spline_basis(
         ``(n, df)`` matrix, with ``df = len(knots) + 1 + intercept``.
 
     Raises:
-        TypeError: If an input is not real-valued, ``df`` is not an integer
-            or ``intercept`` is not a bool.
+        TypeError: If an input is not real-valued or is a numpy masked array,
+            ``df`` is not an integer or ``intercept`` is not a bool.
         ValueError: If ``x`` is not 1-D or has infinite values, ``df`` is
             too small, knots are not finite or not strictly inside the
             boundary knots, the boundary knots are not two distinct finite
             values, or there are too few values of x to place the knots.
     """
-    values = _real_vector(x, "x")
+    # Searched before np.atleast_1d could turn numpy.ma.masked in a list into NaN.
+    reject_masked(knots, "knots")
+    reject_masked(boundary_knots, "boundary_knots")
+    values = _real_vector(x, "x", missing="NaN")
     if np.isinf(values).any():
         raise ValueError(
             "x must not contain infinite values; NaN marks a missing value"
@@ -594,8 +598,8 @@ def _ratio(numerator: FloatArray, denominator: FloatArray) -> FloatArray:
     return result
 
 
-def _real_vector(values: Any, name: str) -> FloatArray:
-    array = np.asarray(values)
+def _real_vector(values: Any, name: str, *, missing: Missing = None) -> FloatArray:
+    array = unmasked_array(values, name, missing=missing)
     if array.dtype.kind not in "iuf":
         raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
     if array.ndim != 1:

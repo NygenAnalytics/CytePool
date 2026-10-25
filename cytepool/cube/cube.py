@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table, _values_equal, _with_missing
 
 LAYER_NAMES = ("counts", "detected", "log_sum", "log_sum_sq", "linear_sum")
@@ -86,7 +87,8 @@ class Cube:
             Other layers are always copied.
 
     Raises:
-        TypeError: If an argument has the wrong type or dtype.
+        TypeError: If an argument has the wrong type or dtype, or is or holds a
+            numpy masked array.
         ValueError: If shapes disagree, a required argument is missing, an id is
             missing or repeated, or a value breaks a constraint below.
 
@@ -173,6 +175,15 @@ class Cube:
         provenance: Mapping[str, Any] | None = None,
         copy: bool = True,
     ) -> None:
+        for argument, value, id_column in (
+            ("samples", samples, "sample_id"),
+            ("groups", groups, "group_id"),
+            ("features", features, "feature_id"),
+        ):
+            reject_masked_table(value, argument, id_column)
+        # A flag read by its truth value would read a masked one through its mask.
+        if not isinstance(copy, bool | np.bool_):
+            raise TypeError(f"copy must be a bool, got {type(copy).__name__}")
         sample_table, sample_index = _axis_table(samples, "samples", "sample_id")
         group_table, group_index = _axis_table(groups, "groups", "group_id")
         feature_table, feature_index = _axis_table(features, "features", "feature_id")
@@ -502,7 +513,8 @@ class Cube:
         Raises:
             KeyError: If an id is unknown.
             IndexError: If a position is out of range.
-            TypeError: If a selection is not ids, a boolean mask or integers.
+            TypeError: If a selection is not ids, a boolean mask or integers, or is
+                a numpy masked array.
             ValueError: If a mask has the wrong length or a selection repeats an
                 entry.
         """
@@ -565,7 +577,8 @@ class Cube:
 
         Raises:
             KeyError: If a member is not a group id.
-            TypeError: If ``mapping`` is not a mapping of strings to strings.
+            TypeError: If ``mapping`` is not a mapping of strings to strings, or
+                holds a numpy masked array.
             ValueError: If a new id is empty, a merge is empty, a group is listed
                 twice or a new id collides with a kept group.
             OverflowError: If a merged ``n_cells`` or a merged value of an
@@ -577,6 +590,7 @@ class Cube:
                 "regroup() needs a mapping of new group id to existing group ids, got "
                 f"{type(mapping).__name__}"
             )
+        reject_masked(mapping, "mapping")
         ids = self._groups["group_id"].tolist()
         owner: dict[int, str] = {}
         merges: dict[str, list[int]] = {}
@@ -935,6 +949,8 @@ class Cube:
         )
 
     def _group_position(self, group: object) -> int:
+        # operator.index accepts a 0-d masked integer and ignores its mask.
+        reject_masked(group, "group")
         if isinstance(group, str):
             position = self._group_index.get(group)
             if position is None:
@@ -1034,7 +1050,8 @@ class _StoredLayer(_LazyLayer):
 
     def read_all(self) -> np.ndarray:
         if self.reads_new_arrays:  # one read, into the array it returns
-            array = self._owned(np.asarray(self.source[...]), new=True)
+            whole = unmasked_array(self.source[...], f"the lazy layer {self.name!r}")
+            array = self._owned(whole, new=True)
             for group in range(self.shape[0]):
                 _check_values(self.name, array[group], group, self.n_cells, self.ids)
         else:
@@ -1047,7 +1064,7 @@ class _StoredLayer(_LazyLayer):
 
     def _fetch(self, group: int) -> np.ndarray:
         """Read one group from the source and check its shape and dtype."""
-        return self._checked(np.asarray(self.source[group]), group, self.shape[1:])
+        return self._checked(self.source[group], group, self.shape[1:])
 
     def _fetch_block(
         self, group: int, samples: np.ndarray | None, features: np.ndarray | None
@@ -1068,14 +1085,12 @@ class _StoredLayer(_LazyLayer):
             return self._owned(_take(self._fetch(group), samples, features), new=True)
         if self.reads_new_arrays:
             key = (group, _every_if_none(samples), _every_if_none(features))
-            block = self._checked(
-                np.asarray(outer[key]), group, (rows, columns), " with oindex"
-            )
+            block = self._checked(outer[key], group, (rows, columns), " with oindex")
             return self._owned(block, new=True)
         sample_key, sample_order = _increasing(samples)
         feature_key, feature_order = _increasing(features)
         block = self._checked(
-            np.asarray(outer[group, sample_key, feature_key]),
+            outer[group, sample_key, feature_key],
             group,
             (_length(sample_key, rows), _length(feature_key, columns)),
             " with oindex",
@@ -1103,13 +1118,14 @@ class _StoredLayer(_LazyLayer):
 
     def _checked(
         self,
-        block: np.ndarray,
+        value: Any,
         group: int,
         shape: tuple[int, ...],
         how: str = "",
     ) -> np.ndarray:
-        """Return what a read of a group gave, after checking its shape and dtype."""
+        """Return what a read of a group gave as an array, after checking it."""
         what = f"group {self.ids[0][group]!r} of the lazy layer {self.name!r}{how}"
+        block = unmasked_array(value, what)
         if block.shape != shape:
             raise ValueError(
                 f"reading {what} gave shape {block.shape}, expected {shape}"
@@ -1502,7 +1518,7 @@ def _as_n_cells(
     group_ids, sample_ids, _ = ids
     if all(hasattr(value, attribute) for attribute in ("index", "columns", "to_numpy")):
         value = _aligned_by_labels(value, sample_ids, group_ids)
-    array = np.asarray(value)
+    array = unmasked_array(value, "n_cells")
     if array.dtype.kind not in "iu":
         raise TypeError(f"n_cells must be an integer array, got dtype {array.dtype}")
     expected = (sample_ids.size, group_ids.size)
@@ -1598,6 +1614,7 @@ def _store_layers(
         raise TypeError(
             f"layers must be a mapping of layer name to array, got {type(layers).__name__}"
         )
+    reject_masked(layers, "layers")
     unknown = [name for name in layers if name not in LAYER_NAMES]
     if unknown:
         raise ValueError(
@@ -1634,10 +1651,6 @@ def _store_layer(
     ids: tuple[np.ndarray, np.ndarray, np.ndarray],
     copy: bool,
 ) -> np.ndarray | _LazyLayer:
-    if isinstance(value, np.ma.MaskedArray):
-        raise TypeError(
-            f"layer {name!r} is a masked array; layers have no missing values"
-        )
     lazy = isinstance(value, np.memmap) or (
         not isinstance(value, np.ndarray)
         and all(
@@ -1649,7 +1662,7 @@ def _store_layer(
         if tuple(value.shape) != shape:
             raise ValueError(_shape_message(name, shape, tuple(value.shape)))
         return _StoredLayer(value, name, dtype, shape, n_cells, ids)
-    array = np.asarray(value)
+    array = unmasked_array(value, f"layers[{name!r}]")
     dtype = _layer_dtype(name, array.dtype)
     if array.shape != shape:
         raise ValueError(_shape_message(name, shape, array.shape))
@@ -1853,7 +1866,7 @@ def _positions(
         and not isinstance(selector, bool | np.bool_)
     ):
         selector = [selector]
-    values = np.asarray(selector)
+    values = unmasked_array(selector, axis)
     if values.ndim != 1:
         raise ValueError(f"{axis} must be a 1-D selection, got shape {values.shape}")
     kind = values.dtype.kind
@@ -2150,6 +2163,7 @@ def _normalization_text(normalization: Mapping[str, Any]) -> str:
         raise TypeError(
             f"normalization must be a mapping, got {type(normalization).__name__}"
         )
+    reject_masked(normalization, "normalization", missing="None")
     plain = _plain_json(normalization, "normalization")
     method = plain.get("method")
     if not isinstance(method, str) or not method:
@@ -2167,6 +2181,7 @@ def _provenance_text(provenance: Mapping[str, Any] | None) -> str:
         raise TypeError(
             f"provenance must be a mapping, got {type(provenance).__name__}"
         )
+    reject_masked(provenance, "provenance", missing="None")
     plain = _plain_json(provenance, "provenance")
     if "operations" in plain and not isinstance(plain["operations"], list):
         raise ValueError("provenance['operations'] must be a list of operation records")

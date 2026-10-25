@@ -19,7 +19,8 @@ Column types:
   value of float (or datetime) columns. Integer and boolean columns have no missing
   value, so a sequence of numbers or booleans that contains ``None`` becomes float64
   with NaN.
-- Bytes, structured and other object columns are rejected.
+- Bytes, structured and other object columns are rejected, and so are numpy masked
+  arrays, whose mask numpy would drop: mark missing values with None or NaN instead.
 """
 
 import importlib
@@ -29,6 +30,8 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 import numpy as np
+
+from ._masked_arrays import reject_masked, unmasked_array
 
 _REPR_ROWS = 5  # rows shown at each end of a long table
 _REPR_COLUMNS = 8  # columns shown as a grid; the rest are listed by name
@@ -45,7 +48,8 @@ class Table:
 
     Raises:
         TypeError: If ``data`` has an unsupported type, a column name is not a
-            string, or a column holds unsupported values.
+            string, or a column holds unsupported values or is a numpy masked
+            array.
         ValueError: If a column name is empty or repeated, a column is not 1-D, or
             the columns have unequal lengths.
 
@@ -66,6 +70,7 @@ class Table:
         elif isinstance(data, Table):
             columns = dict(data._columns)
         elif isinstance(data, Mapping):
+            reject_masked(data, "data", missing="None or NaN")
             columns = {}
             for name, values in data.items():
                 _check_column_name(name)
@@ -146,11 +151,11 @@ class Table:
             indices: 1-D integer positions; negative positions count from the end.
 
         Raises:
-            TypeError: If ``indices`` are not integers.
+            TypeError: If ``indices`` are not integers, or are a numpy masked array.
             ValueError: If ``indices`` are not 1-D.
             IndexError: If a position is out of range.
         """
-        positions = np.asarray(indices)
+        positions = unmasked_array(indices, "indices")
         if positions.dtype.kind == "b":
             raise TypeError("take() needs integer positions; use filter() for a mask")
         if positions.size == 0:
@@ -180,10 +185,10 @@ class Table:
             mask: A boolean array with one value per row.
 
         Raises:
-            TypeError: If ``mask`` is not boolean.
+            TypeError: If ``mask`` is not boolean, or is a numpy masked array.
             ValueError: If ``mask`` does not have one value per row.
         """
-        keep = np.asarray(mask)
+        keep = unmasked_array(mask, "mask")
         if keep.dtype != np.bool_:
             raise TypeError(
                 f"filter() needs a boolean mask, got dtype {keep.dtype}; use take() for "
@@ -207,8 +212,10 @@ class Table:
 
         Raises:
             KeyError: If a name is not a column.
+            TypeError: If ``names`` is a numpy masked array.
             ValueError: If a name is repeated.
         """
+        reject_masked(names, "names")
         chosen = [names] if isinstance(names, str) else list(names)
         missing = [name for name in chosen if name not in self._columns]
         if missing:
@@ -238,7 +245,7 @@ class Table:
 
         Raises:
             TypeError: If ``columns`` is not a mapping, or a name or column has an
-                unsupported type.
+                unsupported type or is a numpy masked array.
             ValueError: If a column is given twice, or a new column's length differs
                 from the table's.
         """
@@ -249,8 +256,10 @@ class Table:
                     f"columns must be a mapping of name to values, got "
                     f"{type(columns).__name__}"
                 )
+            reject_masked(columns, "columns", missing="None or NaN")
             updates.update(columns)
-        for name in named:
+        for name, values in named.items():
+            reject_masked(values, name, missing="None or NaN")
             if name in updates:
                 raise ValueError(f"column {name!r} is given twice")
         updates.update(named)
@@ -422,7 +431,7 @@ def _as_column(name: str, values: Any, missing: np.ndarray | None = None) -> np.
             default rule (None or NaN).
     """
     try:
-        array = np.asarray(values)
+        array = unmasked_array(values, f"column {name!r}", missing="None or NaN")
     except ValueError as error:
         raise ValueError(
             f"column {name!r} could not be read as a 1-D array; columns must be flat "

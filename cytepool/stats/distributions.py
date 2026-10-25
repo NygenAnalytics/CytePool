@@ -11,7 +11,8 @@ Every public function is vectorised: its arguments broadcast with numpy's rules 
 result is a float64 array of the broadcast shape, or a Python float when every argument
 is a scalar. NaN arguments give NaN, and so do parameters outside their domain; the
 functions never raise for numeric input. Arguments that are not real numbers raise
-``TypeError``.
+``TypeError``, and so do numpy masked arrays, whose mask numpy would drop: NaN marks a
+missing value instead.
 
 The compiled scalar routines behind the public functions are named
 ``<function>_scalar`` (for example ``t_sf_scalar``) and can be called from other compiled

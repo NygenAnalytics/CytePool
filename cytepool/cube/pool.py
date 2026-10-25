@@ -17,6 +17,7 @@ import numpy as np
 from numba import prange
 
 from .._jit import jit, thread_limit
+from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table, _is_data_frame
 from .cube import LAYER_NAMES, Cube, _axis_table
 
@@ -130,7 +131,8 @@ def from_cells(
 
     Raises:
         TypeError: If ``counts`` is neither a numeric array nor a CSR matrix (a CSC
-            or masked matrix, for example), or an argument has the wrong type.
+            matrix, for example), an argument has the wrong type, or an argument
+            is or holds a numpy masked array.
         ValueError: If a count is negative, not finite or at least 2**53 (alone or
             summed over repeated entries), labels are missing or absent from a
             table, lengths disagree, a layer name is unknown, or the normalized
@@ -278,7 +280,8 @@ def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube
         least 2**53). Its provenance is ``{"source": "from_bulk"}``.
 
     Raises:
-        TypeError: If ``counts`` is not numeric, or is a masked array.
+        TypeError: If ``counts`` is not numeric, or an argument is or holds a numpy
+            masked array.
         ValueError: If ``counts`` is not 2-D, has a negative or non-finite value
             or an integer above 2**63 - 1, the largest a cube holds, or its shape
             disagrees with ``samples`` or ``features``.
@@ -288,14 +291,13 @@ def from_bulk(counts: Any, *, samples: Any = None, features: Any = None) -> Cube
         >>> cube.layer("counts", "bulk").dtype
         dtype('uint32')
     """
-    _reject_masked(counts)
     if samples is None:
         samples = _frame_labels(counts, "index")
     if features is None:
         features = _frame_labels(counts, "columns")
     if hasattr(counts, "toarray") and not isinstance(counts, np.ndarray):
         counts = counts.toarray()
-    array = np.asarray(counts)
+    array = unmasked_array(counts, "counts")
     if array.dtype.kind not in "iuf":
         raise TypeError(
             f"counts must hold numbers (integers or floats), got dtype {array.dtype}"
@@ -868,17 +870,8 @@ _EMPTY_INDICES = (
 )
 
 
-def _reject_masked(counts: Any) -> None:
-    if isinstance(counts, np.ma.MaskedArray):
-        raise TypeError(
-            "counts is a masked array, and pooling would ignore its mask; pass "
-            "counts.filled(0) or drop the masked rows first"
-        )
-
-
 def _cell_matrix(counts: Any) -> _Counts:
     """Read dense or CSR counts into the form the compiled routine takes."""
-    _reject_masked(counts)
     if hasattr(counts, "indptr") or isinstance(getattr(counts, "format", None), str):
         return _csr_counts(counts)
     if hasattr(counts, "toarray") and not isinstance(counts, np.ndarray):
@@ -886,7 +879,7 @@ def _cell_matrix(counts: Any) -> _Counts:
             f"counts is a {type(counts).__name__} without CSR arrays; pass a numpy "
             "array or a CSR matrix with data, indices, indptr and shape"
         )
-    array = np.asarray(counts)
+    array = unmasked_array(counts, "counts")
     if array.dtype.kind not in "iuf":
         raise TypeError(
             f"counts must hold numbers (integers or floats), got dtype {array.dtype}"
@@ -931,9 +924,9 @@ def _csr_counts(counts: Any) -> _Counts:
     if len(shape) != 2 or min(shape) < 0:
         raise ValueError(f"counts must be 2-D, with sizes of 0 or more, got {shape}")
     n_rows, n_columns = shape
-    data = np.asarray(counts.data)
-    indices = np.asarray(counts.indices)
-    indptr = np.asarray(counts.indptr)
+    data = unmasked_array(counts.data, "counts.data")
+    indices = unmasked_array(counts.indices, "counts.indices")
+    indptr = unmasked_array(counts.indptr, "counts.indptr")
     if data.ndim != 1 or indices.ndim != 1 or indptr.ndim != 1:
         raise ValueError("counts.data, counts.indices and counts.indptr must be 1-D")
     if data.dtype.kind not in "iuf":
@@ -1014,6 +1007,7 @@ def _value_slots(
 def _requested_layers(layers: Sequence[str] | str | None) -> tuple[str, ...]:
     if layers is None:
         return LAYER_NAMES
+    reject_masked(layers, "layers")
     listed = [layers] if isinstance(layers, str) else list(layers)
     for name in listed:
         if not isinstance(name, str):
@@ -1045,7 +1039,7 @@ def _positive_number(value: Any, name: str) -> float:
 def _library_sizes(value: Any, n_cells: int) -> np.ndarray | None:
     if value is None:
         return None
-    array = np.asarray(value)
+    array = unmasked_array(value, "library_sizes")
     if array.dtype.kind not in "iuf":
         raise TypeError(f"library_sizes must hold numbers, got dtype {array.dtype}")
     if array.shape != (n_cells,):
@@ -1077,6 +1071,7 @@ def _axis_codes(
         ids = np.empty(len(distinct), dtype=object)
         ids[:] = distinct
         return codes, Table({id_column: ids})
+    reject_masked_table(table, table_name, id_column)
     axis_table, index = _axis_table(table, name, id_column)
     positions = np.empty(len(distinct), dtype=np.int64)
     for code, label in enumerate(distinct):
@@ -1101,7 +1096,7 @@ def _factorize(labels: Any, name: str, n_cells: int) -> tuple[np.ndarray, list[s
     if categorical is not None:
         codes, values = categorical
     else:
-        array = np.asarray(labels)
+        array = unmasked_array(labels, name)
         if array.ndim != 1:
             raise ValueError(
                 f"{name} must be 1-D, one label per cell, got shape {array.shape}"
@@ -1212,12 +1207,14 @@ def _ids_or_table(value: Any, n: int, axis: str, id_column: str) -> Table:
         ids[:] = [f"{axis[:-1]}_{i}" for i in range(n)]
         return Table({id_column: ids})
     if isinstance(value, Table | Mapping) or _is_data_frame(value):
+        reject_masked_table(value, axis, id_column)
         table = Table(value)
         if len(table) != n:
             raise ValueError(
                 f"the {axis} table has {len(table)} rows, but counts has {n} {unit}s"
             )
         return table
+    reject_masked(value, axis)
     try:
         table = Table({id_column: value})
     except (TypeError, ValueError) as error:

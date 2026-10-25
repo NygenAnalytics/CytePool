@@ -32,9 +32,11 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
+from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool.design.contrasts import (
     _is_named_contrasts,
     _is_pandas,
+    _reject_masked_contrasts,
     _weights_on_columns,
 )
 from cytepool.design.design import _design_columns, _refuse_dropped_random_effects
@@ -97,8 +99,9 @@ class LinearModelFit:
             with per-feature covariance matrices; such a fit has none.
 
     Raises:
-        TypeError: If ``coefficient_names`` is a string or
-            ``exact_standard_errors`` is not a bool.
+        TypeError: If ``coefficient_names`` is a string,
+            ``exact_standard_errors`` is not a bool, or a field is a numpy masked
+            array.
         ValueError: If shapes disagree, names are not unique, or a fit marked
             exact has neither per-feature covariance matrices nor standard
             errors that ``cov_coefficients`` implies.
@@ -117,6 +120,23 @@ class LinearModelFit:
     exact_standard_errors: bool = True
 
     def __post_init__(self) -> None:
+        # NaN marks what a fit cannot estimate in these fields.
+        for name in (
+            "coefficients",
+            "stdev_unscaled",
+            "sigma",
+            "mean_expression",
+            "cov_coefficients_per_feature",
+        ):
+            reject_masked(getattr(self, name), name, missing="NaN")
+        for name in (
+            "df_residual",
+            "cov_coefficients",
+            "coefficient_names",
+            "design",
+            "contrasts",
+        ):
+            reject_masked(getattr(self, name), name)
         coefficients = _read_only(self.coefficients, "coefficients", ndim=2)
         n_features, n_coefficients = coefficients.shape
         design = _read_only(self.design, "design", ndim=2)
@@ -265,7 +285,9 @@ def fit_linear_model(
         of every feature: ``n_features * n_coefficients**2`` floats.
 
     Raises:
-        TypeError: If an input is not real-valued or a label is not comparable.
+        TypeError: If an input is not real-valued, a label is not comparable, or an
+            input is or holds a numpy masked array (mark missing values of ``y``
+            with NaN).
         ValueError: If shapes disagree, ``y`` has infinite values, ``design``
             has random effects that the fit would drop, is not finite or is not
             of full column rank (the message names the aliased columns), a
@@ -389,7 +411,8 @@ def contrasts_fit(
 
     Raises:
         TypeError: If ``fit`` is not a LinearModelFit, ``contrasts`` is not
-            real-valued, or it is a design rather than contrasts.
+            real-valued, it is a design rather than contrasts, or ``contrasts`` or
+            ``names`` is or holds a numpy masked array.
         ValueError: If ``contrasts`` is not finite or has the wrong number of
             rows, names coefficients that are not exactly the fit's, the names
             are invalid, ``method`` is unknown, or the exact method is asked of
@@ -910,7 +933,8 @@ def _design_matrix(
     design: Any, coefficient_names: Sequence[str] | None
 ) -> tuple[FloatArray, tuple[str, ...]]:
     matrix, columns = _design_columns(design)
-    x = _real_array(matrix, "design")
+    reject_masked(coefficient_names, "coefficient_names")
+    x = _real_array(unmasked_array(matrix, "design"), "design")
     if x.ndim != 2:
         raise ValueError(
             "design must be a 2-D array of shape (n_samples, n_coefficients), "
@@ -937,7 +961,7 @@ def _design_matrix(
 
 
 def _expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
-    values = _real_array(y, "y", boolean=False)
+    values = _real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
     if values.ndim != 2:
         raise ValueError(
             "y must be a 2-D array of shape (n_samples, n_features), "
@@ -962,7 +986,7 @@ def _precision_weights(
 ) -> FloatArray | None:
     if weights is None:
         return None
-    w = _real_array(weights, "weights")
+    w = _real_array(unmasked_array(weights, "weights"), "weights")
     with np.errstate(invalid="ignore"):
         valid = np.isfinite(w) & (w >= 0.0)
     if w.shape == (shape[0],):
@@ -988,6 +1012,7 @@ def _block_structure(
     block: npt.ArrayLike | None, correlation: float | None, n_samples: int
 ) -> tuple[IntArray | None, IntArray | None, float]:
     """Block index of each sample, block sizes and the correlation."""
+    reject_masked(block, "block")
     if block is None and correlation is None:
         return None, None, 0.0
     if block is None or correlation is None:
@@ -1001,7 +1026,7 @@ def _block_structure(
     rho = float(correlation)
     if not -1.0 < rho < 1.0:
         raise ValueError(f"correlation must lie in (-1, 1), got {rho}")
-    labels = np.asarray(block)
+    labels = unmasked_array(block, "block")
     if labels.shape != (n_samples,):
         raise ValueError(
             f"block must have one label per sample ({n_samples}), "
@@ -1034,6 +1059,8 @@ def _contrast_matrix(
     rule of :func:`cytepool.design.contrasts._weights_on_columns`; the others
     are taken in order.
     """
+    _reject_masked_contrasts(contrasts, "contrasts")
+    reject_masked(names, "names")
     n_coefficients = len(coefficient_names)
     remedy = _contrasts_remedy(coefficient_names)
     named = _is_named_contrasts(contrasts)

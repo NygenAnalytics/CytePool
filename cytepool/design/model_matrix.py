@@ -51,6 +51,7 @@ from typing import Any
 
 import numpy as np
 
+from .._masked_arrays import reject_masked
 from ..table import Table, _is_data_frame, _missing_mask
 from .formula import FormulaTerms, _close_matches, parse_formula, quote_name
 
@@ -81,6 +82,12 @@ class ModelMatrix:
         coding: For each column, the ``(variable, level)`` pairs it multiplies, with
             level None for a covariate; the intercept has none. For example
             ``(("condition", "stim"), ("age", None))`` for ``conditionstim:age``.
+
+    Raises:
+        TypeError: If a field other than ``intercept`` and ``formula``, which are
+            stored as given, is or holds a numpy masked array.
+        ValueError: If ``matrix`` is not 2-D, or ``columns``, ``assign`` or
+            ``coding`` does not have one entry per column.
     """
 
     matrix: np.ndarray
@@ -94,6 +101,16 @@ class ModelMatrix:
     coding: tuple[tuple[tuple[str, str | None], ...], ...]
 
     def __post_init__(self) -> None:
+        for name in (
+            "matrix",
+            "columns",
+            "assign",
+            "terms",
+            "levels",
+            "variables",
+            "coding",
+        ):
+            reject_masked(getattr(self, name), name)
         matrix = self.matrix
         if not (
             isinstance(matrix, np.ndarray)
@@ -174,8 +191,8 @@ def model_matrix(
         The model matrix with R's column names, column order and coding.
 
     Raises:
-        TypeError: If an argument has the wrong type, or a used column holds
-            datetimes or complex numbers.
+        TypeError: If an argument has the wrong type or is or holds a numpy masked
+            array, or a used column holds datetimes or complex numbers.
         ValueError: If the formula is invalid, names a column that does not exist,
             uses a column with missing or infinite values, a factor has a single
             level, or ``levels`` does not match the data.
@@ -187,16 +204,18 @@ def model_matrix(
         ('(Intercept)', 'conditionstim', 'age')
     """
     parsed = parse_formula(formula)
-    table, categories = _read_samples(data)
+    table, categories = _read_samples(data, "data")
     return _build_model_matrix(table, categories, parsed, levels)[0]
 
 
-def _read_samples(data: Any) -> tuple[Table, dict[str, tuple[str, ...]]]:
+def _read_samples(data: Any, name: str) -> tuple[Table, dict[str, tuple[str, ...]]]:
     """Return the sample table and the categories of its pandas categorical columns.
 
     Categorical columns become text columns, so that their categories, rather than
-    numeric codes or sorted values, give the level order.
+    numeric codes or sorted values, give the level order. ``name`` names the
+    argument in messages.
     """
+    reject_masked(data, name, missing="None or NaN")
     if isinstance(data, Table):
         return data, {}
     categories: dict[str, tuple[str, ...]] = {}
@@ -289,6 +308,7 @@ def _normalize_levels(
     """Check the ``levels`` argument and return it as a dict of lists."""
     if levels is None:
         return {}
+    reject_masked(levels, "levels")
     if not isinstance(levels, Mapping):
         raise TypeError(
             "levels must be a mapping of variable name to a list of levels, for "

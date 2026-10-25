@@ -8,7 +8,8 @@ Every public function is vectorised: its arguments broadcast with numpy's rules 
 result is a float64 array of the broadcast shape, or a Python float when every argument
 is a scalar. NaN arguments give NaN, and so do arguments outside a function's domain;
 the functions never raise for numeric input. Arguments that are not real numbers
-(strings, complex numbers, objects) raise ``TypeError``.
+(strings, complex numbers, objects) raise ``TypeError``, and so do numpy masked arrays,
+whose mask numpy would drop: NaN marks a missing value instead.
 
 The compiled scalar routines behind the public functions are named ``<function>_scalar``
 and can be called from other compiled code.
@@ -82,6 +83,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from cytepool._jit import jit
+from cytepool._masked_arrays import unmasked_array
 
 __all__ = [
     "betainc",
@@ -1303,11 +1305,12 @@ def _apply(
 
     Every argument reaches the loop as a read-only, contiguous, one-dimensional float64
     array, so each loop is compiled for one signature only. Returns a Python float when
-    every argument is a scalar or a 0-d array.
+    every argument is a scalar or a 0-d array. A numpy masked array raises TypeError:
+    NaN marks a missing value instead.
     """
     arrays = []
     for name, value in arguments.items():
-        array = np.asarray(value)
+        array = unmasked_array(value, name, missing="NaN")
         if array.dtype.kind not in "biuf":
             raise TypeError(
                 f"{name} must contain real numbers (bool, integer or float); "

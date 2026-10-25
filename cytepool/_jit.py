@@ -29,6 +29,7 @@ from typing import Any
 import numba
 
 from . import __version__
+from ._masked_arrays import reject_masked
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,8 @@ def thread_limit(n_threads: int | None) -> Iterator[int]:
         return
     if isinstance(n_threads, bool):
         raise TypeError("n_threads must be a positive integer or None, not bool")
+    # operator.index accepts a 0-d masked integer and ignores its mask.
+    reject_masked(n_threads, "n_threads")
     try:
         limit = operator.index(n_threads)
     except TypeError:
