@@ -800,12 +800,24 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         {"variances": "NaN", "df": None, "covariate": "NaN", "winsor_tail_p": None},
     ),
+    "cytepool.stats.empirical_bayes.fit_f_distribution_likelihood": Entry(
+        lambda c: {
+            "variances": c.fit.sigma**2,
+            "df": c.fit.df_residual,
+            "covariate": np.linspace(1.0, 2.0, 8),
+            "prior_weights": np.linspace(0.5, 1.5, 8),
+        },
+        {"variances": "NaN", "df": None, "covariate": "NaN", "prior_weights": None},
+        options=("robust",),
+    ),
+    # The likelihood estimator, as the default chooses it for unequal df.
     "cytepool.stats.empirical_bayes.squeeze_variances": Entry(
         lambda c: {
             "variances": c.fit.sigma**2,
             "df": c.fit.df_residual,
             "covariate": np.linspace(1.0, 2.0, 8),
             "winsor_tail_p": [0.05, 0.1],
+            "prior_estimator": "likelihood",
         },
         {"variances": "NaN", "df": None, "covariate": "NaN", "winsor_tail_p": None},
         options=("robust", "prior_estimator"),
@@ -818,6 +830,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "trend": np.linspace(1.0, 2.0, 8),
             "winsor_tail_p": [0.05, 0.1],
             "f_statistic": "exact",
+            "prior_estimator": "likelihood",
         },
         {"stdev_coef_lim": None, "trend": "NaN", "winsor_tail_p": None},
         options=("proportion", "robust", "f_statistic", "prior_estimator"),
@@ -829,6 +842,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "lfc": 0.5,
             "trend": np.linspace(1.0, 2.0, 8),
             "winsor_tail_p": [0.05, 0.1],
+            "prior_estimator": "moments",
         },
         {"trend": "NaN", "winsor_tail_p": None},
         options=("lfc", "robust", "prior_estimator"),
@@ -1082,6 +1096,7 @@ RECORDS = {
     "cytepool.design.formula.FormulaTerms",
     "cytepool.design.formula.RandomEffect",
     "cytepool.stats.empirical_bayes.FDistributionFit",
+    "cytepool.stats.empirical_bayes.LikelihoodFDistributionFit",
     "cytepool.stats.empirical_bayes.RobustFDistributionFit",
     "cytepool.stats.empirical_bayes.SqueezedVariances",
     "cytepool.stats.empirical_bayes.ModeratedFit",

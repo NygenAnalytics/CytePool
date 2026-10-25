@@ -13,34 +13,45 @@ s~_g^2 = (d0 s0^2 + d_g s_g^2) / (d0 + d_g), the inverse of the posterior mean o
 place of s_g, follows a t distribution on d0 + d_g degrees of freedom under the null
 hypothesis; an infinite d0 gives every feature the prior variance.
 
-Estimation of the prior:
-    - :func:`fit_f_distribution`: the method of moments on e_g = log s_g^2 -
+Estimation of the prior, by one of two estimators (``prior_estimator``):
+    - The method of moments (``"moments"``, limma's ``legacy=TRUE``):
+      :func:`fit_f_distribution` matches the mean and variance of e_g = log s_g^2 -
       psi(d_g / 2) + log(d_g / 2), whose variance is psi'(d0 / 2) plus the mean of
       psi'(d_g / 2) (Smyth 2004, section 6.2). When the variance of the e_g is no larger
       than chi-squared sampling explains, d0 is infinite and s0^2 is the mean variance.
       With a covariate (limma-trend uses the mean log-expression) the moments are taken
       about a natural cubic spline fit of e_g, and s0^2 becomes a trend (Phipson et al.
-      2016, section 10.1).
-    - :func:`fit_f_distribution_robust`: the moments of the log variances Winsorized at
-      their 5% and 90% quantiles are matched to those of a Winsorized log F variable,
-      computed by Gauss-Legendre quadrature, so that hypervariable features do not lower
-      d0. Each feature then gets its own prior df, smaller for outliers (Phipson et al.
-      2016). With a covariate, the log variances are first detrended by LOWESS.
+      2016, section 10.1). :func:`fit_f_distribution_robust` matches the moments of the
+      log variances Winsorized at their 5% and 90% quantiles to those of a Winsorized
+      log F variable, computed by Gauss-Legendre quadrature, so that hypervariable
+      features do not lower d0. Each feature then gets its own prior df, smaller for
+      outliers (Phipson et al. 2016). With a covariate, the log variances are first
+      detrended by LOWESS.
+    - Weighted moments and profile likelihood (``"likelihood"``, limma's
+      ``fitFDistUnequalDF1``): :func:`fit_f_distribution_likelihood` estimates log s0^2
+      by a weighted mean of the e_g, which gives less weight to variances on fewer
+      degrees of freedom, and d0 by maximising the likelihood of the variances under
+      s0^2 F(d_g, d0) with that scale (Chen et al. 2025). It suits degrees of freedom
+      that differ between features, or are small or fractional. With a covariate the
+      weighted mean becomes a weighted LOWESS trend; its robust variant downweights
+      outliers by prior weights instead of Winsorizing.
+
+    By default (``prior_estimator=None``) the likelihood estimator is used when the
+    positive degrees of freedom differ between features, as with missing values or
+    zero observation weights, and the method of moments otherwise: limma's default,
+    ``legacy=NULL``, since limma 3.61.8.
 
 Statistics: :func:`moderated_statistics` computes moderated t and F statistics, their
 p-values and the log-odds of differential expression (the B-statistic of Loennstedt
 and Speed 2002, in the form of Smyth 2004, section 5); :func:`treat` tests whether
 coefficients exceed a threshold in absolute value (McCarthy and Smyth 2009).
 
-Results match limma 3.62.1 (``fitFDist``, ``fitFDistRobustly``, ``squeezeVar``,
-``eBayes`` and ``treat`` with ``legacy=TRUE``). Conventions that limma's documentation
-leaves open were settled by running it as a black box; comments mark them "found by
-probing". One estimator is implemented: the method of moments above, which limma calls
-the legacy method; the ``prior_estimator`` argument names it. When the residual degrees
-of freedom differ between features (with missing values or zero weights), limma 3.61.8
-and later estimate the prior differently by default (``fitFDistUnequalDF1``, which
-downweights features with fewer degrees of freedom and estimates d0 by profile maximum
-likelihood; see Chen et al. 2024), so compare with ``eBayes(fit, legacy=TRUE)``.
+Results match limma 3.62.1 (``fitFDist``, ``fitFDistRobustly``, ``fitFDistUnequalDF1``,
+``squeezeVar``, ``eBayes`` and ``treat``, with ``legacy`` NULL, TRUE or FALSE).
+Conventions that limma's documentation leaves open were settled by running it as a
+black box; comments mark them "found by probing". The robust likelihood estimator
+deliberately differs from limma's where some features have no usable variance or
+prior weights are given (see :func:`fit_f_distribution_likelihood`).
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
@@ -57,9 +68,12 @@ References:
     Loennstedt I, Speed TP (2002). Replicated microarray data. Statistica Sinica 12,
     31-46.
 
-    Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2024). edgeR 4.0: powerful
+    Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2025). edgeR v4: powerful
     differential analysis of sequencing data with expanded functionality and improved
-    support for small counts and larger datasets. bioRxiv 2024.01.21.576131.
+    support for small counts and larger datasets. Nucleic Acids Research 53, gkaf018.
+
+    Brent RP (1973). Algorithms for Minimization without Derivatives. Prentice-Hall,
+    Englewood Cliffs, chapter 5.
 """
 
 import math
@@ -76,28 +90,39 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._linear_algebra import column_space
 from cytepool._masked_arrays import unmasked_array
+from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
     _f_tail_quantile,
     _f_tails,
     f_isf_scalar,
     f_logsf,
+    f_logsf_scalar,
     f_ppf_scalar,
     f_sf,
     t_isf,
     t_sf,
 )
 from cytepool.stats.linear_models import LinearModelFit
-from cytepool.stats.smoothing import _quantile_knots, lowess, natural_spline_basis
+from cytepool.stats.multiple_testing import adjust_p_values
+from cytepool.stats.smoothing import (
+    _quantile_knots,
+    _weighted_lowess,
+    choose_lowess_span,
+    lowess,
+    natural_spline_basis,
+)
 from cytepool.stats.special import digamma, trigamma, trigamma_inverse
 
 __all__ = [
     "FDistributionFit",
+    "LikelihoodFDistributionFit",
     "ModeratedFit",
     "RobustFDistributionFit",
     "SqueezedVariances",
     "TreatFit",
     "fit_f_distribution",
+    "fit_f_distribution_likelihood",
     "fit_f_distribution_robust",
     "moderated_statistics",
     "squeeze_variances",
@@ -131,11 +156,42 @@ _QUADRATURE_NODES, _QUADRATURE_WEIGHTS = np.polynomial.legendre.leggauss(128)
 # largest do not count towards the rank of the F-test (found by probing).
 _F_RANK_TOLERANCE = 1e-8
 _EPS = float(np.finfo(np.float64).eps)
+# The likelihood estimator (limma's fitFDistUnequalDF1), all found by probing limma
+# 3.62.1: variances on fewer degrees of freedom than this take no part in the fit;
+_LIKELIHOOD_MIN_DF = 0.01
+# variances at or below zero are raised to this fraction of the median of the
+# positive usable variances;
+_LIKELIHOOD_FLOOR = 1e-12
+# d0 minimises minus twice the log-likelihood over v = d0 / (d0 + 2) in this interval
+# (d0 from 2 to 9998), by Brent's method with the tolerance of R's optimize;
+_DF2_SEARCH = (0.5, 0.9998)
+_SEARCH_TOLERANCE = _EPS**0.25
+# the trend's weights are divided by their upper quartile and kept in this range;
+_TREND_WEIGHT_RANGE = (1e-8, 100.0)
+# the span of the trend is choose_lowess_span(n, small_n=500);
+_TREND_SMALL_N = 500
+# with at most this many usable variances above zero the location is a constant and
+# a robust fit is not attempted;
+_CONSTANT_TREND_MAX = 2
+# a straight-line trend leaves out its slope as R's QR decomposition does, with
+# this tolerance;
+_LINE_RANK_TOLERANCE = 1e-7
+# robust fits flag the features whose two-sided tail probabilities, adjusted by
+# Benjamini and Hochberg's method, are below this.
+_OUTLIER_LEVEL = 0.3
+# What makes a variance unusable, for error messages.
+_MOMENT_UNUSABLE = "is NaN or has zero degrees of freedom"
+_LIKELIHOOD_UNUSABLE = (
+    f"is NaN, has fewer than {_LIKELIHOOD_MIN_DF} degrees of freedom or has a zero "
+    "prior weight"
+)
 # Warnings are attributed to the first caller outside the package.
 _PACKAGE_DIRECTORY = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ""
 )
 _SMALLEST_NORMAL = float(np.finfo(np.float64).tiny)
+# The golden section ratio of Brent's minimisation, (3 - sqrt(5)) / 2.
+_GOLDEN = 0.5 * (3.0 - math.sqrt(5.0))
 _LARGEST = float(np.finfo(np.float64).max)
 _LOG_HALF = math.log(0.5)
 
@@ -180,16 +236,36 @@ class RobustFDistributionFit(NamedTuple):
     prob_outlier: FloatArray
 
 
+class LikelihoodFDistributionFit(NamedTuple):
+    """A scaled F distribution fitted by weighted moments and profile likelihood.
+
+    Attributes:
+        scale: The prior variance s0^2: a float, or one value per feature when it
+            follows a covariate (NaN where the covariate is NaN).
+        df2: The prior degrees of freedom d0, between 2 and 9998.
+        df2_shrunk: ``(n,)`` prior degrees of freedom of each feature: ``df2``,
+            except for the outliers of a robust fit, which get smaller values.
+        df2_outlier: Prior degrees of freedom of the most extreme outlier of a
+            robust fit; NaN when the fit is not robust or finds no outlier.
+    """
+
+    scale: float | FloatArray
+    df2: float
+    df2_shrunk: FloatArray
+    df2_outlier: float
+
+
 class SqueezedVariances(NamedTuple):
     """Posterior variances and the prior they were shrunk towards.
 
     Attributes:
         posterior_variance: ``(n,)`` posterior values of the variances: the
             inverses of the posterior means of their reciprocals.
-        prior_variance: The prior variance: a float, or one value per feature with a
-            covariate or with at most two variances.
+        prior_variance: The prior variance: one value per feature when it follows a
+            covariate or with at most two variances, a float otherwise.
         prior_df: The prior degrees of freedom: a float, or one value per feature
-            when estimated robustly.
+            from a robust fit (from the likelihood estimator only when it finds
+            outliers, as in limma).
     """
 
     posterior_variance: FloatArray
@@ -209,7 +285,8 @@ class ModeratedFit:
         prior_variance: The prior variance s0^2 (limma's ``s2.prior``): a float, or
             one value per feature with a trend or with at most two features.
         prior_df: The prior degrees of freedom d0 (``df.prior``): a float, possibly
-            infinite, or one value per feature when estimated robustly.
+            infinite, or one value per feature from a robust fit (from the
+            likelihood estimator only when it finds outliers, as in limma).
         posterior_variance: ``(n_features,)`` posterior variances (``s2.post``).
         df_total: ``(n_features,)`` degrees of freedom of the moderated t-statistics,
             ``df_residual + prior_df`` capped at the residual degrees of freedom
@@ -228,6 +305,9 @@ class ModeratedFit:
         f_df1: Numerator degrees of freedom of the F-tests: the rank of the
             correlation matrix of the coefficients.
         proportion: The assumed proportion of non-zero coefficients behind ``lods``.
+        prior_estimator: The estimator of the prior: ``"moments"`` or
+            ``"likelihood"`` (see :func:`squeeze_variances`); with at most two
+            features neither is used.
     """
 
     fit: LinearModelFit
@@ -243,13 +323,15 @@ class ModeratedFit:
     f_p_value: FloatArray
     f_df1: int
     proportion: float
+    prior_estimator: str
 
     def __repr__(self) -> str:
         return (
             f"ModeratedFit(n_features={self.t.shape[0]}, "
             f"coefficient_names={self.fit.coefficient_names!r}, "
             f"prior_df={_summary(self.prior_df)}, "
-            f"prior_variance={_summary(self.prior_variance)})"
+            f"prior_variance={_summary(self.prior_variance)}, "
+            f"prior_estimator={self.prior_estimator!r})"
         )
 
 
@@ -269,6 +351,7 @@ class TreatFit:
             zero by the threshold: sign(t) max(|t| - tau / se, 0), with se the
             moderated standard error.
         p_value: P-values of the tests of |beta| <= tau.
+        prior_estimator: The estimator of the prior, as in :class:`ModeratedFit`.
     """
 
     fit: LinearModelFit
@@ -279,6 +362,7 @@ class TreatFit:
     df_total: FloatArray
     t: FloatArray
     p_value: FloatArray
+    prior_estimator: str
 
     def __repr__(self) -> str:
         return (
@@ -422,6 +506,123 @@ def fit_f_distribution_robust(
     return _fit_robust(x, d, z, usable, lower, upper)
 
 
+def fit_f_distribution_likelihood(
+    variances: npt.ArrayLike,
+    df: npt.ArrayLike,
+    *,
+    covariate: npt.ArrayLike | None = None,
+    prior_weights: npt.ArrayLike | None = None,
+    robust: bool = False,
+) -> LikelihoodFDistributionFit:
+    """Fit a scaled F distribution by weighted moments and profile likelihood.
+
+    limma's ``fitFDistUnequalDF1`` (limma 3.61.8 and later), which ``squeezeVar``,
+    ``eBayes`` and ``treat`` use by default when the degrees of freedom of the
+    variances differ. Each variance is modelled as ``scale * F(df_g, df2)``. The
+    mean of e_g = log s_g^2 - psi(d_g / 2) + log(d_g / 2) is log s0^2 - psi(d0 / 2) +
+    log(d0 / 2) whatever d_g, so for each d0 the scale is estimated from the weighted
+    mean of the e_g with weights pw_g / psi'(d_g / 2): psi'(d_g / 2) is the sampling
+    variance of log s_g^2, so variances on fewer degrees of freedom count less (pw_g
+    are the prior weights, 1 by default). d0 then maximises the likelihood of the
+    variances, each term weighted by pw_g, under the scaled F distribution with that
+    scale: a profile likelihood (Chen et al. 2025). With a covariate, the weighted
+    mean becomes a weighted trend of the e_g on the covariate.
+
+    A variance is usable when it is finite, its df is at least 0.01 and its prior
+    weight is positive; at least two usable variances must be above zero. The
+    conventions of limma 3.62.1 that its documentation leaves open were found by
+    probing it:
+
+    - Variances at or below zero are raised to 1e-12 times the median of the
+      positive usable variances.
+    - d0 minimises minus twice the log-likelihood by Brent's method, as R's
+      ``optimize`` with its default tolerance, over v = d0 / (d0 + 2) in
+      [1/2, 0.9998]. d0 therefore lies between 2 and 9998: variances that vary no
+      more than chi-squared sampling explains give d0 near 8,135, not infinity, and
+      the scale is that of this d0.
+    - The trend is limma's ``loessFit(e, covariate, weights, span =
+      chooseLowessSpan(n, small.n = 500), iterations = 1)`` with the weights divided
+      by their upper quartile and kept in [1e-8, 100]. Every feature with a covariate
+      enters it, an unusable one with the smallest weight, 1e-8, its variance (zero
+      when missing) raised as above and a df of 1 when below 0.01. Equal weights give
+      R's ``lowess``. Unequal weights give a weighted least squares line through at
+      most four features, and through more limma's weighted LOWESS, whose windows
+      hold a share of the total weight.
+    - With at most two usable variances above zero the scale is one value whatever
+      the covariate, and a robust fit is the first fit. When some variances are not
+      usable as well, limma returns NaN; here they are left out.
+    - A feature whose covariate is NaN (allowed only when its variance is not usable)
+      is left out of the trend and gets a NaN scale, where limma stops; infinite
+      covariates are moved one unit beyond the finite range, as for
+      :func:`fit_f_distribution`, where limma returns NaN.
+
+    Robust fits (``robust=True``) downweight outliers by prior weights instead of
+    Winsorizing, as limma does:
+
+    1. Each usable variance gets the two-sided tail probability of s_g^2 / s0^2
+       under F(d_g, d0) from the fit above, adjusted by Benjamini and Hochberg's
+       method; those below 0.3 are outliers (large or small variances).
+    2. The fit is repeated with each outlier's prior weight multiplied by its
+       adjusted probability.
+    3. pi_g = min(1, p_g / ((r_g - 0.5) / n)), with p_g the upper tail
+       probability of the first fit and r_g the rank of s_g^2 / s0^2 from the
+       largest among the n usable variances, is made non-decreasing in p_g as in
+       :func:`fit_f_distribution_robust` and taken as the probability of not being
+       an outlier. ``df2_outlier`` takes two steps of d <- d log(1/2) / log P(F > r)
+       (Phipson et al. 2016, section 10.5) for the variance with the smallest p_g,
+       from d = ``df2`` of the second fit with its first p_g, then with its ratio
+       r to the first fit's scale. ``df2_shrunk`` is pi_g ``df2`` + (1 - pi_g)
+       ``df2_outlier``.
+
+    Without outliers the first fit is returned, and when every pi_g is 1 the second
+    one, with ``df2_shrunk`` equal to ``df2``. This deliberately differs from limma
+    3.62.1 in two respects. Only the usable variances enter steps 1 and 3, where
+    limma also counts the others, a missing variance as a zero one: it becomes the
+    most extreme outlier and lowers the adjusted probabilities of the others, so
+    missing values change which features are outliers. In a simulation where 40 of
+    2,000 genes had no residual df, limma's robust prior df was 11.5% larger with a
+    constant prior, where it also gave 45 genes a smaller prior df as outliers and
+    this function gives every gene the same, and 6% to 10% larger with a trend.
+    Without a covariate the result is limma's fit of the usable variances alone.
+    And the second fit keeps the prior weights, which limma's drops, bringing back
+    the features they leave out. The two agree when every variance is usable and
+    there are no prior weights.
+
+    With df of 1e7 and more, limma's likelihood loses precision: its d0 differed
+    from this function's by up to 1e-5 relative at 1e7 and 5e-2 at 1e12, where this
+    function's agrees with the likelihood computed to 60 digits.
+
+    Args:
+        variances: ``(n,)`` non-negative variances; NaN marks a missing value.
+        df: Degrees of freedom of the variances: one value, or ``(n,)``. They may
+            be fractional or below 1.
+        covariate: ``(n,)`` covariate for a trended scale, such as the mean
+            log-expression; NaN is allowed only where the variance is not usable.
+        prior_weights: ``(n,)`` non-negative weights of the features; 0 leaves a
+            feature out.
+        robust: Whether to downweight outliers.
+
+    Returns:
+        The scale, ``df2``, and with ``robust`` the prior df of each feature and of
+        the most extreme outlier.
+
+    Raises:
+        TypeError: If an input is not real-valued or is a numpy masked array, or
+            ``robust`` is not a bool.
+        ValueError: As :func:`fit_f_distribution`, if ``prior_weights`` is
+            invalid, or if fewer than two usable variances are above zero (limma
+            returns NA), in the fit or, with ``robust``, in its second fit.
+    """
+    x = _variance_vector(variances)
+    d = _df_vector(df, x.size)
+    weights = _prior_weight_vector(prior_weights, x.size)
+    usable = _likelihood_usable(x, d, weights)
+    z = _covariate_vector(covariate, usable, _LIKELIHOOD_UNUSABLE)
+    _check_flag(robust, "robust")
+    _check_zero_variances(x, usable, robust=False)
+    return _fit_likelihood(x, d, z, weights, bool(robust))
+
+
 def squeeze_variances(
     variances: npt.ArrayLike,
     df: npt.ArrayLike,
@@ -429,30 +630,35 @@ def squeeze_variances(
     covariate: npt.ArrayLike | None = None,
     robust: bool = False,
     winsor_tail_p: float | Sequence[float] = (0.05, 0.1),
-    prior_estimator: Literal["moments"] = "moments",
+    prior_estimator: Literal["moments", "likelihood"] | None = None,
 ) -> SqueezedVariances:
     """Shrink variances towards a prior by empirical Bayes.
 
-    Matches limma's ``squeezeVar``. The prior is estimated by
-    :func:`fit_f_distribution`, or :func:`fit_f_distribution_robust` when
-    ``robust``, and each variance is replaced by its posterior value
-    (d0 s0^2 + d_g s_g^2) / (d0 + d_g), the inverse of the posterior mean of its
-    reciprocal (Smyth 2004). A feature with zero df, or an infinite
-    prior df, gets the prior variance; a NaN variance with positive df stays NaN.
-    With at most two variances there is no moderation: the prior df is 0 and each
-    variance is its own prior, as in limma 3.61.12 and later.
+    Matches limma's ``squeezeVar``. The prior is estimated by the method of
+    moments, :func:`fit_f_distribution` or, when ``robust``,
+    :func:`fit_f_distribution_robust`; or by weighted moments and profile
+    likelihood, :func:`fit_f_distribution_likelihood`, robustly when ``robust``.
+    Each variance is replaced by its posterior value (d0 s0^2 + d_g s_g^2) /
+    (d0 + d_g), the inverse of the posterior mean of its reciprocal (Smyth 2004).
+    A feature with zero df, or an infinite prior df, gets the prior variance; a NaN
+    variance with positive df stays NaN. With at most two variances there is no
+    moderation: the prior df is 0 and each variance is its own prior, as in limma
+    3.61.12 and later. A robust fit gives each feature its own prior df: always with
+    the method of moments, and with the likelihood estimator when it finds
+    outliers, as in limma. The likelihood estimator counts a variance on zero df as
+    missing, as limma's ``squeezeVar`` does.
 
     Args:
         variances: ``(n,)`` non-negative variances; NaN marks a missing value.
         df: Degrees of freedom of the variances: one value, or ``(n,)``.
         covariate: ``(n,)`` covariate for a trended prior variance.
         robust: Whether to estimate the prior robustly.
-        winsor_tail_p: Winsorized tail proportions of the robust estimator.
-        prior_estimator: How the prior is estimated. The only option, "moments",
-            is the method of moments of Smyth (2004), Winsorized when ``robust``
-            (Phipson et al. 2016): limma's ``legacy=TRUE``. When the df differ
-            between features, limma 3.61.8 and later use another estimator by
-            default (``fitFDistUnequalDF1``).
+        winsor_tail_p: Winsorized tail proportions of the robust moment estimator;
+            the likelihood estimator does not use them, as in limma.
+        prior_estimator: ``"moments"`` (limma's ``legacy=TRUE``), ``"likelihood"``
+            (``legacy=FALSE``), or None (the default) for limma's default
+            ``legacy=NULL``: the likelihood estimator when the positive degrees of
+            freedom are not all equal, and the method of moments otherwise.
 
     Returns:
         The posterior variances, the prior variance and the prior df.
@@ -460,16 +666,18 @@ def squeeze_variances(
     Raises:
         TypeError: If an input is not real-valued or is a numpy masked array, or
             ``robust`` is not a bool.
-        ValueError: As :func:`fit_f_distribution`, or if an option is invalid.
+        ValueError: As :func:`fit_f_distribution` or
+            :func:`fit_f_distribution_likelihood`, or if an option is invalid.
     """
     x = _variance_vector(variances)
-    d = _df_vector(df, x.size)
+    given = _df_values(df, x.size)
+    d = _zero_tiny_df(given)
     usable = _usable(x, d)
     z = _covariate_vector(covariate, usable)
     lower, upper = _tail_proportions(winsor_tail_p)
     _check_flag(robust, "robust")
-    _check_prior_estimator(prior_estimator)
-    return _squeeze(x, d, z, usable, bool(robust), lower, upper)
+    estimator = _prior_estimator(prior_estimator, given)
+    return _squeeze(x, d, z, usable, bool(robust), lower, upper, estimator)
 
 
 def moderated_statistics(
@@ -481,16 +689,20 @@ def moderated_statistics(
     robust: bool = False,
     winsor_tail_p: float | Sequence[float] = (0.05, 0.1),
     f_statistic: Literal["exact", "limma"] | None = None,
-    prior_estimator: Literal["moments"] = "moments",
+    prior_estimator: Literal["moments", "likelihood"] | None = None,
 ) -> ModeratedFit:
     """Empirical Bayes moderated t and F statistics and log-odds of a fit.
 
-    Matches limma's ``eBayes(fit, legacy=TRUE)``, except that by default the
-    F-statistics of fits with missing values or observation weights are exact
-    rather than limma's approximation (see below and ``f_statistic``). The residual
-    variances of the fit are squeezed by :func:`squeeze_variances`; the moderated
-    t-statistics divide the coefficients by ``stdev_unscaled`` times the posterior
-    standard deviations and have ``df_total`` degrees of freedom.
+    Matches limma's ``eBayes(fit)``, except that by default the F-statistics of
+    fits with missing values or observation weights are exact rather than limma's
+    approximation (see below and ``f_statistic``). The residual variances of the
+    fit are squeezed by :func:`squeeze_variances`; the moderated t-statistics divide
+    the coefficients by ``stdev_unscaled`` times the posterior standard deviations
+    and have ``df_total`` degrees of freedom. By default the prior is estimated as
+    limma's ``eBayes`` estimates it (``legacy=NULL``): by the likelihood estimator
+    when the residual degrees of freedom differ between the features that have
+    some, as with missing values or zero observation weights, and by the method
+    of moments otherwise.
 
     The log-odds (B-statistic) of coefficient j of feature g is (Smyth 2004)
 
@@ -531,7 +743,8 @@ def moderated_statistics(
             standard errors are limma's approximation from
             ``contrasts_fit(method="limma")``, whose F-statistics can only be
             limma's.
-        prior_estimator: See :func:`squeeze_variances`.
+        prior_estimator: ``"moments"``, ``"likelihood"`` or None, as in
+            :func:`squeeze_variances`; the result records the estimator used.
 
     Returns:
         The moderated statistics.
@@ -548,7 +761,7 @@ def moderated_statistics(
     limits = _coefficient_limits(stdev_coef_lim)
     covariate = _trend_covariate(trend, fit)
     exact = _f_method(f_statistic, fit)
-    squeezed, df_total = _moderate(
+    squeezed, df_total, estimator = _moderate(
         fit, covariate, robust, winsor_tail_p, prior_estimator
     )
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -568,10 +781,14 @@ def moderated_statistics(
             for j in range(t.shape[1])
         ]
     )
-    # Without a finite t-statistic (an all-zero contrast) there is nothing to
-    # estimate v0 from; limma then takes the reciprocal of the first prior
-    # variance, a value that the log-odds, all NaN, never use (found by probing).
-    v0[~np.isfinite(v0)] = 1.0 / float(prior_variance[0])
+    # Without a finite t-statistic (an all-zero contrast, or features whose
+    # variances are zero and not moderated) there is nothing to estimate v0 from;
+    # limma then takes the reciprocal of the first prior variance, infinite when it
+    # is zero, a value that the log-odds, all NaN, never use (found by probing).
+    failed = ~np.isfinite(v0)
+    if failed.any():
+        with np.errstate(divide="ignore"):
+            v0[failed] = np.reciprocal(prior_variance[0])
     lods = _log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
     f_value, f_df1 = _f_statistics(t, fit, exact)
     f_df2 = prior_df + fit.df_residual
@@ -590,6 +807,7 @@ def moderated_statistics(
         f_p_value=_frozen(f_p_value),
         f_df1=f_df1,
         proportion=p,
+        prior_estimator=estimator,
     )
 
 
@@ -601,12 +819,12 @@ def treat(
     trend: bool | npt.ArrayLike = False,
     robust: bool = False,
     winsor_tail_p: float | Sequence[float] = (0.05, 0.1),
-    prior_estimator: Literal["moments"] = "moments",
+    prior_estimator: Literal["moments", "likelihood"] | None = None,
 ) -> TreatFit:
     """Moderated t-tests that coefficients exceed a threshold in absolute value.
 
     Tests H0: |beta| <= tau against |beta| > tau (McCarthy and Smyth 2009), matching
-    limma's ``treat(fit, legacy=TRUE)``. With the moderated t-statistic t, its
+    limma's ``treat(fit)``. With the moderated t-statistic t, its
     standard error se and delta = tau / se, the p-value is the worst case over the
     null interval, P(T > |t| - delta) + P(T > |t| + delta) with T on ``df_total``
     degrees of freedom; it is at least the ordinary moderated p-value and equals it
@@ -629,7 +847,8 @@ def treat(
         trend: As in :func:`moderated_statistics`.
         robust: Whether to estimate the prior robustly.
         winsor_tail_p: Winsorized tail proportions of the robust estimator.
-        prior_estimator: See :func:`squeeze_variances`.
+        prior_estimator: ``"moments"``, ``"likelihood"`` or None, as in
+            :func:`squeeze_variances`; the result records the estimator used.
 
     Returns:
         The tests relative to the threshold.
@@ -643,7 +862,7 @@ def treat(
     _check_fit(fit)
     threshold = _treat_threshold(lfc, fc)
     covariate = _trend_covariate(trend, fit)
-    squeezed, df_total = _moderate(
+    squeezed, df_total, estimator = _moderate(
         fit, covariate, robust, winsor_tail_p, prior_estimator
     )
     # (|beta| - tau) / se and (|beta| + tau) / se, which are |t| - delta and
@@ -667,6 +886,7 @@ def treat(
         df_total=_frozen(df_total),
         t=_frozen(shrunk),
         p_value=_frozen(p_value),
+        prior_estimator=estimator,
     )
 
 
@@ -1129,6 +1349,336 @@ def _interpolate(x: FloatArray, y: FloatArray, at: FloatArray) -> FloatArray:
 
 
 # ---------------------------------------------------------------------------------------
+# Likelihood estimator
+# ---------------------------------------------------------------------------------------
+
+
+def _fit_likelihood(
+    x: FloatArray,
+    d: FloatArray,
+    covariate: FloatArray | None,
+    prior_weights: FloatArray,
+    robust: bool,
+) -> LikelihoodFDistributionFit:
+    """Weighted moments and profile likelihood; see
+    :func:`fit_f_distribution_likelihood`."""
+    usable = _likelihood_usable(x, d, prior_weights)
+    positive = int(np.count_nonzero(x[usable] > 0.0))
+    if positive < 2:
+        raise ValueError(
+            "the likelihood estimator needs at least two usable variances above zero "
+            f"(finite, on at least {_LIKELIHOOD_MIN_DF} degrees of freedom and with a "
+            f"positive prior weight), got {positive}; limma's fitFDistUnequalDF1 "
+            "returns NA and squeezeVar stops here (found by probing). The method of "
+            "moments (prior_estimator='moments') does not need two"
+        )
+    weights = np.where(usable, prior_weights, 0.0)
+    location, df2, trended = _likelihood_location_and_df2(
+        x, d, covariate, weights, usable
+    )
+    scale = np.exp(location - _log_minus_digamma_scalar(0.5 * df2))
+    first = LikelihoodFDistributionFit(
+        _scale_value(scale, trended), df2, np.full(x.size, df2), math.nan
+    )
+    # With two variances above zero there is no robust stage (found by probing).
+    if not robust or positive <= _CONSTANT_TREND_MAX:
+        return first
+    return _robust_likelihood(x, d, covariate, weights, usable, scale, first)
+
+
+def _likelihood_usable(
+    x: FloatArray, d: FloatArray, prior_weights: FloatArray
+) -> npt.NDArray[np.bool_]:
+    """The variances that take part in a likelihood fit."""
+    result: npt.NDArray[np.bool_] = (
+        np.isfinite(x) & (d >= _LIKELIHOOD_MIN_DF) & (prior_weights > 0.0)
+    )
+    return result
+
+
+def _likelihood_location_and_df2(
+    x: FloatArray,
+    d: FloatArray,
+    covariate: FloatArray | None,
+    weights: FloatArray,
+    usable: npt.NDArray[np.bool_],
+) -> tuple[FloatArray, float, bool]:
+    """The location of the e_g, d0, and whether the location is a trend.
+
+    ``weights`` are the prior weights, zero where a variance is not usable; at least
+    two usable variances are above zero.
+    """
+    positive = usable & (x > 0.0)
+    floor = _LIKELIHOOD_FLOOR * float(np.median(x[positive]))
+    # A missing variance counts as zero, so it is raised to the floor, and a df below
+    # the minimum counts as 1 (found by probing); they enter only the trend.
+    raised = np.where(np.isnan(x), floor, np.maximum(x, floor))
+    shape = 0.5 * np.where(d >= _LIKELIHOOD_MIN_DF, d, 1.0)
+    e = np.log(raised) + _log_minus_digamma(shape)
+    precision = weights / _as_array(trigamma(shape))
+    # With at most two usable variances above zero the location is a constant, and
+    # the scale one value, as limma's are (found by probing); limma returns NaN when
+    # some variances are not usable as well.
+    trended = False
+    if covariate is not None and int(positive.sum()) > _CONSTANT_TREND_MAX:
+        trended = True
+        location = _likelihood_trend(e, covariate, precision)
+    else:
+        mean = accurate_sum(precision * e)[0] / accurate_sum(precision)[0]
+        location = np.full(x.size, mean)
+    df2 = _profile_likelihood_df2(
+        raised[usable], d[usable], location[usable], weights[usable]
+    )
+    return location, df2, trended
+
+
+def _likelihood_trend(
+    e: FloatArray, covariate: FloatArray, precision: FloatArray
+) -> FloatArray:
+    """limma's loessFit trend of e on the covariate, NaN where it is NaN.
+
+    The weights are divided by their upper quartile (R's type 7, over the features in
+    the trend, zeros included) and kept within ``_TREND_WEIGHT_RANGE``, as limma
+    calls loessFit (found by probing). loessFit fits R's lowess for equal weights;
+    for unequal ones it fits a weighted least squares line when 1 <= span n and
+    span (n - 4) < 1, which with the span of 1 used up to 500 features means at
+    most four features (found by probing; its help page says that it fits a line
+    when there are too few observations), and limma's weighted LOWESS otherwise.
+    """
+    known = ~np.isnan(covariate)
+    z = np.ascontiguousarray(covariate[known])
+    values = np.ascontiguousarray(e[known])
+    w = precision[known]
+    n = int(z.size)
+    span = choose_lowess_span(n, small_n=_TREND_SMALL_N)
+    upper_quartile = float(np.quantile(w, 0.75))
+    low, high = _TREND_WEIGHT_RANGE
+    if upper_quartile > 0.0:
+        relative = np.clip(w / upper_quartile, low, high)
+    else:
+        # 0 / 0 counts as 0 and w / 0 as inf before the clipping (found by probing).
+        relative = np.where(w > 0.0, high, low)
+    if (relative == relative[0]).all():
+        fitted = lowess(z, values, span=span, iterations=0)
+    elif span * n >= 1.0 and span * (n - 4) < 1.0:
+        fitted = _weighted_line(z, values, relative)
+    else:
+        fitted = _weighted_lowess(z, values, relative, span)
+    trend = np.full(e.size, np.nan)
+    trend[known] = fitted
+    return trend
+
+
+def _weighted_line(x: FloatArray, y: FloatArray, weights: FloatArray) -> FloatArray:
+    """Fitted values of the weighted least squares line of y on x, as R's lm.wfit.
+
+    As R's QR decomposition with its tolerance of 1e-7, the slope is left out, and
+    the fit is the weighted mean, when the weighted sum of squares of x about its
+    mean is below 1e-14 times that about zero.
+    """
+    total = float(np.sum(weights))
+    mean_x = float(np.sum(weights * x)) / total
+    mean_y = float(np.sum(weights * y)) / total
+    centred = x - mean_x
+    sxx = float(np.sum(weights * centred * centred))
+    if sxx == 0.0 or sxx < _LINE_RANK_TOLERANCE**2 * float(np.sum(weights * x * x)):
+        return np.full(x.size, mean_y)
+    slope = float(np.sum(weights * centred * (y - mean_y))) / sxx
+    fitted: FloatArray = mean_y + slope * centred
+    return fitted
+
+
+def _profile_likelihood_df2(
+    x: FloatArray, d: FloatArray, location: FloatArray, weights: FloatArray
+) -> float:
+    """The d0 minimising minus twice the log-likelihood, searched as R's optimize."""
+    x = np.ascontiguousarray(x, dtype=np.float64)
+    d = np.ascontiguousarray(d, dtype=np.float64)
+    location = np.ascontiguousarray(location, dtype=np.float64)
+    weights = np.ascontiguousarray(weights, dtype=np.float64)
+
+    def deviance(v: float) -> float:
+        df2 = 2.0 * v / (1.0 - v)
+        shift = _log_minus_digamma_scalar(0.5 * df2)
+        return float(_minus_twice_log_likelihood(x, d, location, weights, df2, shift))
+
+    v = _brent_minimum(deviance, _DF2_SEARCH[0], _DF2_SEARCH[1], _SEARCH_TOLERANCE)
+    return 2.0 * v / (1.0 - v)
+
+
+@jit
+def _minus_twice_log_likelihood(
+    x: FloatArray,
+    d: FloatArray,
+    location: FloatArray,
+    weights: FloatArray,
+    df2: float,
+    shift: float,
+) -> float:
+    """-2 sum_g w_g log f(s_g^2), with s_g^2 / s0_g^2 ~ F(d_g, df2) and
+    log s0_g^2 = location_g - shift, summed with compensation."""
+    total = 0.0
+    error = 0.0
+    for i in range(x.size):
+        log_scale = location[i] - shift
+        ratio = x[i] / math.exp(log_scale)
+        log_density = _f_log_x_density(ratio, d[i], df2) - math.log(ratio)
+        total, rounding = two_sum(total, weights[i] * (log_density - log_scale))
+        error += rounding
+    return -2.0 * (total + error)
+
+
+def _robust_likelihood(
+    x: FloatArray,
+    d: FloatArray,
+    covariate: FloatArray | None,
+    weights: FloatArray,
+    usable: npt.NDArray[np.bool_],
+    scale: FloatArray,
+    first: LikelihoodFDistributionFit,
+) -> LikelihoodFDistributionFit:
+    """The robust stage of the likelihood estimator; see
+    :func:`fit_f_distribution_likelihood`."""
+    index = np.flatnonzero(usable)
+    ratio = np.ascontiguousarray(x[index] / scale[index])
+    df1 = np.ascontiguousarray(d[index])
+    log_upper, log_lower = _f_tail_logs(ratio, df1, first.df2)
+    # Two-sided tail probabilities of the raw variances (zeros included), adjusted by
+    # Benjamini and Hochberg's method; below 0.3 is an outlier (found by probing).
+    two_sided = np.minimum(1.0, 2.0 * np.exp(np.minimum(log_upper, log_lower)))
+    adjusted = _as_array(adjust_p_values(two_sided, "bh"))
+    outlier = adjusted < _OUTLIER_LEVEL
+    if not outlier.any():
+        return first
+    refit_weights = weights.copy()
+    refit_weights[index] *= np.where(outlier, adjusted, 1.0)
+    refit_usable = usable & (refit_weights > 0.0)
+    if int(np.count_nonzero(x[refit_usable] > 0.0)) < 2:
+        # Only when the adjusted probabilities of all but one of the variances above
+        # zero are 0, which takes tail probabilities below the smallest double.
+        raise ValueError(
+            "the second fit of the robust likelihood estimator keeps fewer than two "
+            "variances above zero: the outlier probabilities of the others are 0; "
+            "use robust=False"
+        )
+    location, df2, trended = _likelihood_location_and_df2(
+        x, d, covariate, refit_weights, refit_usable
+    )
+    robust_scale = _scale_value(
+        np.exp(location - _log_minus_digamma_scalar(0.5 * df2)), trended
+    )
+    shrunk = np.full(x.size, df2)
+    # The probability of not being an outlier, from the first fit's upper tail.
+    upper = np.exp(log_upper)
+    n = index.size
+    naive = np.minimum(1.0, upper / ((_average_ranks(-ratio) - 0.5) / n))
+    not_outlier = _monotone_in(log_upper, naive, pool_leading=True)
+    if (not_outlier == 1.0).all():
+        return LikelihoodFDistributionFit(robust_scale, df2, shrunk, math.nan)
+    # Two fixed-point steps for the most extreme variance (found by probing).
+    most = int(np.argmin(log_upper))
+    df2_outlier = df2 * _LOG_HALF / float(log_upper[most])
+    df2_outlier *= _LOG_HALF / f_logsf_scalar(
+        float(ratio[most]), float(df1[most]), df2_outlier
+    )
+    shrunk[index] = not_outlier * df2 + (1.0 - not_outlier) * df2_outlier
+    return LikelihoodFDistributionFit(robust_scale, df2, shrunk, df2_outlier)
+
+
+@jit
+def _f_tail_logs(
+    ratio: FloatArray, df1: FloatArray, df2: float
+) -> tuple[FloatArray, FloatArray]:
+    """log P(F > ratio) and log P(F <= ratio) for F ~ F(df1, df2), element-wise."""
+    n = ratio.size
+    upper = np.empty(n)
+    lower = np.empty(n)
+    for i in range(n):
+        upper[i], lower[i] = _f_tails(ratio[i], df1[i], df2)
+    return upper, lower
+
+
+def _brent_minimum(
+    function: Callable[[float], float], low: float, high: float, tolerance: float
+) -> float:
+    """The minimiser of a function on [low, high] by Brent's (1973) method.
+
+    Golden section search with parabolic interpolation, as in Brent's procedure
+    ``localmin`` (chapter 5) and R's ``optimize``, with its stopping rule: the search
+    ends when the best point lies within 2 (sqrt(eps) |x| + tolerance / 3) of both
+    ends of the bracket. The sequence of evaluations, and so the result, is that of
+    R's ``optimize`` (checked against it).
+    """
+    eps = math.sqrt(_EPS)
+    a, b = low, high
+    x = w = v = a + _GOLDEN * (b - a)
+    fx = fw = fv = function(x)
+    d = e = 0.0
+    while True:
+        middle = 0.5 * (a + b)
+        tol1 = eps * abs(x) + tolerance / 3.0
+        tol2 = 2.0 * tol1
+        if abs(x - middle) <= tol2 - 0.5 * (b - a):
+            return x
+        p = q = r = 0.0
+        if abs(e) > tol1:
+            # The parabola through (v, fv), (w, fw) and (x, fx).
+            r = (x - w) * (fx - fv)
+            q = (x - v) * (fx - fw)
+            p = (x - v) * q - (x - w) * r
+            q = 2.0 * (q - r)
+            if q > 0.0:
+                p = -p
+            else:
+                q = -q
+            r = e
+            e = d
+        if abs(p) >= abs(0.5 * q * r) or p <= q * (a - x) or p >= q * (b - x):
+            # A golden section step into the larger part of the bracket.
+            e = (a - x) if x >= middle else (b - x)
+            d = _GOLDEN * e
+        else:
+            d = p / q
+            u = x + d
+            # Not too close to the ends of the bracket.
+            if u - a < tol2 or b - u < tol2:
+                d = tol1 if middle - x >= 0.0 else -tol1
+        # Not too close to x.
+        if abs(d) >= tol1:
+            u = x + d
+        else:
+            u = x + (tol1 if d >= 0.0 else -tol1)
+        fu = function(u)
+        if fu <= fx:
+            if u < x:
+                b = x
+            else:
+                a = x
+            v, fv = w, fw
+            w, fw = x, fx
+            x, fx = u, fu
+        else:
+            if u < x:
+                a = u
+            else:
+                b = u
+            if fu <= fw or w == x:
+                v, fv = w, fw
+                w, fw = u, fu
+            elif fu <= fv or v == x or v == w:
+                v, fv = u, fu
+
+
+def _scale_value(scale: FloatArray, trended: bool) -> float | FloatArray:
+    """A constant scale as a float, a trended one as an array."""
+    return scale if trended else float(scale[0])
+
+
+def _log_minus_digamma_scalar(a: float) -> float:
+    return float(_log_minus_digamma(np.array([a]))[0])
+
+
+# ---------------------------------------------------------------------------------------
 # Squeezing and moderated statistics
 # ---------------------------------------------------------------------------------------
 
@@ -1141,16 +1691,28 @@ def _squeeze(
     robust: bool,
     p_lower: float,
     p_upper: float,
+    estimator: str,
 ) -> SqueezedVariances:
     if x.size <= 2:
         return SqueezedVariances(x.copy(), x.copy(), 0.0)
-    _check_zero_variances(x, usable, robust)
     prior_variance: float | FloatArray
     prior_df: float | FloatArray
-    if robust:
-        fitted = _fit_robust(x, d, covariate, usable, p_lower, p_upper)
-        prior_variance, prior_df = fitted.scale, fitted.df2_shrunk
+    if estimator == "likelihood":
+        # limma's likelihood estimator does not stop on mostly zero variances.
+        _check_zero_variances(x, usable, robust=False)
+        # A variance on zero df counts as missing, as in limma's squeezeVar; it
+        # enters only the trend (found by probing).
+        missing = np.where(d > 0.0, x, np.nan)
+        fitted = _fit_likelihood(missing, d, covariate, np.ones(x.size), robust)
+        prior_variance = fitted.scale
+        # A robust fit gives each feature its prior df once it finds outliers.
+        prior_df = fitted.df2 if math.isnan(fitted.df2_outlier) else fitted.df2_shrunk
+    elif robust:
+        _check_zero_variances(x, usable, robust)
+        robust_fit = _fit_robust(x, d, covariate, usable, p_lower, p_upper)
+        prior_variance, prior_df = robust_fit.scale, robust_fit.df2_shrunk
     else:
+        _check_zero_variances(x, usable, robust)
         moments = _fit_moments(x, d, covariate, usable)
         prior_variance, prior_df = moments.scale, moments.df2
     return SqueezedVariances(
@@ -1179,14 +1741,14 @@ def _moderate(
     covariate: FloatArray | None,
     robust: bool,
     winsor_tail_p: float | Sequence[float],
-    prior_estimator: str,
-) -> tuple[SqueezedVariances, FloatArray]:
-    """Squeezed variances of a fit and the total degrees of freedom of its tests."""
+    prior_estimator: Any,
+) -> tuple[SqueezedVariances, FloatArray, str]:
+    """Squeezed variances of a fit, the total df of its tests and the estimator."""
     _check_flag(robust, "robust")
-    _check_prior_estimator(prior_estimator)
     lower, upper = _tail_proportions(winsor_tail_p)
     variances = fit.sigma**2
-    df = np.where(fit.df_residual < _ZERO_DF, 0.0, fit.df_residual)
+    df = _zero_tiny_df(fit.df_residual)
+    estimator = _prior_estimator(prior_estimator, fit.df_residual)
     usable = np.isfinite(variances) & (df > 0.0)
     if not usable.any():
         raise ValueError(
@@ -1197,10 +1759,12 @@ def _moderate(
     if covariate is not None:
         _check_covariate_nan(covariate, usable)
         covariate = _finite_covariate(covariate)
-    squeezed = _squeeze(variances, df, covariate, usable, robust, lower, upper)
+    squeezed = _squeeze(
+        variances, df, covariate, usable, robust, lower, upper, estimator
+    )
     prior_df = np.broadcast_to(squeezed.prior_df, df.shape)
     df_total = np.minimum(df + prior_df, float(df.sum()))
-    return squeezed, df_total
+    return squeezed, df_total, estimator
 
 
 def _coefficient_prior_variance(
@@ -1212,13 +1776,16 @@ def _coefficient_prior_variance(
     median_prior: float,
 ) -> float:
     """limma's var.prior for one coefficient (Smyth 2004, section 6.3)."""
-    bounds = (limits[0] ** 2 / median_prior, limits[1] ** 2 / median_prior)
     finite = np.isfinite(t)
     t, stdev_unscaled, df = t[finite], stdev_unscaled[finite], df[finite]
     n = t.size
     n_target = math.ceil(proportion / 2.0 * n)
     if n_target < 1:
         return math.nan
+    # The median prior variance is positive here: a finite t-statistic needs a
+    # positive posterior variance, which with at most two features, not moderated,
+    # is the feature's own prior variance.
+    bounds = np.square(np.asarray(limits, dtype=np.float64)) / median_prior
     size = np.abs(t)
     if df.min() < df.max():
         # t-statistics on fewer df are mapped to the largest df by matching tail
@@ -1335,6 +1902,12 @@ def _variance_vector(values: Any) -> FloatArray:
 
 
 def _df_vector(df: Any, n: int) -> FloatArray:
+    """The degrees of freedom, those below 1e-15 set to zero."""
+    return _zero_tiny_df(_df_values(df, n))
+
+
+def _df_values(df: Any, n: int) -> FloatArray:
+    """The degrees of freedom as given, checked and one per variance."""
     d = _real_array(unmasked_array(df, "df"), "df")
     if d.size == 1 and d.ndim <= 1:
         d = np.full(n, float(d.reshape(-1)[0]))
@@ -1345,6 +1918,10 @@ def _df_vector(df: Any, n: int) -> FloatArray:
         )
     if not (np.isfinite(d).all() and (d >= 0.0).all()):
         raise ValueError("df must be finite and non-negative")
+    return d
+
+
+def _zero_tiny_df(d: FloatArray) -> FloatArray:
     result: FloatArray = np.where(d < _ZERO_DF, 0.0, d)
     return result
 
@@ -1385,7 +1962,7 @@ def _check_zero_variances(
 
 
 def _covariate_vector(
-    covariate: Any, usable: npt.NDArray[np.bool_]
+    covariate: Any, usable: npt.NDArray[np.bool_], unusable: str = _MOMENT_UNUSABLE
 ) -> FloatArray | None:
     if covariate is None:
         return None
@@ -1395,17 +1972,18 @@ def _covariate_vector(
             f"covariate must have one value per variance ({usable.size}), "
             f"got shape {z.shape}"
         )
-    _check_covariate_nan(z, usable)
+    _check_covariate_nan(z, usable, unusable)
     return _finite_covariate(z)
 
 
-def _check_covariate_nan(z: FloatArray, usable: npt.NDArray[np.bool_]) -> None:
+def _check_covariate_nan(
+    z: FloatArray, usable: npt.NDArray[np.bool_], unusable: str = _MOMENT_UNUSABLE
+) -> None:
     missing = np.isnan(z) & usable
     if missing.any():
         raise ValueError(
             f"the covariate is NaN for {int(missing.sum())} features with a usable "
-            "variance; it may be NaN only where the variance is NaN or has zero "
-            "degrees of freedom"
+            f"variance; it may be NaN only where the variance {unusable}"
         )
 
 
@@ -1515,14 +2093,45 @@ def _check_flag(value: Any, name: str) -> None:
         raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
 
 
-def _check_prior_estimator(prior_estimator: Any) -> None:
+def _prior_estimator(prior_estimator: Any, d: FloatArray) -> str:
+    """The estimator to use: limma's legacy=NULL rule for None.
+
+    ``d`` are the degrees of freedom as given, before those below 1e-15 are set to
+    zero.
+    """
+    if prior_estimator is None:
+        # The positive df, those of missing variances and those below 1e-15
+        # included, compared exactly (found by probing): df of zero do not count.
+        positive = d[d > 0.0]
+        unequal = positive.size > 0 and positive.min() < positive.max()
+        return "likelihood" if unequal else "moments"
     # A masked value compares as masked, which is false, so test the type first.
-    if not isinstance(prior_estimator, str) or prior_estimator != "moments":
+    if isinstance(prior_estimator, str) and prior_estimator in (
+        "moments",
+        "likelihood",
+    ):
+        return prior_estimator
+    raise ValueError(
+        "prior_estimator must be 'moments' (the method of moments, limma's "
+        "legacy=TRUE), 'likelihood' (weighted moments and profile likelihood, "
+        "limma's fitFDistUnequalDF1 and legacy=FALSE) or None (limma's default, "
+        f"legacy=NULL); got {prior_estimator!r}"
+    )
+
+
+def _prior_weight_vector(weights: Any, n: int) -> FloatArray:
+    if weights is None:
+        return np.ones(n)
+    w = _real_array(unmasked_array(weights, "prior_weights"), "prior_weights")
+    if w.shape != (n,):
         raise ValueError(
-            "prior_estimator must be 'moments', the method of moments (limma's "
-            f"legacy=TRUE); got {prior_estimator!r}. limma's estimator for unequal "
-            "degrees of freedom (fitFDistUnequalDF1) is not implemented"
+            f"prior_weights must have one value per variance ({n}), got shape {w.shape}"
         )
+    if not (np.isfinite(w).all() and (w >= 0.0).all()):
+        raise ValueError(
+            "prior_weights must be finite and non-negative (0 leaves a feature out)"
+        )
+    return w
 
 
 def _real_array(values: Any, name: str) -> FloatArray:

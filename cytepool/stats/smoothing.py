@@ -83,6 +83,13 @@ _FLAT_NEIGHBOURHOOD = 0.001
 # Robustness iterations stop when six times the median absolute residual is
 # below this fraction of the mean absolute residual (found by probing R).
 _NEGLIGIBLE_SCALE = 1e-7
+# limma's weightedLowess takes the prior-weighted mean of a window narrower than
+# _NARROW_WINDOW, and a weighted mean instead of a line when the weighted sum of
+# squares of x about its mean in a window is below _FLAT_WINDOW. Both are absolute,
+# so the fit depends on the units of x and the scale of the weights (found by
+# probing).
+_NARROW_WINDOW = 1e-7
+_FLAT_WINDOW = 1e-7
 # An interior knot that a quantile places on a boundary knot is moved inside
 # by this fraction of its distance to the nearest other knot, as R's ns()
 # does (found by probing).
@@ -503,6 +510,201 @@ def _lowess_pass(
         if last >= n - 1:
             return
         i = max(last + 1, k - 1)
+
+
+def _weighted_lowess(
+    x: FloatArray, y: FloatArray, weights: FloatArray, span: float, npts: int = 200
+) -> FloatArray:
+    """One pass of LOWESS with prior weights, as limma's ``weightedLowess``.
+
+    limma's ``weightedLowess(x, y, weights, span = span, iterations = 1)`` with its
+    default ``npts`` and ``delta``, which ``loessFit`` calls for unequal weights
+    (unless the points are too few, when it fits a straight line); the empirical
+    Bayes trend of :mod:`cytepool.stats.empirical_bayes` uses it.
+    limma's help page describes the method; the conventions it leaves open were
+    found by probing limma 3.62.1:
+
+    - The local fits are computed at anchor points, the other points are
+      interpolated linearly between them, and points tied in x share a value.
+      The first point is an anchor, each next anchor is the first point more
+      than ``delta`` beyond the previous one, and the last point is an anchor.
+      ``delta`` is 0 (every distinct x an anchor) when x has at most ``npts``
+      distinct values; otherwise it solves sum_i min(g_i, delta) = npts delta
+      over the gaps g_i between successive distinct values, which is the range
+      over ``npts`` for equally spaced x and leaves out the large gaps.
+    - The window of an anchor starts with the points tied with it and grows by
+      the nearest distinct x-value on either side, with every point tied at that
+      value, the right one when both are as near, until its weights sum to at
+      least ``span`` times the total weight; h is the distance to the farthest
+      value in it.
+    - A window with h below 1e-7 gives the prior-weighted mean of its points.
+      Otherwise a point at distance r gets the prior weight times the tricube
+      (1 - (r / h)^3)^3, with no cut-off (unlike R's ``lowess``), and the fitted
+      value is that of the weighted least squares line, or the weighted mean when
+      the weighted sum of squares of x about its mean is below 1e-7. Both bounds
+      are absolute, so the fit depends on the units of x and the scale of the
+      weights.
+
+    Args:
+        x: ``(n,)`` finite predictor values, n >= 1.
+        y: ``(n,)`` finite responses.
+        weights: ``(n,)`` positive prior weights.
+        span: Fraction of the total weight in each window, in (0, 1].
+        npts: Approximate number of anchor points.
+
+    Returns:
+        ``(n,)`` fitted values in the order of ``x``.
+    """
+    order = np.argsort(x, kind="stable")
+    x_sorted = np.ascontiguousarray(x[order], dtype=np.float64)
+    fitted_sorted = _weighted_lowess_sorted(
+        x_sorted,
+        np.ascontiguousarray(y[order], dtype=np.float64),
+        np.ascontiguousarray(weights[order], dtype=np.float64),
+        float(span),
+        _anchor_spacing(x_sorted, npts),
+    )
+    fitted = np.empty(x.size)
+    fitted[order] = fitted_sorted
+    return fitted
+
+
+def _anchor_spacing(x_sorted: FloatArray, npts: int) -> float:
+    """The d >= 0 with sum(min(gaps, d)) = npts d, or 0 for at most npts values.
+
+    The gaps are those between successive distinct values. The function
+    sum(min(g, d)) - npts d is concave and piecewise linear in d, with slope
+    (number of gaps above d) - npts, so with more than npts gaps it has one
+    positive root, found on the interval between two successive sorted gaps.
+    With exactly npts gaps every d up to the smallest gap is a root, and the
+    largest, the smallest gap, is taken (found by probing).
+    """
+    gaps = np.sort(np.diff(np.unique(x_sorted)))
+    m = gaps.size
+    if m < npts:
+        return 0.0
+    cumulative = np.concatenate(([0.0], np.cumsum(gaps)))
+    for k in range(m - npts + 1, m + 1):
+        # Below delta: the k smallest gaps; the other m - k count delta each.
+        delta = float(cumulative[k]) / (npts - m + k)
+        upper = float(gaps[k]) if k < m else math.inf
+        if float(gaps[k - 1]) <= delta <= upper:
+            return delta
+    return float(cumulative[m]) / npts
+
+
+@jit
+def _weighted_lowess_sorted(
+    x: FloatArray, y: FloatArray, weights: FloatArray, span: float, delta: float
+) -> FloatArray:
+    """Weighted LOWESS fitted values of points sorted by x (one pass)."""
+    n = x.size
+    fitted = np.empty(n)
+    total = 0.0
+    for j in range(n):
+        total += weights[j]
+    target = span * total
+    window = np.empty(n)
+    last = -1
+    i = 0
+    while True:
+        fitted[i] = _weighted_local_fit(x, y, weights, i, target, window)
+        if last >= 0:
+            # Points between the anchors are interpolated; ties take a value.
+            width = x[i] - x[last]
+            for j in range(last + 1, i):
+                if x[j] == x[last]:
+                    fitted[j] = fitted[last]
+                elif x[j] == x[i]:
+                    fitted[j] = fitted[i]
+                else:
+                    alpha = (x[j] - x[last]) / width
+                    fitted[j] = alpha * fitted[i] + (1.0 - alpha) * fitted[last]
+        last = i
+        if i == n - 1:
+            break
+        cut = x[i] + delta
+        k = i + 1
+        while k < n - 1 and x[k] <= cut:
+            k += 1
+        # The next anchor is the last of the points tied with it.
+        while k < n - 1 and x[k + 1] == x[k]:
+            k += 1
+        i = k
+    return fitted
+
+
+@jit
+def _weighted_local_fit(
+    x: FloatArray,
+    y: FloatArray,
+    weights: FloatArray,
+    anchor: int,
+    target: float,
+    window: FloatArray,
+) -> float:
+    """The weighted local linear fit at one anchor; ``window`` is workspace."""
+    n = x.size
+    x0 = x[anchor]
+    left = anchor
+    while left > 0 and x[left - 1] == x0:
+        left -= 1
+    right = anchor
+    while right < n - 1 and x[right + 1] == x0:
+        right += 1
+    accumulated = 0.0
+    for j in range(left, right + 1):
+        accumulated += weights[j]
+    # The window grows by whole groups of tied values, the nearer first and the
+    # right one at equal distances (found by probing).
+    while accumulated < target and (left > 0 or right < n - 1):
+        to_left = x0 - x[left - 1] if left > 0 else np.inf
+        to_right = x[right + 1] - x0 if right < n - 1 else np.inf
+        if to_right <= to_left:
+            value = x[right + 1]
+            while right < n - 1 and x[right + 1] == value:
+                right += 1
+                accumulated += weights[right]
+        else:
+            value = x[left - 1]
+            while left > 0 and x[left - 1] == value:
+                left -= 1
+                accumulated += weights[left]
+    h = max(x0 - x[left], x[right] - x0)
+    sum_w = 0.0
+    sum_wy = 0.0
+    if h < _NARROW_WINDOW:
+        for j in range(left, right + 1):
+            sum_w += weights[j]
+            sum_wy += weights[j] * y[j]
+        narrow: float = sum_wy / sum_w
+        return narrow
+    sum_wx = 0.0
+    for j in range(left, right + 1):
+        r = abs(x[j] - x0)
+        if r < h:
+            c = r / h
+            c = 1.0 - c * c * c
+            tricube = c * c * c
+        else:
+            tricube = 0.0
+        w = weights[j] * tricube
+        window[j] = w
+        sum_w += w
+        sum_wx += w * x[j]
+        sum_wy += w * y[j]
+    mean_x = sum_wx / sum_w
+    mean_y = sum_wy / sum_w
+    sxx = 0.0
+    sxy = 0.0
+    for j in range(left, right + 1):
+        dx = x[j] - mean_x
+        sxx += window[j] * dx * dx
+        sxy += window[j] * dx * (y[j] - mean_y)
+    if sxx < _FLAT_WINDOW:
+        return mean_y
+    fit: float = mean_y + sxy / sxx * (x0 - mean_x)
+    return fit
 
 
 def _boundary_knots(

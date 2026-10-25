@@ -22,7 +22,7 @@ what is planned.
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
-| Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
+| Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR; on simulated data and on published single-cell data |
@@ -86,9 +86,15 @@ These are not implemented yet:
   A library size, merged group or pooled sample whose sum would exceed it raises
   `OverflowError` instead of wrapping around. Normalization works in float64, which is
   exact for counts up to 2**53.
-- Empirical Bayes moderation uses limma's moment estimator of the prior (limma's
-  `legacy=TRUE`). Since limma 3.61.8, limma uses a different estimator by default when the
-  residual degrees of freedom differ between genes.
+- With residual degrees of freedom that differ between genes, robust moderation
+  (`robust=True`) uses limma's likelihood estimator, as limma does, but leaves the
+  genes without residual degrees of freedom out of its test for outliers. limma 3.62.1
+  counts them in that test as zero variances, which become outliers and change which
+  other genes count as outliers: in a simulation where 2% of the genes had no residual
+  degrees of freedom, its robust prior degrees of freedom were 11.5% larger with a
+  constant prior and 6% to 10% larger with a trend. Where every gene has residual
+  degrees of freedom, the two agree. `fit_f_distribution_likelihood` also keeps prior
+  weights in its second robust fit, where limma's drops them.
 - Contrast standard errors and moderated F statistics are exact by default. limma's
   approximations are available as an option and can differ when weights vary between
   genes.
