@@ -19,9 +19,10 @@ package in this revision of the repository: on **2026-10-25** for the six script
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
 `sample_quality_weights.py`, `differential_expression.py`,
-`interferon_stimulated_pbmcs.py` and `gene_set_tests.py`, and for `design.py` and
-`empirical_bayes.py`, which printed the same tables again after changes to the code
-they check; and on **2026-10-24** for the others, with the
+`differential_expression_options.py`, `interferon_stimulated_pbmcs.py` and
+`gene_set_tests.py`, and for `design.py` and `empirical_bayes.py`, which printed the
+same tables again after changes to the code they check; and on **2026-10-24** for the
+others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -45,10 +46,11 @@ covers and the largest difference among them. Run a script to see every check.
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
+| [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **976** | **894 pass, none failed; 51 information, 30 deliberate differences, 1 control** | | |
+| **All** | | | **1,042** | **960 pass, none failed; 51 information, 30 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -717,6 +719,63 @@ Deliberate differences, in the NK cells of both paired cases:
   against donor D6, the values of the third row of the table; CytePool reports it as
   not estimable.
 
+## Options for pseudobulk differential expression
+
+[`validation/differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py)
+checks the options of `limma_voom` and `limma_trend` for pseudobulk data against
+limma and edgeR. It simulates cells from 6 donors, each sampled before and after a
+stimulation (seed 20261027), in 3 cell types with 1,000 genes, pools them with
+`from_cells`, and fits `~ donor + condition` with two contrasts, `stim_vs_ctrl` and
+`D3_vs_D2`. One sample is an outlier in every cell type, two are sequenced shallowly
+in one cell type each, and in the NK cells both samples of donor D1, the reference
+level, have fewer than 10 cells, which makes the column `donorD6` a combination of the
+others. Six analyses each set some of the options, and R runs the workflow of the
+section above with the same options:
+
+- sample quality weights (`quality_weights`): limma's `voomWithQualityWeights`, gene by
+  gene and by REML, for limma-voom; `arrayWeights` on the log2 CPM, by REML and gene
+  by gene, then `lmFit` with them as sample weights, for limma-trend;
+- prior weights from cell numbers (`prior_weights="n_cells"`): R counts the cells of
+  each sample and cell type from the cells' labels, not from the cube, and uses them
+  as prior weights: `voom(weights = n)`, whose weights times n enter `lmFit`, as
+  voom's help page says its weights modify prior weights; independently, edgeR's
+  `voomLmFit(prior.weights = n)`, which forms that product itself (found by
+  probing); and `lmFit(weights = n)` for limma-trend;
+- a minimum total count per sample (`min_counts=30000`, in three analyses): R leaves
+  out the samples whose column sum is below it, here the two shallow samples, besides
+  those with fewer than 10 cells;
+- p-values adjusted across cell types (`adjust_across_groups`, in four analyses):
+  `p.adjust(method = "BH")` of the `P.Value` of the three cell types stacked, one
+  contrast at a time.
+
+Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Samples used, features tested, voom's span, residual and prior df, in the 18 fits (6 analyses x 3 cell types) | `filterByExpr`, `voom`, `lmFit`, `eBayes` | 0 mismatches | 0 | 18 pass |
+| Sample quality weights | `voomWithQualityWeights`, `arrayWeights` | 2.7e-11 | 1e-6 | 12 pass |
+| Prior weights against the number of cells R counts from the cells | `table` | 0 | 1e-10 | 6 pass |
+| logFC, AveExpr, t, P.Value, adj.P.Val and B of both contrasts, with quality weights | `topTable` | 1.1e-12 | 1e-6 | 12 pass |
+| The same with prior weights | `topTable` | 1.7e-12 | 1e-10 | 6 pass |
+| The same, limma-voom with prior weights, against edgeR | `voomLmFit` | 1.8e-13 | 1e-10 | 3 pass |
+| P-values adjusted across the cell types, with quality weights | `p.adjust` | 5.1e-13 | 1e-6 | 4 pass |
+| The same with prior weights | `p.adjust` | 7.6e-13 | 1e-10 | 4 pass |
+| Prior weights together with estimated sample weights: both programs refuse | `voomLmFit` | both refuse | n/a | 1 pass |
+
+Differences are relative for the weights; the statistics are scaled as in the section
+above. Everything computed from sample quality weights is in the close tier, as they
+are iterative estimates; the rest is exact. limma-voom ran with
+`contrast_standard_errors="limma"`, since `D3_vs_D2` combines two coefficients. limma's
+quality weights on the rank-deficient design of the NK cells are those on its kept
+columns (found by probing), as CytePool's are. `voomLmFit` treats some genes with zero
+counts differently from `voom` and `lmFit`: it lowers their residual df, as its help
+page says, and can move their average log count in the trend (found by probing). In
+these data that happens only where `min_counts` leaves a donor with one sample, so
+`voomLmFit` is compared in the analysis of limma-voom with prior weights that does not
+set `min_counts`. limma's `voomWithQualityWeights` takes no prior weights, and edgeR's
+`voomLmFit` stops with "Can't specify prior.weights and estimate sample weights";
+CytePool refuses the two together as well.
+
 ## Differential expression on published data
 
 [`validation/interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py)
@@ -1010,6 +1069,7 @@ python validation/gene_set_tests.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/differential_expression.py
+python validation/differential_expression_options.py
 # Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583
 # unless --data or GSE96583_DATA names another directory outside the repository.
 python validation/interferon_stimulated_pbmcs.py

@@ -116,6 +116,7 @@ from cytepool.stats.sample_weights import (
     _prior_weights,
     _too_few_df_message,
     _variance_model,
+    _VarianceModel,
     _weights_of,
 )
 from cytepool.stats.smoothing import choose_lowess_span, lowess
@@ -410,7 +411,6 @@ def voom_with_quality_weights(
     y, sizes, fraction = _voom_inputs(
         counts, design, library_sizes, norm_factors, span, "voom_with_quality_weights"
     )
-    x, _ = _design_matrix(design, None)
     model = _variance_model(
         variance_design,
         variance_groups,
@@ -421,6 +421,32 @@ def voom_with_quality_weights(
         tolerance=tolerance,
         methods=("gene_by_gene", "reml"),
     )
+    result, notes = _quality_weighted_voom(y, design, sizes, fraction, model)
+    for note in notes:
+        warnings.warn(note, RuntimeWarning, stacklevel=2)
+    return result
+
+
+def _quality_weighted_voom(
+    y: FloatArray,
+    design: Any,
+    sizes: FloatArray,
+    fraction: float,
+    model: _VarianceModel,
+) -> tuple[VoomResult, list[str]]:
+    """The steps of :func:`voom_with_quality_weights` on checked inputs.
+
+    Returns the result and the warnings for the caller to give, so that a caller
+    can also record them.
+
+    Args:
+        y: The counts, checked.
+        design: The design, checked by ``fit_linear_model``.
+        sizes: The effective library sizes.
+        fraction: The span.
+        model: The variance model and the settings of its estimation.
+    """
+    x, _ = _design_matrix(design, None)
     first, fitted = _voom_trend(y, design, sizes, fraction, None)
     notes = []
     if not fitted:
@@ -438,9 +464,7 @@ def voom_with_quality_weights(
         )
         notes += list(dict.fromkeys(first_notes + second_notes))
         quality = _weights_of(log_variances)
-    for note in notes:
-        warnings.warn(note, RuntimeWarning, stacklevel=2)
-    return VoomResult(
+    result = VoomResult(
         log_cpm=second.log_cpm,
         weights=second.weights * quality[:, np.newaxis],
         effective_library_sizes=sizes,
@@ -450,6 +474,7 @@ def voom_with_quality_weights(
         span=second.span,
         sample_weights=quality,
     )
+    return result, notes
 
 
 def _voom_inputs(

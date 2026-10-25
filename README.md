@@ -24,7 +24,7 @@ what is planned.
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
-| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result | limma, edgeR; on simulated data and on published single-cell data |
+| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR; on simulated data and on published single-cell data |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
 
 ## Planned
@@ -91,13 +91,19 @@ These are not implemented yet:
   approximations are available as an option and can differ when weights vary between
   genes.
 - `voom` normalizes by library-size factors only, and fits its trend without a block
-  correlation; `voomLmFit` is not implemented, and `limma_voom` does not use sample
-  quality weights yet. `voom` and `voom_with_quality_weights` need a design of full
-  column rank (limma drops aliased columns; `limma_voom` fits a group's column space),
-  and raise an error where limma returns values without meaning: for a sample whose
-  library size is zero, or a trend that is not positive where weights are read. With
-  prior weights, `voom` returns the trend's weights times the prior weights, which a
-  fit needs; limma returns the trend's alone.
+  correlation; `voomLmFit` is not implemented. `voom` and `voom_with_quality_weights`
+  need a design of full column rank (limma drops aliased columns; `limma_voom` fits a
+  group's column space), and raise an error where limma returns values without
+  meaning: for a sample whose library size is zero, or a trend that is not positive
+  where weights are read. With prior weights, `voom` returns the trend's weights
+  times the prior weights, which a fit needs; limma returns the trend's alone.
+- In `limma_voom` and `limma_trend`, sample quality weights give each sample a weight
+  of its own; there is no variance model for groups of samples (limma's `var.group`
+  and `var.design`). Prior weights are the number of cells of each sample and cannot
+  be combined with quality weights, which edgeR's `voomLmFit` refuses too. In a
+  design that pairs two samples per donor, both samples of a donor get the same
+  quality weight from limma-trend and similar ones from limma-voom, as their
+  residuals are equal and opposite.
 - `sample_quality_weights` stops REML where limma does, so that its weights are
   limma's: within about half a percent of the REML estimate without prior weights, and
   up to about 15% from it with prior weights (as for the voom weights of

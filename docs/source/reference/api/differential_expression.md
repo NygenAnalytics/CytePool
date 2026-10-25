@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: Differential expression of every cell type of a pseudobulk cube by limma-voom and limma-trend in CytePool, with the samples behind each fit and a provenance record.
+    description: Differential expression of every cell type of a pseudobulk cube by limma-voom and limma-trend in CytePool, with options for pseudobulk data, the samples behind each fit and a provenance record.
 ---
 
 # Differential expression
@@ -12,9 +12,12 @@ myst:
 time, as the limma and edgeR User's Guides do for RNA-seq counts. The design is
 matched to the cube by `sample_id`; samples with too few cells are left out of a
 group's fit, and a group whose design becomes rank deficient is fitted on its column
-space, with the contrasts its samples can estimate. The result holds a table per group
-and contrast, a summary of every group, the samples used and left out, and a record
-that traces every number to the profiles of the cube that produced it.
+space, with the contrasts its samples can estimate. Options for pseudobulk data, each
+off by default, add sample quality weights, prior weights from the number of cells, a
+minimum total count per sample, and p-values adjusted across groups. The result holds
+a table per group and contrast, a summary of every group, the samples used and left
+out with the weights of each fit, and a record that traces every number to the
+profiles of the cube that produced it.
 
 ```{eval-rst}
 .. automodule:: cytepool.differential_expression
