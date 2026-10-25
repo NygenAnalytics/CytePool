@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from numba.core.caching import NullCache
 
+import cytepool
 from cytepool import _jit
 
 SOURCE = """
@@ -90,6 +91,27 @@ def test_editing_any_source_file_starts_a_new_cache(package: Path) -> None:
     _call(after)
     assert sum(after.weighted_total.stats.cache_hits.values()) == 0
     assert sum(after.weighted_total.stats.cache_misses.values()) == 1
+
+
+def test_a_new_version_of_the_same_code_keeps_the_cache(
+    package: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every commit gets its own version; one that leaves the code as it was, such as
+    # a change to the documentation, needs no new compilation.
+    (package / "_version.py").write_text('version = "0.1.dev38+g3496bb80b"\n')
+    _call(_load(package / "routines.py", "routines_before"))
+    key_before = _jit.cache_key()
+
+    (package / "_version.py").write_text('version = "0.1.dev39+g0123456"\n')
+    monkeypatch.setattr(cytepool, "__version__", "0.1.dev39+g0123456")
+    monkeypatch.setattr(_jit, "__version__", "0.1.dev39+g0123456", raising=False)
+    _clear_memoized()
+    assert _jit.cache_key() == key_before
+
+    after = _load(package / "routines.py", "routines_after")
+    _call(after)
+    assert sum(after.weighted_total.stats.cache_hits.values()) == 1
+    assert sum(after.weighted_total.stats.cache_misses.values()) == 0
 
 
 def test_bounds_checking_has_its_own_cache(
