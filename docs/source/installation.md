@@ -32,6 +32,18 @@ python -c "import cytepool; print(cytepool.__version__)"
 
 On Windows, activate the environment with `.venv\Scripts\activate` instead.
 
+## Optional integrations
+
+Converting cubes to and from AnnData and MuData (`cytepool.io.anndata`) needs anndata,
+and mudata for MuData. Install them with CytePool's `anndata` or `mudata` extra:
+
+```bash
+uv pip install "cytepool[mudata] @ git+https://github.com/NygenAnalytics/CytePool.git"
+```
+
+The `mudata` extra installs anndata too. CytePool imports them only when a
+conversion runs, and says which extra to install when one is missing.
+
 ## First calls and threads
 
 Numerical routines are compiled by numba the first time they run, which takes up to

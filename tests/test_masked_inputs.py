@@ -46,6 +46,7 @@ import cytepool
 from cytepool._masked_arrays import reject_masked
 from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
+from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
 from cytepool.stats import distributions, special
@@ -56,6 +57,13 @@ from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.voom import voom_with_quality_weights
 from cytepool.table import Table
+
+# anndata and mudata, which the conversions of cubes call, warn about their own use
+# of pandas options that pandas 4 removes.
+pytestmark = [
+    pytest.mark.filterwarnings("ignore::DeprecationWarning:anndata"),
+    pytest.mark.filterwarnings("ignore::DeprecationWarning:mudata"),
+]
 
 # The standard message: what was found, why it is refused, and the remedy for how
 # the argument marks missing values (None when it accepts no missing values). The
@@ -233,6 +241,50 @@ def _differential_expression(context: Context) -> dict[str, Any]:
     }
 
 
+def _scverse_arguments(context: Context, container: str) -> dict[str, Any]:
+    """The cube as a long AnnData or a MuData, and a value for every argument of the
+    import. Skipped without anndata, or mudata."""
+    pytest.importorskip("anndata")
+    pandas = pytest.importorskip("pandas")
+    cube = context.cube
+    if container == "mudata":
+        pytest.importorskip("mudata")
+        data = {"mdata": to_mudata(cube)}
+    else:
+        data = {"adata": to_anndata(cube), "sample": "sample_id", "group": "group_id"}
+    return {
+        **data,
+        "layers": {"counts": "counts"},
+        "n_cells": pandas.DataFrame(
+            cube.n_cells,
+            index=cube.samples["sample_id"].tolist(),
+            columns=cube.groups["group_id"].tolist(),
+        ),
+        "sample_table": {"sample_id": ["S1", "S2"]},
+        "group_table": {"group_id": ["B", "T"]},
+        "normalization": {"method": "library_size", "target_sum": 1e4},
+        "source": {"dataset": "test", "values": [1, 2]},
+    }
+
+
+# The arguments of from_anndata and from_mudata that take arrays: the id columns of
+# the tables accept no missing values, and JSON metadata marks them with None.
+_SCVERSE_ARRAYS: dict[str, str | None] = {
+    "layers": None,
+    "n_cells": None,
+    "sample_table": None,
+    "group_table": None,
+    "normalization": "None",
+    "source": "None",
+}
+_SCVERSE_KEYS = {
+    "layers": "counts",
+    "sample_table": "sample_id",
+    "group_table": "group_id",
+    "normalization": "target_sum",
+    "source": "values",
+}
+
 TABLE = Table({"x": [1.0, 2.0], "s": ["a", "b"]})
 NORM_FACTORS = [1.0, 1.1, 0.9, 1.0]
 LIBRARY_SIZES = COUNTS.sum(axis=1).astype(float)
@@ -384,6 +436,20 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"key": None},
         instance=lambda c: c.zarr_array.oindex,
         names={"key": "index"},
+    ),
+    # Cubes from scverse's data structures.
+    "cytepool.io.anndata.from_anndata": Entry(
+        lambda c: _scverse_arguments(c, "anndata"),
+        _SCVERSE_ARRAYS,
+        options=("sample", "group"),
+        objects=("adata",),
+        keys=_SCVERSE_KEYS,
+    ),
+    "cytepool.io.anndata.from_mudata": Entry(
+        lambda c: _scverse_arguments(c, "mudata"),
+        _SCVERSE_ARRAYS,
+        objects=("mdata",),
+        keys=_SCVERSE_KEYS,
     ),
     "cytepool.io.zarr.write_array": Entry(
         lambda c: {
@@ -788,6 +854,14 @@ NO_ARRAY_INPUT = {
     "cytepool.io.cube_files.write_cube": (
         ("cube", "path", "compression", "level", "overwrite"),
         "a Cube, whose arrays were checked when it was built, a path and options",
+    ),
+    "cytepool.io.anndata.to_anndata": (
+        ("cube",),
+        "a Cube, whose arrays were checked when it was built",
+    ),
+    "cytepool.io.anndata.to_mudata": (
+        ("cube",),
+        "a Cube, whose arrays were checked when it was built",
     ),
     "cytepool.io.zarr.ZarrArray": (
         ("path", "metadata", "stamp"),
