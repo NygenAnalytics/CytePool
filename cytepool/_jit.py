@@ -28,7 +28,6 @@ from typing import Any
 
 import numba
 
-from . import __version__
 from ._masked_arrays import reject_masked
 
 logger = logging.getLogger(__name__)
@@ -112,9 +111,14 @@ def thread_limit(n_threads: int | None) -> Iterator[int]:
 
 @cache
 def cache_key() -> str:
-    """Return the key that names this installation's cache directory."""
+    """Return the key that names this installation's cache directory.
+
+    The key follows what the machine code depends on: the package's source, numba's
+    version and the compilation settings. It does not follow the version of
+    CytePool, which names the commit, so that a commit that leaves the code as it
+    was keeps the cache.
+    """
     parts = (
-        __version__,
         _source_digest(_PACKAGE_ROOT),
         numba.__version__,
         f"boundscheck={numba.config.BOUNDSCHECK}",
@@ -162,8 +166,8 @@ def _source_digest(root: Path) -> str:
     digest = hashlib.sha256()
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root).as_posix()
-        # The version file is rewritten on every install; the version is keyed
-        # separately.
+        # The version file is rewritten on every install and changes nothing
+        # that is compiled.
         if relative == "_version.py":
             continue
         digest.update(relative.encode())

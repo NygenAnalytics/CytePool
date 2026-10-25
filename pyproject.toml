@@ -83,6 +83,15 @@ include = ["cytepool*"]
 [tool.setuptools_scm]
 version_file = "cytepool/_version.py"
 
+[tool.uv]
+# The version is written when the package is built, from the commit and the tags, so
+# an installed checkout is rebuilt when either changes: without this, it would keep
+# reporting the commit it was first installed from.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { git = { commit = true, tags = true } },
+]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra"
