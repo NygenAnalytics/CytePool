@@ -21,9 +21,9 @@ cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
 `negative_binomial_fits.py`, `differential_expression.py`,
 `differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
-`gene_set_tests.py` and `composition_tests.py`, and for `design.py`, which printed
-the same table again after changes to the code it checks; and on **2026-10-24** for
-the others, with the
+`gene_set_tests.py`, `rotation_gene_set_tests.py` and `composition_tests.py`, and for
+`design.py`, which printed the same table again after changes to the code it checks;
+and on **2026-10-24** for the others, with the
 reference versions given in each section. Every script exited without a failure.
 Each row below is a family of checks: it gives the number of printed checks it
 covers and the largest difference among them. Run a script to see every check.
@@ -47,6 +47,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 150 | 146 pass, 4 deliberate differences | 4.8 s | 195 MiB |
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
+| [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
@@ -54,7 +55,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,407** | **1,238 pass, none failed; 110 information, 58 deliberate differences, 1 control** | | |
+| **All** | | | **1,510** | **1,319 pass, none failed; 112 information, 78 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -91,8 +92,9 @@ describe. Besides **pass**, a printed check can be:
 
 Sections also list deliberate differences that passing checks confirm, such as
 formulas that CytePool rejects by design; the summary counts as deliberate
-differences only the checks that the scripts print as such. No check is calibrated
-yet: every method implemented so far is deterministic.
+differences only the checks that the scripts print as such. The calibrated checks are
+those of `rotation_gene_set_tests.py`, whose tests draw random rotations; the other
+methods implemented so far are deterministic.
 
 ## Pseudobulk cubes
 
@@ -845,6 +847,91 @@ Deliberate differences:
   which it adjusts with the others, and in fry a mixed p-value of 0 for an empty set.
   The tests check these.
 
+## Rotation gene-set tests
+
+[`validation/rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py)
+compares `roast`, `mroast` and `romer` with limma's functions of the same names on
+log-expression of 1,500 genes simulated from fixed seeds, with the gene variances and
+gene sets of `gene_set_tests.py` and three sets with contribution weights: a signature
+whose genes go up or down, with weights +1 and -1; a set with weights of different
+sizes; and a set with half of its weights zero. The cases are three groups with the
+contrast given as a design column; interleaved groups with observation weights and a
+named contrast given as weights; the same with a trended prior estimated robustly;
+counts with voom weights; a paired design with sample weights; equal residual
+variances (an infinite prior df), also with effects so large that limma's log-odds of
+23 genes exceed 709.8; and contribution weights for every gene, drawn from -2, -1, 0.5,
+1 and 3. The exact checks give CytePool the rotations limma drew: a generator that
+replays the standard normal draws R gives limma after `set.seed`, in the order limma
+uses them (found by probing). limma tests each set with the same seed, which is how
+CytePool's `mroast` shares its rotations between sets. The calibrated checks let each
+program draw its own rotations, and allow a difference of 4 sd(p_1 - p_2) + 2 / (B + 1)
+for B rotations each, with the sd from the binomial variance of each estimate at their
+mean. Differences of p-values are absolute: each p-value counts rotations, so a
+difference of one count is at least 1 / (2B + 1). Reference: R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| roast given limma's rotations: the down, up, two-sided and mixed p-values, active proportions and numbers of genes of every set, for every set statistic and case | `roast` | 5.0e-16 | 1e-12 | 19 pass |
+| mroast given the same rotations for every set: two-sided p-values, and directions (mismatched sets) | `mroast` | 0; 0 sets | 1e-12; 0 | 38 pass |
+| romer given limma's rotations: up, down and mixed p-values and numbers of genes, for every set statistic, with and without shrinkage, with sample weights and with an infinite prior df | `romer` | 0 | 1e-12 | 7 pass |
+| limma's FDR and FDR.Mixed from its p-values by mroast's rule; numbers of genes and active proportions with each program's own rotations | `mroast` | 4.4e-16 | 1e-12 | 9 pass |
+| Each program's own rotations: mroast (mean, msq, mean50; B = 1,999) and romer (mean, mean50; B = 999) | `mroast`, `romer` | 0.54 of the bound | 1 | 5 pass |
+| mroast's mean statistic with 20,000 rotations against fry, its limit, with equal variances | `fry` | 0.34 of the bound | 1 | 1 pass |
+| CytePool's fry, mixed p-values of the sets of 2 to 6 genes, against the msq rotation test with 20,000 rotations | `mroast` | 0.015 (absolute) | 0.1 | 1 pass |
+| CytePool's msq p-values with every contribution weight multiplied by 10 (B = 1,999) | `roast` | 0 | 1e-12 | 1 pass |
+| limma's fry, mixed p-values of the sets of 2 to 6 genes, against the same | `mroast` | 0.45 (absolute) | n/a | 1 information |
+| Genes whose log-odds in limma exceed 709.8 (very large effects) | `romer` | 23 genes | n/a | 1 information |
+| p-values where the observed floor-mean or mean-square statistic is the smallest it can be | `roast` | 0.50 (absolute) | n/a | 6 deliberate differences |
+| floormean's mixed p-values of sets with negative weights; msq's up, down and two-sided p-values of sets with weights of both signs | `roast` | 0.65; 0.33 (absolute) | n/a | 6 deliberate differences |
+| limma's msq p-values with every weight multiplied by 10 (B = 1,999) | `roast` | 0.45 (absolute change) | n/a | 1 deliberate difference |
+| The set with weights of zero: its number of genes, and its mean50 p-values | `roast` | 8 against 16 genes; 0.039 | n/a | 6 deliberate differences |
+| romer with shrinkage where limma's posterior probabilities are NaN | `romer` | 0.15 (absolute) | n/a | 1 deliberate difference |
+
+The z-scores of the moderated t-statistics are Bailey's (1980) transformation on
+min(d_0 + d, 10^4) degrees of freedom; romer's shrinkage of each gene's contrast effect
+computes its log-odds on d_0 + d degrees of freedom, without the limit, and with the
+proportion of true null hypotheses of limma's `propTrueNull(method = "lfdr")`. These
+conventions, the set statistics' definitions where limma differs from the paper (the
+mean-50 statistic averages the ceiling(m / 2) largest values, and romer's floor-mean
+mixed statistic floors \|t\| at 1), and the order of limma's random draws were found
+by probing, and the exact checks confirm them, with an infinite prior df too. Without
+shrinkage, romer agrees with limma exactly on the data with very large effects, which
+shows that the difference with shrinkage comes from limma's NaN posterior
+probabilities. The fry checks give the reference that `gene_set_tests.py` approximated
+by simulation: the mixed p-values of fry for sets of 2 to d genes, where CytePool uses
+all d + 1 dimensions of the rotation and limma only the set's, against the rotation
+test of the same statistic, which `mroast`'s msq statistic is when all genes have the
+same residual variance (up to the limit on the df of the z-scores).
+
+Deliberate differences:
+
+- roast and mroast count a rotated statistic equal to the observed one as at least as
+  extreme, as Wu et al. (2010) and Phipson and Smyth (2010) define the p-value and as
+  limma's `romer` does; limma's `roast` counts only larger ones. Where the observed
+  floor-mean or mean-square statistic is the smallest it can be (a set without a gene
+  on one side of zero, or, for the floor-mean mixed statistic, without a gene whose
+  \|z\| exceeds 0.674), CytePool's p-value is 1 and limma's about 1/2. The script
+  checks that CytePool's p-value is 1 in each such case.
+- With contribution weights a_g, the mean-square statistic weighs each gene's z^2 by
+  \|a_g\|, as Wu et al. (2010) define it; limma's up, down and two-sided p-values differ
+  from it for sets with weights of both signs, and with more than 1,000 rotations its
+  p-values change when every weight is multiplied by the same number (here by up to
+  0.45 for a factor of 10). The floor-mean mixed statistic weighs each gene by
+  \|a_g\|, where limma takes a negative weight as evidence against the set; the script
+  checks that CytePool's mixed p-value is limma's with the absolute weights.
+- A gene of contribution weight zero leaves the set: it counts neither in the number
+  of genes nor among the values that the mean-50 statistic averages. limma keeps it in
+  both, and leaves it out of the active proportions, as CytePool does.
+- romer's posterior probability that a gene is differentially expressed is
+  1 / (1 + exp(-lods)). limma's is NaN beyond log-odds of 709.8 (\|t\| above about 38
+  with an infinite prior df), which makes the gene's shrunk contrast effect NaN and
+  changes the p-values of every set (found by probing).
+- A set without genes, or whose genes all have weight zero, has NaN p-values and no
+  direction in CytePool and is left out of the other sets' adjustment; limma reports
+  "down" and NA, or the smallest possible p-value when all weights are zero. A gene
+  listed twice counts once in CytePool, twice in limma. mroast tests every set with the
+  same rotations, where limma draws new ones for each set. The tests check these.
+
 ## Multiple testing
 
 [`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
@@ -1357,6 +1444,7 @@ RSCRIPT=$REF/r-mixed/bin/Rscript python validation/mixed_models.py
 RSCRIPT=$REF/r-mixed/bin/Rscript python validation/mixed_models.py --benchmark
 python validation/empirical_bayes.py
 python validation/gene_set_tests.py
+python validation/rotation_gene_set_tests.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py

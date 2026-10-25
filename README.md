@@ -24,7 +24,7 @@ what is planned.
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
-| Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; gene sets named by gene id or position | limma |
+| Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR; on simulated data and on published single-cell data |
 | Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
@@ -43,8 +43,7 @@ These are not implemented yet:
   default. Random intercepts are fitted by REML now (see the table above);
   `fit_linear_model` refuses a design whose random effects it would drop, and its
   message points to `fit_mixed_model`.
-- Rotation gene-set tests (`roast`, `mroast`, `romer`), and pathway or
-  transcription-factor activity
+- Pathway or transcription-factor activity
 - Composition tests with precision weights or random effects (crumblr)
 - Ligand-receptor scoring and differential interactions
 - Dose-response fits, benchmark doses and synergy
@@ -156,6 +155,22 @@ These are not implemented yet:
   than about 1e10, the coefficients that only the samples of small weight determine
   lose accuracy (about 1e-16 times that factor), and beyond about 1e14 they are not
   determined.
+- `roast`, `mroast` and `romer` draw their rotations from a numpy generator, so their
+  p-values agree with limma's within Monte Carlo error, and exactly when given the
+  rotations limma draws; `mroast` tests every set with the same rotations. Like `camera`
+  and `fry` they need every value observed and fit fixed effects only (no block
+  correlation), and `romer` takes sample weights only, as limma's does. A rotated
+  statistic equal to the observed one counts as at least as extreme, as Wu et al.
+  (2010) define the p-value; limma's `roast` counts only larger ones, which gives about
+  1/2 instead of 1 where a set has no gene on one side of zero (`"floormean"`,
+  `"msq"`). With contribution weights, a gene of weight zero leaves the set, and
+  `"msq"` and the mixed `"floormean"` statistic weigh each gene by the size of its
+  weight, as the paper does; limma's `"msq"` p-values differ for weights of both signs
+  (and change with the scale of the weights beyond 1,000 rotations), and its
+  `"floormean"` takes a negative weight as evidence against the set. `romer` shrinks
+  genes whose log-odds exceed 709.8, which limma's shrinkage turns into NaN. Exact
+  z-scores (limma's `approx.zscore = FALSE`) and given prior parameters (`var.prior`,
+  `df.prior`) are not offered.
 - `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
   is refused, and there is no `duplicateCorrelation`. Normalization factors are TMM or
   none. In a group whose design is rank deficient they test every contrast the
