@@ -905,6 +905,95 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("standardize", "trend", "robust"),
         keys={"gene_sets": "set"},
     ),
+    # Rotation tests take complete values too; contribution weights are finite.
+    "cytepool.stats.rotation_gene_set_tests.roast": Entry(
+        lambda c: (
+            {
+                key: value
+                for key, value in _gene_set_arguments().items()
+                if key != "gene_sets"
+            }
+            | {
+                "gene_set": ["g1", "g2"],
+                "gene_weights": np.linspace(-1.0, 1.0, COUNTS.shape[1]),
+                "n_rotations": 9,
+                "rng": 1,
+                "n_threads": 1,
+            }
+        ),
+        dict.fromkeys(
+            (
+                "y",
+                "design",
+                "contrast",
+                "gene_set",
+                "gene_ids",
+                "weights",
+                "gene_weights",
+            ),
+            None,
+        ),
+        options=(
+            "set_statistic",
+            "n_rotations",
+            "trend",
+            "robust",
+            "rng",
+            "n_threads",
+        ),
+    ),
+    "cytepool.stats.rotation_gene_set_tests.mroast": Entry(
+        lambda c: {
+            **_gene_set_arguments(),
+            "gene_weights": np.linspace(-1.0, 1.0, COUNTS.shape[1]),
+            "n_rotations": 9,
+            "rng": 1,
+            "n_threads": 1,
+        },
+        dict.fromkeys(
+            (
+                "y",
+                "design",
+                "contrast",
+                "gene_sets",
+                "gene_ids",
+                "weights",
+                "gene_weights",
+            ),
+            None,
+        ),
+        options=(
+            "set_statistic",
+            "n_rotations",
+            "trend",
+            "robust",
+            "mid_p",
+            "rng",
+            "n_threads",
+        ),
+        keys={"gene_sets": "set"},
+    ),
+    # romer takes sample weights only.
+    "cytepool.stats.rotation_gene_set_tests.romer": Entry(
+        lambda c: {
+            **_gene_set_arguments(),
+            "weights": np.full(COUNTS.shape[0], 2.0),
+            "n_rotations": 9,
+            "rng": 1,
+            "n_threads": 1,
+        },
+        dict.fromkeys(
+            ("y", "design", "contrast", "gene_sets", "gene_ids", "weights"), None
+        ),
+        options=(
+            "set_statistic",
+            "n_rotations",
+            "shrink_contrast_effects",
+            "rng",
+            "n_threads",
+        ),
+        keys={"gene_sets": "set"},
+    ),
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
         lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
