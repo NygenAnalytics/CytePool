@@ -24,6 +24,7 @@ what is planned.
 | dream | `voom_with_dream_weights`: voom's precision weights from the mean-variance trend of every gene's mixed model, fitted by maximum likelihood, as variancePartition's `voomWithDreamWeights`; `moderated_fixed_effect_tests`: Satterthwaite t-tests of a mixed model moderated by empirical Bayes as variancePartition's `eBayes` moderates `dream` fits, with `topTable`'s z-statistic | variancePartition |
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
+| Quasi-likelihood F-tests | `fit_quasi_likelihood` and `quasi_likelihood_f_test`: edgeR 4's `glmQLFit` and `glmQLFTest` with their defaults: the common negative binomial dispersion of the most highly expressed genes by Cox-Reid adjusted profile likelihood (`common_dispersion`), deviances adjusted for small counts with exact moments of the unit deviance (`negative_binomial_unit_deviance_moments`), the average quasi-dispersion, limma's prior for unequal degrees of freedom with a trend in the average log CPM (`average_log_cpm`) or robust, prior weights and offsets, and F-tests of coefficients and named contrasts with edgeR's columns (logFC, logCPM, F, PValue, FDR) | edgeR, limma, mpmath |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
@@ -36,8 +37,9 @@ what is planned.
 
 These are not implemented yet:
 
-- Dispersion estimation and tests for negative binomial models (edgeR's
-  quasi-likelihood F-tests and likelihood ratio tests, DESeq2-style tests)
+- Likelihood ratio tests and gene-wise dispersions for negative binomial models
+  (edgeR's `glmLRT` and `estimateDisp`), DESeq2-style tests, edgeR's quasi-likelihood
+  F-tests on every group of a cube, and their `legacy = TRUE` methods
 - The rest of dream (variancePartition): Kenward-Roger degrees of freedom (dream's
   default for 20 samples or fewer), F-tests of several contrasts at once, random
   slopes, and variance partitioning. dream with random intercepts and Satterthwaite's
@@ -148,16 +150,16 @@ These are not implemented yet:
   p-value. For larger sets the two agree, and their beta approximation can be much too
   small far in the tail. `camera` also offers robust moderation, which limma's does
   not.
-- `fit_negative_binomial_model` takes the dispersions as given; CytePool does not
-  estimate them yet. Where a gene's maximum likelihood estimate is infinite, as when
-  every count of a group is zero, its fitted values tend to zero and its coefficients
-  are large but finite: -1e8 for such a group of a one-way layout, as in edgeR. Its
-  deviances are exact, and differ from edgeR's, which adds 1e-8 to counts and means
-  and approximates the deviance for dispersions below 1e-4 and where the dispersion
-  times the mean reaches 1e6. Where weights differ between samples by a factor of more
-  than about 1e10, the coefficients that only the samples of small weight determine
-  lose accuracy (about 1e-16 times that factor), and beyond about 1e14 they are not
-  determined.
+- `fit_negative_binomial_model` takes the dispersions as given; CytePool estimates
+  only a common dispersion (`common_dispersion`). Where a gene's maximum likelihood
+  estimate is infinite, as when every count of a group is zero, its fitted values tend
+  to zero and its coefficients are large but finite: -1e8 for such a group of a
+  one-way layout, as in edgeR. Its deviances are exact, and differ from edgeR's, which
+  adds 1e-8 to counts and means and approximates the deviance for dispersions below
+  1e-4 and where the dispersion times the mean reaches 1e6. Where weights differ
+  between samples by a factor of more than about 1e10, the coefficients that only the
+  samples of small weight determine lose accuracy (about 1e-16 times that factor), and
+  beyond about 1e14 they are not determined.
 - `roast`, `mroast` and `romer` draw their rotations from a numpy generator, so their
   p-values agree with limma's within Monte Carlo error, and exactly when given the
   rotations limma draws; `mroast` tests every set with the same rotations. Like `camera`
@@ -174,6 +176,18 @@ These are not implemented yet:
   genes whose log-odds exceed 709.8, which limma's shrinkage turns into NaN. Exact
   z-scores (limma's `approx.zscore = FALSE`) and given prior parameters (`var.prior`,
   `df.prior`) are not offered.
+- `fit_quasi_likelihood` follows edgeR 4.4's default method only (`legacy = FALSE`),
+  as edgeR runs it on a matrix of counts; a given dispersion should come from a
+  global model (common or trended), as edgeR's help page says. edgeR's method for a
+  DGEList agrees, except when the DGEList holds a trended dispersion from
+  `estimateDisp`: it then takes one dispersion from that trend in place of the
+  Cox-Reid estimate. The moments of the unit deviance are exact, where edgeR's
+  approximations are off by up to about 1e-3 at dispersions up to 0.2 and 1e-2 at a
+  dispersion of 1, so that adjusted deviances, quasi-dispersions and F-statistics
+  differ from edgeR's by up to about 3e-3. The robust prior leaves genes without
+  residual degrees of freedom out of the outlier tests, where limma counts them as
+  zero variances. With offsets per observation, edgeR's `aveLogCPM` ignores the
+  offsets of the first gene, and so differs from CytePool's there.
 - `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
   is refused (`dream_voom` fits random intercepts), and there is no
   `duplicateCorrelation`. Normalization factors are TMM or
