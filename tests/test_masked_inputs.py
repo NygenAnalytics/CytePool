@@ -46,6 +46,7 @@ import cytepool
 from cytepool._masked_arrays import reject_masked
 from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
+from cytepool.differential_expression import limma_voom
 from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
@@ -328,6 +329,24 @@ def _mixed_model(context: Context) -> dict[str, Any]:
         ),
         "weights": np.full(COUNTS.shape, 2.0),
         "n_threads": 1,
+    }
+
+
+def _meta_analysis_arguments(context: Context) -> dict[str, Any]:
+    """Two studies, the same differential expression of the bulk cube under two
+    names, and a value for every argument that can hold an array."""
+    arguments = _differential_expression(context)
+    result = limma_voom(
+        arguments["cube"],
+        arguments["design"],
+        contrasts=arguments["contrasts"],
+        expression_filter=False,
+    )
+    return {
+        "results": {"first": result, "second": result},
+        "groups": ["bulk"],
+        "contrasts": ["stim"],
+        "min_studies": 2,
     }
 
 
@@ -1124,6 +1143,24 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         {"contrasts": None},
     ),
+    # Meta-analysis. NaN marks a study that did not measure a feature.
+    "cytepool.meta_analysis.meta_analysis": Entry(
+        lambda c: {
+            "effects": [[0.1, 0.4], [0.3, np.nan], [0.2, 0.5]],
+            "standard_errors": [[0.1, 0.2], [0.2, 0.3], [0.15, 0.1]],
+            "level": 0.9,
+        },
+        {"effects": "NaN", "standard_errors": "NaN"},
+        options=("method", "test", "level"),
+    ),
+    # min_studies goes through operator.index, which reads a 0-d masked integer;
+    # the results were checked when they were built.
+    "cytepool.meta_analysis.differential_expression_meta_analysis": Entry(
+        _meta_analysis_arguments,
+        {"groups": None, "contrasts": None, "min_studies": None},
+        options=("method", "test", "level"),
+        objects=("results",),
+    ),
 }
 # Every argument of the distribution and special functions is an array, with NaN
 # for missing values; values outside a domain give NaN, so any numbers are valid.
@@ -1205,6 +1242,15 @@ NO_ARRAY_INPUT = {
         ("contrast",),
         "a contrast name, looked up",
     ),
+    "cytepool.meta_analysis.MetaAnalysisResult": (
+        ("summary", "studies", "tables", "provenance"),
+        "Tables, which were checked when they were built, and a record kept as JSON, "
+        "which cannot hold an array",
+    ),
+    "cytepool.meta_analysis.MetaAnalysisResult.table": (
+        ("group", "contrast"),
+        "a group id and a contrast name, looked up",
+    ),
 }
 
 # Result containers: they store their fields as given, so a masked field keeps its
@@ -1223,6 +1269,7 @@ RECORDS = {
     "cytepool.stats.negative_binomial_models.NegativeBinomialFit",
     "cytepool.stats.mixed_models.FixedEffectTests",
     "cytepool.stats.mixed_models.MixedModelFit",
+    "cytepool.meta_analysis.MetaAnalysisFit",
 }
 
 # Callables that modules with __all__ define but do not export.

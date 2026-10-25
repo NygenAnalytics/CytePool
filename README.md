@@ -26,7 +26,8 @@ what is planned.
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
-| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR; on simulated data and on published single-cell data |
+| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, tables of limma's `topTable` statistics with the moderated standard error of each log fold change, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR; on simulated data and on published single-cell data |
+| Meta-analysis | `meta_analysis`: for every gene, the fixed-effect (inverse-variance) or random-effects estimate of a common effect from the effects and standard errors of several studies, with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I² and H², z-tests or the Knapp-Hartung adjustment, and genes measured in some studies only; `differential_expression_meta_analysis`: the same for the `limma_voom` or `limma_trend` results of several cubes, matched by cell type, contrast and gene id, with p-values adjusted over the genes and a provenance record | metafor |
 | Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
 
@@ -47,7 +48,8 @@ These are not implemented yet:
 - Composition tests with precision weights or random effects (crumblr)
 - Ligand-receptor scoring and differential interactions
 - Dose-response fits, benchmark doses and synergy
-- Meta-analysis across studies
+- Meta-regression (meta-analysis with study-level covariates) and multivariate
+  meta-analysis of correlated effects
 
 ## Known limits
 
@@ -206,6 +208,19 @@ These are not implemented yet:
   slope of a covariate, and gives no mean proportions or ratio for a contrast that
   compares no levels, where speckle reports regression coefficients; and it refuses
   data that the design fits exactly, such as copies of samples.
+- `meta_analysis` fits models without moderators and takes the studies as independent,
+  with known sampling variances; `differential_expression_meta_analysis` takes limma's
+  moderated standard errors as such, so a gene that one study tested, kept with
+  `min_studies=1`, gets a z-test whose p-value is smaller than the study's own
+  t-test's. Its REML estimate is the largest maximum of the restricted likelihood:
+  where that likelihood has two maxima, as when an imprecise study lies far from
+  precise ones that agree, metafor's Fisher scoring from the Hedges estimate can stop
+  at the lower one or at zero (in 2 of the 9 such features of one validation case),
+  and on some features it does not converge without `stepadj`. Its REML and
+  Paule-Mandel estimates converge to rounding, beyond metafor's default stopping
+  rules, and it reports I² as a proportion, where metafor reports a percentage. It
+  refuses standard errors that are zero or infinite; NaN marks a study that did not
+  measure a gene.
 - numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
   are refused with a `TypeError` that names the argument, because numpy drops the
   mask when it converts one and the masked entries would be read as data. Where an

@@ -271,6 +271,11 @@ class DifferentialExpressionResult:
 
     - ``feature_id`` and, when the cube's feature table has one, ``symbol``;
     - ``log2_fold_change``: the contrast's estimate (limma's ``logFC``);
+    - ``standard_error``: its moderated standard error, the contrast's unscaled
+      standard deviation times the feature's posterior standard deviation (limma's
+      ``stdev.unscaled * sqrt(s2.post)``), so that ``t`` is
+      ``log2_fold_change / standard_error``; it is what a meta-analysis of studies
+      reads (:func:`~cytepool.meta_analysis.differential_expression_meta_analysis`);
     - ``average_log2_cpm``: the mean log2 count per million over the group's samples
       (``AveExpr``);
     - ``t`` and ``p_value``: the moderated t-statistic and its two-sided p-value;
@@ -1056,11 +1061,16 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
     identity = {"feature_id": features["feature_id"][fit.tested]}
     if "symbol" in features:
         identity["symbol"] = features["symbol"][fit.tested]
+    # The moderated standard errors, as they enter the t-statistics.
+    errors = (
+        contrast_fit.stdev_unscaled * np.sqrt(moderated.posterior_variance)[:, None]
+    )
     for column, name in enumerate(contrast_fit.coefficient_names):
         fit.tables[name] = Table(
             {
                 **identity,
                 "log2_fold_change": contrast_fit.coefficients[:, column],
+                "standard_error": errors[:, column],
                 "average_log2_cpm": model.mean_expression,
                 "t": moderated.t[:, column],
                 "p_value": moderated.p_value[:, column],
