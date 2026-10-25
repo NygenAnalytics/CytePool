@@ -733,6 +733,56 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         {"variance_groups": None},
     ),
+    # Negative binomial fits: library sizes and normalization factors, or offsets.
+    "cytepool.stats.negative_binomial_models.fit_negative_binomial_model": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "design": DESIGN,
+            "dispersion": np.full(8, 0.1),
+            "library_sizes": LIBRARY_SIZES,
+            "norm_factors": NORM_FACTORS,
+            "weights": np.full((4, 8), 2.0),
+            "coefficient_names": ["a", "b"],
+            "prior_count": 0.5,
+            "max_iterations": 50,
+            "n_threads": 1,
+        },
+        {
+            "counts": None,
+            "design": None,
+            "dispersion": None,
+            "library_sizes": None,
+            "norm_factors": None,
+            "weights": None,
+            "coefficient_names": None,
+            "n_threads": None,
+        },
+        options=("prior_count", "max_iterations"),
+    ),
+    "cytepool.stats.negative_binomial_models.fit_negative_binomial_model[offsets]": (
+        Entry(
+            lambda c: {
+                "counts": COUNTS,
+                "design": DESIGN,
+                "dispersion": 0.1,
+                "offsets": np.log(LIBRARY_SIZES),
+            },
+            {"offsets": None},
+        )
+    ),
+    "cytepool.stats.negative_binomial_models.negative_binomial_deviance": Entry(
+        lambda c: {
+            "counts": COUNTS,
+            "means": COUNTS + 1.0,
+            "dispersion": np.full(8, 0.1),
+            "weights": np.full(4, 2.0),
+        },
+        {"counts": None, "means": None, "dispersion": None, "weights": None},
+    ),
+    "cytepool.stats.negative_binomial_models.negative_binomial_unit_deviance": Entry(
+        lambda c: {"counts": COUNTS, "means": COUNTS + 1.0, "dispersion": 0.1},
+        {"counts": None, "means": None, "dispersion": None},
+    ),
     "cytepool.stats.empirical_bayes.fit_f_distribution": Entry(
         lambda c: {
             "variances": c.fit.sigma**2,
@@ -1036,6 +1086,7 @@ RECORDS = {
     "cytepool.stats.empirical_bayes.SqueezedVariances",
     "cytepool.stats.empirical_bayes.ModeratedFit",
     "cytepool.stats.empirical_bayes.TreatFit",
+    "cytepool.stats.negative_binomial_models.NegativeBinomialFit",
 }
 
 # Callables that modules with __all__ define but do not export.

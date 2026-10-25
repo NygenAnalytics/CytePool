@@ -21,6 +21,7 @@ what is planned.
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
+| Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
@@ -32,8 +33,8 @@ what is planned.
 
 These are not implemented yet:
 
-- Negative binomial models (edgeR quasi-likelihood, DESeq2-style tests) and dispersion
-  estimation
+- Dispersion estimation and tests for negative binomial models (edgeR's
+  quasi-likelihood F-tests and likelihood ratio tests, DESeq2-style tests)
 - Mixed models (dream-style fits, variance partitioning). A design can describe random
   effects, and its checks examine them, but no function estimates them yet.
   `fit_linear_model` fits one random intercept with a known correlation, given `block=`
@@ -126,6 +127,16 @@ These are not implemented yet:
   p-value. For larger sets the two agree, and their beta approximation can be much too
   small far in the tail. `camera` also offers robust moderation, which limma's does
   not.
+- `fit_negative_binomial_model` takes the dispersions as given; CytePool does not
+  estimate them yet. Where a gene's maximum likelihood estimate is infinite, as when
+  every count of a group is zero, its fitted values tend to zero and its coefficients
+  are large but finite: -1e8 for such a group of a one-way layout, as in edgeR. Its
+  deviances are exact, and differ from edgeR's, which adds 1e-8 to counts and means
+  and approximates the deviance for dispersions below 1e-4 and where the dispersion
+  times the mean reaches 1e6. Where weights differ between samples by a factor of more
+  than about 1e10, the coefficients that only the samples of small weight determine
+  lose accuracy (about 1e-16 times that factor), and beyond about 1e14 they are not
+  determined.
 - `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
   is refused, and there is no `duplicateCorrelation`. Normalization factors are TMM or
   none. In a group whose design is rank deficient they test every contrast the

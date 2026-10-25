@@ -18,7 +18,7 @@ This page summarises the tables the scripts printed when they were run against t
 package in this revision of the repository: on **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`, `voom.py`,
-`sample_quality_weights.py`, `differential_expression.py`,
+`sample_quality_weights.py`, `negative_binomial_fits.py`, `differential_expression.py`,
 `differential_expression_options.py`, `interferon_stimulated_pbmcs.py`,
 `gene_set_tests.py` and `composition_tests.py`, and for `design.py` and
 `empirical_bayes.py`, which printed the same tables again after changes to the code
@@ -42,6 +42,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
 | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
 | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
+| [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 73 | 73 pass | 14.7 s | 306 MiB |
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
@@ -51,7 +52,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,074** | **985 pass, none failed; 51 information, 37 deliberate differences, 1 control** | | |
+| **All** | | | **1,195** | **1,063 pass, none failed; 81 information, 50 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -522,6 +523,65 @@ estimator differs. Deliberate differences:
 - Zero prior weights that leave a gene's coefficients inestimable: limma returns
   missing weights for the gene; CytePool's are those of the trend at its fitted values
   over the samples of positive weight, and zero where the prior weight is.
+## Negative binomial models
+
+[`validation/negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py)
+compares `fit_negative_binomial_model` with edgeR's `glmFit`,
+`negative_binomial_deviance` with `nbinomDeviance`, and
+`negative_binomial_unit_deviance` with `nbinomUnitDeviance` and with mpmath, on
+negative binomial counts simulated from fixed seeds: 2,000 genes and 6 to 16 samples in
+15 cases, with genes without counts and groups whose counts are all zero planted in
+most. Six are one-way layouts (two groups, group means with TMM factors, an intercept
+alone, one coefficient per sample, sample weights, and dispersions, offsets and weights
+per observation), which edgeR fits group by group to its last bits. Nine are other
+designs: groups and a covariate with trended dispersions, a paired design with TMM
+factors, dispersions, offsets and weights per observation, sample weights, the Poisson
+model, sparse counts of about one read per gene and sample, a covariate such as a date
+next to an intercept, means near 1e8, and a dispersion of 2e-5. edgeR's fits of these
+stop short of the maximum, so they are compared with the maximum that Newton's method
+with the observed information, written in R for the script, reaches from edgeR's fit,
+and with `mglmLevenberg(tol = 1e-14)`, a check where it converges and information where
+it does not. The unit deviance is compared at 5,373 points, counts and means from 1e-30
+to 1e30 and dispersions from 0 to 1e12, with mpmath at 150 digits. Reference: R 4.4.3,
+edgeR 4.4.0, mpmath 1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| One-way layouts: coefficients and fitted values, shrunk coefficients | `glmFit` | 3.0e-11 | 1e-6 | 12 pass |
+| One-way layouts: deviance, and `nbinomDeviance` at edgeR's fitted values | `glmFit`, `nbinomDeviance` | 2.3e-7 | 1e-6 | 6 pass |
+| Residual df, and fits that did not converge | `glmFit` | 0 | 0 | 15 pass |
+| Other designs: coefficients and fitted values | Newton's method in R | 1.8e-7 | 1e-6 | 9 pass |
+| Other designs where edgeR converges: coefficients and fitted values, shrunk coefficients | `mglmLevenberg(tol = 1e-14)` | 3.1e-7 | 1e-6 | 8 pass |
+| Other designs: deviance at the maximum, and at edgeR's fitted values | `nbinomDeviance` | 3.2e-7 | 1e-6 | 8 pass |
+| Genes whose maximum lies at infinity: fitted values that tend to zero, below 1e-6 in both; the others and the deviance | `mglmLevenberg(tol = 1e-14)` | 3.9e-7, 8.5e-7 | 1e-6 | 15 pass |
+| Unit deviance | mpmath; `nbinomUnitDeviance` where edgeR is accurate | 7.8e-15; 3.0e-7 | 1e-13; 1e-6 | 2 pass |
+| Refused inputs: an aliased column, a zero weight, a negative dispersion | `glmFit` | both raise | n/a | 3 pass |
+| Where edgeR stops short: its distance from the maximum | `glmFit`, `mglmLevenberg` | up to 1.6 for `glmFit` (a date), 2.3e-3 for `mglmLevenberg` | n/a | 19 information |
+| `glmFit` deviances that are not those of its own fitted values | `glmFit`, `nbinomDeviance` | 5 of 2,000 genes, with dispersions and weights per observation | n/a | 9 information |
+| Seconds for 2,000 genes, group means and a paired design | `glmFit` | CytePool 0.007 and 0.059, edgeR 0.008 and 0.062 | n/a | 2 information |
+| Deliberate differences, listed below | `glmFit`, `nbinomDeviance`, `nbinomUnitDeviance` | 9 cases of genes without counts; 2 rows for a dispersion of 2e-5; 2 for edgeR's unit deviance | n/a | 13 deliberate differences |
+
+Coefficients are compared relative to max(\|reference\|, 1), fitted values relative to
+the reference, and deviances relative to the larger of the reference and the number of
+samples. A gene whose maximum lies at infinity has coefficients that depend on where
+each program stops, so for such genes only the fitted values that tend to zero (below
+1e-6 in both programs), the others and the deviance are compared. edgeR's Levenberg
+fits stop up to about 3e-4 from the maximum in `glmFit` (1e-2 with dispersions and
+weights per observation, and 1.6 with a date, where fitted values that should tend to
+zero stay near 1e2), and about 2e-7 in `mglmLevenberg(tol = 1e-14)`, but 2e-3 with
+dispersions and weights per observation, 2e-6 with sparse counts, 1e-5 with a date or
+large counts, and 2e-3 with a dispersion of 2e-5. Deliberate differences:
+
+- A gene without counts, in a design with an intercept: edgeR's Levenberg fit returns
+  NA coefficients; CytePool returns those of the log mean -1e8, as edgeR's one-way fit
+  does, with fitted values and deviance of zero.
+- The deviance is exact. edgeR adds 1e-8 to each count and mean, which lowers the unit
+  deviance of a zero count by up to about 5e-7. Below a dispersion of 1e-4 it
+  approximates the unit deviance, with an error that grows with the dispersion times
+  the mean, from about 1e-6 at 1e-3 to factors from about 1; with the dispersion of
+  2e-5, its deviances, and the fits of genes whose maximum lies at infinity, differ by
+  up to 0.97 and 1.2e-3. From a dispersion times the mean of 1e6 it uses the limit of
+  the gamma distribution, which gives zero counts 1.6 to 2.6 times their deviance.
 
 ## Empirical Bayes moderation
 
@@ -1146,6 +1206,7 @@ python validation/empirical_bayes.py
 python validation/gene_set_tests.py
 python validation/voom.py
 python validation/sample_quality_weights.py
+python validation/negative_binomial_fits.py
 python validation/differential_expression.py
 python validation/differential_expression_options.py
 # Downloads 77 MB from GEO on its first run, into ~/.cache/cytepool-validation/GSE96583

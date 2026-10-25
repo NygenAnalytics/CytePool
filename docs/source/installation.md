@@ -52,15 +52,16 @@ sessions. The cache is a `cytepool` directory under `NUMBA_CACHE_DIR` when that 
 else under the user cache directory (`$XDG_CACHE_HOME` or `~/.cache`), else under the
 temporary directory. Any change to the installed CytePool source starts a new cache.
 
-Parallel routines use numba's threads: `from_cells`, and the fits of linear models in
+Parallel routines use numba's threads: `from_cells`, the fits of linear models in
 which each gene needs its own fit (with observation weights, as from voom, or missing
-values), which `limma_voom` runs. Set `NUMBA_NUM_THREADS` before Python starts to cap
-them, for example on a shared machine, or pass `n_threads` to a function that takes
-it; results do not depend on the number of threads. With numba's OpenMP threading
-layer, a process that has run a parallel routine cannot fork worker processes that run
-one again: start workers with the "spawn" or "forkserver" method of `multiprocessing`
-instead. With one thread (`n_threads=1`, or `numba.set_num_threads(1)`), the fits of
-linear models run without a parallel region, so forked workers and several Python
+values), which `limma_voom` runs, and the fits of negative binomial models. Set
+`NUMBA_NUM_THREADS` before Python starts to cap them, for example on a shared machine,
+or pass `n_threads` to a function that takes it; results do not depend on the number
+of threads. With numba's OpenMP threading layer, a process that has run a parallel
+routine cannot fork worker processes that run one again: start workers with the
+"spawn" or "forkserver" method of `multiprocessing` instead. With one thread
+(`n_threads=1`, or `numba.set_num_threads(1)`), the fits of linear and negative
+binomial models run without a parallel region, so forked workers and several Python
 threads can run them at once; `from_cells` always starts one.
 
 ## Development setup
