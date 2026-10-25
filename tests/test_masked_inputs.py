@@ -237,7 +237,27 @@ def _differential_expression(context: Context) -> dict[str, Any]:
         "groups": ["bulk"],
         "contrasts": {"stim": [0.0, 1.0]},
         "min_cells": 10,
+        "min_counts": 100,
         "expression_filter": {"min_count": 5},
+        "quality_weights": {"prior_n": 10.0},
+        "adjust_across_groups": True,
+    }
+
+
+def _weighted_by_cells(context: Context) -> dict[str, Any]:
+    """As _differential_expression, with a cube that records cell numbers, and prior
+    weights from them instead of quality weights."""
+    arguments = _differential_expression(context)
+    del arguments["quality_weights"]
+    return arguments | {
+        "cube": Cube(
+            {"counts": COUNTS[np.newaxis]},
+            samples={"sample_id": SAMPLE_TABLE["sample_id"]},
+            groups={"group_id": ["bulk"]},
+            features={"feature_id": [f"g{j}" for j in range(COUNTS.shape[1])]},
+            n_cells=np.array([[20], [30], [40], [50]]),
+        ),
+        "prior_weights": "n_cells",
     }
 
 
@@ -836,16 +856,33 @@ ENTRY_POINTS: dict[str, Entry] = {
             "groups": None,
             "min_cells": None,
             "expression_filter": None,
+            "quality_weights": None,
             "n_threads": None,
         },
-        options=("normalization", "span", "robust", "contrast_standard_errors"),
+        options=(
+            "min_counts",
+            "normalization",
+            "span",
+            "robust",
+            "contrast_standard_errors",
+            "adjust_across_groups",
+        ),
         objects=("cube", "design"),
-        keys={"contrasts": "stim", "expression_filter": "min_count"},
+        keys={
+            "contrasts": "stim",
+            "expression_filter": "min_count",
+            "quality_weights": "prior_n",
+        },
     ),
     # Contrasts given as expressions.
     "cytepool.differential_expression.limma_voom[expressions]": Entry(
         lambda c: {**_differential_expression(c), "contrasts": ["conditionstim"]},
         {"contrasts": None},
+    ),
+    # Prior weights from cell numbers, which need a cube that records them and
+    # exclude quality weights.
+    "cytepool.differential_expression.limma_voom[prior_weights]": Entry(
+        _weighted_by_cells, {}, options=("prior_weights",)
     ),
     "cytepool.differential_expression.limma_trend": Entry(
         _differential_expression,
@@ -854,10 +891,24 @@ ENTRY_POINTS: dict[str, Entry] = {
             "groups": None,
             "min_cells": None,
             "expression_filter": None,
+            "quality_weights": None,
         },
-        options=("normalization", "prior_count", "robust"),
+        options=(
+            "min_counts",
+            "normalization",
+            "prior_count",
+            "robust",
+            "adjust_across_groups",
+        ),
         objects=("cube", "design"),
-        keys={"contrasts": "stim", "expression_filter": "min_count"},
+        keys={
+            "contrasts": "stim",
+            "expression_filter": "min_count",
+            "quality_weights": "prior_n",
+        },
+    ),
+    "cytepool.differential_expression.limma_trend[prior_weights]": Entry(
+        _weighted_by_cells, {}, options=("prior_weights",)
     ),
 }
 # Every argument of the distribution and special functions is an array, with NaN

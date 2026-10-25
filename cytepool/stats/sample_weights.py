@@ -133,6 +133,11 @@ _MIN_RESIDUAL_DF = 2
 _SINGULAR = 64.0 * np.finfo(np.float64).eps
 
 
+class _SingularInformation(ValueError):
+    """The information about the sample weights is singular, so a caller can say
+    what to change in its own terms."""
+
+
 @dataclass(frozen=True)
 class _VarianceModel:
     """The variance model and the settings of its estimation, checked."""
@@ -277,7 +282,7 @@ def _gene_by_gene(
         RANK_TOLERANCE,
     )
     if singular:
-        raise ValueError(_singular_message())
+        raise _SingularInformation(_singular_message())
     notes = []
     if used == 0:
         notes.append(
@@ -441,7 +446,7 @@ def _equal_prior_sums(
 def _solve(information: FloatArray, score: FloatArray) -> FloatArray:
     step = np.empty(score.size)
     if not _cholesky_solve(np.array(information), score.copy(), step):
-        raise ValueError(_singular_message())
+        raise _SingularInformation(_singular_message())
     return step
 
 
