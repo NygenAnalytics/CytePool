@@ -284,11 +284,8 @@ from .normalization import (
     log_cpm,
     tmm_factors,
 )
-from .stats.dream import (
-    _dream_weights,
-    _scaled_prior_weights,
-    moderated_fixed_effect_tests,
-)
+from .stats._mean_variance_trend import scaled_prior_weights, trend_span, voom_inputs
+from .stats.dream import _dream_weights, moderated_fixed_effect_tests
 from .stats.empirical_bayes import moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
 from .stats.mixed_models import _fit as _fit_mixed_model
@@ -305,13 +302,7 @@ from .stats.sample_weights import (
     _variance_model,
     _weights_of,
 )
-from .stats.voom import (
-    VoomResult,
-    _quality_weighted_voom,
-    _trend_span,
-    _voom_inputs,
-    voom,
-)
+from .stats.voom import VoomResult, _quality_weighted_voom, voom
 from .table import Table
 
 __all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
@@ -1397,8 +1388,8 @@ def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             f"tested {'has' if with_counts == 1 else 'have'} counts",
         )
     sizes = np.array(effective_library_sizes(y, None, data.factors))
-    fraction = _trend_span(settings["span"], n_tested)
-    prior = None if data.prior is None else _scaled_prior_weights(data.prior, y.shape)
+    fraction = trend_span(settings["span"], n_tested)
+    prior = None if data.prior is None else scaled_prior_weights(data.prior, y.shape)
     with thread_limit(settings["n_threads"]):
         try:
             weighted = _dream_weights(y, sizes, fraction, data.mixed, prior, True)
@@ -1495,7 +1486,7 @@ def _voom_weights(
     quality = settings["quality_weights"]
     if quality is None:
         return voom(y, x, norm_factors=factors, span=settings["span"], weights=prior)
-    counts, sizes, fraction = _voom_inputs(
+    counts, sizes, fraction = voom_inputs(
         y, x, None, factors, settings["span"], "limma_voom"
     )
     model = _variance_model(
