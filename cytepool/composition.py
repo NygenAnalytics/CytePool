@@ -121,20 +121,25 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ._analysis_records import cube_record, design_record, software_versions
-from ._columns import text_column
+from ._analysis_records import (
+    cube_record,
+    design_record,
+    matched_samples,
+    software_versions,
+)
+from ._columns import is_data_frame, text_column
 from ._masked_arrays import reject_masked, unmasked_array
 from ._messages import listing, quoted
 from ._options import checked_choice, checked_flag
 from ._summation import accurate_mean
 from .cube import Cube
 from .design import Contrasts, Design, ModelMatrix, make_contrasts
+from .design._design_matrices import refuse_random_effects
 from .design.checks import _aliasing, _relation
-from .design.design import _refuse_random_effects
 from .stats.empirical_bayes import ModeratedFit, moderated_statistics
 from .stats.linear_models import LinearModelFit, contrasts_fit, fit_linear_model
 from .stats.multiple_testing import adjust_p_values
-from .table import Table, _is_data_frame
+from .table import Table
 
 __all__ = ["CompositionResult", "propeller"]
 
@@ -483,14 +488,24 @@ def propeller(
             "design must be a Design whose sample table has a sample_id column with "
             f"the sample ids of the data, got {type(design).__name__}"
         )
-    _refuse_random_effects(design, _METHOD)
+    refuse_random_effects(design, _METHOD)
     settings: dict[str, Any] = {
         "transform": checked_choice(transform, "transform", ("logit", "asin")),
         "robust": checked_flag(robust, "robust"),
         "trend": checked_flag(trend, "trend"),
         "f_test": _factor_name(f_test),
     }
-    cube_rows, design_rows = _matched_samples(cube, design, given)
+    named = "the cube" if given == "cube" else "the table of cell numbers"
+    cube_rows, design_rows = matched_samples(
+        cube,
+        design,
+        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
+        f"be matched to the samples of {named}; build the Design from a table whose "
+        f"'sample_id' column holds the sample ids of {named}",
+        text_ids=f"the sample ids of {named} are",
+        data=named,
+        data_ids=f"sample ids of {named}",
+    )
     # make_contrasts refuses contrasts that are or hold a numpy masked array.
     tested = (
         design.contrasts if contrasts is None else make_contrasts(contrasts, design)
@@ -617,58 +632,9 @@ def _as_cube(data: Any) -> tuple[Cube, str]:
     return cube, "table"
 
 
-def _matched_samples(
-    cube: Cube, design: Design, given: str
-) -> tuple[np.ndarray, np.ndarray]:
-    """The position of every design sample in the data, increasing, and its design row.
-
-    Raises:
-        TypeError, ValueError: If the design's samples cannot be matched to those of
-            the data by ``sample_id``.
-    """
-    data = "the cube" if given == "cube" else "the table of cell numbers"
-    table = design.samples
-    if _SAMPLE_ID not in table:
-        raise ValueError(
-            "the design's sample table has no 'sample_id' column, so its rows cannot "
-            f"be matched to the samples of {data}; build the Design from a table "
-            f"whose 'sample_id' column holds the sample ids of {data}"
-        )
-    ids = table[_SAMPLE_ID]
-    if ids.dtype != object:
-        raise TypeError(
-            "the design's 'sample_id' column must hold text ids, as the sample ids of "
-            f"{data} are, got dtype {ids.dtype}"
-        )
-    values = ids.tolist()
-    blank = [row for row, value in enumerate(values) if value is None]
-    if blank:
-        raise ValueError(
-            f"the design's 'sample_id' column is missing in row(s) {listing(blank)}; "
-            "every sample needs an id"
-        )
-    repeated = [value for value, count in Counter(values).items() if count > 1]
-    if repeated:
-        raise ValueError(
-            f"the design's sample table repeats the sample id(s) {quoted(repeated)}; "
-            "each sample must appear once"
-        )
-    index = {value: i for i, value in enumerate(cube.samples[_SAMPLE_ID].tolist())}
-    unknown = [value for value in values if value not in index]
-    if unknown:
-        raise ValueError(
-            f"{len(unknown)} of the design's {len(values)} samples are not samples of "
-            f"{data}: {quoted(unknown)}; the design's 'sample_id' must hold sample "
-            f"ids of {data}, such as {quoted(list(index)[:3])}"
-        )
-    positions = np.array([index[value] for value in values], dtype=np.intp)
-    order = np.argsort(positions, kind="stable")
-    return positions[order], order
-
-
 def _read_table(data: Any) -> tuple[list[Any], list[Any], list[Any]]:
     """The sample ids, group ids and cell-number columns of a table."""
-    if _is_data_frame(data):
+    if is_data_frame(data):
         if _SAMPLE_ID in data.columns:
             ids = data[_SAMPLE_ID].tolist()
             names = [name for name in data.columns if name != _SAMPLE_ID]

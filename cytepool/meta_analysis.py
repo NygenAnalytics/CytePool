@@ -148,8 +148,6 @@ References:
 
 import json
 import math
-import operator
-import os
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -162,11 +160,10 @@ import numpy.typing as npt
 from ._analysis_records import software_versions
 from ._columns import text_column
 from ._jit import jit
-from ._masked_arrays import reject_masked, unmasked_array
-from ._messages import listing, quoted
-from ._options import checked_choice
+from ._masked_arrays import read_only, reject_masked, unmasked_array
+from ._messages import PACKAGE_DIRECTORY, listing, quoted
+from ._options import checked_choice, index_integer, real_number
 from .differential_expression import DifferentialExpressionResult
-from .normalization import _real
 from .stats.distributions import (
     chi2_sf_scalar,
     norm_isf,
@@ -214,8 +211,6 @@ _MAX_ITERATIONS = 1000
 # of tau^2, to bracket every maximum of the restricted likelihood.
 _GRID_PER_DECADE = 8
 _ANALYSED = "analysed"  # the status of a group and contrast that was meta-analysed
-# Warnings are attributed to the first caller outside the package.
-_PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -369,13 +364,13 @@ def meta_analysis(
     )
     shape = y.shape[1:]
     arrays = {
-        name: _read_only(results[row].reshape(shape))
+        name: read_only(results[row].reshape(shape))
         for row, name in enumerate(_OUTPUTS)
     }
     return MetaAnalysisFit(
         **arrays,
-        n_studies=_read_only(counts.reshape(shape)),
-        converged=_read_only(converged.reshape(shape)),
+        n_studies=read_only(counts.reshape(shape)),
+        converged=read_only(converged.reshape(shape)),
         method=chosen_method,
         test=chosen_test,
         level=confidence,
@@ -413,21 +408,15 @@ def _check_values(y: FloatArray, se: FloatArray) -> None:
 
 
 def _level(value: Any) -> float:
-    # _real would refuse a masked value too, but without saying how to fix it.
+    # real_number would refuse a masked value too, but without saying how to fix it.
     reject_masked(value, "level")
-    number = _real(value, "level")
+    number = real_number(value, "level", finite=True)
     if not 0.0 < number < 1.0:
         raise ValueError(
             f"level must be in (0, 1), such as 0.95 for 95% confidence intervals, got "
             f"{number}"
         )
     return number
-
-
-def _read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
-    view = values.view()
-    view.flags.writeable = False
-    return view
 
 
 # The meta-analyses, compiled. Each routine works on the k studies that measured a
@@ -1170,7 +1159,7 @@ def differential_expression_meta_analysis(
                     f"{'' if len(failed) == 1 else 's'}, {quoted(failed)}; the record "
                     "lists them under not_converged",
                     RuntimeWarning,
-                    skip_file_prefixes=(_PACKAGE_DIRECTORY,),
+                    skip_file_prefixes=(PACKAGE_DIRECTORY,),
                 )
             rows.append(row)
     return MetaAnalysisResult(
@@ -1377,16 +1366,9 @@ def _check_table(table: Table, study: str, group: str, contrast: str) -> None:
 
 
 def _min_studies(value: Any) -> int:
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, "min_studies")
     if isinstance(value, bool | np.bool_):
         raise TypeError("min_studies must be a whole number of studies, not bool")
-    try:
-        number = operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"min_studies must be a whole number of studies, got {type(value).__name__}"
-        ) from None
+    number = index_integer(value, "min_studies", expected="a whole number of studies")
     if number < 1:
         raise ValueError(f"min_studies must be at least 1, got {number}")
     return number

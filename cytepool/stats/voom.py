@@ -105,14 +105,15 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._masked_arrays import reject_masked
-from cytepool._summation import accurate_mean
-from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts, _effective_library_sizes
-from cytepool.stats.linear_models import (
-    LinearModelFit,
-    _design_matrix,
-    fit_linear_model,
+from cytepool.design._design_matrices import design_matrix
+from cytepool.stats._mean_variance_trend import (
+    Trend,
+    trend_weights,
+    voom_inputs,
+    voom_log_cpm,
+    voom_mean_log_count,
 )
+from cytepool.stats.linear_models import LinearModelFit, fit_linear_model
 from cytepool.stats.sample_weights import (
     _estimate,
     _prior_weights,
@@ -121,16 +122,11 @@ from cytepool.stats.sample_weights import (
     _VarianceModel,
     _weights_of,
 )
-from cytepool.stats.smoothing import choose_lowess_span, lowess
 
 __all__ = ["VoomResult", "voom", "voom_with_quality_weights"]
 
 FloatArray = npt.NDArray[np.float64]
 
-# Robustness iterations of the LOWESS trend: R's default, which limma keeps (found
-# by probing).
-_TREND_ITERATIONS = 3
-_LOG2_MILLION = math.log2(1e6)
 _NO_REPLICATION = (
     "the design leaves no residual degrees of freedom (no replication), so no "
     "mean-variance trend can be fitted; every weight is set to 1"
@@ -250,18 +246,6 @@ class VoomResult:
         )
 
 
-@dataclass(frozen=True)
-class _Trend:
-    """voom's quantities before prior weights are multiplied in."""
-
-    log_cpm: FloatArray
-    weights: FloatArray  # the trend's: NaN only where a prior weight is zero
-    mean_log_count: FloatArray
-    sqrt_sd: FloatArray
-    sqrt_sd_trend: FloatArray
-    span: float
-
-
 def voom(
     counts: npt.ArrayLike,
     design: Any,
@@ -336,7 +320,7 @@ def voom(
             features have counts (with residual degrees of freedom), or the trend
             is not positive where the weights are read from it.
     """
-    y, sizes, fraction = _voom_inputs(
+    y, sizes, fraction = voom_inputs(
         counts, design, library_sizes, norm_factors, span, "voom"
     )
     prior = _prior_weights(weights, y.shape, np.ones(y.shape, dtype=bool))
@@ -413,7 +397,7 @@ def voom_with_quality_weights(
             ``sample_quality_weights``, or the trend is not positive where weights
             are read from it.
     """
-    y, sizes, fraction = _voom_inputs(
+    y, sizes, fraction = voom_inputs(
         counts, design, library_sizes, norm_factors, span, "voom_with_quality_weights"
     )
     model = _variance_model(
@@ -451,7 +435,7 @@ def _quality_weighted_voom(
         fraction: The span.
         model: The variance model and the settings of its estimation.
     """
-    x, _ = _design_matrix(design, None)
+    x, _ = design_matrix(design, None)
     first, fitted = _voom_trend(y, design, sizes, fraction, None)
     notes = []
     if not fitted:
@@ -482,40 +466,13 @@ def _quality_weighted_voom(
     return result, notes
 
 
-def _voom_inputs(
-    counts: npt.ArrayLike,
-    design: Any,
-    library_sizes: npt.ArrayLike | None,
-    norm_factors: npt.ArrayLike | None,
-    span: Any,
-    function: str,
-) -> tuple[FloatArray, FloatArray, float]:
-    """The counts, effective library sizes and span, checked for ``function``."""
-    y = _as_counts(counts)
-    n_samples, n_features = y.shape
-    if n_features < 2:
-        raise ValueError(
-            f"a mean-variance trend needs at least two features, got {n_features}"
-        )
-    n_design_rows = _design_matrix(design, None)[0].shape[0]
-    _refuse_random_effects(design, function)
-    if n_design_rows != n_samples:
-        raise ValueError(
-            f"counts have {n_samples} rows (samples) but the design has "
-            f"{n_design_rows}; both need one row per sample"
-        )
-    # A copy, so that the result does not change with the caller's array.
-    sizes = np.array(_effective_library_sizes(y, library_sizes, norm_factors))
-    return y, sizes, _trend_span(span, n_features)
-
-
 def _voom_trend(
     y: FloatArray,
     design: Any,
     sizes: FloatArray,
     fraction: float,
     prior: FloatArray | None,
-) -> tuple[_Trend, bool]:
+) -> tuple[Trend, bool]:
     """voom's log2 CPM and the trend's weights; False when no trend can be fitted.
 
     Args:
@@ -525,13 +482,13 @@ def _voom_trend(
         fraction: The span.
         prior: Prior weights from ``_prior_weights``, or None.
     """
-    log_cpm = _log_cpm(y, sizes)
+    log_cpm = voom_log_cpm(y, sizes)
     fit = fit_linear_model(log_cpm, design, weights=prior)
-    mean_log_count = _mean_log_count(fit.mean_expression, sizes, y)
+    mean_log_count = voom_mean_log_count(fit.mean_expression, sizes, y)
     if not np.any(fit.df_residual > 0.0):
         # limma returns no span then (found by probing).
         nan = np.full(y.shape[1], np.nan)
-        unit = _Trend(
+        unit = Trend(
             log_cpm, np.ones_like(log_cpm), mean_log_count, nan, nan.copy(), math.nan
         )
         return unit, False
@@ -539,7 +496,7 @@ def _voom_trend(
     weighted = (
         np.ones(y.shape, dtype=bool) if prior is None else _positive(prior, y.shape)
     )
-    trend = _trend_weights(
+    trend = trend_weights(
         log_cpm,
         mean_log_count,
         fit.sigma,
@@ -551,106 +508,6 @@ def _voom_trend(
         "" if prior is None else " and residual degrees of freedom",
     )
     return trend, True
-
-
-def _log_cpm(y: FloatArray, sizes: FloatArray) -> FloatArray:
-    """voom's log2 counts per million, log2((r + 0.5) / (R + 1) * 1e6)."""
-    # The operations of limma, which give its values to the last bit (found by
-    # probing).
-    log_cpm: FloatArray = np.log2((y + 0.5) / (sizes + 1.0)[:, np.newaxis] * 1e6)
-    return log_cpm
-
-
-def _mean_log_count(
-    mean_expression: FloatArray, sizes: FloatArray, y: FloatArray
-) -> FloatArray:
-    """The x of the trend: average log2 counts, NaN for features without counts.
-
-    ``mean_expression`` is R's rowMeans to the last bit on log2 CPM, and the sum is
-    formed in limma's order, so that x and its ties are limma's (found by probing).
-    """
-    log_size = np.log2(sizes + 1.0)
-    mean_log_count: FloatArray = (
-        mean_expression + accurate_mean(log_size)
-    ) - _LOG2_MILLION
-    # Features without counts are left out of the trend (found by probing).
-    mean_log_count[~(y > 0.0).any(axis=0)] = np.nan
-    return mean_log_count
-
-
-def _trend_weights(
-    log_cpm: FloatArray,
-    mean_log_count: FloatArray,
-    sigma: FloatArray,
-    in_trend: npt.NDArray[np.bool_],
-    fitted: FloatArray,
-    sizes: FloatArray,
-    fraction: float,
-    weighted: npt.NDArray[np.bool_],
-    condition: str,
-) -> _Trend:
-    """The mean-variance trend of the features ``in_trend`` and its weights.
-
-    The square roots of the residual standard deviations ``sigma`` are smoothed by
-    LOWESS against ``mean_log_count``, and every observation is weighted by the
-    inverse fourth power of the trend at its fitted log2 count, from ``fitted``.
-
-    Args:
-        log_cpm: The log2 counts per million.
-        mean_log_count: The x of the trend.
-        sigma: The residual standard deviation of each feature.
-        in_trend: The features whose ``sigma`` enter the trend.
-        fitted: ``(n_samples, n_features)`` fitted log2 CPM.
-        sizes: The effective library sizes.
-        fraction: The span.
-        weighted: The observations whose weights must be usable.
-        condition: What the features in the trend need besides counts, for the
-            message when there are fewer than two.
-
-    Raises:
-        ValueError: If fewer than two features are in the trend, or the trend is not
-            positive where weights are read from it.
-    """
-    n_features = log_cpm.shape[1]
-    sqrt_sd = np.full(n_features, np.nan)
-    sqrt_sd_trend = np.full(n_features, np.nan)
-    n_in_trend = int(np.count_nonzero(in_trend))
-    if n_in_trend < 2:
-        raise ValueError(
-            f"a mean-variance trend needs at least two features with counts"
-            f"{condition}, got {n_in_trend}"
-        )
-    trend_x = mean_log_count[in_trend]
-    trend_y = np.sqrt(sigma[in_trend])
-    # R's default delta, 1% of the range of x (found by probing).
-    trend = lowess(trend_x, trend_y, span=fraction, iterations=_TREND_ITERATIONS)
-    sqrt_sd[in_trend] = trend_y
-    sqrt_sd_trend[in_trend] = trend
-    # limma averages the curve over tied x (its NEWS); tied points share their
-    # fitted value, so each distinct x is one knot with that value.
-    knots_x, first = np.unique(trend_x, return_index=True)
-    knots_y = trend[first]
-
-    # The fitted log2 counts, formed on the count scale as limma forms them (found
-    # by probing).
-    fitted_log_count = np.log2(
-        np.power(2.0, fitted) * (sizes + 1.0)[:, np.newaxis] * 1e-6
-    )
-    predicted = _interpolate(knots_x, knots_y, fitted_log_count)
-    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-        weights = 1.0 / np.power(predicted, 4.0)
-    usable = (predicted > 0.0) & np.isfinite(weights)
-    if not np.all(usable[weighted]):
-        lowest = float(np.nanmin(np.where(weighted, predicted, np.inf)))
-        raise ValueError(
-            "the mean-variance trend falls to "
-            f"{lowest:.3g} where weights are read from it, but "
-            "the weights, its inverse fourth power, need it positive and large "
-            "enough to invert. Few features, or features that the design fits "
-            "exactly, can cause this: filter out features with low counts, or use "
-            "more features"
-        )
-    return _Trend(log_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
 
 
 def _fitted_values(
@@ -696,44 +553,3 @@ def _times_prior(weights: FloatArray, prior: FloatArray | None) -> FloatArray:
     with np.errstate(invalid="ignore"):
         combined: FloatArray = np.where(full > 0.0, weights * full, 0.0)
     return combined
-
-
-def _interpolate(
-    knots_x: FloatArray, knots_y: FloatArray, at: FloatArray
-) -> FloatArray:
-    """Linear interpolation through sorted distinct knots, constant beyond them.
-
-    The value between knots j and j + 1 is y_j + (y_j+1 - y_j) ((v - x_j) /
-    (x_j+1 - x_j)), the operations of R's ``approx`` (found by probing); at a knot
-    it is the knot's value. NaN where ``at`` is NaN.
-    """
-    if knots_x.size == 1:
-        constant: FloatArray = np.where(np.isnan(at), np.nan, knots_y[0])
-        return constant
-    j = np.searchsorted(knots_x, at, side="right") - 1
-    np.clip(j, 0, knots_x.size - 2, out=j)
-    x0, x1 = knots_x[j], knots_x[j + 1]
-    y0, y1 = knots_y[j], knots_y[j + 1]
-    values: FloatArray = y0 + (y1 - y0) * ((at - x0) / (x1 - x0))
-    values[at <= knots_x[0]] = knots_y[0]
-    values[at >= knots_x[-1]] = knots_y[-1]
-    return values
-
-
-def _trend_span(span: Any, n_features: int) -> float:
-    """The span of the trend: as given, or chosen from the number of features."""
-    if span is None:
-        # limma's voom passes nrow(counts), which counts the features that the
-        # trend leaves out too (its help page; confirmed by probing).
-        return choose_lowess_span(n_features)
-    if isinstance(span, (bool, np.bool_)) or not isinstance(span, numbers.Real):
-        raise TypeError(
-            "span must be a real number, or None to choose it from the number of "
-            f"features, got {type(span).__name__}"
-        )
-    fraction = float(span)
-    if not 0.0 < fraction <= 1.0:
-        raise ValueError(
-            f"span must be a fraction of the features in (0, 1], got {fraction}"
-        )
-    return fraction

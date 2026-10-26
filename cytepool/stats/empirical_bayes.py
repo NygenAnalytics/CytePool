@@ -87,8 +87,6 @@ References:
 """
 
 import math
-import numbers
-import os
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -98,9 +96,20 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
-from cytepool._linear_algebra import column_space
-from cytepool._masked_arrays import unmasked_array
+from cytepool._linear_algebra import column_space, correlation_matrix
+from cytepool._masked_arrays import real_array, unmasked_array
+from cytepool._messages import PACKAGE_DIRECTORY, value_range
+from cytepool._options import checked_flag, real_number
+from cytepool._ranks import average_ranks
 from cytepool._summation import accurate_sum, two_sum
+from cytepool.stats._interpolation import approx
+from cytepool.stats._moderation import (
+    LIKELIHOOD_MIN_DF,
+    coefficient_prior_variance,
+    log_odds,
+    posterior_variances,
+)
+from cytepool.stats._optimize import brent_minimum
 from cytepool.stats.distributions import (
     _f_log_x_density,
     _f_tail_quantile,
@@ -110,7 +119,6 @@ from cytepool.stats.distributions import (
     f_logsf_scalar,
     f_ppf_scalar,
     f_sf,
-    t_isf,
     t_sf,
 )
 from cytepool.stats.linear_models import LinearModelFit
@@ -167,9 +175,8 @@ _QUADRATURE_NODES, _QUADRATURE_WEIGHTS = np.polynomial.legendre.leggauss(128)
 _F_RANK_TOLERANCE = 1e-8
 _EPS = float(np.finfo(np.float64).eps)
 # The likelihood estimator (limma's fitFDistUnequalDF1), all found by probing limma
-# 3.62.1: variances on fewer degrees of freedom than this take no part in the fit;
-_LIKELIHOOD_MIN_DF = 0.01
-# variances at or below zero are raised to this fraction of the median of the
+# 3.62.1: variances on fewer degrees of freedom than LIKELIHOOD_MIN_DF take no part in
+# the fit; variances at or below zero are raised to this fraction of the median of the
 # positive usable variances;
 _LIKELIHOOD_FLOOR = 1e-12
 # d0 minimises minus twice the log-likelihood over v = d0 / (d0 + 2) in this interval
@@ -192,16 +199,10 @@ _OUTLIER_LEVEL = 0.3
 # What makes a variance unusable, for error messages.
 _MOMENT_UNUSABLE = "is NaN or has zero degrees of freedom"
 _LIKELIHOOD_UNUSABLE = (
-    f"is NaN, has fewer than {_LIKELIHOOD_MIN_DF} degrees of freedom or has a zero "
+    f"is NaN, has fewer than {LIKELIHOOD_MIN_DF} degrees of freedom or has a zero "
     "prior weight"
 )
-# Warnings are attributed to the first caller outside the package.
-_PACKAGE_DIRECTORY = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ""
-)
 _SMALLEST_NORMAL = float(np.finfo(np.float64).tiny)
-# The golden section ratio of Brent's minimisation, (3 - sqrt(5)) / 2.
-_GOLDEN = 0.5 * (3.0 - math.sqrt(5.0))
 _LARGEST = float(np.finfo(np.float64).max)
 _LOG_HALF = math.log(0.5)
 
@@ -339,8 +340,8 @@ class ModeratedFit:
         return (
             f"ModeratedFit(n_features={self.t.shape[0]}, "
             f"coefficient_names={self.fit.coefficient_names!r}, "
-            f"prior_df={_summary(self.prior_df)}, "
-            f"prior_variance={_summary(self.prior_variance)}, "
+            f"prior_df={value_range(self.prior_df)}, "
+            f"prior_variance={value_range(self.prior_variance)}, "
             f"prior_estimator={self.prior_estimator!r})"
         )
 
@@ -628,7 +629,7 @@ def fit_f_distribution_likelihood(
     weights = _prior_weight_vector(prior_weights, x.size)
     usable = _likelihood_usable(x, d, weights)
     z = _covariate_vector(covariate, usable, _LIKELIHOOD_UNUSABLE)
-    _check_flag(robust, "robust")
+    checked_flag(robust, "robust", expected="a bool")
     _check_zero_variances(x, usable, robust=False)
     return _fit_likelihood(x, d, z, weights, bool(robust))
 
@@ -685,7 +686,7 @@ def squeeze_variances(
     usable = _usable(x, d)
     z = _covariate_vector(covariate, usable)
     lower, upper = _tail_proportions(winsor_tail_p)
-    _check_flag(robust, "robust")
+    checked_flag(robust, "robust", expected="a bool")
     estimator = _prior_estimator(prior_estimator, given)
     return _squeeze(x, d, z, usable, bool(robust), lower, upper, estimator)
 
@@ -785,7 +786,7 @@ def moderated_statistics(
     median_prior = float(np.nanmedian(prior_variance))
     v0 = np.array(
         [
-            _coefficient_prior_variance(
+            coefficient_prior_variance(
                 t[:, j], fit.stdev_unscaled[:, j], df_total, p, limits, median_prior
             )
             for j in range(t.shape[1])
@@ -799,7 +800,7 @@ def moderated_statistics(
     if failed.any():
         with np.errstate(divide="ignore"):
             v0[failed] = np.reciprocal(prior_variance[0])
-    lods = _log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
+    lods = log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
     f_value, f_df1 = _f_statistics(t, fit, exact)
     f_df2 = prior_df + fit.df_residual
     f_p_value = _as_array(f_sf(f_value, float(f_df1), f_df2))
@@ -1057,7 +1058,7 @@ def _fit_robust(
             full = np.empty(n)
             full[usable] = part.scale
             full[~usable] = np.exp(
-                _interpolate(covariate[usable], np.log(part.scale), covariate[~usable])
+                approx(covariate[usable], np.log(part.scale), covariate[~usable])
             )
             scale = full
         return RobustFDistributionFit(
@@ -1102,7 +1103,7 @@ def _fit_robust(
     scale_values = np.exp(log_scale + trend)
     ratio = values / scale_values
     tail = _as_array(f_sf(ratio, df1, df2))
-    not_outlier = np.minimum(1.0, tail / ((_average_ranks(-ratio) - 0.5) / n))
+    not_outlier = np.minimum(1.0, tail / ((average_ranks(-ratio) - 0.5) / n))
     if math.isinf(df2):
         # A cumulative maximum alone, and pi_g times the df of all n variances on
         # the common df (found by probing).
@@ -1313,18 +1314,6 @@ def _brent_root(function: Callable[[float], float], low: float, high: float) -> 
     return b
 
 
-def _average_ranks(values: FloatArray) -> FloatArray:
-    """Ranks from 1 for the smallest value, with ties given their average rank."""
-    order = np.argsort(values, kind="stable")
-    ordered = values[order]
-    starts = np.flatnonzero(np.r_[True, ordered[1:] != ordered[:-1]])
-    ends = np.r_[starts[1:], ordered.size]
-    average = 0.5 * (starts + ends - 1) + 1.0
-    ranks = np.empty(values.size)
-    ranks[order] = np.repeat(average, ends - starts)
-    return ranks
-
-
 def _monotone_in(
     key: FloatArray, values: FloatArray, *, pool_leading: bool
 ) -> FloatArray:
@@ -1341,20 +1330,6 @@ def _monotone_in(
         ordered[: first_minimum + 1] = cumulative_mean[first_minimum]
     result = np.empty(values.size)
     result[order] = np.maximum.accumulate(ordered)
-    return result
-
-
-def _interpolate(x: FloatArray, y: FloatArray, at: FloatArray) -> FloatArray:
-    """Linear interpolation of y over x at ``at``, constant beyond the range.
-
-    Values of y at tied x are averaged first (R's ``approx`` with ``ties=mean``).
-    """
-    order = np.argsort(x, kind="stable")
-    xs, ys = x[order], y[order]
-    starts = np.flatnonzero(np.r_[True, xs[1:] != xs[:-1]])
-    unique_x = xs[starts]
-    mean_y = np.add.reduceat(ys, starts) / np.diff(np.r_[starts, xs.size])
-    result: FloatArray = np.interp(at, unique_x, mean_y)
     return result
 
 
@@ -1377,7 +1352,7 @@ def _fit_likelihood(
     if positive < 2:
         raise ValueError(
             "the likelihood estimator needs at least two usable variances above zero "
-            f"(finite, on at least {_LIKELIHOOD_MIN_DF} degrees of freedom and with a "
+            f"(finite, on at least {LIKELIHOOD_MIN_DF} degrees of freedom and with a "
             f"positive prior weight), got {positive}; limma's fitFDistUnequalDF1 "
             "returns NA and squeezeVar stops here (found by probing). The method of "
             "moments (prior_estimator='moments') does not need two"
@@ -1401,7 +1376,7 @@ def _likelihood_usable(
 ) -> npt.NDArray[np.bool_]:
     """The variances that take part in a likelihood fit."""
     result: npt.NDArray[np.bool_] = (
-        np.isfinite(x) & (d >= _LIKELIHOOD_MIN_DF) & (prior_weights > 0.0)
+        np.isfinite(x) & (d >= LIKELIHOOD_MIN_DF) & (prior_weights > 0.0)
     )
     return result
 
@@ -1423,7 +1398,7 @@ def _likelihood_location_and_df2(
     # A missing variance counts as zero, so it is raised to the floor, and a df below
     # the minimum counts as 1 (found by probing); they enter only the trend.
     raised = np.where(np.isnan(x), floor, np.maximum(x, floor))
-    shape = 0.5 * np.where(d >= _LIKELIHOOD_MIN_DF, d, 1.0)
+    shape = 0.5 * np.where(d >= LIKELIHOOD_MIN_DF, d, 1.0)
     e = np.log(raised) + _log_minus_digamma(shape)
     precision = weights / _as_array(trigamma(shape))
     # With at most two usable variances above zero the location is a constant, and
@@ -1512,7 +1487,7 @@ def _profile_likelihood_df2(
         shift = _log_minus_digamma_scalar(0.5 * df2)
         return float(_minus_twice_log_likelihood(x, d, location, weights, df2, shift))
 
-    v = _brent_minimum(deviance, _DF2_SEARCH[0], _DF2_SEARCH[1], _SEARCH_TOLERANCE)
+    v = brent_minimum(deviance, _DF2_SEARCH[0], _DF2_SEARCH[1], _SEARCH_TOLERANCE)
     return 2.0 * v / (1.0 - v)
 
 
@@ -1581,7 +1556,7 @@ def _robust_likelihood(
     # The probability of not being an outlier, from the first fit's upper tail.
     upper = np.exp(log_upper)
     n = index.size
-    naive = np.minimum(1.0, upper / ((_average_ranks(-ratio) - 0.5) / n))
+    naive = np.minimum(1.0, upper / ((average_ranks(-ratio) - 0.5) / n))
     not_outlier = _monotone_in(log_upper, naive, pool_leading=True)
     if (not_outlier == 1.0).all():
         return LikelihoodFDistributionFit(robust_scale, df2, shrunk, math.nan)
@@ -1606,77 +1581,6 @@ def _f_tail_logs(
     for i in range(n):
         upper[i], lower[i] = _f_tails(ratio[i], df1[i], df2)
     return upper, lower
-
-
-def _brent_minimum(
-    function: Callable[[float], float], low: float, high: float, tolerance: float
-) -> float:
-    """The minimiser of a function on [low, high] by Brent's (1973) method.
-
-    Golden section search with parabolic interpolation, as in Brent's procedure
-    ``localmin`` (chapter 5) and R's ``optimize``, with its stopping rule: the search
-    ends when the best point lies within 2 (sqrt(eps) |x| + tolerance / 3) of both
-    ends of the bracket. The sequence of evaluations, and so the result, is that of
-    R's ``optimize`` (checked against it).
-    """
-    eps = math.sqrt(_EPS)
-    a, b = low, high
-    x = w = v = a + _GOLDEN * (b - a)
-    fx = fw = fv = function(x)
-    d = e = 0.0
-    while True:
-        middle = 0.5 * (a + b)
-        tol1 = eps * abs(x) + tolerance / 3.0
-        tol2 = 2.0 * tol1
-        if abs(x - middle) <= tol2 - 0.5 * (b - a):
-            return x
-        p = q = r = 0.0
-        if abs(e) > tol1:
-            # The parabola through (v, fv), (w, fw) and (x, fx).
-            r = (x - w) * (fx - fv)
-            q = (x - v) * (fx - fw)
-            p = (x - v) * q - (x - w) * r
-            q = 2.0 * (q - r)
-            if q > 0.0:
-                p = -p
-            else:
-                q = -q
-            r = e
-            e = d
-        if abs(p) >= abs(0.5 * q * r) or p <= q * (a - x) or p >= q * (b - x):
-            # A golden section step into the larger part of the bracket.
-            e = (a - x) if x >= middle else (b - x)
-            d = _GOLDEN * e
-        else:
-            d = p / q
-            u = x + d
-            # Not too close to the ends of the bracket.
-            if u - a < tol2 or b - u < tol2:
-                d = tol1 if middle - x >= 0.0 else -tol1
-        # Not too close to x.
-        if abs(d) >= tol1:
-            u = x + d
-        else:
-            u = x + (tol1 if d >= 0.0 else -tol1)
-        fu = function(u)
-        if fu <= fx:
-            if u < x:
-                b = x
-            else:
-                a = x
-            v, fv = w, fw
-            w, fw = x, fx
-            x, fx = u, fu
-        else:
-            if u < x:
-                a = u
-            else:
-                b = u
-            if fu <= fw or w == x:
-                v, fv = w, fw
-                w, fw = u, fu
-            elif fu <= fv or v == x or v == w:
-                v, fv = u, fu
 
 
 def _scale_value(scale: FloatArray, trended: bool) -> float | FloatArray:
@@ -1726,24 +1630,8 @@ def _squeeze(
         moments = _fit_moments(x, d, covariate, usable)
         prior_variance, prior_df = moments.scale, moments.df2
     return SqueezedVariances(
-        _posterior_variances(x, d, prior_variance, prior_df), prior_variance, prior_df
+        posterior_variances(x, d, prior_variance, prior_df), prior_variance, prior_df
     )
-
-
-def _posterior_variances(
-    x: FloatArray,
-    d: FloatArray,
-    prior_variance: float | FloatArray,
-    prior_df: float | FloatArray,
-) -> FloatArray:
-    s0 = np.broadcast_to(prior_variance, x.shape)
-    d0 = np.broadcast_to(prior_df, x.shape)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        weighted = np.where(d > 0.0, d * x, 0.0)
-        posterior = (weighted + np.where(np.isinf(d0), 0.0, d0 * s0)) / (d + d0)
-    # An infinite prior df, or zero residual df, leaves the prior variance.
-    result: FloatArray = np.where(np.isinf(d0) | (d == 0.0), s0, posterior)
-    return result
 
 
 def _moderate(
@@ -1754,7 +1642,7 @@ def _moderate(
     prior_estimator: Any,
 ) -> tuple[SqueezedVariances, FloatArray, str]:
     """Squeezed variances of a fit, the total df of its tests and the estimator."""
-    _check_flag(robust, "robust")
+    checked_flag(robust, "robust", expected="a bool")
     lower, upper = _tail_proportions(winsor_tail_p)
     variances = fit.sigma**2
     df = _zero_tiny_df(fit.df_residual)
@@ -1777,74 +1665,12 @@ def _moderate(
     return squeezed, df_total, estimator
 
 
-def _coefficient_prior_variance(
-    t: FloatArray,
-    stdev_unscaled: FloatArray,
-    df: FloatArray,
-    proportion: float,
-    limits: tuple[float, float],
-    median_prior: float,
-) -> float:
-    """limma's var.prior for one coefficient (Smyth 2004, section 6.3)."""
-    finite = np.isfinite(t)
-    t, stdev_unscaled, df = t[finite], stdev_unscaled[finite], df[finite]
-    n = t.size
-    n_target = math.ceil(proportion / 2.0 * n)
-    if n_target < 1:
-        return math.nan
-    # The median prior variance is positive here: a finite t-statistic needs a
-    # positive posterior variance, which with at most two features, not moderated,
-    # is the feature's own prior variance.
-    bounds = np.square(np.asarray(limits, dtype=np.float64)) / median_prior
-    size = np.abs(t)
-    if df.min() < df.max():
-        # t-statistics on fewer df are mapped to the largest df by matching tail
-        # probabilities (found by probing).
-        df_common = float(df.max())
-        size = _as_array(t_isf(_as_array(t_sf(size, df)), df_common))
-        df = np.full(n, df_common)
-    share = max(n_target / n, proportion)
-    top = np.argsort(-size, kind="stable")[:n_target]
-    size, v1, df = size[top], stdev_unscaled[top] ** 2, df[top]
-    p0 = 2.0 * _as_array(t_sf(size, df))
-    target = ((np.arange(1, n_target + 1) - 0.5) / n - (1.0 - share) * p0) / share
-    v0 = np.zeros(n_target)
-    above = target > p0
-    if above.any():
-        quantile = _as_array(t_isf(target[above] / 2.0, df[above]))
-        v0[above] = v1[above] * ((size[above] / quantile) ** 2 - 1.0)
-    v0 = np.clip(v0, bounds[0], bounds[1])
-    return float(np.mean(v0))
-
-
-def _log_odds(
-    t: FloatArray,
-    stdev_unscaled: FloatArray,
-    df_total: FloatArray,
-    infinite_prior: npt.NDArray[np.bool_],
-    v0: FloatArray,
-    proportion: float,
-) -> FloatArray:
-    with np.errstate(divide="ignore", invalid="ignore"):
-        v = stdev_unscaled**2
-        r = v / (v + v0)
-        t2 = t * t
-        df = df_total[:, np.newaxis]
-        finite = (1.0 + df) / 2.0 * np.log1p(t2 * (1.0 - r) / (t2 * r + df))
-        limit = t2 * (1.0 - r) / 2.0
-        log_ratio = np.where(infinite_prior[:, np.newaxis], limit, finite)
-        lods: FloatArray = (
-            math.log(proportion / (1.0 - proportion)) + 0.5 * np.log(r) + log_ratio
-        )
-    return lods
-
-
 def _f_statistics(
     t: FloatArray, fit: LinearModelFit, exact: bool
 ) -> tuple[FloatArray, int]:
     """Moderated F-statistics and their numerator degrees of freedom."""
     n_features, k = t.shape
-    correlation = _unit_correlation(fit.cov_coefficients)
+    correlation = correlation_matrix(fit.cov_coefficients, unit_diagonal=True)
     eigenvalues, eigenvectors = np.linalg.eigh(correlation)
     keep = eigenvalues > _F_RANK_TOLERANCE * eigenvalues.max()
     rank = int(keep.sum())
@@ -1874,29 +1700,18 @@ def _f_statistics(
     return f_value, rank
 
 
-def _unit_correlation(covariance: FloatArray) -> FloatArray:
-    """Correlation matrix, with a coefficient of zero variance uncorrelated.
-
-    limma gives such a coefficient (an all-zero contrast) correlations of zero and
-    keeps it in the rank of the F-test (found by probing).
-    """
-    scale = np.sqrt(np.diag(covariance))
-    constant = scale == 0.0
-    safe = np.where(constant, 1.0, scale)
-    correlation: FloatArray = covariance / np.outer(safe, safe)
-    correlation[constant, :] = 0.0
-    correlation[:, constant] = 0.0
-    correlation[constant, constant] = 1.0
-    return correlation
-
-
 # ---------------------------------------------------------------------------------------
 # Argument checks
 # ---------------------------------------------------------------------------------------
 
 
 def _variance_vector(values: Any) -> FloatArray:
-    x = _real_array(unmasked_array(values, "variances", missing="NaN"), "variances")
+    x = real_array(
+        unmasked_array(values, "variances", missing="NaN"),
+        "variances",
+        boolean=False,
+        objects=False,
+    )
     if x.ndim != 1:
         raise ValueError(f"variances must be a 1-D array, got shape {x.shape}")
     if x.size == 0:
@@ -1918,7 +1733,7 @@ def _df_vector(df: Any, n: int) -> FloatArray:
 
 def _df_values(df: Any, n: int) -> FloatArray:
     """The degrees of freedom as given, checked and one per variance."""
-    d = _real_array(unmasked_array(df, "df"), "df")
+    d = real_array(unmasked_array(df, "df"), "df", boolean=False, objects=False)
     if d.size == 1 and d.ndim <= 1:
         d = np.full(n, float(d.reshape(-1)[0]))
     elif d.shape != (n,):
@@ -1967,7 +1782,7 @@ def _check_zero_variances(
         "more than half of the variances are exactly zero, so the estimated prior "
         "is unreliable",
         RuntimeWarning,
-        skip_file_prefixes=(_PACKAGE_DIRECTORY,),
+        skip_file_prefixes=(PACKAGE_DIRECTORY,),
     )
 
 
@@ -1976,7 +1791,12 @@ def _covariate_vector(
 ) -> FloatArray | None:
     if covariate is None:
         return None
-    z = _real_array(unmasked_array(covariate, "covariate", missing="NaN"), "covariate")
+    z = real_array(
+        unmasked_array(covariate, "covariate", missing="NaN"),
+        "covariate",
+        boolean=False,
+        objects=False,
+    )
     if z.shape != usable.shape:
         raise ValueError(
             f"covariate must have one value per variance ({usable.size}), "
@@ -2013,7 +1833,9 @@ def _finite_covariate(z: FloatArray) -> FloatArray:
 
 def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
     proportions = unmasked_array(winsor_tail_p, "winsor_tail_p")
-    values = _real_array(proportions, "winsor_tail_p").reshape(-1)
+    values = real_array(
+        proportions, "winsor_tail_p", boolean=False, objects=False
+    ).reshape(-1)
     if values.size == 1:
         values = np.repeat(values, 2)
     if values.size != 2:
@@ -2031,7 +1853,12 @@ def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
 def _trend_covariate(trend: Any, fit: LinearModelFit) -> FloatArray | None:
     if isinstance(trend, (bool, np.bool_)):
         return np.asarray(fit.mean_expression, dtype=np.float64) if trend else None
-    z = _real_array(unmasked_array(trend, "trend", missing="NaN"), "trend")
+    z = real_array(
+        unmasked_array(trend, "trend", missing="NaN"),
+        "trend",
+        boolean=False,
+        objects=False,
+    )
     if z.shape != fit.sigma.shape:
         raise ValueError(
             "trend must be a bool or one covariate value per feature "
@@ -2060,18 +1887,23 @@ def _treat_threshold(lfc: Any, fc: Any) -> float:
     if lfc is not None and fc is not None:
         raise ValueError("give the threshold as lfc or as fc, not both")
     if lfc is not None:
-        value = _real_scalar(lfc, "lfc")
+        value = real_number(lfc, "lfc")
         if not math.isfinite(value):
             raise ValueError(f"lfc must be finite, got {value}")
         return abs(value)
-    ratio = 1.2 if fc is None else _real_scalar(fc, "fc")
+    ratio = 1.2 if fc is None else real_number(fc, "fc")
     if not (math.isfinite(ratio) and ratio > 0.0):
         raise ValueError(f"fc must be positive and finite, got {ratio}")
     return abs(math.log2(ratio))
 
 
 def _coefficient_limits(limits: Any) -> tuple[float, float]:
-    values = _real_array(unmasked_array(limits, "stdev_coef_lim"), "stdev_coef_lim")
+    values = real_array(
+        unmasked_array(limits, "stdev_coef_lim"),
+        "stdev_coef_lim",
+        boolean=False,
+        objects=False,
+    )
     values = values.reshape(-1)
     if values.size != 2:
         raise ValueError(
@@ -2087,7 +1919,7 @@ def _coefficient_limits(limits: Any) -> tuple[float, float]:
 
 
 def _open_unit_interval(value: Any, name: str) -> float:
-    number = _real_scalar(value, name)
+    number = real_number(value, name)
     if not 0.0 < number < 1.0:
         raise ValueError(f"{name} must lie strictly between 0 and 1, got {number}")
     return number
@@ -2096,11 +1928,6 @@ def _open_unit_interval(value: Any, name: str) -> float:
 def _check_fit(fit: Any) -> None:
     if not isinstance(fit, LinearModelFit):
         raise TypeError(f"fit must be a LinearModelFit, got {type(fit).__name__}")
-
-
-def _check_flag(value: Any, name: str) -> None:
-    if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
 
 
 def _prior_estimator(prior_estimator: Any, d: FloatArray) -> str:
@@ -2132,7 +1959,12 @@ def _prior_estimator(prior_estimator: Any, d: FloatArray) -> str:
 def _prior_weight_vector(weights: Any, n: int) -> FloatArray:
     if weights is None:
         return np.ones(n)
-    w = _real_array(unmasked_array(weights, "prior_weights"), "prior_weights")
+    w = real_array(
+        unmasked_array(weights, "prior_weights"),
+        "prior_weights",
+        boolean=False,
+        objects=False,
+    )
     if w.shape != (n,):
         raise ValueError(
             f"prior_weights must have one value per variance ({n}), got shape {w.shape}"
@@ -2142,19 +1974,6 @@ def _prior_weight_vector(weights: Any, n: int) -> FloatArray:
             "prior_weights must be finite and non-negative (0 leaves a feature out)"
         )
     return w
-
-
-def _real_array(values: Any, name: str) -> FloatArray:
-    array = np.asarray(values)
-    if array.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
-    return array.astype(np.float64, copy=False)
-
-
-def _real_scalar(value: Any, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    return float(value)
 
 
 # ---------------------------------------------------------------------------------------
@@ -2177,12 +1996,3 @@ def _frozen(values: Any) -> Any:
     array = np.array(values, dtype=np.float64)
     array.flags.writeable = False
     return array
-
-
-def _summary(values: float | FloatArray) -> str:
-    if isinstance(values, float):
-        return f"{values:.6g}"
-    finite = values[np.isfinite(values)]
-    if finite.size == 0:
-        return "[non-finite]"
-    return f"[{finite.min():.6g} to {finite.max():.6g}]"

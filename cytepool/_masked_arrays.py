@@ -1,4 +1,4 @@
-"""Refusing numpy masked arrays where CytePool reads array input.
+"""Refusing numpy masked arrays where CytePool reads array input, and reading reals.
 
 numpy's conversions (``numpy.asarray``, ``numpy.array``, ``numpy.ascontiguousarray``)
 keep the values under the mask of a ``numpy.ma.MaskedArray`` and drop the mask, so an
@@ -12,18 +12,24 @@ columns, the arguments of the distributions) and the values read from lazy sourc
 are converted with ``unmasked_array``, which also refuses an array-like that converts
 to a masked array, such as a netCDF4 variable; the small arrays that make up
 contrasts and result objects are searched only. pandas objects are not inspected:
-pandas marks missing values without numpy masks.
+pandas marks missing values without numpy masks. ``real_array`` then reads arrays
+of real numbers as float64, and ``expression_matrix`` the samples x features
+values of a fit. ``read_only`` gives the read-only views that results hold.
 """
 
+import numbers
 from collections.abc import Iterable, Mapping
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
+import numpy.typing as npt
 
 Missing = Literal["NaN", "None", "None or NaN"] | None
 """How an argument marks missing values: with NaN (numbers), with None (JSON
 metadata), with None in text and NaN in numbers (table columns), or not at all
 (None)."""
+
+FloatArray = npt.NDArray[np.float64]
 
 _REASON = (
     "CytePool does not accept numpy masked arrays, because numpy drops the mask when "
@@ -130,6 +136,32 @@ def unmasked_array(value: object, name: str, *, missing: Missing = None) -> np.n
     return np.asarray(array)
 
 
+def real_array(
+    values: object, name: str, *, boolean: bool = True, objects: bool = True
+) -> np.ndarray:
+    """Values as float64 without copying when possible.
+
+    Integers and floats are read, booleans with ``boolean``, and object arrays whose
+    every element is a real number with ``objects``, such as a table whose columns mix
+    booleans and floats. The caller refuses masked arrays first.
+
+    Raises:
+        TypeError: If the values are not real numbers.
+    """
+    array = np.asarray(values)
+    if objects and array.dtype.kind == "O":
+        flags = (bool, np.bool_)
+        kinds = {type(value) for value in array.flat}
+        if not all(issubclass(kind, (numbers.Real, np.bool_)) for kind in kinds) or (
+            not boolean and any(issubclass(kind, flags) for kind in kinds)
+        ):
+            raise TypeError(f"{name} must hold real numbers")
+        array = array.astype(np.float64)
+    if array.dtype.kind not in ("biuf" if boolean else "iuf"):
+        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
+    return array.astype(np.float64, copy=False)
+
+
 def _refusal(
     subject: str, masked: np.ndarray, missing: Missing, *, converted: bool = False
 ) -> TypeError:
@@ -206,3 +238,31 @@ def _may_hold_masked(items: Iterable[object]) -> bool:
     return any(
         issubclass(kind, np.ndarray | list | tuple | Mapping | slice) for kind in kinds
     )
+
+
+def expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
+    """The values ``y`` of a fit as float64, samples x features: real numbers, one row
+    per row of the design, NaN for a missing value and no infinity."""
+    values = real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
+    if values.ndim != 2:
+        raise ValueError(
+            "y must be a 2-D array of shape (n_samples, n_features), "
+            f"got shape {values.shape}"
+        )
+    if values.shape[0] != n_samples:
+        raise ValueError(
+            f"y has {values.shape[0]} rows but design has {n_samples}; "
+            "rows of both are samples"
+        )
+    if values.shape[1] == 0:
+        raise ValueError("y must have at least one feature (column)")
+    if np.isinf(values).any():
+        raise ValueError("y contains infinite values; mark missing values with NaN")
+    return values
+
+
+def read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Return a view of an array that cannot be written."""
+    view = values.view()
+    view.flags.writeable = False
+    return view

@@ -193,43 +193,43 @@ References:
 """
 
 import math
-import numbers
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._counts import as_counts
+from cytepool._jit import by_chunks, jit, thread_limit
+from cytepool._linear_algebra import (
+    RANK_TOLERANCE,
+    cholesky,
+    cholesky_solve,
+    column_space,
+)
+from cytepool._masked_arrays import read_only, reject_masked, unmasked_array
+from cytepool._options import real_number
 from cytepool._summation import accurate_sums
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import (
+    aliased_columns,
+    design_matrix,
+    refuse_random_effects,
+    require_full_rank,
+)
 from cytepool.design.contrasts import make_contrasts
-from cytepool.design.design import Design, _refuse_random_effects
-from cytepool.normalization import _as_counts, median_ratio_size_factors
+from cytepool.design.design import Design
+from cytepool.normalization import median_ratio_size_factors
+from cytepool.stats._negative_binomial import linear_predictors, log1p_ratio
+from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
 from cytepool.stats.distributions import chi2_sf, f_ppf, norm_sf
-from cytepool.stats.linear_models import (
-    _aliased_columns,
-    _contrast_matrix,
-    _design_matrix,
-)
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.stats.negative_binomial_models import (
-    _log1p_ratio,
-    negative_binomial_deviance,
-)
+from cytepool.stats.negative_binomial_models import negative_binomial_deviance
 from cytepool.stats.smoothing import lowess
-from cytepool.stats.special import (
-    _log_gamma_increment,
-    _stirling_error,
-    digamma_scalar,
-    lgamma_scalar,
-    trigamma,
-)
+from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
 
 __all__ = [
     "DESeq2Dispersions",
@@ -934,7 +934,7 @@ def _dispersions(
     def spread(values: npt.NDArray[Any], fill: Any) -> npt.NDArray[Any]:
         full = np.full(n_features, fill, dtype=values.dtype)
         full[counted] = values
-        return _read_only(full)
+        return read_only(full)
 
     full_means = np.full((n_samples, n_features), np.nan)
     full_means[:, counted] = means
@@ -944,11 +944,11 @@ def _dispersions(
         trended=spread(np.asarray(trended, dtype=np.float64), np.nan),
         map_estimate=spread(posterior, np.nan),
         outlier=spread(outlier, False),
-        all_zero=_read_only(~counted),
-        base_mean=_read_only(base_mean),
-        base_variance=_read_only(base_variance),
-        means=_read_only(full_means),
-        size_factors=_read_only(s.copy()),
+        all_zero=read_only(~counted),
+        base_mean=read_only(base_mean),
+        base_variance=read_only(base_variance),
+        means=read_only(full_means),
+        size_factors=read_only(s.copy()),
         trend=used,
         asymptotic_dispersion=float(a0),
         extra_poisson=float(a1),
@@ -1040,12 +1040,9 @@ def _maximize(
         np.ascontiguousarray(prior_means, dtype=np.float64),
         float(precision),
     )
-    threads = numba.get_num_threads()
-    if threads > 1 and counts.shape[0] > 1:
-        n_chunks = max(1, min(counts.shape[0], 4 * threads))
-        result: FloatArray = _maximize_in_parallel(*arguments, n_chunks)
-    else:
-        result = _maximize_in_order(*arguments)
+    result: FloatArray = by_chunks(
+        _maximize_in_parallel, _maximize_in_order, arguments, counts.shape[0]
+    )
     return result
 
 
@@ -1258,27 +1255,27 @@ def _fit(
     log2_covariance = covariance * scale * scale
     standard_errors = np.sqrt(np.diagonal(log2_covariance, axis1=1, axis2=2))
     return DESeq2Fit(
-        coefficients=_read_only(natural * scale),
-        standard_errors=_read_only(np.ascontiguousarray(standard_errors)),
-        covariance=_read_only(log2_covariance),
-        fitted_values=_read_only(fitted),
-        minus_twice_log_likelihood=_read_only(
+        coefficients=read_only(natural * scale),
+        standard_errors=read_only(np.ascontiguousarray(standard_errors)),
+        covariance=read_only(log2_covariance),
+        fitted_values=read_only(fitted),
+        minus_twice_log_likelihood=read_only(
             _minus_twice_log_likelihood(y, fitted, alpha, counted)
         ),
-        hat_values=_read_only(hat),
-        cooks_distances=_read_only(cooks),
-        max_cooks=_read_only(max_cooks),
-        converged=_read_only(converged),
-        iterations=_read_only(iterations),
-        dispersion=_read_only(np.where(counted, alpha, np.nan)),
+        hat_values=read_only(hat),
+        cooks_distances=read_only(cooks),
+        max_cooks=read_only(max_cooks),
+        converged=read_only(converged),
+        iterations=read_only(iterations),
+        dispersion=read_only(np.where(counted, alpha, np.nan)),
         dispersion_estimates=estimates,
-        size_factors=_read_only(s.copy()),
-        base_mean=_read_only(base_mean),
-        counts=_read_only(y),
-        design=_read_only(x),
+        size_factors=read_only(s.copy()),
+        base_mean=read_only(base_mean),
+        counts=read_only(y),
+        design=read_only(x),
         coefficient_names=names,
         min_mean=floor,
-        replicated=_read_only(replicated),
+        replicated=read_only(replicated),
         two_groups=_two_groups(x, design),
     )
 
@@ -1311,14 +1308,9 @@ def _fitted_means(
         np.full(x.shape[1], _NATURAL_RIDGE),
         np.ascontiguousarray(start.T),
     )
-    threads = numba.get_num_threads()
-    if threads > 1 and n_genes > 1:
-        n_chunks = max(1, min(n_genes, 4 * threads))
-        coefficients, fitted_by_gene, converged, iterations = _fit_in_parallel(
-            *arguments, n_chunks
-        )
-    else:
-        coefficients, fitted_by_gene, converged, iterations = _fit_in_order(*arguments)
+    coefficients, fitted_by_gene, converged, iterations = by_chunks(
+        _fit_in_parallel, _fit_in_order, arguments, n_genes
+    )
     return coefficients, np.ascontiguousarray(fitted_by_gene.T), converged, iterations
 
 
@@ -1455,7 +1447,7 @@ def _contrast(contrast: Any, names: tuple[str, ...]) -> tuple[FloatArray, str]:
         contrast = make_contrasts({contrast: contrast}, names)
     elif isinstance(contrast, Mapping):
         contrast = make_contrasts(contrast, names)
-    matrix, contrast_names = _contrast_matrix(contrast, None, names)
+    matrix, contrast_names = contrast_matrix(contrast, None, names)
     if matrix.shape[1] != 1:
         raise ValueError(
             "contrast must hold one contrast, as results() tests one at a time; got "
@@ -1555,28 +1547,28 @@ def _results(
         threshold = quantile = math.nan
         quantiles = rejections = fitted = np.empty(0)
     return DESeq2Results(
-        base_mean=_read_only(base_mean.copy()),
-        log2_fold_change=_read_only(lfc),
-        standard_error=_read_only(se),
-        statistic=_read_only(statistic),
-        p_value=_read_only(p_value),
-        adjusted_p_value=_read_only(adjusted),
+        base_mean=read_only(base_mean.copy()),
+        log2_fold_change=read_only(lfc),
+        standard_error=read_only(se),
+        statistic=read_only(statistic),
+        p_value=read_only(p_value),
+        adjusted_p_value=read_only(adjusted),
         test=test,
         name=name,
-        contrast=_read_only(weights),
+        contrast=read_only(weights),
         df=df,
-        cooks_outlier=_read_only(outlier),
+        cooks_outlier=read_only(outlier),
         converged=fit.converged,
         reduced_converged=(
-            None if reduced_converged is None else _read_only(reduced_converged)
+            None if reduced_converged is None else read_only(reduced_converged)
         ),
         cooks_cutoff=settings.cutoff,
         alpha=settings.alpha,
         filter_threshold=threshold,
         filter_quantile=quantile,
-        filter_quantiles=_read_only(quantiles),
-        rejections=_read_only(rejections),
-        rejections_fit=_read_only(fitted),
+        filter_quantiles=read_only(quantiles),
+        rejections=read_only(rejections),
+        rejections_fit=read_only(fitted),
     )
 
 
@@ -1644,15 +1636,15 @@ def _reduced_design(reduced: Any, fit: DESeq2Fit) -> FloatArray:
             "reduced must be a design matrix or a Design of the fit's samples, such as "
             f"Design(samples, {reduced!r}); a formula alone does not give the samples"
         )
-    x, _ = _design_matrix(reduced, None)
-    _refuse_random_effects(reduced, "deseq2_likelihood_ratio_test")
+    x, _ = design_matrix(reduced, None)
+    refuse_random_effects(reduced, "deseq2_likelihood_ratio_test")
     n_samples = fit.design.shape[0]
     if x.shape[0] != n_samples:
         raise ValueError(
             f"the reduced design has {x.shape[0]} rows but the fit has {n_samples} "
             "samples; both need one row per sample"
         )
-    aliased = _aliased_columns(x)
+    aliased = aliased_columns(x)
     if aliased:
         raise ValueError(
             "the reduced design is not of full column rank: column(s) "
@@ -1683,7 +1675,7 @@ def _reduced_design(reduced: Any, fit: DESeq2Fit) -> FloatArray:
 def _whole_counts(counts: npt.ArrayLike) -> FloatArray:
     """The counts as a new float64 array, so that a fit does not change with the
     caller's array; whole numbers are required."""
-    y = _as_counts(counts)
+    y = as_counts(counts)
     if isinstance(counts, np.ndarray) and np.shares_memory(y, counts):
         y = y.copy()
     bad = np.argwhere(y != np.floor(y))
@@ -1699,21 +1691,14 @@ def _whole_counts(counts: npt.ArrayLike) -> FloatArray:
 def _full_rank_design(
     design: Any, n_samples: int, function: str
 ) -> tuple[FloatArray, tuple[str, ...]]:
-    x, names = _design_matrix(design, None)
-    _refuse_random_effects(design, function)
+    x, names = design_matrix(design, None)
+    refuse_random_effects(design, function)
     if x.shape[0] != n_samples:
         raise ValueError(
             f"counts have {n_samples} rows (samples) but the design has "
             f"{x.shape[0]}; both need one row per sample"
         )
-    aliased = _aliased_columns(x)
-    if aliased:
-        listed = ", ".join(repr(names[j]) for j in aliased)
-        raise ValueError(
-            f"design is not of full column rank: column(s) {listed} are linear "
-            "combinations of the preceding columns; remove them or reparametrise the "
-            "design"
-        )
+    require_full_rank(x, names)
     if x.shape[1] >= n_samples:
         raise ValueError(
             f"the design has {x.shape[1]} columns for {n_samples} samples and leaves no "
@@ -1790,14 +1775,7 @@ def _trend_kind(trend: Any) -> str:
 
 def _real(value: Any, name: str, *, finite: bool = True) -> float:
     reject_masked(value, name)
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if math.isnan(number) or (finite and math.isinf(number)):
-        raise ValueError(
-            f"{name} must be {'finite' if finite else 'a number'}, got {number}"
-        )
-    return number
+    return real_number(value, name, finite=finite)
 
 
 def _positive(value: Any, name: str) -> float:
@@ -1814,12 +1792,6 @@ def _check_fit(fit: Any) -> None:
         )
 
 
-def _read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
-    view = np.asarray(values).view()
-    view.flags.writeable = False
-    return view
-
-
 # Compiled routines: the dispersions.
 
 
@@ -1832,11 +1804,11 @@ def _log_gamma_shift(y: float, r: float) -> float:
         shift: float = (
             (r + y - 0.5) * math.log1p(y / r)
             - y
-            + _stirling_error(r + y)
-            - _stirling_error(r)
+            + stirling_error(r + y)
+            - stirling_error(r)
         )
         return shift
-    value: float = _log_gamma_increment(r, y) - y * math.log(r)
+    value: float = log_gamma_increment(r, y) - y * math.log(r)
     return value
 
 
@@ -2317,13 +2289,13 @@ def _observation_value(
     if eta >= log_floor:
         mu = math.exp(eta)
         above: float = (
-            y * eta - y * math.log1p(alpha * mu) - mu * _log1p_ratio(alpha * mu)
+            y * eta - y * math.log1p(alpha * mu) - mu * log1p_ratio(alpha * mu)
         )
         return above
     base = (
         y * log_floor
         - y * math.log1p(alpha * floor)
-        - floor * _log1p_ratio(alpha * floor)
+        - floor * log1p_ratio(alpha * floor)
     )
     slope = (y - floor) / (1.0 + alpha * floor)
     curvature = floor / (1.0 + alpha * floor)
@@ -2358,47 +2330,18 @@ def _penalized_value(
 
 
 @jit
-def _linear_predictors(
-    x: FloatArray, beta: FloatArray, offsets: FloatArray, eta: FloatArray
-) -> None:
-    n, p = x.shape
-    for i in range(n):
-        total = offsets[i]
-        for k in range(p):
-            total += x[i, k] * beta[k]
-        eta[i] = total
-
-
-@jit
 def _solve_positive_definite(
     matrix: FloatArray, factor: FloatArray, rhs: FloatArray, out: FloatArray
 ) -> bool:
-    """Solve matrix out = rhs by the Cholesky factor of the lower triangle of matrix;
-    False if it is not positive definite."""
+    """Solve matrix out = rhs by the Cholesky factor of the lower triangle of matrix,
+    formed in ``factor``; False if it is not positive definite."""
     p = rhs.size
     for a in range(p):
-        total = matrix[a, a]
-        for k in range(a):
-            total -= factor[a, k] * factor[a, k]
-        if not total > 0.0:
-            return False
-        diagonal = math.sqrt(total)
-        factor[a, a] = diagonal
-        for b in range(a + 1, p):
-            total = matrix[b, a]
-            for k in range(a):
-                total -= factor[b, k] * factor[a, k]
-            factor[b, a] = total / diagonal
-    for a in range(p):
-        total = rhs[a]
-        for k in range(a):
-            total -= factor[a, k] * out[k]
-        out[a] = total / factor[a, a]
-    for a in range(p - 1, -1, -1):
-        total = out[a]
-        for k in range(a + 1, p):
-            total -= factor[k, a] * out[k]
-        out[a] = total / factor[a, a]
+        for b in range(a, p):
+            factor[b, a] = matrix[b, a]
+    if not cholesky(factor, p, 0.0):
+        return False
+    cholesky_solve(factor, p, rhs, out)
     return True
 
 
@@ -2425,7 +2368,7 @@ def _fit_one(
     log_floor = math.log(floor)
     floor_weight = floor / (1.0 + alpha * floor)
     floor_slope_offset = 1.0 + alpha * floor
-    _linear_predictors(x, beta, offsets, eta)
+    linear_predictors(x, beta, offsets, eta)
     value, size = _penalized_value(y, eta, alpha, floor, beta, ridge)
     for iteration in range(1, _FIT_ITERATIONS + 1):
         for a in range(p):
@@ -2465,7 +2408,7 @@ def _fit_one(
         while True:
             for k in range(p):
                 trial[k] = beta[k] + length * step[k]
-            _linear_predictors(x, trial, offsets, trial_eta)
+            linear_predictors(x, trial, offsets, trial_eta)
             trial_value, trial_size = _penalized_value(
                 y, trial_eta, alpha, floor, trial, ridge
             )

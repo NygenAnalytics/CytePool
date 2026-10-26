@@ -194,32 +194,35 @@ from typing import Any, NamedTuple
 import numpy as np
 import numpy.typing as npt
 
+from cytepool._counts import as_counts, dispersion_matrix, offset_matrix, weight_matrix
 from cytepool._jit import jit, thread_limit
-from cytepool._masked_arrays import reject_masked, unmasked_array
-from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts, _non_negative
-from cytepool.stats.distributions import f_sf
-from cytepool.stats.empirical_bayes import (
-    _LIKELIHOOD_MIN_DF,
-    _brent_minimum,
-    squeeze_variances,
+from cytepool._linear_algebra import orthogonalise
+from cytepool._masked_arrays import read_only, reject_masked, unmasked_array
+from cytepool._messages import value_range
+from cytepool._options import (
+    checked_flag,
+    non_negative_number,
+    positive_integer,
+    real_number,
 )
-from cytepool.stats.linear_models import _contrast_matrix, _design_matrix
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import design_matrix, refuse_random_effects
+from cytepool.stats._moderation import LIKELIHOOD_MIN_DF
+from cytepool.stats._negative_binomial import (
+    SERIES_LIMIT,
+    unit_deviance,
+    unit_deviances,
+)
+from cytepool.stats._optimize import brent_minimum
+from cytepool.stats._scalar_special_functions import stirling_error
+from cytepool.stats.distributions import f_sf
+from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.negative_binomial_models import (
-    _SERIES_LIMIT,
     NegativeBinomialFit,
-    _dispersion_matrix,
-    _iteration_limit,
-    _offset_matrix,
-    _read_only,
-    _unit_deviance,
-    _unit_deviances,
-    _weight_matrix,
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
-from cytepool.stats.special import _stirling_error
 
 __all__ = [
     "QuasiLikelihoodFit",
@@ -395,20 +398,20 @@ def _check_moment_range(values: FloatArray, name: str, largest: float) -> None:
 def _log_probability(y: float, phi: float, deviance: float) -> float:
     """log P(Y = y) for y > 0, Y ~ NB(mu, phi), in Loader's deviance form."""
     if phi == 0.0:
-        return -0.5 * deviance - 0.5 * (_LOG_2PI + math.log(y)) - _stirling_error(y)
+        return -0.5 * deviance - 0.5 * (_LOG_2PI + math.log(y)) - stirling_error(y)
     r = 1.0 / phi
     return (
         -0.5 * deviance
         - 0.5 * (_LOG_2PI + math.log(y) + math.log1p(phi * y))
-        + (_stirling_error(y + r) - _stirling_error(r))
-        - _stirling_error(y)
+        + (stirling_error(y + r) - stirling_error(r))
+        - stirling_error(y)
     )
 
 
 @jit
 def _probability_and_deviance(y: float, mu: float, phi: float) -> tuple[float, float]:
     """P(Y = y) and the unit deviance d(y, mu, phi), for y >= 0 and mu > 0."""
-    deviance = _unit_deviance(y, mu, phi)
+    deviance = unit_deviance(y, mu, phi)
     if y == 0.0:
         return math.exp(-0.5 * deviance), deviance
     return math.exp(_log_probability(y, phi, deviance)), deviance
@@ -449,12 +452,12 @@ def _direct_sums(mu: float, phi: float) -> tuple[float, float, float]:
 def _deviance_from_offset(y: float, s: float, mu: float, phi: float) -> float:
     """d(y, mu, phi) at the count y = mu (1 + s), from the relative offset s.
 
-    Within 1/8 of the mean it is the series of ``_unit_deviance`` in s itself, so
+    Within 1/8 of the mean it is the series of ``unit_deviance`` in s itself, so
     that it is the deviance at mu (1 + s) whatever the rounding of y; farther out it
-    is ``_unit_deviance`` of the count.
+    is ``unit_deviance`` of the count.
     """
-    if abs(s) >= _SERIES_LIMIT:
-        far: float = _unit_deviance(y, mu, phi)
+    if abs(s) >= SERIES_LIMIT:
+        far: float = unit_deviance(y, mu, phi)
         return far
     product = phi * mu
     share = product / (1.0 + product) if product <= 1.0 else 1.0 / (1.0 + 1.0 / product)
@@ -764,13 +767,7 @@ def _orthonormal_columns(
             total += value * value
         if total == 0.0:
             continue
-        for _ in range(2):
-            for k in range(rank):
-                product = 0.0
-                for i in range(n_samples):
-                    product += basis[k, i] * basis[rank, i]
-                for i in range(n_samples):
-                    basis[rank, i] -= product * basis[k, i]
+        orthogonalise(basis[rank], basis, rank, n_samples)
         remaining = 0.0
         for i in range(n_samples):
             remaining += basis[rank, i] * basis[rank, i]
@@ -931,7 +928,7 @@ def _unit_deviances_at(
         np.ascontiguousarray(np.broadcast_to(a, shape), dtype=np.float64).ravel()
         for a in (counts, means, dispersion)
     ]
-    values: FloatArray = _unit_deviances(*flat).reshape(shape)
+    values: FloatArray = unit_deviances(*flat).reshape(shape)
     return values
 
 
@@ -940,13 +937,13 @@ def _check_moderation(quasi: FloatArray, df: FloatArray) -> None:
     cannot be estimated from (``squeeze_variances`` moderates no more than two)."""
     if quasi.size <= 2:
         return
-    usable = np.isfinite(quasi) & (df >= _LIKELIHOOD_MIN_DF)
+    usable = np.isfinite(quasi) & (df >= LIKELIHOOD_MIN_DF)
     positive = int(np.count_nonzero(quasi[usable] > 0.0))
     if positive < 2:
         raise ValueError(
             "the quasi-dispersions cannot be moderated: limma's prior for unequal "
             "degrees of freedom needs at least two genes with a quasi-dispersion above "
-            f"zero on at least {_LIKELIHOOD_MIN_DF:g} adjusted residual degrees of "
+            f"zero on at least {LIKELIHOOD_MIN_DF:g} adjusted residual degrees of "
             f"freedom, and {positive} have one"
         )
 
@@ -1027,8 +1024,8 @@ def average_log_cpm(
             :func:`~cytepool.stats.negative_binomial_models.fit_negative_binomial_model`,
             or if ``prior_count`` is negative.
     """
-    y = _as_counts(counts)
-    prior = _non_negative(prior_count, "prior_count")
+    y = as_counts(counts)
+    prior = non_negative_number(prior_count, "prior_count")
     fit = fit_negative_binomial_model(
         y,
         np.ones((y.shape[0], 1)),
@@ -1124,16 +1121,20 @@ def common_dispersion(
             if an option is out of range, or if no gene has ``min_row_sum`` counts.
     """
     with thread_limit(n_threads):
-        y = _as_counts(counts)
+        y = as_counts(counts)
         n_samples, n_features = y.shape
-        x, names = _design_matrix(design, coefficient_names)
-        _refuse_random_effects(design, "common_dispersion")
+        x, names = design_matrix(design, coefficient_names)
+        refuse_random_effects(design, "common_dispersion")
         low, high = _search_interval(interval)
-        least = _non_negative(min_row_sum, "min_row_sum")
-        most = _positive_integer(subset, "subset")
-        limit = _iteration_limit(max_iterations)
-        log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
-        w = _weight_matrix(weights, n_samples, n_features)
+        least = non_negative_number(min_row_sum, "min_row_sum")
+        reject_masked(subset, "subset")
+        most = positive_integer(subset, "subset", expected="a positive integer")
+        reject_masked(max_iterations, "max_iterations")
+        limit = positive_integer(
+            max_iterations, "max_iterations", expected="a positive integer"
+        )
+        log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
+        w = weight_matrix(weights, n_samples, n_features)
         return _common_dispersion(
             y, x, names, log_sizes, w, low, high, least, most, limit
         )
@@ -1190,7 +1191,7 @@ def _common_dispersion(
         )
         return -value
 
-    phi = _brent_minimum(minus_likelihood, low, high, _DISPERSION_TOLERANCE)
+    phi = brent_minimum(minus_likelihood, low, high, _DISPERSION_TOLERANCE)
     reach = 2.0 * (math.sqrt(_EPSILON) * abs(phi) + _DISPERSION_TOLERANCE)
     if phi - low <= reach or high - phi <= reach:
         end = "lower" if phi - low <= reach else "upper"
@@ -1237,7 +1238,7 @@ def _adjusted_profile_likelihood(
             root[i] = math.sqrt(w * mu / (1.0 + phi * mu)) if mu > floor else 0.0
             if mu <= 0.0:
                 continue
-            deviance = w * _unit_deviance(y, mu, phi)
+            deviance = w * unit_deviance(y, mu, phi)
             if y == 0.0:
                 log_likelihood -= 0.5 * deviance
                 continue
@@ -1245,11 +1246,11 @@ def _adjusted_profile_likelihood(
             term = (
                 -0.5 * deviance
                 - 0.5 * (_LOG_2PI + math.log(z) + math.log1p(phi * y))
-                - _stirling_error(z)
+                - stirling_error(z)
             )
             if phi > 0.0:
                 size = w / phi
-                term += _stirling_error(z + size) - _stirling_error(size)
+                term += stirling_error(z + size) - stirling_error(size)
             log_likelihood += term
         _, log_determinant = _orthonormal_columns(design, root, basis)
         value = log_likelihood - 0.5 * log_determinant
@@ -1396,9 +1397,9 @@ class QuasiLikelihoodFit:
         return (
             f"QuasiLikelihoodFit(n_features={n_features}, n_samples={n_samples}, "
             f"coefficient_names={self.coefficient_names!r}, "
-            f"dispersion={_summary(self.dispersion)}, "
+            f"dispersion={value_range(self.dispersion)}, "
             f"average_quasi_dispersion={self.average_quasi_dispersion:.6g}, "
-            f"prior_df={_summary(self.prior_df)}, robust={self.robust})"
+            f"prior_df={value_range(self.prior_df)}, robust={self.robust})"
         )
 
 
@@ -1489,10 +1490,10 @@ def fit_quasi_likelihood(
             so that limma's prior cannot be estimated.
     """
     with thread_limit(n_threads):
-        y = _as_counts(counts)
+        y = as_counts(counts)
         n_samples, n_features = y.shape
-        x, names = _design_matrix(design, coefficient_names)
-        _refuse_random_effects(design, "fit_quasi_likelihood")
+        x, names = design_matrix(design, coefficient_names)
+        refuse_random_effects(design, "fit_quasi_likelihood")
         if x.shape[0] != n_samples:
             raise ValueError(
                 f"counts have {n_samples} rows (samples) but the design has "
@@ -1504,11 +1505,15 @@ def fit_quasi_likelihood(
                 f"the design has {x.shape[1]} columns for {n_samples} samples, so it "
                 "leaves no residual degrees of freedom to estimate quasi-dispersions"
             )
-        _check_flag(robust, "robust")
-        prior = _non_negative(prior_count, "prior_count")
-        limit = _iteration_limit(max_iterations)
-        log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
-        w = _weight_matrix(weights, n_samples, n_features)
+        reject_masked(robust, "robust")
+        checked_flag(robust, "robust", expected="a bool")
+        prior = non_negative_number(prior_count, "prior_count")
+        reject_masked(max_iterations, "max_iterations")
+        limit = positive_integer(
+            max_iterations, "max_iterations", expected="a positive integer"
+        )
+        log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
+        w = weight_matrix(weights, n_samples, n_features)
         covariate = _trend_values(trend, n_features)
         if dispersion is not None and top_proportion is not None:
             raise ValueError(
@@ -1552,7 +1557,7 @@ def fit_quasi_likelihood(
                 dispersion=value,
             )
         else:
-            phi = _dispersion_matrix(dispersion, n_samples, n_features)
+            phi = dispersion_matrix(dispersion, n_samples, n_features)
             _check_moment_range(phi, "dispersion", _LARGEST_DISPERSION)
             reported = _as_given(_argument(phi))
             # With a dispersion given, the trends follow the average log CPM at that
@@ -1607,24 +1612,24 @@ def fit_quasi_likelihood(
         dispersion=reported,
         top_proportion=None if dispersion is not None else share,
         average_quasi_dispersion=float(average),
-        unit_deviance_adjusted=_read_only(adjusted.unit_deviance),
-        unit_df_adjusted=_read_only(adjusted.unit_df),
-        leverage=_read_only(adjusted.leverage),
-        deviance_adjusted=_read_only(adjusted.deviance),
-        df_residual_adjusted=_read_only(df),
-        quasi_dispersion=_read_only(quasi),
+        unit_deviance_adjusted=read_only(adjusted.unit_deviance),
+        unit_df_adjusted=read_only(adjusted.unit_df),
+        leverage=read_only(adjusted.leverage),
+        deviance_adjusted=read_only(adjusted.deviance),
+        df_residual_adjusted=read_only(df),
+        quasi_dispersion=read_only(quasi),
         prior_df=_frozen(squeezed.prior_df),
         prior_quasi_dispersion=_frozen(squeezed.prior_variance),
-        posterior_quasi_dispersion=_read_only(
+        posterior_quasi_dispersion=read_only(
             np.asarray(squeezed.posterior_variance, dtype=np.float64)
         ),
         covariate=None
         if trend_values is False
-        else _read_only(np.asarray(trend_values, dtype=np.float64)),
-        average_log_cpm=_read_only(log_cpm),
+        else read_only(np.asarray(trend_values, dtype=np.float64)),
+        average_log_cpm=read_only(log_cpm),
         robust=bool(robust),
         # A copy: the tests refit the null model from these counts.
-        counts=_read_only(np.array(y)),
+        counts=read_only(np.array(y)),
         max_iterations=limit,
     )
 
@@ -1743,7 +1748,7 @@ def quasi_likelihood_f_test(
     if contrasts is not None:
         if coefficients is not None:
             raise ValueError("give coefficients or contrasts to test, not both")
-        matrix, tested = _contrast_matrix(contrasts, names, coefficient_names)
+        matrix, tested = contrast_matrix(contrasts, names, coefficient_names)
         if not np.isfinite(matrix).all():
             raise ValueError("contrasts must be finite")
         null_design, rank = _null_design(x, matrix)
@@ -1784,17 +1789,17 @@ def quasi_likelihood_f_test(
     return QuasiLikelihoodTest(
         fit=fit,
         names=tuple(tested),
-        contrasts=_read_only(np.array(matrix, dtype=np.float64)),
-        log_fold_change=_read_only(np.ascontiguousarray(log_fold_change)),
+        contrasts=read_only(np.array(matrix, dtype=np.float64)),
+        log_fold_change=read_only(np.ascontiguousarray(log_fold_change)),
         average_log_cpm=fit.average_log_cpm,
-        likelihood_ratio=_read_only(likelihood_ratio),
-        f_statistic=_read_only(np.asarray(f_statistic, dtype=np.float64)),
-        p_value=_read_only(p_value),
-        adjusted_p_value=_read_only(
+        likelihood_ratio=read_only(likelihood_ratio),
+        f_statistic=read_only(np.asarray(f_statistic, dtype=np.float64)),
+        p_value=read_only(p_value),
+        adjusted_p_value=read_only(
             np.asarray(adjust_p_values(p_value, "bh"), dtype=np.float64)
         ),
         df_test=int(rank),
-        df_total=_read_only(df_total),
+        df_total=read_only(df_total),
     )
 
 
@@ -1858,22 +1863,12 @@ def _rows(matrix: FloatArray, genes: npt.NDArray[np.int64]) -> FloatArray:
 def _as_given(value: Any) -> float | FloatArray:
     if isinstance(value, float):
         return value
-    return _read_only(np.asarray(value, dtype=np.float64))
-
-
-def _check_flag(value: Any, name: str) -> None:
-    reject_masked(value, name)
-    if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
+    return read_only(np.asarray(value, dtype=np.float64))
 
 
 def _proportion(value: Any) -> float:
     reject_masked(value, "top_proportion")
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(
-            f"top_proportion must be a real number, got {type(value).__name__}"
-        )
-    share = float(value)
+    share = real_number(value, "top_proportion")
     if not 0.0 < share <= 1.0:
         raise ValueError(f"top_proportion must be in (0, 1], got {share}")
     return share
@@ -1909,18 +1904,6 @@ def _search_interval(interval: Any) -> tuple[float, float]:
             f"interval must satisfy 0 <= low < high, both finite; got ({low}, {high})"
         )
     return low, high
-
-
-def _positive_integer(value: Any, name: str) -> int:
-    reject_masked(value, name)
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(
-            f"{name} must be a positive integer, got {type(value).__name__}"
-        )
-    number = int(value)
-    if number < 1:
-        raise ValueError(f"{name} must be at least 1, got {number}")
-    return number
 
 
 def _coefficient_positions(
@@ -1978,13 +1961,4 @@ def _frozen(values: Any) -> Any:
     array = np.asarray(values, dtype=np.float64)
     if array.ndim == 0:
         return float(array)
-    return _read_only(np.array(array))
-
-
-def _summary(values: float | FloatArray) -> str:
-    if isinstance(values, float):
-        return f"{values:.6g}"
-    finite = np.asarray(values)[np.isfinite(values)]
-    if finite.size == 0:
-        return "[non-finite]"
-    return f"[{finite.min():.6g} to {finite.max():.6g}]"
+    return read_only(np.array(array))

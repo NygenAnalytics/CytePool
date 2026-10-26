@@ -30,21 +30,24 @@ import numpy as np
 from numba import prange
 
 from .. import __version__
+from .._columns import is_data_frame
 from .._jit import jit, thread_limit
-from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
-from ..table import Table, _is_data_frame
-from .cube import LAYER_NAMES, Cube, _axis_table
-from .provenance import _source_record
+from .._masked_arrays import (
+    read_only,
+    reject_masked,
+    reject_masked_table,
+    unmasked_array,
+)
+from ..table import Table
+from ._axes import COUNT_LIMIT, UINT32_MAX, axis_codes, count_dtype
+from ._provenance_records import source_record
+from .cube import LAYER_NAMES, Cube
 
 BULK_GROUP = "bulk"
 """The id of the single group of a cube built by ``from_bulk``."""
 
 _NORMALIZED_LAYERS = ("log_sum", "log_sum_sq", "linear_sum")
 
-# float64 holds every whole number below 2**53, so library sizes and integer sums of
-# counts below it are exact; larger counts are rejected.
-_COUNT_LIMIT = 2.0**53
-_UINT32_MAX = np.uint64(2**32 - 1)
 # The largest value of a cube's integer layers, the largest int64. It is a uint64,
 # like the sums it bounds: numba compares uint64 with an int64 through float64,
 # which rounds 2**63 - 1 up to 2**63.
@@ -205,14 +208,14 @@ def from_cells(
     """
     names = _requested_layers(layers)
     target = _positive_number(target_sum, "target_sum")
-    record = _source_record(source)
+    record = source_record(source)
     with thread_limit(n_threads) as threads:
         matrix = _cell_matrix(counts)
         n_rows, n_features = matrix.shape
-        sample_codes, sample_axis, sample_integers = _axis_codes(
+        sample_codes, sample_axis, sample_integers = axis_codes(
             samples, "samples", n_rows, sample_table, "sample_table", "sample_id"
         )
-        group_codes, group_axis, group_integers = _axis_codes(
+        group_codes, group_axis, group_integers = axis_codes(
             groups, "groups", n_rows, group_table, "group_table", "group_id"
         )
         feature_origin = _id_origin(features, counts, "columns")
@@ -246,11 +249,11 @@ def from_cells(
         worker_segments, worker_starts = _assign_workers(filled, work[filled], threads)
         pooled = _pool(
             matrix,
-            _read_only(cell_order),
-            _read_only(segment_starts),
+            read_only(cell_order),
+            read_only(segment_starts),
             worker_segments,
             worker_starts,
-            _read_only(np.empty(0) if sizes is None else sizes),
+            read_only(np.empty(0) if sizes is None else sizes),
             target,
             sum(_LAYER_BITS[name] for name in names if name != "counts"),
             (n_segments, n_features),
@@ -347,7 +350,7 @@ def from_bulk(
         >>> cube.layer("counts", "bulk").dtype
         dtype('uint32')
     """
-    record = _source_record(source)
+    record = source_record(source)
     construction = {
         "function": "from_bulk",
         "cytepool_version": __version__,
@@ -392,30 +395,13 @@ def from_bulk(
         )
     n_samples, n_features = array.shape
     return Cube(
-        {"counts": array.astype(_count_dtype(array, largest))[None]},
+        {"counts": array.astype(count_dtype(array, largest))[None]},
         samples=_ids_or_table(samples, n_samples, "samples", "sample_id"),
         groups={"group_id": [BULK_GROUP]},
         features=_ids_or_table(features, n_features, "features", "feature_id"),
         provenance={"source": record, "construction": construction},
         copy=False,
     )
-
-
-def _count_dtype(counts: np.ndarray, largest: Any) -> type:
-    """Return the dtype of a counts layer that holds these counts exactly.
-
-    ``counts`` are non-negative and finite, integers at most 2**63 - 1, and
-    ``largest`` is their largest value (0 when there are none). The dtype is uint32
-    when every count is a whole number up to 2**32 - 1, uint64 for larger whole
-    numbers, and float64 when a count is not a whole number or, for float input,
-    is at least 2**53, beyond which float64 does not hold every whole number.
-    """
-    whole = counts.dtype.kind in "iu" or bool(
-        largest < _COUNT_LIMIT and np.all(counts == np.floor(counts))
-    )
-    if not whole:
-        return np.float64
-    return np.uint32 if largest <= int(_UINT32_MAX) else np.uint64
 
 
 # The compiled pooling routine.
@@ -459,7 +445,7 @@ def _merge_repeats(
         position = where[column]
         if 0 <= position < merged and row_columns[position] == column:
             total = row_counts[position] + row_counts[entry]
-            if total >= _COUNT_LIMIT:
+            if total >= COUNT_LIMIT:
                 return -1 - column  # type: ignore[no-any-return]
             row_counts[position] = total
         else:
@@ -544,7 +530,7 @@ def _pool_segment(
                 count = np.float64(values_i32[position])
             if column < 0 or column >= n_features:
                 return _BAD_COLUMN, cell, column
-            if not (count >= 0.0 and count < _COUNT_LIMIT):
+            if not (count >= 0.0 and count < COUNT_LIMIT):
                 return _BAD_VALUE, cell, column
             if check_whole and count != np.floor(count):
                 return _NOT_WHOLE, cell, column
@@ -574,7 +560,7 @@ def _pool_segment(
             column = row_columns[entry]
             if counts_kind == _COUNTS_UINT32:
                 narrow = np.uint64(counts_u32[segment, column]) + np.uint64(count)
-                if narrow > _UINT32_MAX:
+                if narrow > UINT32_MAX:
                     return _OVERFLOW, cell, column
                 counts_u32[segment, column] = np.uint32(narrow)
             elif counts_kind == _COUNTS_UINT64:
@@ -872,7 +858,7 @@ def _invalid_input(matrix: _Counts, flag: int, cell: int, column: int) -> ValueE
         entries = stored[column : column + 1]
     else:
         entries = stored[matrix.indices[matrix.column_kind - 1][start:stop] == column]
-    bad = [float(value) for value in entries if not 0 <= value < _COUNT_LIMIT]
+    bad = [float(value) for value in entries if not 0 <= value < COUNT_LIMIT]
     if not bad:
         found = (
             f"repeated entries that sum to {float(entries.sum(dtype=np.float64)):g}, "
@@ -921,23 +907,16 @@ def _assign_workers(
     by_worker = np.argsort(owner, kind="stable")
     worker_segments = segments[order[by_worker]].astype(np.int64)
     worker_starts = np.searchsorted(owner[by_worker], np.arange(n_workers + 1))
-    return _read_only(worker_segments), _read_only(worker_starts.astype(np.int64))
+    return read_only(worker_segments), read_only(worker_starts.astype(np.int64))
 
 
 # Reading the arguments.
 
 
-def _read_only(array: np.ndarray) -> np.ndarray:
-    """Return a read-only view: one compiled version then serves any input."""
-    view = array.view()
-    view.flags.writeable = False
-    return view
-
-
-_EMPTY_VALUES = tuple(_read_only(np.empty(0, dtype=dtype)) for dtype in _VALUE_DTYPES)
+_EMPTY_VALUES = tuple(read_only(np.empty(0, dtype=dtype)) for dtype in _VALUE_DTYPES)
 _EMPTY_INDICES = (
-    _read_only(np.empty(0, dtype=np.int32)),
-    _read_only(np.empty(0, dtype=np.int64)),
+    read_only(np.empty(0, dtype=np.int32)),
+    read_only(np.empty(0, dtype=np.int64)),
 )
 
 
@@ -968,7 +947,7 @@ def _cell_matrix(counts: Any) -> _Counts:
         value_kind,
         _EMPTY_INDICES,
         _DENSE,
-        _read_only(row_starts),
+        read_only(row_starts),
         (n_rows, n_columns),
         n_columns,
     )
@@ -1041,18 +1020,18 @@ def _csr_counts(counts: Any) -> _Counts:
         )
     values, value_kind = _value_slots(data)
     if indices.dtype == np.int32:
-        columns = (_read_only(np.ascontiguousarray(indices)), _EMPTY_INDICES[1])
+        columns = (read_only(np.ascontiguousarray(indices)), _EMPTY_INDICES[1])
         column_kind = _INDICES_INT32
     else:
         wide = np.ascontiguousarray(indices, dtype=np.int64)
-        columns = (_EMPTY_INDICES[0], _read_only(wide))
+        columns = (_EMPTY_INDICES[0], read_only(wide))
         column_kind = _INDICES_INT64
     return _Counts(
         values,
         value_kind,
         columns,
         column_kind,
-        _read_only(row_starts),
+        read_only(row_starts),
         (n_rows, n_columns),
         int(row_lengths.max(initial=0)),
     )
@@ -1071,7 +1050,7 @@ def _value_slots(
         data = data.astype(np.int64)
     kind = next(k for k, slot in enumerate(_VALUE_DTYPES) if data.dtype == slot)
     slots = list(_EMPTY_VALUES)
-    slots[kind] = _read_only(np.ascontiguousarray(data))
+    slots[kind] = read_only(np.ascontiguousarray(data))
     return (slots[0], slots[1], slots[2], slots[3]), kind
 
 
@@ -1128,150 +1107,9 @@ def _library_sizes(value: Any, n_cells: int) -> np.ndarray | None:
     return sizes
 
 
-def _axis_codes(
-    labels: Any,
-    name: str,
-    n_cells: int,
-    table: Any,
-    table_name: str,
-    id_column: str,
-    unit: str = "cell",
-) -> tuple[np.ndarray, Table, bool]:
-    """Return the position of every cell's label on an axis, the axis table, and
-    whether the labels were integers.
-
-    ``unit`` names what holds the labels in messages: a cell, or a row of a table
-    of profiles that already pools cells.
-    """
-    codes, distinct, integers = _factorize(labels, name, n_cells, unit)
-    if table is None:
-        ids = np.empty(len(distinct), dtype=object)
-        ids[:] = distinct
-        return codes, Table({id_column: ids}), integers
-    reject_masked_table(table, table_name, id_column)
-    axis_table, index = _axis_table(table, name, id_column)
-    positions = np.empty(len(distinct), dtype=np.int64)
-    for code, label in enumerate(distinct):
-        position = index.get(label)
-        if position is None:
-            first = int(np.argmax(codes == code))
-            raise ValueError(
-                f"the label {label!r} of {unit} {first} in {name} is not in "
-                f"{table_name}[{id_column!r}]; every label needs a row"
-            )
-        positions[code] = position
-    return positions[codes], axis_table, integers
-
-
-def _factorize(
-    labels: Any, name: str, n_cells: int, unit: str = "cell"
-) -> tuple[np.ndarray, list[str], bool]:
-    """Return the code of every cell's label, the sorted distinct labels, and
-    whether the labels are integers.
-
-    Codes index the returned labels. Integer labels sort in numeric order and become
-    their decimal text. ``unit`` names what holds the labels in messages.
-    """
-    categorical = _categorical_parts(labels)
-    if categorical is not None:
-        codes, values = categorical
-    else:
-        array = unmasked_array(labels, name)
-        if array.ndim != 1:
-            raise ValueError(
-                f"{name} must be 1-D, one label per {unit}, got shape {array.shape}"
-            )
-        if array.dtype.kind == "U" and not isinstance(labels, np.ndarray):
-            # numpy turns a sequence that mixes text with NaN or numbers into text
-            # ("nan", "1"); check such a sequence value by value instead.
-            items = list(labels)
-            if not all(isinstance(item, str) for item in items):
-                array = np.empty(len(items), dtype=object)
-                array[:] = items
-        if array.size == 0:  # numpy reads [] as float64
-            codes, values = np.empty(0, dtype=np.int64), []
-        elif array.dtype.kind in "iu":
-            unique, codes = np.unique(array, return_inverse=True)
-            values = unique.tolist()
-        elif array.dtype.kind in "UTO":
-            index: dict[Any, int] = {}
-            try:
-                codes = np.fromiter(
-                    (index.setdefault(item, len(index)) for item in array.tolist()),
-                    dtype=np.int64,
-                    count=array.size,
-                )
-            except TypeError:
-                raise TypeError(
-                    f"{name} must hold text or integer labels, got values that "
-                    "cannot be used as labels"
-                ) from None
-            values = list(index)
-        else:
-            raise TypeError(
-                f"{name} must hold text or integer labels, got dtype {array.dtype}"
-            )
-    codes = np.asarray(codes, dtype=np.int64).reshape(-1)
-    if codes.size != n_cells:
-        raise ValueError(
-            f"{name} must hold one label per {unit}: counts has {n_cells} rows, "
-            f"{name} has {codes.size} labels"
-        )
-    if codes.size and codes.min() < 0:  # a categorical's code for a missing value
-        raise ValueError(
-            f"{name} has a missing label at {unit} {int(np.argmax(codes < 0))}"
-        )
-    used = np.unique(codes)
-    if used.size < len(values):  # a categorical with unused categories
-        values = [values[code] for code in used.tolist()]
-        codes = np.searchsorted(used, codes)
-    kinds: set[type] = set()
-    for code, value in enumerate(values):
-        if isinstance(value, str) and value:
-            kinds.add(str)
-            continue
-        if isinstance(value, int | np.integer) and not isinstance(
-            value, bool | np.bool_
-        ):
-            kinds.add(int)
-            continue
-        first = int(np.argmax(codes == code))
-        if (
-            value is None
-            or type(value).__name__ in ("NAType", "NaTType")
-            or (isinstance(value, float) and math.isnan(value))
-        ):
-            raise ValueError(f"{name} has a missing label at {unit} {first}")
-        if isinstance(value, str):
-            raise ValueError(f"{name} has an empty label at {unit} {first}")
-        raise TypeError(
-            f"{name} must hold text or integer labels; {unit} {first} has "
-            f"{type(value).__name__} {value!r}"
-        )
-    if len(kinds) > 1:
-        raise TypeError(f"{name} mixes text and integer labels; use one kind")
-    order = sorted(range(len(values)), key=lambda code: values[code])
-    rank = np.empty(len(values), dtype=np.int64)
-    rank[order] = np.arange(len(values))
-    return rank[codes], [str(values[code]) for code in order], kinds == {int}
-
-
-def _categorical_parts(labels: Any) -> tuple[np.ndarray, list[Any]] | None:
-    """Return the codes and categories of pandas categorical labels, else None."""
-    if getattr(getattr(labels, "dtype", None), "name", None) != "category":
-        return None
-    parts = getattr(labels, "cat", labels)  # a Series keeps them in .cat
-    try:
-        codes = np.asarray(parts.codes)
-        categories = np.asarray(parts.categories, dtype=object).tolist()
-    except AttributeError:
-        return None
-    return codes, categories
-
-
 def _frame_labels(counts: Any, axis: str) -> np.ndarray | None:
     """Return the index or columns of a pandas DataFrame when they hold text."""
-    if not _is_data_frame(counts):
+    if not is_data_frame(counts):
         return None
     labels = np.asarray(getattr(counts, axis), dtype=object)
     if all(isinstance(label, str) and label for label in labels.tolist()):
@@ -1288,7 +1126,7 @@ def _id_origin(value: Any, counts: Any, labels: str) -> str:
     if value is None:
         found = _frame_labels(counts, labels)
         return "positions" if found is None else f"data_frame_{labels}"
-    if isinstance(value, Table | Mapping) or _is_data_frame(value):
+    if isinstance(value, Table | Mapping) or is_data_frame(value):
         return "table"
     return "ids"
 
@@ -1300,7 +1138,7 @@ def _ids_or_table(value: Any, n: int, axis: str, id_column: str) -> Table:
         ids = np.empty(n, dtype=object)
         ids[:] = [f"{axis[:-1]}_{i}" for i in range(n)]
         return Table({id_column: ids})
-    if isinstance(value, Table | Mapping) or _is_data_frame(value):
+    if isinstance(value, Table | Mapping) or is_data_frame(value):
         reject_masked_table(value, axis, id_column)
         table = Table(value)
         if len(table) != n:

@@ -104,7 +104,6 @@ References:
 """
 
 import math
-import numbers
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -113,15 +112,30 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
-from cytepool._masked_arrays import reject_masked, unmasked_array
-from cytepool.design.design import Design, _refuse_random_effects
-from cytepool.stats.linear_models import (
-    _aliased_columns,
-    _design_matrix,
-    _expression_matrix,
-    _real_array,
+from cytepool._linear_algebra import (
+    RANK_TOLERANCE,
+    cholesky,
+    cholesky_solve,
+    column_space,
+    orthogonalise,
 )
+from cytepool._masked_arrays import (
+    expression_matrix,
+    real_array,
+    reject_masked,
+    unmasked_array,
+)
+from cytepool._options import (
+    number_at_least,
+    positive_finite_number,
+    positive_integer,
+)
+from cytepool.design._design_matrices import (
+    design_matrix,
+    refuse_random_effects,
+    require_full_rank,
+)
+from cytepool.design.design import Design
 
 __all__ = ["sample_quality_weights"]
 
@@ -222,10 +236,10 @@ def sample_quality_weights(
             of range, or the information matrix is singular (some sample carries no
             information about its variance, and ``prior_n`` is too small).
     """
-    x, names = _design_matrix(design, None)
-    _refuse_random_effects(design, "sample_quality_weights")
-    values = _expression_matrix(y, x.shape[0])
-    _require_full_rank(x, names)
+    x, names = design_matrix(design, None)
+    refuse_random_effects(design, "sample_quality_weights")
+    values = expression_matrix(y, x.shape[0])
+    require_full_rank(x, names)
     prior = _prior_weights(weights, values.shape, ~np.isnan(values))
     model = _variance_model(
         variance_design,
@@ -479,17 +493,6 @@ def _too_few_df_message(df: int) -> str:
     )
 
 
-def _require_full_rank(x: FloatArray, names: tuple[str, ...]) -> None:
-    aliased = _aliased_columns(x)
-    if aliased:
-        listed = ", ".join(repr(names[j]) for j in aliased)
-        raise ValueError(
-            f"design is not of full column rank: column(s) {listed} are linear "
-            "combinations of the preceding columns; remove them or reparametrise "
-            "the design"
-        )
-
-
 def _prior_weights(
     weights: Any, shape: tuple[int, int], observed: npt.NDArray[np.bool_]
 ) -> FloatArray | None:
@@ -500,7 +503,7 @@ def _prior_weights(
     """
     if weights is None:
         return None
-    array = _real_array(unmasked_array(weights, "weights"), "weights")
+    array = real_array(unmasked_array(weights, "weights"), "weights")
     n_samples, n_features = shape
     if array.shape == (n_samples,):
         kind, relevant = "sample weights", observed.any(axis=1)
@@ -563,10 +566,10 @@ def _variance_model(
         raise ValueError(f"method must be one of {listed}, got {method!r}")
     return _VarianceModel(
         basis=basis,
-        prior_n=_real_at_least(prior_n, "prior_n", 0.0),
+        prior_n=number_at_least(prior_n, "prior_n", 0.0),
         method=method,
-        max_iterations=_positive_integer(max_iterations, "max_iterations"),
-        tolerance=_positive_real(tolerance, "tolerance"),
+        max_iterations=positive_integer(max_iterations, "max_iterations"),
+        tolerance=positive_finite_number(tolerance, "tolerance"),
     )
 
 
@@ -605,7 +608,7 @@ def _variance_design_matrix(variance_design: Any, n_samples: int) -> FloatArray:
             "takes the span of fixed columns; build the Design without random="
         )
     matrix = getattr(variance_design, "matrix", variance_design)
-    array = _real_array(unmasked_array(matrix, "variance_design"), "variance_design")
+    array = real_array(unmasked_array(matrix, "variance_design"), "variance_design")
     if array.ndim == 1:
         array = array[:, np.newaxis]
     if array.ndim != 2 or array.shape[0] != n_samples or array.shape[1] == 0:
@@ -616,32 +619,6 @@ def _variance_design_matrix(variance_design: Any, n_samples: int) -> FloatArray:
     if not np.isfinite(array).all():
         raise ValueError("variance_design must be finite")
     return array
-
-
-def _real_at_least(value: Any, name: str, lower: float) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if not (math.isfinite(number) and number >= lower):
-        raise ValueError(f"{name} must be finite and at least {lower:g}, got {number}")
-    return number
-
-
-def _positive_real(value: Any, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if not (math.isfinite(number) and number > 0.0):
-        raise ValueError(f"{name} must be positive and finite, got {number}")
-    return number
-
-
-def _positive_integer(value: Any, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(f"{name} must be an integer, got {type(value).__name__}")
-    if value < 1:
-        raise ValueError(f"{name} must be at least 1, got {value}")
-    return int(value)
 
 
 @jit
@@ -858,7 +835,7 @@ def _project_gene(
             continue
         for t in range(m):
             column[t] /= norm
-        _orthogonalise(column, gene_basis, rank, m)
+        orthogonalise(column, gene_basis, rank, m)
         remainder = 0.0
         for t in range(m):
             remainder += column[t] * column[t]
@@ -870,27 +847,13 @@ def _project_gene(
         rank += 1
     for t in range(m):
         residuals[t] = math.sqrt(weights[rows[t]]) * response[rows[t]]
-    _orthogonalise(residuals, gene_basis, rank, m)
+    orthogonalise(residuals, gene_basis, rank, m)
     for t in range(m):
         total = 0.0
         for a in range(rank):
             total += gene_basis[a, t] * gene_basis[a, t]
         leverages[t] = total
     return m, rank
-
-
-@jit
-def _orthogonalise(
-    vector: FloatArray, gene_basis: FloatArray, rank: int, m: int
-) -> None:
-    """Remove from ``vector[:m]`` its projection on ``gene_basis[:rank, :m]``, twice."""
-    for _ in range(2):
-        for a in range(rank):
-            dot = 0.0
-            for t in range(m):
-                dot += gene_basis[a, t] * vector[t]
-            for t in range(m):
-                vector[t] -= dot * gene_basis[a, t]
 
 
 @jit
@@ -906,27 +869,7 @@ def _cholesky_solve(
     largest = 0.0
     for k in range(n):
         largest = max(largest, abs(matrix[k, k]))
-    for k in range(n):
-        total = matrix[k, k]
-        for j in range(k):
-            total -= matrix[k, j] * matrix[k, j]
-        if not total > _SINGULAR * n * largest:
-            return False
-        pivot = math.sqrt(total)
-        matrix[k, k] = pivot
-        for i in range(k + 1, n):
-            total = matrix[i, k]
-            for j in range(k):
-                total -= matrix[i, j] * matrix[k, j]
-            matrix[i, k] = total / pivot
-    for i in range(n):
-        total = right[i]
-        for j in range(i):
-            total -= matrix[i, j] * solution[j]
-        solution[i] = total / matrix[i, i]
-    for i in range(n - 1, -1, -1):
-        total = solution[i]
-        for j in range(i + 1, n):
-            total -= matrix[j, i] * solution[j]
-        solution[i] = total / matrix[i, i]
+    if not cholesky(matrix, n, _SINGULAR * n * largest):
+        return False
+    cholesky_solve(matrix, n, right, solution)
     return True

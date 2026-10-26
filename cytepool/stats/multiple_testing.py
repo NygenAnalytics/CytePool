@@ -30,13 +30,13 @@ References:
 """
 
 import math
-import operator
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 from cytepool._jit import jit
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import unmasked_array
+from cytepool._options import index_integer
 
 _EULER_GAMMA = 0.5772156649015329
 
@@ -150,14 +150,7 @@ def _p_value_array(p: ArrayLike) -> np.ndarray:
 def _integer(value: int, name: str) -> int:
     if isinstance(value, bool | np.bool_):
         raise TypeError(f"{name} must be an integer, got a boolean")
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, name)
-    try:
-        return operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"{name} must be an integer, got {type(value).__name__}"
-        ) from None
+    return index_integer(value, name, expected="an integer")
 
 
 def _axis_index(axis: int, ndim: int) -> int:

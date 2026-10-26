@@ -964,7 +964,7 @@ estimate. Reference: R 4.4.3, limma 3.62.1.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
-| camera: numbers of genes, correlations, directions, p-values and FDR, with a given or estimated correlation, ranks and a trend | `camera` | 1.5e-14 | 1e-10 | 35 pass |
+| camera: numbers of genes, correlations, directions, p-values and FDR, with a given or estimated correlation, ranks and a trend | `camera` | 1.3e-14 | 1e-10 | 35 pass |
 | camera with robust moderation | `cameraPR`, `rankSumTestWithCorrelation` | 1.7e-12 | 1e-6 | 12 pass |
 | fry with `standardize` `"none"` and `"residual_sd"`: numbers of genes, directions, p-values and FDR, mixed p-values of sets of one or more than d genes, and their FDR | `fry` | 5.2e-13 | 1e-10 | 15 pass |
 | fry with `"posterior_sd"`, with and without trend or robust moderation | `fry` | 4.4e-5 | 1e-3 | 15 pass |

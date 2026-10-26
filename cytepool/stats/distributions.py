@@ -87,20 +87,20 @@ import math
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from cytepool.stats.special import (
-    _apply,
-    _compile,
-    _deviance_term,
-    _log1mexp,
-    _log_beta_positive,
-    _log_beta_prefactor,
-    _log_betainc_pair,
-    _log_betainc_pair_at,
-    _log_gamma_prefactor,
-    _log_gamma_ratio,
-    _log_gammainc_pair,
-    _stirling_error,
-    _two_product,
+from cytepool._jit import jit_numpy_errors
+from cytepool.stats._scalar_special_functions import (
+    deviance_term,
+    elementwise,
+    log1mexp,
+    log_beta_positive,
+    log_beta_prefactor,
+    log_betainc_pair,
+    log_betainc_pair_at,
+    log_gamma_prefactor,
+    log_gamma_ratio,
+    log_gammainc_pair,
+    stirling_error,
+    two_product,
 )
 
 __all__ = [
@@ -235,7 +235,7 @@ _CDF, _SF, _LOGCDF, _LOGSF, _PPF, _ISF = 0, 1, 2, 3, 4, 5
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _normal_upper(x: float) -> float:
     """Return Q(x) = P(Z > x) for x >= 0."""
     if x < 0.5:
@@ -245,12 +245,12 @@ def _normal_upper(x: float) -> float:
     # Q(x) = erfc(u) / 2 with u = x / sqrt 2. Rounding u would cost a relative error of
     # about x^2 eps in the tail; Dekker's product gives the exact remainder du, which is
     # added to first order using d erfc(u) / du = -2 exp(-u^2) / sqrt(pi).
-    u, u_low = _two_product(x, _SQRT_HALF_HI)
+    u, u_low = two_product(x, _SQRT_HALF_HI)
     du = u_low + x * _SQRT_HALF_LO
     return 0.5 * math.erfc(u) - _INV_SQRT_PI * math.exp(-u * u) * du
 
 
-@_compile
+@jit_numpy_errors
 def _normal_log_upper(x: float) -> float:
     """Return log Q(x) for x >= 0."""
     if x < 37.0:  # Q(37) = 5.7e-300 is still a normal double
@@ -263,7 +263,7 @@ def _normal_log_upper(x: float) -> float:
     return -0.5 * x * x - _LN_SQRT_2PI - math.log(t)
 
 
-@_compile
+@jit_numpy_errors
 def norm_cdf_scalar(x: float) -> float:
     """Return P(Z <= x) for a standard normal Z."""
     if math.isnan(x):
@@ -273,13 +273,13 @@ def norm_cdf_scalar(x: float) -> float:
     return 1.0 - _normal_upper(x)
 
 
-@_compile
+@jit_numpy_errors
 def norm_sf_scalar(x: float) -> float:
     """Return P(Z > x) for a standard normal Z."""
     return norm_cdf_scalar(-x)
 
 
-@_compile
+@jit_numpy_errors
 def norm_logcdf_scalar(x: float) -> float:
     """Return log P(Z <= x) for a standard normal Z."""
     if math.isnan(x):
@@ -289,13 +289,13 @@ def norm_logcdf_scalar(x: float) -> float:
     return math.log1p(-_normal_upper(x))
 
 
-@_compile
+@jit_numpy_errors
 def norm_logsf_scalar(x: float) -> float:
     """Return log P(Z > x) for a standard normal Z."""
     return norm_logcdf_scalar(-x)
 
 
-@_compile
+@jit_numpy_errors
 def _polynomial7(c: NDArray[np.float64], r: float) -> float:
     s: float = c[7]
     for k in range(6, -1, -1):
@@ -303,7 +303,7 @@ def _polynomial7(c: NDArray[np.float64], r: float) -> float:
     return s
 
 
-@_compile
+@jit_numpy_errors
 def norm_ppf_scalar(p: float) -> float:
     """Return the standard normal quantile z with P(Z <= z) = p (Wichura 1988, AS 241)."""
     if math.isnan(p) or p < 0.0 or p > 1.0:
@@ -326,7 +326,7 @@ def norm_ppf_scalar(p: float) -> float:
     return -z if q < 0.0 else z
 
 
-@_compile
+@jit_numpy_errors
 def norm_isf_scalar(p: float) -> float:
     """Return the z with P(Z > z) = p."""
     return -norm_ppf_scalar(p)
@@ -337,7 +337,7 @@ def norm_isf_scalar(p: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _t_two_sided(x: float, df: float) -> tuple[float, float]:
     """Return log P(|T| > |x|) and log P(|T| <= |x|) for T ~ t(df), 0 < df < inf.
 
@@ -357,7 +357,7 @@ def _t_two_sided(x: float, df: float) -> tuple[float, float]:
     if r == _INF:
         # w underflows but log w = -log r does not; lambda = a (1 - w) - w / 2 = a.
         log_r = 2.0 * math.log(ax) - math.log(df)
-        return _log_betainc_pair(a, 0.5, 0.0, 1.0, -log_r, 0.0, a)
+        return log_betainc_pair(a, 0.5, 0.0, 1.0, -log_r, 0.0, a)
     w = 1.0 / (1.0 + r)
     v = r / (1.0 + r)  # 1 - w
     log_w = -math.log1p(r)
@@ -371,10 +371,10 @@ def _t_two_sided(x: float, df: float) -> tuple[float, float]:
         lam = 0.5 * w * ((ax - 1.0) * (ax + 1.0))  # a v - w / 2 = w (x^2 - 1) / 2
     else:
         lam = 0.5 * (df * v - w)
-    return _log_betainc_pair(a, 0.5, w, v, log_w, log_v, lam)
+    return log_betainc_pair(a, 0.5, w, v, log_w, log_v, lam)
 
 
-@_compile
+@jit_numpy_errors
 def t_sf_scalar(x: float, df: float) -> float:
     """Return P(T > x) for T ~ t(df); df > 0, df = inf gives the normal distribution."""
     if math.isnan(x) or math.isnan(df) or df <= 0.0:
@@ -387,13 +387,13 @@ def t_sf_scalar(x: float, df: float) -> float:
     return 1.0 - 0.5 * both
 
 
-@_compile
+@jit_numpy_errors
 def t_cdf_scalar(x: float, df: float) -> float:
     """Return P(T <= x) for T ~ t(df)."""
     return t_sf_scalar(-x, df)
 
 
-@_compile
+@jit_numpy_errors
 def t_logsf_scalar(x: float, df: float) -> float:
     """Return log P(T > x) for T ~ t(df)."""
     if math.isnan(x) or math.isnan(df) or df <= 0.0:
@@ -406,7 +406,7 @@ def t_logsf_scalar(x: float, df: float) -> float:
     return math.log1p(-0.5 * math.exp(log_both))
 
 
-@_compile
+@jit_numpy_errors
 def _t_log_density(t: float, df: float, log_norm: float) -> float:
     """Return log f(t) of the t density for t >= 0, given its log normalising constant."""
     if t < 1e150:
@@ -416,7 +416,7 @@ def _t_log_density(t: float, df: float, log_norm: float) -> float:
     return log_norm - 0.5 * (df + 1.0) * log_kernel
 
 
-@_compile
+@jit_numpy_errors
 def _t_quantile_residual(
     t: float, df: float, log_norm: float, central: bool, target: float
 ) -> tuple[float, float]:
@@ -435,7 +435,7 @@ def _t_quantile_residual(
     return h, h * math.exp(log_s - log_density) / t
 
 
-@_compile
+@jit_numpy_errors
 def _t_upper_quantile(p: float, df: float) -> float:
     """Return the t > 0 with P(T > t) = p, for 0 < p < 1/2 and 0 < df < inf.
 
@@ -450,7 +450,7 @@ def _t_upper_quantile(p: float, df: float) -> float:
         return (1.0 - 2.0 * p) / math.sqrt(2.0 * p * (1.0 - p))
     a = 0.5 * df
     if a >= 10.0:
-        log_norm = _log_gamma_ratio(a, 0.5) - 0.5 * math.log(df * _PI)
+        log_norm = log_gamma_ratio(a, 0.5) - 0.5 * math.log(df * _PI)
     else:
         log_norm = math.lgamma(a + 0.5) - math.lgamma(a) - 0.5 * math.log(df * _PI)
     # Near p = 1/2 the quantile is small and log P(T > t) is close to -log 2, so solving
@@ -522,7 +522,7 @@ def _t_upper_quantile(p: float, df: float) -> float:
     return _INF if (h > 0.0) != central else _NAN
 
 
-@_compile
+@jit_numpy_errors
 def t_isf_scalar(p: float, df: float) -> float:
     """Return the t with P(T > t) = p for T ~ t(df)."""
     if math.isnan(p) or math.isnan(df) or p < 0.0 or p > 1.0 or df <= 0.0:
@@ -540,7 +540,7 @@ def t_isf_scalar(p: float, df: float) -> float:
     return _t_upper_quantile(p, df)
 
 
-@_compile
+@jit_numpy_errors
 def t_ppf_scalar(p: float, df: float) -> float:
     """Return the t with P(T <= t) = p for T ~ t(df)."""
     return -t_isf_scalar(p, df)
@@ -551,7 +551,7 @@ def t_ppf_scalar(p: float, df: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _f_tails(x: float, dfn: float, dfd: float) -> tuple[float, float]:
     """Return log P(F > x) and log P(F <= x) for F(dfn, dfd); NaN outside the domain."""
     if math.isnan(x) or math.isnan(dfn) or math.isnan(dfd) or dfn <= 0.0 or dfd <= 0.0:
@@ -567,14 +567,14 @@ def _f_tails(x: float, dfn: float, dfd: float) -> tuple[float, float]:
         a = 0.5 * dfn
         z = a * x
         log_z = math.log(z) if z >= _SMALLEST_NORMAL else math.log(a) + math.log(x)
-        log_p, log_q = _log_gammainc_pair(a, z, log_z, a * (1.0 - x))
+        log_p, log_q = log_gammainc_pair(a, z, log_z, a * (1.0 - x))
         return log_q, log_p
     if dfn == _INF:
         # dfd / F ~ chi-squared(dfd): P(F > x) = P(dfd / 2, dfd / (2 x))
         a = 0.5 * dfd
         z = a / x
         log_z = math.log(z) if z >= _SMALLEST_NORMAL else math.log(a) - math.log(x)
-        log_p, log_q = _log_gammainc_pair(a, z, log_z, a * (x - 1.0) / x)
+        log_p, log_q = log_gammainc_pair(a, z, log_z, a * (x - 1.0) / x)
         return log_p, log_q
     # P(F > x) = I_w(dfd / 2, dfn / 2), w = dfd / (dfd + dfn x) = 1 / (1 + r)
     r = dfn * x / dfd
@@ -582,7 +582,7 @@ def _f_tails(x: float, dfn: float, dfd: float) -> tuple[float, float]:
         r = x * (dfn / dfd)
     if r == _INF:
         log_r = math.log(dfn) + math.log(x) - math.log(dfd)
-        return _log_betainc_pair(0.5 * dfd, 0.5 * dfn, 0.0, 1.0, -log_r, 0.0, 0.5 * dfd)
+        return log_betainc_pair(0.5 * dfd, 0.5 * dfn, 0.0, 1.0, -log_r, 0.0, 0.5 * dfd)
     w = 1.0 / (1.0 + r)
     v = r / (1.0 + r)
     log_w = -math.log1p(r)
@@ -593,28 +593,28 @@ def _f_tails(x: float, dfn: float, dfd: float) -> tuple[float, float]:
     else:  # a subnormal r has lost bits; its logarithm comes from the inputs
         log_v = math.log(dfn) + math.log(x) - math.log(dfd) + log_w
     lam = 0.5 * dfn * w * (x - 1.0)  # (dfd / 2) v - (dfn / 2) w
-    return _log_betainc_pair(0.5 * dfd, 0.5 * dfn, w, v, log_w, log_v, lam)
+    return log_betainc_pair(0.5 * dfd, 0.5 * dfn, w, v, log_w, log_v, lam)
 
 
-@_compile
+@jit_numpy_errors
 def f_cdf_scalar(x: float, dfn: float, dfd: float) -> float:
     """Return P(F <= x) for F ~ F(dfn, dfd)."""
     return math.exp(_f_tails(x, dfn, dfd)[1])
 
 
-@_compile
+@jit_numpy_errors
 def f_sf_scalar(x: float, dfn: float, dfd: float) -> float:
     """Return P(F > x) for F ~ F(dfn, dfd); dfn or dfd may be inf."""
     return math.exp(_f_tails(x, dfn, dfd)[0])
 
 
-@_compile
+@jit_numpy_errors
 def f_logsf_scalar(x: float, dfn: float, dfd: float) -> float:
     """Return log P(F > x) for F ~ F(dfn, dfd)."""
     return _f_tails(x, dfn, dfd)[0]
 
 
-@_compile
+@jit_numpy_errors
 def _f_log_x_density(x: float, dfn: float, dfd: float) -> float:
     """Return log(x f(x)) for the density f of F(dfn, dfd), x > 0 and finite dfn.
 
@@ -626,7 +626,7 @@ def _f_log_x_density(x: float, dfn: float, dfd: float) -> float:
     if dfd == _INF:
         z = a * x
         log_z = math.log(z) if z >= _SMALLEST_NORMAL else math.log(a) + math.log(x)
-        return math.log(a) + _log_gamma_prefactor(a, z, log_z, a * (1.0 - x))
+        return math.log(a) + log_gamma_prefactor(a, z, log_z, a * (1.0 - x))
     r = dfn * x / dfd
     if not (r < _INF):
         r = x * (dfn / dfd)
@@ -642,10 +642,10 @@ def _f_log_x_density(x: float, dfn: float, dfd: float) -> float:
     else:  # a subnormal r has lost bits; its logarithm comes from the inputs
         log_v = math.log(dfn) + math.log(x) - math.log(dfd) + log_w
     lam = 0.5 * dfn * w * (1.0 - x)  # a w - b v
-    return _log_beta_prefactor(a, 0.5 * dfd, v, w, log_v, log_w, lam)
+    return log_beta_prefactor(a, 0.5 * dfd, v, w, log_v, log_w, lam)
 
 
-@_compile
+@jit_numpy_errors
 def _f_quantile_residual(
     x: float, dfn: float, dfd: float, upper: bool, target: float
 ) -> tuple[float, float]:
@@ -661,7 +661,7 @@ def _f_quantile_residual(
     return h, (h * ratio if upper else -h * ratio)
 
 
-@_compile
+@jit_numpy_errors
 def _f_quantile_finish(
     x: float, dfn: float, dfd: float, upper: bool, target: float, high: float
 ) -> float:
@@ -682,7 +682,7 @@ def _f_quantile_finish(
     return x
 
 
-@_compile
+@jit_numpy_errors
 def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float:
     """Return the x > 0 with log P(F > x) = log_p if upper, else log P(F <= x) = log_p.
 
@@ -725,7 +725,7 @@ def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float
             log_tail_start = (target + math.lgamma(a + 1.0)) / a - math.log(a)
     else:
         b = 0.5 * dfd
-        log_beta = _log_beta_positive(a, b)
+        log_beta = log_beta_positive(a, b)
         if upper:  # P(F > x) ~ (dfd / (dfn x))^b / (b B(a, b)) as x -> inf
             log_tail_start = math.log(dfd / dfn) - (target + math.log(b) + log_beta) / b
         else:  # P(F <= x) ~ (dfn x / dfd)^a / (a B(a, b)) as x -> 0
@@ -778,7 +778,7 @@ def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float
     return _NAN
 
 
-@_compile
+@jit_numpy_errors
 def _f_quantile(p: float, upper: bool, dfn: float, dfd: float) -> float:
     """Return the x with P(F > x) = p if upper, else P(F <= x) = p, for 0 < p < 1.
 
@@ -798,7 +798,7 @@ def _f_quantile(p: float, upper: bool, dfn: float, dfd: float) -> float:
     return _f_tail_quantile(math.log1p(-p), not upper, dfn, dfd)
 
 
-@_compile
+@jit_numpy_errors
 def f_isf_scalar(p: float, dfn: float, dfd: float) -> float:
     """Return the x with P(F > x) = p for F ~ F(dfn, dfd); dfn or dfd may be inf."""
     if math.isnan(p) or math.isnan(dfn) or math.isnan(dfd):
@@ -812,7 +812,7 @@ def f_isf_scalar(p: float, dfn: float, dfd: float) -> float:
     return _f_quantile(p, True, dfn, dfd)
 
 
-@_compile
+@jit_numpy_errors
 def f_ppf_scalar(p: float, dfn: float, dfd: float) -> float:
     """Return the x with P(F <= x) = p for F ~ F(dfn, dfd); dfn or dfd may be inf."""
     if math.isnan(p) or math.isnan(dfn) or math.isnan(dfd):
@@ -831,7 +831,7 @@ def f_ppf_scalar(p: float, dfn: float, dfd: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _chi2_tails(x: float, df: float) -> tuple[float, float]:
     """Return log P(X <= x) and log P(X > x) for chi-squared(df); NaN outside the domain."""
     if math.isnan(x) or math.isnan(df) or not (0.0 < df < _INF):
@@ -840,28 +840,28 @@ def _chi2_tails(x: float, df: float) -> tuple[float, float]:
         return -_INF, 0.0
     z = 0.5 * x
     log_z = math.log(z) if z >= _SMALLEST_NORMAL else math.log(x) - _LN2
-    return _log_gammainc_pair(0.5 * df, z, log_z, 0.5 * (df - x))
+    return log_gammainc_pair(0.5 * df, z, log_z, 0.5 * (df - x))
 
 
-@_compile
+@jit_numpy_errors
 def chi2_cdf_scalar(x: float, df: float) -> float:
     """Return P(X <= x) for X ~ chi-squared(df)."""
     return math.exp(_chi2_tails(x, df)[0])
 
 
-@_compile
+@jit_numpy_errors
 def chi2_sf_scalar(x: float, df: float) -> float:
     """Return P(X > x) for X ~ chi-squared(df)."""
     return math.exp(_chi2_tails(x, df)[1])
 
 
-@_compile
+@jit_numpy_errors
 def chi2_logsf_scalar(x: float, df: float) -> float:
     """Return log P(X > x) for X ~ chi-squared(df)."""
     return _chi2_tails(x, df)[1]
 
 
-@_compile
+@jit_numpy_errors
 def chi2_isf_scalar(p: float, df: float) -> float:
     """Return the x with P(X > x) = p for X ~ chi-squared(df), 0 < df < inf."""
     if math.isnan(df) or not (0.0 < df < _INF):
@@ -870,7 +870,7 @@ def chi2_isf_scalar(p: float, df: float) -> float:
     return df * f_isf_scalar(p, df, _INF)
 
 
-@_compile
+@jit_numpy_errors
 def chi2_ppf_scalar(p: float, df: float) -> float:
     """Return the x with P(X <= x) = p for X ~ chi-squared(df), 0 < df < inf."""
     if math.isnan(df) or not (0.0 < df < _INF):
@@ -878,7 +878,7 @@ def chi2_ppf_scalar(p: float, df: float) -> float:
     return df * f_ppf_scalar(p, df, _INF)
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_tails(x: float, shape: float, scale: float) -> tuple[float, float]:
     """Return log P(X <= x) and log P(X > x) for Gamma(shape, scale); NaN off the domain."""
     if (
@@ -894,18 +894,18 @@ def _gamma_tails(x: float, shape: float, scale: float) -> tuple[float, float]:
     z = x / scale
     log_z = math.log(z) if z >= _SMALLEST_NORMAL else math.log(x) - math.log(scale)
     # shape - x / scale = (shape scale - x) / scale, with shape scale formed exactly
-    p, p_low = _two_product(shape, scale)
+    p, p_low = two_product(shape, scale)
     d = ((p - x) + p_low) / scale if p < _INF else shape - z
-    return _log_gammainc_pair(shape, z, log_z, d)
+    return log_gammainc_pair(shape, z, log_z, d)
 
 
-@_compile
+@jit_numpy_errors
 def gamma_cdf_scalar(x: float, shape: float, scale: float) -> float:
     """Return P(X <= x) for X ~ Gamma(shape, scale)."""
     return math.exp(_gamma_tails(x, shape, scale)[0])
 
 
-@_compile
+@jit_numpy_errors
 def gamma_sf_scalar(x: float, shape: float, scale: float) -> float:
     """Return P(X > x) for X ~ Gamma(shape, scale)."""
     return math.exp(_gamma_tails(x, shape, scale)[1])
@@ -916,7 +916,7 @@ def gamma_sf_scalar(x: float, shape: float, scale: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _beta_tails(x: float, a: float, b: float) -> tuple[float, float]:
     """Return log P(X <= x) and log P(X > x) for Beta(a, b); NaN outside the domain."""
     if (
@@ -931,16 +931,16 @@ def _beta_tails(x: float, a: float, b: float) -> tuple[float, float]:
         return -_INF, 0.0
     if x >= 1.0:
         return 0.0, -_INF
-    return _log_betainc_pair_at(a, b, x)
+    return log_betainc_pair_at(a, b, x)
 
 
-@_compile
+@jit_numpy_errors
 def beta_cdf_scalar(x: float, a: float, b: float) -> float:
     """Return P(X <= x) for X ~ Beta(a, b)."""
     return math.exp(_beta_tails(x, a, b)[0])
 
 
-@_compile
+@jit_numpy_errors
 def beta_sf_scalar(x: float, a: float, b: float) -> float:
     """Return P(X > x) for X ~ Beta(a, b)."""
     return math.exp(_beta_tails(x, a, b)[1])
@@ -951,7 +951,7 @@ def beta_sf_scalar(x: float, a: float, b: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _log_binomial_probability(
     k: float, n: float, p: float, q: float, d: float
 ) -> float:
@@ -966,16 +966,16 @@ def _log_binomial_probability(
     if k == n:
         return n * (math.log1p(-q) if q < 0.5 else math.log(p))
     return (
-        _stirling_error(n)
-        - _stirling_error(k)
-        - _stirling_error(n - k)
-        - _deviance_term(k, n * p, d)
-        - _deviance_term(n - k, n * q, -d)
+        stirling_error(n)
+        - stirling_error(k)
+        - stirling_error(n - k)
+        - deviance_term(k, n * p, d)
+        - deviance_term(n - k, n * q, -d)
         + 0.5 * math.log(n / (k * (n - k)) / (2.0 * _PI))
     )
 
 
-@_compile
+@jit_numpy_errors
 def _hypergeom_log_probability(k: float, M: float, n: float, N: float) -> float:
     """Return log P(X = k) for k in the support, 0 < N < M (Loader 2000).
 
@@ -990,8 +990,8 @@ def _hypergeom_log_probability(k: float, M: float, n: float, N: float) -> float:
     # products would leave d with a relative error of eps k / |d|, which the deviance
     # carries into log P(X = k) multiplied by the square of the number of standard
     # deviations between k and the mean.
-    km, km_error = _two_product(k, M)
-    nn, nn_error = _two_product(n, N)
+    km, km_error = two_product(k, M)
+    nn, nn_error = two_product(n, N)
     d = ((km - nn) + (km_error - nn_error)) / M
     return (
         _log_binomial_probability(k, n, p, q, d)
@@ -1000,7 +1000,7 @@ def _hypergeom_log_probability(k: float, M: float, n: float, N: float) -> float:
     )
 
 
-@_compile
+@jit_numpy_errors
 def _hypergeom_log_tails(k: float, M: float, n: float, N: float) -> tuple[float, float]:
     """Return log P(X > k) and log P(X <= k) for Hypergeom(M, n, N); NaN off the domain."""
     if math.isnan(k) or math.isnan(M) or math.isnan(n) or math.isnan(N):
@@ -1046,7 +1046,7 @@ def _hypergeom_log_tails(k: float, M: float, n: float, N: float) -> tuple[float,
             if steps > _MAX_TERMS:
                 return _NAN, _NAN
         log_sf = min(log_first + math.log(total + carried), 0.0)
-        return log_sf, _log1mexp(-log_sf)
+        return log_sf, log1mexp(-log_sf)
     # Lower tail: the probabilities fall from j = k down.
     j = k
     log_first = _hypergeom_log_probability(j, M, n, N)
@@ -1067,16 +1067,16 @@ def _hypergeom_log_tails(k: float, M: float, n: float, N: float) -> tuple[float,
         if steps > _MAX_TERMS:
             return _NAN, _NAN
     log_cdf = min(log_first + math.log(total + carried), 0.0)
-    return _log1mexp(-log_cdf), log_cdf
+    return log1mexp(-log_cdf), log_cdf
 
 
-@_compile
+@jit_numpy_errors
 def hypergeom_sf_scalar(k: float, M: float, n: float, N: float) -> float:
     """Return P(X > k) for X ~ Hypergeom(M, n, N)."""
     return math.exp(_hypergeom_log_tails(k, M, n, N)[0])
 
 
-@_compile
+@jit_numpy_errors
 def hypergeom_logsf_scalar(k: float, M: float, n: float, N: float) -> float:
     """Return log P(X > k) for X ~ Hypergeom(M, n, N)."""
     return _hypergeom_log_tails(k, M, n, N)[0]
@@ -1087,7 +1087,7 @@ def hypergeom_logsf_scalar(k: float, M: float, n: float, N: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _norm_array(x: NDArray[np.float64], kind: int) -> NDArray[np.float64]:
     out = np.empty(x.size)
     for i in range(x.size):
@@ -1106,7 +1106,7 @@ def _norm_array(x: NDArray[np.float64], kind: int) -> NDArray[np.float64]:
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _t_array(
     x: NDArray[np.float64], df: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1125,7 +1125,7 @@ def _t_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _f_array(
     x: NDArray[np.float64],
     dfn: NDArray[np.float64],
@@ -1149,7 +1149,7 @@ def _f_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _chi2_array(
     x: NDArray[np.float64], df: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1170,7 +1170,7 @@ def _chi2_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_array(
     x: NDArray[np.float64],
     shape: NDArray[np.float64],
@@ -1184,7 +1184,7 @@ def _gamma_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _beta_array(
     x: NDArray[np.float64], a: NDArray[np.float64], b: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1195,7 +1195,7 @@ def _beta_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _hypergeom_array(
     k: NDArray[np.float64],
     M: NDArray[np.float64],
@@ -1227,7 +1227,7 @@ def norm_cdf(x: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If ``x`` is not real-valued.
     """
-    return _apply(_norm_array, _CDF, x=x)
+    return elementwise(_norm_array, _CDF, x=x)
 
 
 def norm_sf(x: ArrayLike) -> float | NDArray[np.float64]:
@@ -1243,7 +1243,7 @@ def norm_sf(x: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If ``x`` is not real-valued.
     """
-    return _apply(_norm_array, _SF, x=x)
+    return elementwise(_norm_array, _SF, x=x)
 
 
 def norm_logcdf(x: ArrayLike) -> float | NDArray[np.float64]:
@@ -1258,7 +1258,7 @@ def norm_logcdf(x: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If ``x`` is not real-valued.
     """
-    return _apply(_norm_array, _LOGCDF, x=x)
+    return elementwise(_norm_array, _LOGCDF, x=x)
 
 
 def norm_logsf(x: ArrayLike) -> float | NDArray[np.float64]:
@@ -1273,7 +1273,7 @@ def norm_logsf(x: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If ``x`` is not real-valued.
     """
-    return _apply(_norm_array, _LOGSF, x=x)
+    return elementwise(_norm_array, _LOGSF, x=x)
 
 
 def norm_ppf(p: ArrayLike) -> float | NDArray[np.float64]:
@@ -1288,7 +1288,7 @@ def norm_ppf(p: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If ``p`` is not real-valued.
     """
-    return _apply(_norm_array, _PPF, p=p)
+    return elementwise(_norm_array, _PPF, p=p)
 
 
 def norm_isf(p: ArrayLike) -> float | NDArray[np.float64]:
@@ -1303,7 +1303,7 @@ def norm_isf(p: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If ``p`` is not real-valued.
     """
-    return _apply(_norm_array, _ISF, p=p)
+    return elementwise(_norm_array, _ISF, p=p)
 
 
 def t_cdf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1320,7 +1320,7 @@ def t_cdf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_t_array, _CDF, x=x, df=df)
+    return elementwise(_t_array, _CDF, x=x, df=df)
 
 
 def t_sf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1337,7 +1337,7 @@ def t_sf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_t_array, _SF, x=x, df=df)
+    return elementwise(_t_array, _SF, x=x, df=df)
 
 
 def t_logsf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1354,7 +1354,7 @@ def t_logsf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_t_array, _LOGSF, x=x, df=df)
+    return elementwise(_t_array, _LOGSF, x=x, df=df)
 
 
 def t_ppf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1374,7 +1374,7 @@ def t_ppf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_t_array, _PPF, p=p, df=df)
+    return elementwise(_t_array, _PPF, p=p, df=df)
 
 
 def t_isf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1395,7 +1395,7 @@ def t_isf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_t_array, _ISF, p=p, df=df)
+    return elementwise(_t_array, _ISF, p=p, df=df)
 
 
 def f_cdf(x: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.float64]:
@@ -1413,7 +1413,7 @@ def f_cdf(x: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.fl
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_f_array, _CDF, x=x, dfn=dfn, dfd=dfd)
+    return elementwise(_f_array, _CDF, x=x, dfn=dfn, dfd=dfd)
 
 
 def f_sf(x: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.float64]:
@@ -1431,7 +1431,7 @@ def f_sf(x: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.flo
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_f_array, _SF, x=x, dfn=dfn, dfd=dfd)
+    return elementwise(_f_array, _SF, x=x, dfn=dfn, dfd=dfd)
 
 
 def f_logsf(
@@ -1451,7 +1451,7 @@ def f_logsf(
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_f_array, _LOGSF, x=x, dfn=dfn, dfd=dfd)
+    return elementwise(_f_array, _LOGSF, x=x, dfn=dfn, dfd=dfd)
 
 
 def f_ppf(p: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.float64]:
@@ -1472,7 +1472,7 @@ def f_ppf(p: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.fl
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_f_array, _PPF, p=p, dfn=dfn, dfd=dfd)
+    return elementwise(_f_array, _PPF, p=p, dfn=dfn, dfd=dfd)
 
 
 def f_isf(p: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.float64]:
@@ -1493,7 +1493,7 @@ def f_isf(p: ArrayLike, dfn: ArrayLike, dfd: ArrayLike) -> float | NDArray[np.fl
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_f_array, _ISF, p=p, dfn=dfn, dfd=dfd)
+    return elementwise(_f_array, _ISF, p=p, dfn=dfn, dfd=dfd)
 
 
 def chi2_cdf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1510,7 +1510,7 @@ def chi2_cdf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_chi2_array, _CDF, x=x, df=df)
+    return elementwise(_chi2_array, _CDF, x=x, df=df)
 
 
 def chi2_sf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1527,7 +1527,7 @@ def chi2_sf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_chi2_array, _SF, x=x, df=df)
+    return elementwise(_chi2_array, _SF, x=x, df=df)
 
 
 def chi2_logsf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1544,7 +1544,7 @@ def chi2_logsf(x: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_chi2_array, _LOGSF, x=x, df=df)
+    return elementwise(_chi2_array, _LOGSF, x=x, df=df)
 
 
 def chi2_ppf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1561,7 +1561,7 @@ def chi2_ppf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_chi2_array, _PPF, p=p, df=df)
+    return elementwise(_chi2_array, _PPF, p=p, df=df)
 
 
 def chi2_isf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
@@ -1580,7 +1580,7 @@ def chi2_isf(p: ArrayLike, df: ArrayLike) -> float | NDArray[np.float64]:
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_chi2_array, _ISF, p=p, df=df)
+    return elementwise(_chi2_array, _ISF, p=p, df=df)
 
 
 def gamma_cdf(
@@ -1602,7 +1602,7 @@ def gamma_cdf(
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_gamma_array, _CDF, x=x, shape=shape, scale=scale)
+    return elementwise(_gamma_array, _CDF, x=x, shape=shape, scale=scale)
 
 
 def gamma_sf(
@@ -1622,7 +1622,7 @@ def gamma_sf(
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_gamma_array, _SF, x=x, shape=shape, scale=scale)
+    return elementwise(_gamma_array, _SF, x=x, shape=shape, scale=scale)
 
 
 def beta_cdf(x: ArrayLike, a: ArrayLike, b: ArrayLike) -> float | NDArray[np.float64]:
@@ -1640,7 +1640,7 @@ def beta_cdf(x: ArrayLike, a: ArrayLike, b: ArrayLike) -> float | NDArray[np.flo
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_beta_array, _CDF, x=x, a=a, b=b)
+    return elementwise(_beta_array, _CDF, x=x, a=a, b=b)
 
 
 def beta_sf(x: ArrayLike, a: ArrayLike, b: ArrayLike) -> float | NDArray[np.float64]:
@@ -1658,7 +1658,7 @@ def beta_sf(x: ArrayLike, a: ArrayLike, b: ArrayLike) -> float | NDArray[np.floa
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_beta_array, _SF, x=x, a=a, b=b)
+    return elementwise(_beta_array, _SF, x=x, a=a, b=b)
 
 
 def hypergeom_sf(
@@ -1683,7 +1683,7 @@ def hypergeom_sf(
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_hypergeom_array, _SF, k=k, M=M, n=n, N=N)
+    return elementwise(_hypergeom_array, _SF, k=k, M=M, n=n, N=N)
 
 
 def hypergeom_logsf(
@@ -1705,4 +1705,4 @@ def hypergeom_logsf(
     Raises:
         TypeError: If an argument is not real-valued.
     """
-    return _apply(_hypergeom_array, _LOGSF, k=k, M=M, n=n, N=N)
+    return elementwise(_hypergeom_array, _LOGSF, k=k, M=M, n=n, N=N)

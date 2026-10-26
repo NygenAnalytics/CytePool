@@ -134,12 +134,10 @@ from ..cube.cube import (
     _take_stored_digests,
 )
 from ..table import Table
+from ._files import file_stamp, local_path, same_file
 from .zarr import (
     METADATA_FILE,
     ZarrArray,
-    _file_stamp,
-    _local_path,
-    _same_file,
     check_compression,
     open_array,
     read_group_attributes,
@@ -217,7 +215,7 @@ def write_cube(
     if not isinstance(overwrite, bool):
         raise TypeError(f"overwrite must be True or False, got {overwrite!r}")
     level = check_compression(compression, level)
-    target = _local_path(path)
+    target = local_path(path)
     if not target.parent.is_dir():
         raise FileNotFoundError(f"the directory {target.parent} does not exist")
     _check_target(target, overwrite)
@@ -265,9 +263,9 @@ def read_cube(path: str | os.PathLike[str]) -> Cube:
         TypeError: If a stored value has a type the cube does not accept.
         RuntimeError: If the store was replaced while it was being read.
     """
-    root = _local_path(path)
+    root = local_path(path)
     try:
-        before = _file_stamp(root / METADATA_FILE)
+        before = file_stamp(root / METADATA_FILE)
     except OSError:
         before = None  # read_group_attributes says what is wrong
     attributes = read_group_attributes(root)
@@ -311,10 +309,10 @@ def read_cube(path: str | os.PathLike[str]) -> Cube:
     # A store replaced while it was read could pair one cube's tables with another's
     # layers; the root metadata of a store written anew is a new file.
     try:
-        after = _file_stamp(root / METADATA_FILE)
+        after = file_stamp(root / METADATA_FILE)
     except OSError:
         after = None
-    if before is None or after is None or not _same_file(before, after):
+    if before is None or after is None or not same_file(before, after):
         raise RuntimeError(
             f"the cube file at {root} was replaced or removed while it was being "
             "read; open it again"

@@ -245,10 +245,7 @@ References:
 
 import json
 import numbers
-import operator
-import os
 import warnings
-from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -256,56 +253,56 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ._analysis_records import cube_record, design_record, software_versions
+from ._analysis_records import (
+    cube_record,
+    design_record,
+    matched_samples,
+    software_versions,
+)
 from ._columns import text_column
+from ._counts import effective_library_sizes
 from ._jit import thread_limit
 from ._masked_arrays import reject_masked
-from ._messages import listing, quoted
-from ._options import checked_choice, checked_flag
+from ._messages import PACKAGE_DIRECTORY, listing
+from ._options import (
+    checked_choice,
+    checked_flag,
+    index_integer,
+    non_negative_number,
+    number_at_least,
+    positive_finite_number,
+    positive_integer,
+    real_number,
+)
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
+from .design._design_matrices import is_random_intercept, refuse_random_effects
 from .design.checks import _aliasing, _contrast_violations
-from .design.design import _is_random_intercept, _refuse_random_effects
 from .normalization import (
-    _effective_library_sizes,
-    _non_negative,
-    _real,
     filter_by_expression,
     library_sizes,
     log_cpm,
     tmm_factors,
 )
-from .stats.dream import (
-    _dream_weights,
-    _scaled_prior_weights,
-    moderated_fixed_effect_tests,
+from .stats._mean_variance_trend import scaled_prior_weights, trend_span, voom_inputs
+from .stats._mixed_model_designs import (
+    MixedDesign,
+    mixed_design_of_samples,
+    random_intercepts,
 )
+from .stats.dream import _dream_weights, moderated_fixed_effect_tests
 from .stats.empirical_bayes import moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
 from .stats.mixed_models import _fit as _fit_mixed_model
-from .stats.mixed_models import (
-    _mixed_design_of_samples,
-    _MixedDesign,
-    _random_intercepts,
-    fixed_effect_tests,
-)
+from .stats.mixed_models import fixed_effect_tests
 from .stats.multiple_testing import adjust_p_values
 from .stats.sample_weights import (
     _estimate,
-    _positive_integer,
-    _positive_real,
-    _real_at_least,
     _SingularInformation,
     _variance_model,
     _weights_of,
 )
-from .stats.voom import (
-    VoomResult,
-    _quality_weighted_voom,
-    _trend_span,
-    _voom_inputs,
-    voom,
-)
+from .stats.voom import VoomResult, _quality_weighted_voom, voom
 from .table import Table
 
 __all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
@@ -342,8 +339,6 @@ _DREAM_SETTINGS = {
     "df_method": "satterthwaite",
 }
 _METHODS = ("limma_voom", "limma_trend", "dream_voom")
-# Warnings are attributed to the first caller outside the package.
-_PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 
 
 class DifferentialExpressionResult:
@@ -866,7 +861,7 @@ def limma_trend(
             positive.
         KeyError: If a group is not in the cube.
     """
-    count = _real(prior_count, "prior_count")
+    count = real_number(prior_count, "prior_count", finite=True)
     if not count > 0.0:
         raise ValueError(
             f"prior_count must be positive, so that zero counts have finite logs; got "
@@ -1082,12 +1077,12 @@ def _analyse(
                 "random='(1 | donor)', or test a design without random effects with "
                 "limma_voom"
             )
-        _random_intercepts(design)
+        random_intercepts(design)
     else:
         try:
-            _refuse_random_effects(design, method)
+            refuse_random_effects(design, method)
         except ValueError as error:
-            if not all(_is_random_intercept(effect) for effect in design.random):
+            if not all(is_random_intercept(effect) for effect in design.random):
                 raise
             raise ValueError(
                 f"{error} On a cube, dream_voom fits these random intercepts in every "
@@ -1099,7 +1094,16 @@ def _analyse(
             "this cube does not record (a cube of bulk samples has none); leave "
             "prior_weights at None"
         )
-    cube_rows, order = _matched_samples(cube, design)
+    cube_rows, order = matched_samples(
+        cube,
+        design,
+        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
+        "be matched to the cube's samples; build the Design from cube.samples, or from "
+        "a table whose 'sample_id' column holds cube sample ids",
+        text_ids="the cube's does",
+        data="the cube",
+        data_ids="the cube's sample ids",
+    )
     tested = _contrasts_to_test(design, contrasts, method)
     positions = _group_positions(cube, groups)
     inputs = _Inputs(method, cube, order, cube_rows, tested, settings)
@@ -1111,7 +1115,7 @@ def _analyse(
             warnings.warn(
                 f"group {fit.group_id!r}: {message}",
                 RuntimeWarning,
-                skip_file_prefixes=(_PACKAGE_DIRECTORY,),
+                skip_file_prefixes=(PACKAGE_DIRECTORY,),
             )
         fits.append(fit)
     if settings["adjust_across_groups"]:
@@ -1157,7 +1161,7 @@ class _GroupData:
     sizes: np.ndarray  # library sizes over the features tested
     factors: np.ndarray | None  # normalization factors, or None
     prior: np.ndarray | None  # prior weights of the samples used, or None
-    mixed: _MixedDesign | None  # the mixed model's design of the samples used
+    mixed: MixedDesign | None  # the mixed model's design of the samples used
 
 
 def _prepare_group(
@@ -1223,7 +1227,7 @@ def _prepare_group(
     parts = None
     if mixed:
         try:
-            parts = _mixed_design_of_samples(
+            parts = mixed_design_of_samples(
                 design, inputs.model_rows[used], x_kept, columns
             )
         except ValueError as error:
@@ -1383,9 +1387,9 @@ def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             f"features with counts, and {with_counts} of the {n_tested} features "
             f"tested {'has' if with_counts == 1 else 'have'} counts",
         )
-    sizes = np.array(_effective_library_sizes(y, None, data.factors))
-    fraction = _trend_span(settings["span"], n_tested)
-    prior = None if data.prior is None else _scaled_prior_weights(data.prior, y.shape)
+    sizes = np.array(effective_library_sizes(y, None, data.factors))
+    fraction = trend_span(settings["span"], n_tested)
+    prior = None if data.prior is None else scaled_prior_weights(data.prior, y.shape)
     with thread_limit(settings["n_threads"]):
         try:
             weighted = _dream_weights(y, sizes, fraction, data.mixed, prior, True)
@@ -1482,7 +1486,7 @@ def _voom_weights(
     quality = settings["quality_weights"]
     if quality is None:
         return voom(y, x, norm_factors=factors, span=settings["span"], weights=prior)
-    counts, sizes, fraction = _voom_inputs(
+    counts, sizes, fraction = voom_inputs(
         y, x, None, factors, settings["span"], "limma_voom"
     )
     model = _variance_model(
@@ -1545,52 +1549,6 @@ def _adjust_across_groups(fits: list[_GroupFit], contrasts: Sequence[str]) -> No
 # Checks of the arguments.
 
 
-def _matched_samples(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray]:
-    """The cube position of every design sample, increasing, and their design rows.
-
-    Raises:
-        TypeError, ValueError: If the design's samples cannot be matched to the
-            cube's by ``sample_id``.
-    """
-    table = design.samples
-    if "sample_id" not in table:
-        raise ValueError(
-            "the design's sample table has no 'sample_id' column, so its rows cannot "
-            "be matched to the cube's samples; build the Design from cube.samples, "
-            "or from a table whose 'sample_id' column holds cube sample ids"
-        )
-    ids = table["sample_id"]
-    if ids.dtype != object:
-        raise TypeError(
-            "the design's 'sample_id' column must hold text ids, as the cube's does, "
-            f"got dtype {ids.dtype}"
-        )
-    values = ids.tolist()
-    blank = [row for row, value in enumerate(values) if value is None]
-    if blank:
-        raise ValueError(
-            f"the design's 'sample_id' column is missing in row(s) {listing(blank)}; "
-            "every sample needs an id"
-        )
-    repeated = [value for value, count in Counter(values).items() if count > 1]
-    if repeated:
-        raise ValueError(
-            f"the design's sample table repeats the sample id(s) {quoted(repeated)}; "
-            "each sample must appear once"
-        )
-    index = {value: i for i, value in enumerate(cube.samples["sample_id"].tolist())}
-    unknown = [value for value in values if value not in index]
-    if unknown:
-        raise ValueError(
-            f"{len(unknown)} of the design's {len(values)} samples are not samples of "
-            f"the cube: {quoted(unknown)}; the design's 'sample_id' must hold the "
-            f"cube's sample ids, such as {quoted(list(index)[:3])}"
-        )
-    positions = np.array([index[value] for value in values], dtype=np.intp)
-    order = np.argsort(positions, kind="stable")
-    return positions[order], order
-
-
 def _contrasts_to_test(design: Design, contrasts: Any, function: str) -> Contrasts:
     # make_contrasts refuses contrasts that are or hold a numpy masked array.
     chosen = (
@@ -1642,25 +1600,18 @@ def _group_positions(cube: Cube, groups: str | Sequence[str] | None) -> list[int
 
 
 def _min_cells(value: Any) -> int:
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, "min_cells")
     if isinstance(value, bool | np.bool_):
         raise TypeError("min_cells must be a whole number of cells, not bool")
-    try:
-        number = operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"min_cells must be a whole number of cells, got {type(value).__name__}"
-        ) from None
+    number = index_integer(value, "min_cells", expected="a whole number of cells")
     if number < 0:
         raise ValueError(f"min_cells must be at least 0, got {number}")
     return number
 
 
 def _min_counts(value: Any) -> float:
-    # _real would refuse a masked value too, but without saying how to fix it.
+    # real_number would refuse a masked value too, but without saying how to fix it.
     reject_masked(value, "min_counts")
-    return _non_negative(value, "min_counts")
+    return non_negative_number(value, "min_counts")
 
 
 def _prior_weight_setting(prior_weights: Any) -> str | None:
@@ -1718,13 +1669,13 @@ def _quality_settings(value: Any, method: str) -> dict[str, Any] | None:
         "method": checked_choice(
             settings["method"], "quality_weights['method']", ("gene_by_gene", "reml")
         ),
-        "prior_n": _real_at_least(
+        "prior_n": number_at_least(
             settings["prior_n"], "quality_weights['prior_n']", 0.0
         ),
-        "max_iterations": _positive_integer(
+        "max_iterations": positive_integer(
             settings["max_iterations"], "quality_weights['max_iterations']"
         ),
-        "tolerance": _positive_real(
+        "tolerance": positive_finite_number(
             settings["tolerance"], "quality_weights['tolerance']"
         ),
     }
@@ -1750,16 +1701,9 @@ def _span(value: Any) -> float | None:
 def _threads(value: Any) -> int | None:
     if value is None:
         return None
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, "n_threads")
     if isinstance(value, bool | np.bool_):
         raise TypeError("n_threads must be a positive integer or None, not bool")
-    try:
-        number = operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"n_threads must be a positive integer or None, got {type(value).__name__}"
-        ) from None
+    number = index_integer(value, "n_threads", expected="a positive integer or None")
     if number < 1:
         raise ValueError(f"n_threads must be at least 1, got {number}")
     return number
@@ -1781,7 +1725,7 @@ def _filter_settings(value: Any) -> dict[str, float] | None:
                 f"expression_filter has the unknown setting {name!r}; the settings are "
                 f"{', '.join(_FILTER_DEFAULTS)}"
             )
-        settings[name] = _non_negative(number, f"expression_filter[{name!r}]")
+        settings[name] = non_negative_number(number, f"expression_filter[{name!r}]")
     if settings["min_prop"] > 1.0:
         raise ValueError(
             f"expression_filter['min_prop'] must be in [0, 1], got {settings['min_prop']}"

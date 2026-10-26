@@ -66,6 +66,7 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._masked_arrays import Missing, reject_masked, unmasked_array
+from cytepool._options import integral_number, real_number
 
 __all__ = ["choose_lowess_span", "lowess", "natural_spline_basis"]
 
@@ -151,7 +152,7 @@ def lowess(
         raise ValueError("x must be finite; it contains NaN or infinite values")
     if not np.isfinite(y_values).all():
         raise ValueError("y must be finite; it contains NaN or infinite values")
-    fraction = _real_scalar(span, "span")
+    fraction = real_number(span, "span")
     if not (math.isfinite(fraction) and fraction > 0.0):
         raise ValueError(f"span must be positive and finite, got {fraction}")
     robustness_iterations = _whole_number(iterations, "iterations")
@@ -165,7 +166,7 @@ def lowess(
     if delta is None:
         skip = 0.01 * x_range
     else:
-        skip = _real_scalar(delta, "delta")
+        skip = real_number(delta, "delta")
         if not (math.isfinite(skip) and skip >= 0.0):
             raise ValueError(f"delta must be non-negative and finite, got {skip}")
     if n == 1:
@@ -226,8 +227,8 @@ def choose_lowess_span(
     """
     points = _whole_number(n, "n")
     full = _whole_number(small_n, "small_n")
-    lower = _real_scalar(min_span, "min_span")
-    rate = _real_scalar(power, "power")
+    lower = real_number(min_span, "min_span")
+    rate = real_number(power, "power")
     if not 0.0 < lower <= 1.0:
         raise ValueError(f"min_span must be in (0, 1], got {lower}")
     if not 0.0 <= rate <= 1.0:
@@ -877,15 +878,8 @@ def _real_vector(values: Any, name: str, *, missing: Missing = None) -> FloatArr
     return array.astype(np.float64, copy=False)
 
 
-def _real_scalar(value: Any, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    return float(value)
-
-
 def _whole_number(value: Any, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(f"{name} must be an integer, got {type(value).__name__}")
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative, got {value}")
-    return int(value)
+    number = integral_number(value, name)
+    if number < 0:
+        raise ValueError(f"{name} must be non-negative, got {number}")
+    return number

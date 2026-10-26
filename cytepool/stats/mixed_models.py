@@ -158,20 +158,25 @@ import math
 from collections import namedtuple
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
-from typing import Any, Literal, NamedTuple, cast
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import numba
 import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit, thread_limit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
-from cytepool._masked_arrays import reject_masked, unmasked_array
-from cytepool.design.checks import _aliasing, _random_checks
-from cytepool.design.design import Design, _is_random_intercept
+from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, symmetric
+from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
+from cytepool._summation import observed_means
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design.design import Design
+from cytepool.stats._mixed_model_designs import (
+    MixedDesign,
+    maximum_likelihood,
+    mixed_design,
+)
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.linear_models import _contrast_matrix, _observed_means, _real_array
 
 __all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
 
@@ -404,14 +409,14 @@ def fit_mixed_model(
         >>> fit.component_names
         ('donor',)
     """
-    ml = _maximum_likelihood(method)
+    ml = maximum_likelihood(method)
     with thread_limit(n_threads):
-        parts = _mixed_design(design)
+        parts = mixed_design(design)
         return _fit(y, weights, ml, parts)
 
 
 def _fit(
-    y: npt.ArrayLike, weights: npt.ArrayLike | None, ml: bool, parts: "_MixedDesign"
+    y: npt.ArrayLike, weights: npt.ArrayLike | None, ml: bool, parts: MixedDesign
 ) -> MixedModelFit:
     """Fit every feature of ``y`` with checked design parts, as fit_mixed_model does.
 
@@ -510,7 +515,7 @@ def _fit(
     mean_weights = np.broadcast_to(np.mean(weight_rows, axis=1), n_features)
     return MixedModelFit(
         coefficients=_frozen(coefficients),
-        cov_coefficients=_frozen(_symmetric(covariance)),
+        cov_coefficients=_frozen(symmetric(covariance)),
         variance_components=_frozen(ratios * residual_variance[:, None]),
         residual_variance=_frozen(residual_variance),
         reml_criterion=_frozen(np.full(n_features, np.nan) if ml else criterion),
@@ -518,7 +523,7 @@ def _fit(
         converged=_frozen(converged, np.bool_),
         iterations=_frozen(iterations, np.int64),
         variance_parameter_covariance=_frozen(parameter_covariance),
-        cov_coefficients_derivatives=_frozen(_symmetric(derivatives)),
+        cov_coefficients_derivatives=_frozen(symmetric(derivatives)),
         coefficient_names=names,
         component_names=components,
         design=_frozen(x),
@@ -527,7 +532,7 @@ def _fit(
         fitted_values=_frozen(fitted),
         residual_df=_frozen(residual_df),
         mean_weights=_frozen(mean_weights),
-        mean_expression=_frozen(_observed_means(values)),
+        mean_expression=_frozen(observed_means(values)),
     )
 
 
@@ -587,7 +592,7 @@ def fixed_effect_tests(
         matrix = np.eye(len(fit.coefficient_names))
         contrast_names = fit.coefficient_names
     else:
-        matrix, contrast_names = _contrast_matrix(
+        matrix, contrast_names = contrast_matrix(
             contrasts, names, fit.coefficient_names
         )
     estimate = fit.coefficients @ matrix
@@ -619,164 +624,8 @@ def fixed_effect_tests(
 # Arguments.
 
 
-class _MixedDesign(NamedTuple):
-    """The parts of a mixed model's design that the fits read."""
-
-    x: FloatArray  # (n_samples, n_coefficients) fixed effects, of full column rank
-    names: tuple[str, ...]  # the names of the fixed effects
-    codes: IntArray  # (n_components, n_samples) level of each sample, from 0
-    n_levels: IntArray  # the number of levels of each grouping factor
-    components: tuple[str, ...]  # the names of the grouping factors
-
-
-class _SomeSamples:
-    """What the random-effect checks of a design read, for some of its samples."""
-
-    def __init__(self, n_samples: int, random_parts: tuple[Any, ...]) -> None:
-        self.n_samples = n_samples
-        self._random_parts = random_parts
-
-
-def _mixed_design(design: Any) -> _MixedDesign:
-    """The fixed-effects matrix, its column names, and the random intercepts.
-
-    Returns:
-        The design matrix, its column names, the level of each sample for every
-        grouping factor (``(n_components, n_samples)``, levels numbered from 0), the
-        number of levels of each factor, and the factors' names.
-    """
-    _random_intercepts(design)
-    report = design.check()
-    for issue in report.errors:
-        if issue.kind.startswith("random_"):
-            raise ValueError(f"the random effects cannot be estimated: {issue}")
-    if report.aliased:
-        raise ValueError(
-            "the fixed effects are not of full column rank: column(s) "
-            + ", ".join(repr(name) for name in report.aliased)
-            + " are linear combinations of the preceding columns; remove them or "
-            "reparametrise the design (see design.check())"
-        )
-    x = np.array(design.matrix, dtype=np.float64, order="C")
-    parts = design._random_parts
-    codes = np.array([part[1] for part in parts], dtype=np.int64).reshape(
-        len(parts), x.shape[0]
-    )
-    return _spanning_checked(x, tuple(design.columns), codes, design)
-
-
-def _mixed_design_of_samples(
-    design: Design, rows: npt.NDArray[np.intp], x: FloatArray, names: tuple[str, ...]
-) -> _MixedDesign:
-    """The design parts of some samples of a design, checked as for the design.
-
-    For a fit to a subset of a design's samples, such as those a workflow keeps in
-    one group of a cube: the fixed effects are ``x``, rows of the design's matrix
-    for those samples restricted to columns of full rank, and the random intercepts
-    are the design's, with the levels those samples have, numbered from 0 in order
-    of appearance. The random effects are checked on these samples as
-    ``design.check()`` checks them on all: a factor with one level left, levels with
-    one sample each, levels that the fixed effects separate, or two factors that
-    group the samples alike cannot be estimated.
-
-    Args:
-        design: A ``Design`` with random intercepts, as fit_mixed_model takes.
-        rows: The positions of the samples among the design's, in fitting order.
-        x: ``(len(rows), n_coefficients)`` fixed effects of the samples.
-        names: The names of the columns of ``x``.
-
-    Raises:
-        ValueError: As fit_mixed_model, for these samples; the message says why.
-    """
-    _random_intercepts(design)
-    x = np.array(x, dtype=np.float64, order="C")
-    aliasing = _aliasing(x)
-    if aliasing.aliased:
-        raise ValueError(
-            "the fixed effects are not of full column rank: column(s) "
-            + ", ".join(repr(names[j]) for j in aliasing.aliased)
-            + " are linear combinations of the preceding columns"
-        )
-    parts = []
-    for effect, codes, effects in design._random_parts:
-        index: dict[int, int] = {}
-        recoded = np.array(
-            [index.setdefault(int(code), len(index)) for code in codes[rows]],
-            dtype=np.intp,
-        )
-        parts.append((effect, recoded, replace(effects, matrix=effects.matrix[rows])))
-    errors: list[Any] = []
-    # The checks read the number of samples and the random effects of a Design.
-    _random_checks(
-        cast(Design, _SomeSamples(len(rows), tuple(parts))), aliasing, errors
-    )
-    for issue in errors:
-        raise ValueError(f"the random effects cannot be estimated: {issue}")
-    codes = np.array([part[1] for part in parts], dtype=np.int64).reshape(
-        len(parts), len(rows)
-    )
-    return _spanning_checked(x, tuple(names), codes, design)
-
-
-def _random_intercepts(design: Any) -> None:
-    """Refuse anything but a ``Design`` whose random effects are random intercepts."""
-    reject_masked(design, "design")
-    if not isinstance(design, Design):
-        raise TypeError(
-            "design must be a Design with random effects, such as Design(samples, "
-            f"'~ condition', random='(1 | donor)'); got {type(design).__name__}"
-        )
-    if not design.random:
-        raise ValueError(
-            "the design has no random effects, so there is no mixed model to fit; "
-            "fit it with fit_linear_model, or build it with random effects such as "
-            "random='(1 | donor)'"
-        )
-    for effect in design.random:
-        if not _is_random_intercept(effect):
-            raise ValueError(
-                f"fit_mixed_model fits random intercepts, such as (1 | "
-                f"{effect.group}), but the random effect {effect} has random slopes, "
-                "which are not available yet"
-            )
-
-
-def _spanning_checked(
-    x: FloatArray, names: tuple[str, ...], codes: IntArray, design: Design
-) -> _MixedDesign:
-    """The parts, after refusing fixed and random effects that span every sample."""
-    n_samples = x.shape[0]
-    n_levels = codes.max(axis=1) + 1
-    columns = [x]
-    for row, count in zip(codes, n_levels):
-        indicator = np.zeros((n_samples, int(count)))
-        indicator[np.arange(n_samples), row] = 1.0
-        columns.append(indicator)
-    rank = column_space(np.column_stack(columns)).rank
-    if rank >= n_samples:
-        raise ValueError(
-            f"the fixed and random effects together span every sample ({rank} "
-            f"dimensions for {n_samples} samples), so they reproduce every feature "
-            "exactly; fit_mixed_model does not fit such designs yet: add samples, or "
-            "remove a random effect or a covariate"
-        )
-    components = tuple(effect.group for effect in design.random)
-    return _MixedDesign(x, names, codes, n_levels, components)
-
-
-def _maximum_likelihood(method: Any) -> bool:
-    """Whether ``method`` asks for maximum likelihood ("ml") rather than REML."""
-    if isinstance(method, str) and method in ("reml", "ml"):
-        return method == "ml"
-    error = ValueError if isinstance(method, str) else TypeError
-    raise error(
-        "method must be 'reml' (restricted maximum likelihood, lme4's REML = TRUE) "
-        f"or 'ml' (maximum likelihood, REML = FALSE), got {method!r}"
-    )
-
-
 def _response_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
-    values = _real_array(unmasked_array(y, "y"), "y", boolean=False)
+    values = real_array(unmasked_array(y, "y"), "y", boolean=False)
     if values.ndim != 2:
         raise ValueError(
             "y must be a 2-D array of shape (n_samples, n_features), "
@@ -806,7 +655,7 @@ def _positive_weights(
     """The weights as rows of samples, one per feature or one for all."""
     if weights is None:
         return np.ones((1, shape[0]))
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
+    w = real_array(unmasked_array(weights, "weights"), "weights")
     if w.shape == (shape[0],):
         rows = w[np.newaxis, :]
         kind = "sample weights"
@@ -837,12 +686,6 @@ def _frozen(values: Any, dtype: type = np.float64) -> Any:
     array: npt.NDArray[Any] = np.array(values, dtype=dtype)
     array.flags.writeable = False
     return array
-
-
-def _symmetric(matrices: FloatArray) -> FloatArray:
-    """Average each trailing square matrix with its transpose."""
-    result: FloatArray = (matrices + np.swapaxes(matrices, -1, -2)) / 2.0
-    return result
 
 
 # The fits, compiled.
@@ -1385,7 +1228,7 @@ def _criterion(
             chol[s, t] = scale[s] * gam[s, t] * scale[t]
         if s < q_rest:
             chol[s, s] += 1.0
-    if not _cholesky(chol, pivots):
+    if not cholesky(chol, pivots, 0.0):
         return np.inf
     log_random = 0.0
     for t in range(q_rest):
@@ -1955,7 +1798,7 @@ def _inverse_positive_definite(
     L^-T L^-1. ``matrix`` is overwritten. Returns False if the matrix is not
     positive definite.
     """
-    if not _cholesky(matrix, size):
+    if not cholesky(matrix, size, 0.0):
         return False
     for i in range(size):
         for j in range(size):
@@ -1967,28 +1810,6 @@ def _inverse_positive_definite(
             for t in range(max(i, j), size):
                 total += work[t, i] * work[t, j]
             inverse[i, j] = total
-    return True
-
-
-@jit
-def _cholesky(matrix: FloatArray, size: int) -> bool:
-    """The lower Cholesky factor of ``matrix[:size, :size]`` in place.
-
-    Reads the lower triangle. Returns False if the matrix is not positive definite.
-    """
-    for j in range(size):
-        total = matrix[j, j]
-        for k in range(j):
-            total -= matrix[j, k] * matrix[j, k]
-        if not total > 0.0:
-            return False
-        diagonal = math.sqrt(total)
-        matrix[j, j] = diagonal
-        for i in range(j + 1, size):
-            total = matrix[i, j]
-            for k in range(j):
-                total -= matrix[i, k] * matrix[j, k]
-            matrix[i, j] = total / diagonal
     return True
 
 

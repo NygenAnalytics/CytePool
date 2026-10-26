@@ -116,27 +116,26 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
+from cytepool._counts import as_counts, effective_library_sizes
 from cytepool._jit import thread_limit
-from cytepool._masked_arrays import unmasked_array
 from cytepool.design.design import Design
-from cytepool.normalization import _as_counts, _effective_library_sizes
+from cytepool.stats._mean_variance_trend import (
+    scaled_prior_weights,
+    trend_span,
+    trend_weights,
+    voom_log_cpm,
+    voom_mean_log_count,
+)
+from cytepool.stats._mixed_model_designs import (
+    MixedDesign,
+    maximum_likelihood,
+    mixed_design,
+)
 from cytepool.stats.distributions import norm_isf, norm_logsf, t_logsf, t_sf
 from cytepool.stats.empirical_bayes import moderated_statistics
-from cytepool.stats.linear_models import LinearModelFit, _real_array
-from cytepool.stats.mixed_models import (
-    FixedEffectTests,
-    _fit,
-    _maximum_likelihood,
-    _mixed_design,
-    _MixedDesign,
-)
-from cytepool.stats.voom import (
-    VoomResult,
-    _log_cpm,
-    _mean_log_count,
-    _trend_span,
-    _trend_weights,
-)
+from cytepool.stats.linear_models import LinearModelFit
+from cytepool.stats.mixed_models import FixedEffectTests, _fit
+from cytepool.stats.voom import VoomResult
 
 __all__ = [
     "ModeratedFixedEffectTests",
@@ -270,7 +269,7 @@ def voom_with_dream_weights(
             fewer than two features with counts can be fitted, or the trend is not
             positive where weights are read from it.
     """
-    y = _as_counts(counts)
+    y = as_counts(counts)
     if y.shape[1] < 2:
         raise ValueError(
             f"a mean-variance trend needs at least two features, got {y.shape[1]}"
@@ -281,17 +280,17 @@ def voom_with_dream_weights(
             "model to fit; use voom, which fits the linear model of such a design, or "
             "build the design with random effects such as random='(1 | donor)'"
         )
-    ml = _maximum_likelihood(method)
-    parts = _mixed_design(design)
+    ml = maximum_likelihood(method)
+    parts = mixed_design(design)
     if parts.x.shape[0] != y.shape[0]:
         raise ValueError(
             f"counts have {y.shape[0]} rows (samples) but the design has "
             f"{parts.x.shape[0]}; both need one row per sample"
         )
     # A copy, so that the result does not change with the caller's array.
-    sizes = np.array(_effective_library_sizes(y, library_sizes, norm_factors))
-    fraction = _trend_span(span, y.shape[1])
-    prior = _scaled_prior_weights(weights, y.shape)
+    sizes = np.array(effective_library_sizes(y, library_sizes, norm_factors))
+    fraction = trend_span(span, y.shape[1])
+    prior = scaled_prior_weights(weights, y.shape)
     with thread_limit(n_threads):
         return _dream_weights(y, sizes, fraction, parts, prior, ml)
 
@@ -416,7 +415,7 @@ def _dream_weights(
     y: FloatArray,
     sizes: FloatArray,
     fraction: float,
-    parts: _MixedDesign,
+    parts: MixedDesign,
     prior: FloatArray | None,
     ml: bool,
 ) -> VoomResult:
@@ -432,15 +431,15 @@ def _dream_weights(
         prior: Prior weights, each feature's scaled to mean one, or None.
         ml: Whether to fit by maximum likelihood.
     """
-    log_cpm = _log_cpm(y, sizes)
+    log_cpm = voom_log_cpm(y, sizes)
     fit = _fit(log_cpm, prior, ml, parts)
-    mean_log_count = _mean_log_count(fit.mean_expression, sizes, y)
+    mean_log_count = voom_mean_log_count(fit.mean_expression, sizes, y)
     sigma = np.sqrt(fit.residual_variance)
     in_trend = (y > 0.0).any(axis=0) & np.isfinite(sigma)
     # A feature that the effects reproduce has no fit; its fitted values are its
     # values, the limit of the fits as the residual variance goes to zero.
     fitted = np.where(np.isnan(fit.fitted_values), log_cpm, fit.fitted_values)
-    trend = _trend_weights(
+    trend = trend_weights(
         log_cpm,
         mean_log_count,
         sigma,
@@ -463,33 +462,6 @@ def _dream_weights(
         sqrt_sd_trend=trend.sqrt_sd_trend,
         span=fraction,
     )
-
-
-def _scaled_prior_weights(
-    weights: npt.ArrayLike | None, shape: tuple[int, int]
-) -> FloatArray | None:
-    """Prior weights with each feature's divided by their mean, as variancePartition.
-
-    Sample weights become a vector of mean one, observation weights a matrix whose
-    columns (features) have mean one (found by probing variancePartition).
-    """
-    if weights is None:
-        return None
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
-    if w.shape not in ((shape[0],), shape):
-        raise ValueError(
-            f"weights must have shape ({shape[0]},) for sample weights or {shape} "
-            f"for observation weights, got {w.shape}"
-        )
-    with np.errstate(invalid="ignore"):
-        invalid = int(np.count_nonzero(~(np.isfinite(w) & (w > 0.0))))
-    if invalid:
-        raise ValueError(
-            f"prior weights must be finite and positive; {invalid} are zero, negative "
-            "or not finite. The mixed model of a feature is fitted to all its samples"
-        )
-    scaled: FloatArray = w / np.mean(w, axis=0)
-    return scaled
 
 
 def _signed_z(t: FloatArray, df: FloatArray, p_value: FloatArray) -> FloatArray:

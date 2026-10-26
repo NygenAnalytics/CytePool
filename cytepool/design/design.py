@@ -21,16 +21,16 @@ from typing import Any
 
 import numpy as np
 
+from .._columns import missing_mask
 from .._masked_arrays import reject_masked
-from ..table import Table, _missing_mask
-from .checks import DesignReport, _same_partition, check_design
-from .contrasts import Contrasts, _is_pandas, make_contrasts
+from .._messages import close_matches
+from ..table import Table
+from .checks import DesignReport, check_design
+from .contrasts import Contrasts, make_contrasts
 from .formula import (
     RandomEffect,
-    _close_matches,
     parse_formula,
     parse_random_effects,
-    quote_name,
 )
 from .model_matrix import (
     ModelMatrix,
@@ -283,172 +283,6 @@ def _restore(*state: Any) -> Design:
     return design
 
 
-def _design_columns(design: Any) -> tuple[Any, Any]:
-    """The matrix and column names of a design, as given.
-
-    A design is a ``Design``, a ``ModelMatrix`` or another object with ``matrix``
-    and ``columns`` attributes, a table with ``columns`` such as a pandas
-    DataFrame, or a matrix. A function that fits a model also passes the design
-    to :func:`_refuse_dropped_random_effects`.
-
-    Returns:
-        The matrix, not yet checked or converted, and the column names, or None
-        when the design has none.
-
-    Raises:
-        TypeError: If the design, or its matrix or columns, is a numpy masked array.
-    """
-    reject_masked(design, "design")
-    if _is_pandas(design):
-        # Its columns, which pandas also shows as attributes, are the design's.
-        return design, design.columns
-    if hasattr(design, "matrix") and hasattr(design, "columns"):
-        reject_masked(design.matrix, "design.matrix")
-        reject_masked(design.columns, "design.columns")
-        return design.matrix, design.columns
-    columns = getattr(design, "columns", None)
-    reject_masked(columns, "design.columns")
-    return design, columns
-
-
-def _refuse_dropped_random_effects(
-    design: Any, function: str, block: Any, correlation: float
-) -> None:
-    """Refuse a fit that would drop the random effects of a ``Design``.
-
-    Every function that fits fixed effects and, through a correlation within
-    blocks, at most one random intercept calls this; ``fit_mixed_model``, which
-    estimates random intercepts, does not. A ``Design`` with random effects is
-    accepted only when they are one random intercept, such as ``(1 | donor)``,
-    whose grouping splits the samples as the blocks do, with a correlation of at
-    least zero. Only a ``Design`` carries random effects; any other design is a
-    matrix.
-
-    Args:
-        design: The design given to the fit.
-        function: The name of the fitting function, for the message.
-        block: The block index of each sample, already checked, or None.
-        correlation: The correlation within blocks, already checked.
-
-    Raises:
-        ValueError: If the fit would drop a random effect.
-    """
-    if not isinstance(design, Design) or not design.random:
-        return
-    effects = design.random
-    if block is None:
-        reason = ""
-    elif len(effects) != 1 or not _is_random_intercept(effects[0]):
-        reason = "; block= can stand only for a single random intercept"
-    elif not _same_partition(np.asarray(block), design._random_parts[0][1]):
-        reason = f"; block= does not group the samples as {effects[0]} does"
-    elif correlation < 0.0:
-        reason = (
-            "; a random intercept gives the samples of a group a correlation of at "
-            f"least zero, so correlation={correlation:g} does not stand for "
-            f"{effects[0]}"
-        )
-    else:
-        return
-    raise ValueError(_random_effects_refusal(design, function, reason))
-
-
-def _refuse_random_effects(design: Any, function: str) -> None:
-    """Refuse a fit of fixed effects only for a ``Design`` with random effects.
-
-    Unlike :func:`_refuse_dropped_random_effects`, for functions that take no
-    ``block=`` and ``correlation=``, so that every random effect would be dropped.
-
-    Raises:
-        ValueError: If ``design`` is a ``Design`` with random effects.
-    """
-    if isinstance(design, Design) and design.random:
-        raise ValueError(_random_effects_refusal(design, function, "", block=False))
-
-
-def _is_random_intercept(effect: RandomEffect) -> bool:
-    return effect.effects.intercept and not effect.effects.terms
-
-
-def _random_effects_refusal(
-    design: Design, function: str, reason: str, *, block: bool = True
-) -> str:
-    """Why a fit refuses the random effects of a design, and what can be fitted.
-
-    ``block`` says whether the function fits a random intercept with a known
-    correlation through ``block=`` and ``correlation=``. Random intercepts, alone or
-    with others, are estimated by ``fit_mixed_model``, which the message names
-    first; random slopes are not estimated by any function yet.
-    """
-    effects = design.random
-    listed = " + ".join(str(effect) for effect in effects)
-    noun = "random effect" if len(effects) == 1 else "random effects"
-    shared = len({effect.grouping for effect in effects}) == 1
-    group = effects[0].group if shared else None
-    single = shared and len(effects[0].grouping) == 1
-    # In a formula a name such as "cell type" needs backticks; lme4 names a
-    # combination of variables with them already.
-    term = quote_name(effects[0].grouping[0]) if single else group
-    intercept = len(effects) == 1 and _is_random_intercept(effects[0])
-    intercepts = all(_is_random_intercept(effect) for effect in effects)
-    if group is None:
-        options = [
-            "a fixed-effects analysis, with the Design built without random= and the "
-            "grouping variables in the formula when the conditions compared vary "
-            "within their groups (left out, the samples of a group count as "
-            "independent)"
-        ]
-    else:
-        options = [
-            "a fixed-effects analysis, with the Design built without random= and "
-            f"{term} in the formula when the conditions compared vary within each "
-            f"{group} (left out, the samples of a {group} count as independent)"
-        ]
-        if intercept and block:
-            labels = (
-                f"block=design.samples[{group!r}]"
-                if single
-                else f"block= (the {group} of each sample)"
-            )
-            options.append(
-                "this random intercept with a known correlation between the samples "
-                f"of each {group}, given {labels} and correlation= ({function} does "
-                "not estimate the correlation)"
-            )
-        by = (
-            f"({group!r})"
-            if single
-            else f", by a column holding the {group} of each sample"
-        )
-        options.append(
-            f"when the conditions compared differ between levels of {group}, not "
-            f"within them, a fit of one profile per {group}, pooled first with "
-            f"Cube.collapse_samples{by}"
-        )
-    fitted = (
-        options[0]
-        if len(options) == 1
-        else ("; ".join(options[:-1]) + "; or, " + options[-1])
-    )
-    fits = (
-        f"{function} fits fixed effects and, through block= and correlation=, one "
-        "random intercept with a known correlation"
-        if block
-        else f"{function} fits fixed effects only"
-    )
-    dropped = f"{fits}, so it would drop the {noun} {listed} of this design{reason}."
-    if intercepts:
-        return (
-            f"{dropped} fit_mixed_model estimates {'it' if len(effects) == 1 else 'them'}"
-            " by REML, and fixed_effect_tests tests contrasts of the fixed effects with "
-            f"Satterthwaite's degrees of freedom. Other analyses: {fitted}."
-        )
-    return (
-        f"{dropped} Random slopes are not available yet: fit_mixed_model fits random "
-        f"intercepts only. What can be fitted now: {fitted}."
-    )
-
-
 def _parse_random(random: str | Sequence[str] | None) -> tuple[RandomEffect, ...]:
     if random is None:
         return ()
@@ -488,11 +322,11 @@ def _random_parts(
         if absent:
             raise ValueError(
                 f"the random effect {label} groups by {absent[0]!r}, which is not a "
-                f"column of the sample table{_close_matches(absent[0], table.columns)}"
+                f"column of the sample table{close_matches(absent[0], table.columns)}"
                 f"; columns are: {', '.join(table.columns)}"
             )
         for name in effect.grouping:
-            missing = np.flatnonzero(_missing_mask(table[name]))
+            missing = np.flatnonzero(missing_mask(table[name]))
             if missing.size:
                 raise ValueError(
                     f"the grouping column {name!r} of the random effect {label} has "

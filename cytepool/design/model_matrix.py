@@ -49,18 +49,20 @@ References:
 import itertools
 import math
 import numbers
-from decimal import Decimal
 from collections import Counter
 from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 
+from .._columns import is_data_frame, missing_mask
 from .._masked_arrays import reject_masked
-from ..table import Table, _is_data_frame, _missing_mask
-from .formula import FormulaTerms, _close_matches, parse_formula, quote_name
+from .._messages import close_matches
+from ..table import Table
+from .formula import FormulaTerms, parse_formula, quote_name
 
 __all__ = ["INTERCEPT", "ModelMatrix", "model_matrix"]
 
@@ -226,7 +228,7 @@ def _read_samples(data: Any, name: str) -> tuple[Table, dict[str, tuple[str, ...
     if isinstance(data, Table):
         return data, {}
     categories: dict[str, tuple[str, ...]] = {}
-    if _is_data_frame(data):
+    if is_data_frame(data):
         replaced: dict[int, np.ndarray] = {}
         for position, name in enumerate(data.columns):
             text = _categorical_as_text(data.iloc[:, position])
@@ -289,7 +291,7 @@ def _check_level_names(table: Table, levels: Mapping[str, Any]) -> None:
         if name not in table:
             raise ValueError(
                 f"levels are given for {name!r}, which is not a column of the sample "
-                f"table{_close_matches(name, table.columns)}; columns are: "
+                f"table{close_matches(name, table.columns)}; columns are: "
                 f"{', '.join(table.columns) if table.columns else '(none)'}"
             )
 
@@ -367,12 +369,12 @@ def _read_variables(
         name = absent[0]
         raise ValueError(
             f"{context} uses {quote_name(name)}, which is not a column of the "
-            f"sample table{_close_matches(name, table.columns)}; columns are: "
+            f"sample table{close_matches(name, table.columns)}; columns are: "
             f"{', '.join(table.columns) if table.columns else '(none)'}"
         )
     gaps = []
     for name in names:
-        missing = np.flatnonzero(_missing_mask(table[name]))
+        missing = np.flatnonzero(missing_mask(table[name]))
         if missing.size:
             gaps.append(f"{name!r} in {_describe_rows(table, missing)}")
     if gaps:

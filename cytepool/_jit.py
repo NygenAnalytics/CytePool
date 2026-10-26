@@ -12,23 +12,23 @@ installed numba no longer provides the interfaces used here, routines are
 compiled in every process instead.
 
 Parallel routines use numba's threads; ``thread_limit`` caps how many of them one
-call uses.
+call uses, and ``by_chunks`` runs a loop over items in parallel or on the calling
+thread.
 """
 
 import hashlib
 import logging
-import operator
 import os
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numba
 
-from ._masked_arrays import reject_masked
+from ._options import index_integer
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,14 @@ def jit(function: Callable[..., Any] | None = None, /, **options: Any) -> Any:
         return dispatcher
 
     return decorate if function is None else decorate(function)
+
+
+def jit_numpy_errors[F: Callable[..., Any]](function: F) -> F:
+    """Compile a routine with numba; division by zero gives inf or NaN, as in numpy.
+
+    The compiled routine keeps the Python signature for type checking.
+    """
+    return cast(F, jit(error_model="numpy")(function))
 
 
 @contextmanager
@@ -90,15 +98,7 @@ def thread_limit(n_threads: int | None) -> Iterator[int]:
         return
     if isinstance(n_threads, bool):
         raise TypeError("n_threads must be a positive integer or None, not bool")
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(n_threads, "n_threads")
-    try:
-        limit = operator.index(n_threads)
-    except TypeError:
-        raise TypeError(
-            "n_threads must be a positive integer or None, got "
-            f"{type(n_threads).__name__}"
-        ) from None
+    limit = index_integer(n_threads, "n_threads", expected="a positive integer or None")
     if limit < 1:
         raise ValueError(f"n_threads must be at least 1, got {limit}")
     previous = numba.get_num_threads()
@@ -107,6 +107,29 @@ def thread_limit(n_threads: int | None) -> Iterator[int]:
         yield numba.get_num_threads()
     finally:
         numba.set_num_threads(previous)
+
+
+def by_chunks(
+    parallel: Callable[..., Any],
+    serial: Callable[..., Any],
+    arguments: tuple[Any, ...],
+    n_items: int,
+) -> Any:
+    """Run a compiled loop over items in parallel, or on the calling thread alone.
+
+    ``parallel(*arguments, n_chunks)`` runs the loop in ``n_chunks`` runs of
+    consecutive items on numba's threads, and ``serial(*arguments)`` runs it in
+    order; both do the same operations for every item, so the result does not
+    depend on the number of threads or chunks. With more than one thread and more
+    than one item, the parallel form runs with about four chunks per thread, which
+    balances the work. Otherwise the serial form runs without a parallel region,
+    which forked processes and several Python threads at once can run whatever
+    numba's threading layer.
+    """
+    threads = numba.get_num_threads()
+    if threads > 1 and n_items > 1:
+        return parallel(*arguments, max(1, min(n_items, 4 * threads)))
+    return serial(*arguments)
 
 
 @cache

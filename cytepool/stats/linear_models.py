@@ -27,34 +27,38 @@ References:
 """
 
 import math
-import numbers
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
-from cytepool._masked_arrays import reject_masked, unmasked_array
-from cytepool.design.contrasts import (
-    _is_named_contrasts,
-    _is_pandas,
-    _reject_masked_contrasts,
-    _weights_on_columns,
+from cytepool._jit import by_chunks, jit, thread_limit
+from cytepool._linear_algebra import (
+    RANK_TOLERANCE,
+    correlation_matrix,
+    householder_qr,
+    symmetric,
 )
-from cytepool.design.design import _design_columns, _refuse_dropped_random_effects
-from cytepool._summation import rounded_quotient, two_sum
+from cytepool._masked_arrays import (
+    expression_matrix,
+    real_array,
+    reject_masked,
+    unmasked_array,
+)
+from cytepool._summation import observed_means
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import (
+    aliased_columns,
+    design_matrix,
+    refuse_dropped_random_effects,
+    require_full_rank,
+)
 
 __all__ = ["LinearModelFit", "contrasts_fit", "fit_linear_model"]
 
-# Below this magnitude the splitting in the exactly rounded division cannot
-# overflow; above it, and for a sum that overflowed (NaN after two-sums), a mean
-# is a plain division.
-_EXACT_DIVISION_LIMIT = 2.0**995
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
@@ -309,27 +313,20 @@ def fit_linear_model(
             design column's name to another column.
     """
     with thread_limit(n_threads):
-        x, names = _design_matrix(design, coefficient_names)
+        x, names = design_matrix(design, coefficient_names)
         codes, counts, rho = _block_structure(block, correlation, x.shape[0])
-        _refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
-        values = _expression_matrix(y, x.shape[0])
+        refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
+        values = expression_matrix(y, x.shape[0])
         observed = ~np.isnan(values)
         precision = _precision_weights(weights, values.shape, observed)
 
-        aliased = _aliased_columns(x)
-        if aliased:
-            listed = ", ".join(repr(names[j]) for j in aliased)
-            raise ValueError(
-                f"design is not of full column rank: column(s) {listed} are linear "
-                "combinations of the preceding columns; remove them or "
-                "reparametrise the design"
-            )
+        require_full_rank(x, names)
         if precision is not None and precision.ndim == 1:
             # Sample weights apply to every feature, and a zero weight removes the
             # sample from every feature's fit.
             positive = precision > 0.0
             weighted = x[positive] * np.sqrt(precision[positive])[:, np.newaxis]
-            aliased = _aliased_columns(weighted)
+            aliased = aliased_columns(weighted)
             if aliased:
                 listed = ", ".join(repr(names[j]) for j in aliased)
                 raise ValueError(
@@ -339,7 +336,7 @@ def fit_linear_model(
                 )
 
         complete = bool(observed.all())
-        mean_expression = _observed_means(values)
+        mean_expression = observed_means(values)
         # Only in this case does limma report the covariance matrix of the
         # weighted design; otherwise it reports that of the design without
         # weights (found by probing).
@@ -442,7 +439,7 @@ def contrasts_fit(
             "contrasts_fit with method='limma'), so its contrasts cannot be exact; "
             "contrast the original fit, or use method='limma'"
         )
-    matrix, contrast_names = _contrast_matrix(contrasts, names, fit.coefficient_names)
+    matrix, contrast_names = contrast_matrix(contrasts, names, fit.coefficient_names)
     n_features = fit.coefficients.shape[0]
     n_contrasts = matrix.shape[1]
 
@@ -450,7 +447,7 @@ def contrasts_fit(
     involved = (matrix != 0.0).astype(np.float64)
     undefined = unusable.astype(np.float64) @ involved > 0.0
     coefficients = np.where(unusable, 0.0, fit.coefficients) @ matrix
-    cov_coefficients = _symmetric(matrix.T @ fit.cov_coefficients @ matrix)
+    cov_coefficients = symmetric(matrix.T @ fit.cov_coefficients @ matrix)
 
     stored = fit.cov_coefficients_per_feature
     per_feature: FloatArray | None = None
@@ -471,7 +468,7 @@ def contrasts_fit(
         # that it does not refactorise the design for each feature.
         exact = False
         stdev = np.where(unusable, 0.0, fit.stdev_unscaled)
-        correlations = _correlation_matrix(fit.cov_coefficients)
+        correlations = correlation_matrix(fit.cov_coefficients)
         variances = np.empty((n_features, n_contrasts))
         for j in range(n_contrasts):
             scaled = stdev * matrix[:, j]
@@ -510,7 +507,7 @@ def _fit_shared_design(
     n_samples, n_coefficients = x.shape
     n_features = values.shape[1]
     whitened_design = _whiten(x, sample_weights, codes, counts, correlation)
-    aliased = _aliased_columns(whitened_design)
+    aliased = aliased_columns(whitened_design)
     if aliased:
         listed = ", ".join(repr(names[j]) for j in aliased)
         raise ValueError(
@@ -574,17 +571,9 @@ def _fit_each_feature(
         correlation,
         RANK_TOLERANCE,
     )
-    threads = numba.get_num_threads()
-    if threads > 1:
-        # Several chunks of features per thread balance the work. Each feature is
-        # fitted by the same operations whatever its chunk, so the result does not
-        # depend on the number of threads.
-        n_chunks = max(1, min(values.shape[1], 4 * threads))
-        fitted = _least_squares_per_feature(*arguments, n_chunks)
-    else:
-        # Without a parallel region, which forked processes and several Python
-        # threads at once can run whatever numba's threading layer.
-        fitted = _least_squares_in_order(*arguments)
+    fitted = by_chunks(
+        _least_squares_per_feature, _least_squares_in_order, arguments, values.shape[1]
+    )
     coefficients, stdev_unscaled, sigma, df_residual, per_feature = fitted
     # limma reports the covariance matrix of the design without weights here
     # (found by probing).
@@ -779,7 +768,9 @@ def _fit_features(
                 block_sums,
                 block_counts,
             )
-        rank = _householder_qr(work, m, tolerance, norms, aliased, kept, products)
+        rank = householder_qr(
+            work, m, last, tolerance, False, 0.0, norms, aliased, kept, products
+        )
 
         df = m - rank
         df_residual[g] = df
@@ -870,76 +861,6 @@ def _whiten_blocks(
             work[t, j] = within * work[t, j] + shift * block_sums[k, j]
 
 
-@jit
-def _householder_qr(
-    work: FloatArray,
-    m: int,
-    tolerance: float,
-    norms: FloatArray,
-    aliased: npt.NDArray[np.bool_],
-    kept: IntArray,
-    products: FloatArray,
-) -> int:
-    """Householder QR of the first m rows of the design columns of work.
-
-    The last column of work is the response. Columns are taken in order; one
-    whose part orthogonal to the kept columns before it has a norm at most
-    ``tolerance`` times its own norm is aliased and skipped, as by R's qr().
-    Each reflection is applied in place to every column, the response
-    included. On return, rows ``0:rank`` of the kept column ``kept[t]`` hold
-    column t of the triangular factor, those of an aliased column hold its
-    coordinates in the orthonormal basis of the kept columns, and rows
-    ``rank:m`` of the response hold its residual effects.
-
-    Returns:
-        The rank: the number of kept columns.
-    """
-    n_columns = work.shape[1] - 1
-    norms[:] = 0.0
-    for i in range(m):
-        for j in range(n_columns):
-            norms[j] += work[i, j] * work[i, j]
-    for j in range(n_columns):
-        norms[j] = math.sqrt(norms[j])
-    rank = 0
-    for j in range(n_columns):
-        aliased[j] = True
-        if rank == m:
-            continue
-        total = 0.0
-        for i in range(rank, m):
-            total += work[i, j] * work[i, j]
-        norm = math.sqrt(total)
-        if norm <= tolerance * norms[j]:
-            continue
-        aliased[j] = False
-        head = work[rank, j]
-        alpha = -norm if head >= 0.0 else norm
-        work[rank, j] = head - alpha
-        # The reflection is I - 2 v v' / (v'v) with v = work[rank:m, j], and
-        # v'v = 2 norm (norm + |head|). Kept columns before j are zero from
-        # row rank on, so the reflection leaves them unchanged.
-        products[:] = 0.0
-        for i in range(rank, m):
-            v = work[i, j]
-            for k in range(n_columns + 1):
-                products[k] += v * work[i, k]
-        scale = 1.0 / (norm * (norm + abs(head)))
-        for k in range(n_columns + 1):
-            products[k] *= scale
-        products[j] = 0.0
-        for i in range(rank, m):
-            v = work[i, j]
-            for k in range(n_columns + 1):
-                work[i, k] -= products[k] * v
-        work[rank, j] = alpha
-        for i in range(rank + 1, m):
-            work[i, j] = 0.0
-        kept[rank] = j
-        rank += 1
-    return rank
-
-
 def _writable_c_array(values: npt.NDArray[Any], dtype: type) -> npt.NDArray[Any]:
     return np.require(values, dtype=dtype, requirements=["C", "W", "A"])
 
@@ -969,137 +890,10 @@ def _whiten(
     return within * z + shift[codes][:, np.newaxis] * sums[codes]
 
 
-def _aliased_columns(x: FloatArray) -> list[int]:
-    """Indices of the columns of x that are linear combinations of earlier ones.
-
-    The rule is R's ``qr()`` rule, as in :func:`column_space`; the compiled
-    :func:`_householder_qr` applies the same tolerance to each feature.
-    """
-    return list(column_space(x).aliased)
-
-
 def _inverse_cross_product(r: FloatArray) -> FloatArray:
     """(R'R)^-1 from the triangular factor R of a QR factorisation."""
     r_inverse = np.linalg.solve(r, np.eye(r.shape[0]))
-    return _symmetric(r_inverse @ r_inverse.T)
-
-
-def _symmetric(matrix: FloatArray) -> FloatArray:
-    return (matrix + matrix.T) / 2.0
-
-
-def _correlation_matrix(covariance: FloatArray) -> FloatArray:
-    """Correlations of a covariance matrix, zero for a constant coefficient.
-
-    A coefficient with zero variance contributes nothing to a contrast's
-    variance whatever its correlations, so they are set to zero.
-    """
-    scale = np.sqrt(np.diag(covariance))
-    constant = scale == 0.0
-    scale = np.where(constant, 1.0, scale)
-    correlations: FloatArray = covariance / np.outer(scale, scale)
-    correlations[constant, :] = 0.0
-    correlations[:, constant] = 0.0
-    return correlations
-
-
-def _observed_means(values: FloatArray) -> FloatArray:
-    """Mean of the observed (non-NaN) values of each column; NaN for none.
-
-    limma's ``Amean`` is R's ``rowMeans``, which accumulates in extended
-    precision. Sums with error compensation, divided with a single rounding, give
-    the exactly rounded mean, which is rowMeans' value to the last bit on
-    log-expression data (found by probing; R rounds its extended sum, so values
-    spanning many decades can differ in the last bit). voom needs them exactly:
-    LOWESS treats tied means differently from means a rounding error apart.
-    """
-    means: FloatArray = _compensated_means(_writable_c_array(values, np.float64))
-    return means
-
-
-@jit
-def _compensated_means(values: FloatArray) -> FloatArray:
-    """Column means of the non-NaN values, each rounded once (NaN for none).
-
-    Near the largest doubles, where the exact division would overflow, the mean is
-    the plain sum divided by the count, infinite when the sum overflows.
-    """
-    n_rows, n_columns = values.shape
-    high = np.zeros(n_columns)
-    low = np.zeros(n_columns)
-    plain = np.zeros(n_columns)
-    counts = np.zeros(n_columns)
-    for i in range(n_rows):
-        for j in range(n_columns):
-            value = values[i, j]
-            if math.isnan(value):
-                continue
-            total, error = two_sum(high[j], value)
-            high[j] = total
-            low[j] += error
-            plain[j] += value
-            counts[j] += 1.0
-    means = np.empty(n_columns)
-    for j in range(n_columns):
-        if counts[j] == 0.0:
-            means[j] = np.nan
-            continue
-        total, remainder = two_sum(high[j], low[j])
-        if abs(total) < _EXACT_DIVISION_LIMIT:
-            means[j] = rounded_quotient(total, remainder, counts[j])
-        else:
-            means[j] = plain[j] / counts[j]
-    return means
-
-
-def _design_matrix(
-    design: Any, coefficient_names: Sequence[str] | None
-) -> tuple[FloatArray, tuple[str, ...]]:
-    matrix, columns = _design_columns(design)
-    reject_masked(coefficient_names, "coefficient_names")
-    x = _real_array(unmasked_array(matrix, "design"), "design")
-    if x.ndim != 2:
-        raise ValueError(
-            "design must be a 2-D array of shape (n_samples, n_coefficients), "
-            f"got shape {x.shape}"
-        )
-    if x.shape[0] == 0 or x.shape[1] == 0:
-        raise ValueError(
-            f"design must have at least one row and one column, got shape {x.shape}"
-        )
-    if not np.isfinite(x).all():
-        raise ValueError("design must be finite; it contains NaN or infinite values")
-    if coefficient_names is not None:
-        names = _checked_names(coefficient_names, x.shape[1], "coefficient_names")
-        if columns is not None:
-            _check_renaming(
-                names, [str(c) for c in columns], "coefficient_names", "the design"
-            )
-    elif columns is not None:
-        names = _checked_names([str(c) for c in columns], x.shape[1], "design columns")
-    else:
-        names = tuple(f"x{j + 1}" for j in range(x.shape[1]))
-    # A copy, so that the fit does not change with the caller's array.
-    return np.array(x, dtype=np.float64, order="C"), names
-
-
-def _expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
-    values = _real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
-    if values.ndim != 2:
-        raise ValueError(
-            "y must be a 2-D array of shape (n_samples, n_features), "
-            f"got shape {values.shape}"
-        )
-    if values.shape[0] != n_samples:
-        raise ValueError(
-            f"y has {values.shape[0]} rows but design has {n_samples}; "
-            "rows of both are samples"
-        )
-    if values.shape[1] == 0:
-        raise ValueError("y must have at least one feature (column)")
-    if np.isinf(values).any():
-        raise ValueError("y contains infinite values; mark missing values with NaN")
-    return values
+    return symmetric(r_inverse @ r_inverse.T)
 
 
 def _precision_weights(
@@ -1109,7 +903,7 @@ def _precision_weights(
 ) -> FloatArray | None:
     if weights is None:
         return None
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
+    w = real_array(unmasked_array(weights, "weights"), "weights")
     with np.errstate(invalid="ignore"):
         valid = np.isfinite(w) & (w >= 0.0)
     if w.shape == (shape[0],):
@@ -1171,169 +965,6 @@ def _block_structure(
             f"the correlation matrix is positive definite only above {bound:.6g}"
         )
     return codes.astype(np.int64).reshape(n_samples), counts.astype(np.int64), rho
-
-
-def _contrast_matrix(
-    contrasts: Any, names: Sequence[str] | None, coefficient_names: tuple[str, ...]
-) -> tuple[FloatArray, tuple[str, ...]]:
-    """The contrast matrix, rows in the order of the coefficients, and its names.
-
-    Weights that name their coefficients are matched to them by name, by the
-    rule of :func:`cytepool.design.contrasts._weights_on_columns`; the others
-    are taken in order.
-    """
-    _reject_masked_contrasts(contrasts, "contrasts")
-    reject_masked(names, "names")
-    n_coefficients = len(coefficient_names)
-    remedy = _contrasts_remedy(coefficient_names)
-    named = _is_named_contrasts(contrasts)
-    if (named or isinstance(contrasts, Mapping)) and names is not None:
-        raise ValueError(
-            "names must not be given when contrasts is a mapping or a Contrasts, "
-            "which carry their own names"
-        )
-    if named:
-        weights = _weights_on_columns(
-            contrasts,
-            coefficient_names,
-            label="the contrasts",
-            target="the fit's coefficients",
-            remedy=remedy,
-        )
-        matrix = _real_array(weights, "contrasts")
-        if matrix.shape[1] == 0:
-            raise ValueError("contrasts must hold at least one contrast")
-        contrast_names = _checked_names(
-            contrasts.names, matrix.shape[1], "contrast names"
-        )
-    elif isinstance(contrasts, Mapping):
-        if not contrasts:
-            raise ValueError("contrasts must hold at least one contrast")
-        vectors = []
-        for key, vector in contrasts.items():
-            weights = _weights_on_columns(
-                vector,
-                coefficient_names,
-                label=f"contrast {key!r}",
-                target="the fit's coefficients",
-                remedy=remedy,
-            )
-            values = _real_array(weights, f"contrast {key!r}")
-            if values.shape != (n_coefficients,):
-                raise ValueError(
-                    f"contrast {key!r} must have one value per coefficient "
-                    f"({n_coefficients}), got shape {values.shape}"
-                )
-            vectors.append(values)
-        matrix = np.column_stack(vectors)
-        contrast_names = _checked_names(
-            list(contrasts.keys()), matrix.shape[1], "contrast names"
-        )
-    else:
-        # The columns of a DataFrame, or the name of a Series, name its contrasts;
-        # the index names its rows.
-        columns = getattr(contrasts, "columns", None)
-        if _is_pandas(contrasts) and columns is None:
-            name = getattr(contrasts, "name", None)
-            columns = [name] if isinstance(name, str) else None
-        weights = _weights_on_columns(
-            contrasts,
-            coefficient_names,
-            label="the contrasts",
-            target="the fit's coefficients",
-            remedy=remedy,
-        )
-        matrix = _real_array(weights, "contrasts")
-        if matrix.ndim == 1:
-            matrix = matrix[:, np.newaxis]
-        if matrix.ndim != 2 or matrix.shape[0] != n_coefficients:
-            raise ValueError(
-                "contrasts must have one row per coefficient of the fit "
-                f"({n_coefficients}), got shape {matrix.shape}"
-            )
-        if matrix.shape[1] == 0:
-            raise ValueError("contrasts must hold at least one contrast")
-        if names is not None:
-            contrast_names = _checked_names(names, matrix.shape[1], "names")
-            if columns is not None:
-                _check_renaming(
-                    contrast_names, [str(c) for c in columns], "names", "the contrasts"
-                )
-        elif columns is not None:
-            contrast_names = _checked_names(
-                [str(c) for c in columns], matrix.shape[1], "contrast columns"
-            )
-        else:
-            contrast_names = tuple(f"contrast{j + 1}" for j in range(matrix.shape[1]))
-    if not np.isfinite(matrix).all():
-        raise ValueError("contrasts must be finite")
-    return np.array(matrix, dtype=np.float64, order="C"), contrast_names
-
-
-def _contrasts_remedy(coefficient_names: tuple[str, ...]) -> str:
-    """How to make contrasts that match a fit, for error messages."""
-    remedy = "make them with make_contrasts(..., fit.coefficient_names)"
-    if coefficient_names == tuple(f"x{j + 1}" for j in range(len(coefficient_names))):
-        remedy += (
-            "; the fit has the default names x1, x2, ..., so fit the Design itself, "
-            "not its matrix, to keep the names of its columns"
-        )
-    return remedy
-
-
-def _check_renaming(
-    given: tuple[str, ...], existing: Sequence[str], label: str, owner: str
-) -> None:
-    """Refuse new names that give a column the name another column already has.
-
-    Names given by position rename the columns in order. Coefficients and
-    contrasts are matched by name downstream, so moving a name to another
-    column would silently swap what it refers to.
-    """
-    existing = list(existing)
-    for position, name in enumerate(given):
-        own = position < len(existing) and existing[position] == name
-        if name in existing and not own:
-            raise ValueError(
-                f"{label} give column {position + 1} the name {name!r}, the name of "
-                f"column {existing.index(name) + 1} of {owner}; {label} rename "
-                f"the columns in order ({', '.join(map(repr, existing))}), so a name "
-                "already in use may only label its own column"
-            )
-
-
-def _checked_names(names: Any, count: int, label: str) -> tuple[str, ...]:
-    if isinstance(names, str):
-        raise TypeError(f"{label} must be a sequence of strings, not a single string")
-    checked = tuple(names)
-    if not all(isinstance(name, str) for name in checked):
-        raise TypeError(f"{label} must be strings")
-    checked = tuple(str(name) for name in checked)
-    if len(checked) != count:
-        raise ValueError(f"{label} must have {count} entries, got {len(checked)}")
-    if len(set(checked)) != count:
-        raise ValueError(f"{label} must be unique, got {checked}")
-    return checked
-
-
-def _real_array(values: Any, name: str, *, boolean: bool = True) -> FloatArray:
-    """Values as float64 without copying when possible; booleans optional.
-
-    Object arrays, such as a table whose columns mix booleans and floats, are
-    accepted when every element is a real number.
-    """
-    array = np.asarray(values)
-    if array.dtype.kind == "O":
-        flags = (bool, np.bool_)
-        kinds = {type(value) for value in array.flat}
-        if not all(issubclass(kind, (numbers.Real, np.bool_)) for kind in kinds) or (
-            not boolean and any(issubclass(kind, flags) for kind in kinds)
-        ):
-            raise TypeError(f"{name} must hold real numbers")
-        array = array.astype(np.float64)
-    if array.dtype.kind not in ("biuf" if boolean else "iuf"):
-        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
-    return array.astype(np.float64, copy=False)
 
 
 def _read_only(

@@ -182,32 +182,29 @@ import operator
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
+from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._options import checked_flag, positive_integer
+from cytepool._ranks import average_ranks_in_order
+from cytepool._summation import observed_means
+from cytepool.stats._gene_sets import (
+    check_matched,
+    checked_gene_sets,
+    contrast_design,
+    expression_values,
+    gene_effects,
+    gene_positions,
+    id_positions,
+    set_label,
+    set_positions,
+)
+from cytepool.stats._moderation import coefficient_prior_variance, log_odds
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.empirical_bayes import (
-    _coefficient_prior_variance,
-    _log_odds,
-    squeeze_variances,
-)
-from cytepool.stats.gene_set_tests import (
-    _check_matched,
-    _checked_gene_sets,
-    _contrast_design,
-    _effects,
-    _expression,
-    _flag,
-    _id_positions,
-    _positions,
-    _set_label,
-    _set_positions,
-)
-from cytepool.stats.linear_models import _observed_means
+from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.table import Table
 
@@ -407,7 +404,7 @@ def mroast(
         ValueError: As :func:`roast`, or if ``gene_sets`` is empty or no gene id of
             any set is among ``gene_ids``.
     """
-    use_mid_p = _flag(mid_p, "mid_p")
+    use_mid_p = checked_flag(mid_p, "mid_p", expected="a bool")
     tests = _roast_tests(
         y,
         design,
@@ -510,7 +507,9 @@ def romer(
     """
     statistic = _statistic(set_statistic, _ROMER_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    shrink = _flag(shrink_contrast_effects, "shrink_contrast_effects")
+    shrink = checked_flag(
+        shrink_contrast_effects, "shrink_contrast_effects", expected="a bool"
+    )
     generator = _generator(rng)
     with thread_limit(n_threads):
         return _romer_sets(
@@ -540,28 +539,28 @@ def _romer_sets(
     generator: np.random.Generator,
 ) -> Table:
     """:func:`romer` once its options are checked."""
-    values, precision = _expression(y, weights)
+    values, precision = expression_values(y, weights)
     if precision is not None and precision.ndim != 1:
         raise ValueError(
             "romer takes sample weights only, of shape (n_samples,); limma's romer "
             "has no observation weights, so a VoomResult or a matrix of weights "
             "cannot be used"
         )
-    index = _checked_gene_sets(gene_sets, gene_ids, values.shape[1])
+    index = checked_gene_sets(gene_sets, gene_ids, values.shape[1])
     names, members = [], []
     matched = 0
     for name, genes in gene_sets.items():
-        label = _set_label(name)
+        label = set_label(name)
         if isinstance(genes, Mapping):
             raise TypeError(
                 f"{label} maps genes to contribution weights, which romer does not "
                 "take; give the set's genes as a list"
             )
-        positions, found = _set_positions(genes, label, index, values.shape[1])
+        positions, found = set_positions(genes, label, index, values.shape[1])
         names.append(name)
         members.append(positions)
         matched += found
-    _check_matched(index, matched)
+    check_matched(index, matched)
     p_values = _romer_p_values(
         values,
         design,
@@ -619,8 +618,8 @@ def _roast_tests(
     """The active proportions and p-values of each set, for roast and mroast."""
     statistic = _statistic(set_statistic, _ROAST_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    with_trend = _flag(trend, "trend")
-    with_robust = _flag(robust, "robust")
+    with_trend = checked_flag(trend, "trend", expected="a bool")
+    with_robust = checked_flag(robust, "robust", expected="a bool")
     generator = _generator(rng)
     with thread_limit(n_threads):
         return _roast_sets(
@@ -656,19 +655,19 @@ def _roast_sets(
     function: str,
 ) -> _RoastTests:
     """:func:`_roast_tests` once its options are checked."""
-    values, precision = _expression(y, weights)
+    values, precision = expression_values(y, weights)
     n_genes = values.shape[1]
     contribution = _gene_weights(gene_weights, n_genes)
     names, members, set_weights = _weighted_sets(
         gene_sets, gene_ids, n_genes, contribution, single=function == "roast"
     )
-    reparametrised, d = _contrast_design(values, design, contrast, function)
-    effects = _effects(values, reparametrised, precision)
+    reparametrised, d = contrast_design(values, design, contrast, function)
+    effects = gene_effects(values, reparametrised, precision)
     variances = np.sum(effects[:, 1:] ** 2, axis=1) / d
     squeezed = squeeze_variances(
         variances,
         d,
-        covariate=_observed_means(values) if with_trend else None,
+        covariate=observed_means(values) if with_trend else None,
         robust=with_robust,
     )
     prior_variance = np.broadcast_to(squeezed.prior_variance, (n_genes,))
@@ -875,22 +874,15 @@ def _counts(
     The rotations are drawn ``_ROTATION_BATCH`` at a time, which bounds the memory
     they take; numpy's generator gives the same stream however its draws are split.
     """
-    threads = numba.get_num_threads()
     total: npt.NDArray[np.int64] | None = None
     for first in range(0, n_rotations, _ROTATION_BATCH):
         rotations = _rotation_vectors(
             generator, min(_ROTATION_BATCH, n_rotations - first), dimension
         )
-        n_batch = rotations.shape[0]
-        if threads > 1 and n_batch > 1:
-            # Several chunks of rotations per thread balance the work. The counts are
-            # sums of integers, so they do not depend on the number of threads.
-            n_chunks = max(1, min(n_batch, 4 * threads))
-            counts = parallel(*arguments, observed, rotations, n_chunks)
-        else:
-            # Without a parallel region, which forked processes and several Python
-            # threads at once can run whatever numba's threading layer.
-            counts = serial(*arguments, observed, rotations)
+        # The counts are sums of integers, so they do not depend on the chunks.
+        counts = by_chunks(
+            parallel, serial, (*arguments, observed, rotations), rotations.shape[0]
+        )
         total = counts if total is None else total + counts
     assert total is not None  # n_rotations is at least 1
     return total
@@ -1120,8 +1112,8 @@ def _romer_p_values(
     generator: np.random.Generator,
 ) -> FloatArray:
     """``(n_sets, 3)`` up, down and mixed p-values of romer."""
-    reparametrised, d = _contrast_design(values, design, contrast, "romer")
-    effects = _effects(values, reparametrised, weights, signed_residuals=True)
+    reparametrised, d = contrast_design(values, design, contrast, "romer")
+    effects = gene_effects(values, reparametrised, weights, signed_residuals=True)
     variances = np.sum(effects[:, 1:] ** 2, axis=1) / d
     squeezed = squeeze_variances(variances, d)
     n_genes = values.shape[1]
@@ -1194,7 +1186,7 @@ def _shrinkage(
         whitened = reparametrised * np.sqrt(weights)[:, np.newaxis]
     v = float(np.linalg.inv(whitened.T @ whitened)[-1, -1])
     unscaled = np.full((t.size, 1), math.sqrt(v))
-    v0 = _coefficient_prior_variance(
+    v0 = coefficient_prior_variance(
         t,
         unscaled[:, 0],
         df,
@@ -1202,7 +1194,7 @@ def _shrinkage(
         _COEFFICIENT_LIMITS,
         float(np.nanmedian(prior_variance)),
     )
-    lods = _log_odds(
+    lods = log_odds(
         t[:, np.newaxis], unscaled, df, np.isinf(df), np.array([v0]), proportion
     )[:, 0]
     with np.errstate(over="ignore"):
@@ -1281,9 +1273,9 @@ def _alternative_ranks(
     """
     n = t.size
     order = np.argsort(t)
-    _average_ranks(t, order, up)
+    average_ranks_in_order(t, order, up)
     magnitude = np.abs(t)
-    _average_ranks(magnitude, _magnitude_order(t, order), mixed)
+    average_ranks_in_order(magnitude, _magnitude_order(t, order), mixed)
     for g in range(n):
         down[g] = n + 1.0 - up[g]  # the rank of -t
     if statistic != _FLOORMEAN:
@@ -1325,23 +1317,6 @@ def _magnitude_order(
             merged[k] = order[j]
             j += 1
     return merged
-
-
-@jit
-def _average_ranks(
-    values: FloatArray, order: npt.NDArray[np.int64], ranks: FloatArray
-) -> None:
-    """Fill ``ranks`` with the average ranks of ``values``, sorted by ``order``."""
-    n = values.size
-    i = 0
-    while i < n:
-        j = i + 1
-        while j < n and values[order[j]] == values[order[i]]:
-            j += 1
-        rank = 0.5 * (i + 1 + j)  # the mean of ranks i + 1 to j
-        for k in range(i, j):
-            ranks[order[k]] = rank
-        i = j
 
 
 @jit
@@ -1514,13 +1489,13 @@ def _weighted_sets(
 ) -> tuple[list[str], list[IntArray], list[FloatArray]]:
     """Each set's name, the sorted positions of its genes and their contribution
     weights, with genes of weight zero left out."""
-    index = _checked_gene_sets(gene_sets, gene_ids, n_genes)
+    index = checked_gene_sets(gene_sets, gene_ids, n_genes)
     names: list[str] = []
     members: list[IntArray] = []
     weights: list[FloatArray] = []
     matched = 0
     for name, genes in gene_sets.items():
-        label = "gene_set" if single else _set_label(name)
+        label = "gene_set" if single else set_label(name)
         if isinstance(genes, Mapping):
             if gene_weights is not None:
                 raise ValueError(
@@ -1529,7 +1504,7 @@ def _weighted_sets(
                 )
             positions, set_weights, found = _mapped_set(genes, label, index, n_genes)
         else:
-            positions, found = _set_positions(genes, label, index, n_genes)
+            positions, found = set_positions(genes, label, index, n_genes)
             set_weights = (
                 np.ones(positions.size)
                 if gene_weights is None
@@ -1545,7 +1520,7 @@ def _weighted_sets(
             "no gene of gene_set is among gene_ids; the set and gene_ids must name "
             "genes the same way (for example both by symbol, or both by Ensembl id)"
         )
-    _check_matched(index, matched)
+    check_matched(index, matched)
     return names, members, weights
 
 
@@ -1572,10 +1547,10 @@ def _mapped_set(
     weights = np.array(values, dtype=np.float64)
     found = 0
     if index is None:
-        positions = _positions(unmasked_array(keys, label), label, n_genes)
+        positions = gene_positions(unmasked_array(keys, label), label, n_genes)
     else:
         present = [key in index for key in _hashable_keys(keys, label)]
-        positions = _id_positions(keys, label, index)
+        positions = id_positions(keys, label, index)
         weights = weights[np.array(present, dtype=bool)]
         found = positions.size
     order = np.argsort(positions, kind="stable")
@@ -1623,14 +1598,7 @@ def _statistic(value: Any, options: tuple[str, ...]) -> int:
 
 def _rotation_count(value: Any) -> int:
     reject_masked(value, "n_rotations")
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(
-            f"n_rotations must be a positive integer, got {type(value).__name__}"
-        )
-    count = operator.index(value)
-    if count < 1:
-        raise ValueError(f"n_rotations must be at least 1, got {count}")
-    return count
+    return positive_integer(value, "n_rotations", expected="a positive integer")
 
 
 def _generator(rng: Any) -> np.random.Generator:

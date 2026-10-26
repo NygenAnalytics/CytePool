@@ -47,7 +47,6 @@ References:
     using lme4. Journal of Statistical Software 67(1), 1-48. doi:10.18637/jss.v067.i01
 """
 
-import difflib
 import math
 import re
 from dataclasses import dataclass
@@ -141,14 +140,6 @@ def quote_name(name: str) -> str:
     if not isinstance(name, str):
         raise TypeError(f"name must be a str, got {type(name).__name__}")
     return name if _is_syntactic(name) else f"`{name}`"
-
-
-def _close_matches(name: str, candidates: tuple[str, ...] | list[str]) -> str:
-    """Return a ' (did you mean ...?)' hint for a misspelled name, or ''."""
-    found = difflib.get_close_matches(name, list(candidates), n=3, cutoff=0.6)
-    if not found:
-        return ""
-    return " (did you mean " + " or ".join(repr(match) for match in found) + "?)"
 
 
 def _is_syntactic(name: str) -> bool:

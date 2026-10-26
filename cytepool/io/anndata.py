@@ -189,11 +189,12 @@ from typing import Any
 import numpy as np
 
 from .. import __version__
+from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
-from ..cube.cube import LAYER_NAMES, Cube, _as_n_cells, _first
-from ..cube.pool import _axis_codes, _count_dtype
-from ..cube.provenance import _source_record
-from ..table import Table, _values_equal, _with_missing
+from ..cube._axes import axis_codes, checked_n_cells, count_dtype, first_index
+from ..cube._provenance_records import source_record
+from ..cube.cube import LAYER_NAMES, Cube
+from ..table import Table
 
 __all__ = ["to_anndata", "from_anndata", "to_mudata", "from_mudata"]
 
@@ -368,7 +369,7 @@ def from_anndata(
             version reads.
     """
     _check_arguments(layers, n_cells, sample_table, group_table, normalization)
-    caller_source = _source_record(source)
+    caller_source = source_record(source)
     for argument, value in (("sample", sample), ("group", group)):
         if value is not None and not isinstance(value, str):
             raise TypeError(
@@ -599,7 +600,7 @@ def from_mudata(
             ``from_anndata`` gives.
     """
     _check_arguments(layers, n_cells, sample_table, group_table, normalization)
-    caller_source = _source_record(source)
+    caller_source = source_record(source)
     modalities = _modalities(mdata)
     record = _read_record(mdata.uns, "mudata")
     names = [name for name, _ in modalities]
@@ -806,7 +807,7 @@ class _Rows:
         ):
             try:
                 positions.append(
-                    _axis_codes(
+                    axis_codes(
                         labels, name, n_rows, table, table_name, id_column, "row"
                     )
                 )
@@ -890,11 +891,11 @@ class _Rows:
                     f"lacks {missing[:5]} and has {extra[:5]} besides"
                     + ("" if len(set(given)) == len(given) else ", and repeats one")
                 )
-        n_cells = _as_n_cells(table, ids)
+        n_cells = checked_n_cells(table, ids)
         rowless = n_cells.copy()
         rowless[self.sample_codes, self.group_codes] = 0
         if rowless.any():
-            at = _first(rowless > 0)
+            at = first_index(rowless > 0)
             raise ValueError(
                 f"n_cells gives {rowless[at]} cells to sample "
                 f"{ids[1][at[0]]!r} in group {ids[0][at[1]]!r}, which has no row: "
@@ -908,7 +909,7 @@ class _Rows:
         n_samples, _ = self.shape
         present = np.zeros(self.shape[::-1], dtype=bool)
         present[self.group_codes, self.sample_codes] = True
-        group, sample = _first(~present)
+        group, sample = first_index(~present)
         return self.samples[_SAMPLE_ID][sample], self.groups[_GROUP_ID][group]
 
     def infer_columns(
@@ -957,7 +958,7 @@ class _Rows:
                 if name in _TEXT_COLUMNS[axis] and column.dtype != object:
                     continue  # the table holds this column as text only
                 if stands_for is not None and bool(
-                    _values_equal(
+                    values_equal(
                         column[compared], column[stands_for[codes[compared]]]
                     ).all()
                 ):
@@ -993,7 +994,7 @@ class _Rows:
                 column = Table({name: frame[name]})[name]
             except (TypeError, ValueError):
                 continue
-            added[name] = _with_missing(column[np.where(lacking, 0, rows)], lacking)
+            added[name] = with_missing(column[np.where(lacking, 0, rows)], lacking)
         if added:
             self.samples = self.samples.with_columns(added)
         return list(added)
@@ -1073,12 +1074,12 @@ class _Rows:
             )
         _check_counts(values, what, where)
         largest = values.max() if values.size else 0
-        dtype = _count_dtype(values, largest)
+        dtype = count_dtype(values, largest)
         if dtype is not np.float64:
             return values.astype(dtype)
         fractional = values != np.floor(values)
         if not fractional.any():  # whole numbers beyond 2**53
-            index = _first(values >= _WHOLE_LIMIT)
+            index = first_index(values >= _WHOLE_LIMIT)
             if name == "detected" or recognised is not None:
                 raise ValueError(
                     f"{what} holds {values[index]} at {where(index)}, at or above "
@@ -1092,7 +1093,7 @@ class _Rows:
                     )
                 )
             return values.astype(np.float64, copy=False)
-        index = _first(fractional)
+        index = first_index(fractional)
         found = f"{what} holds {values[index]} at {where(index)}, not a whole number"
         if name == "detected":
             raise ValueError(f"{found}, but 'detected' counts cells")
@@ -1152,7 +1153,7 @@ def _as_recorded(
         cast = values.astype(dtype)
     same = cast == values
     if not same.all():
-        index = _first(~same)
+        index = first_index(~same)
         raise ValueError(
             f"{what} holds {values[index]} at {where(index)}, which its type when "
             f"CytePool exported it, {dtype}, does not hold: it was changed after the "
@@ -1177,7 +1178,7 @@ def _check_detected(
     if whole_counts and counts.dtype.kind in "iu":
         wrong |= counts < detected
     if wrong.any():
-        group, sample, feature = _first(wrong)
+        group, sample, feature = first_index(wrong)
         raise ValueError(
             f"the counts are not sums over the cells that 'detected' counts: at group "
             f"{ids[0][group]!r}, sample {ids[1][sample]!r}, feature "
@@ -1207,7 +1208,7 @@ def _check_fractions_pattern(
     detecting = fractions > 0
     wrong = (values > 0) != detecting
     if wrong.any():
-        row, feature = _first(wrong)
+        row, feature = first_index(wrong)
         raise ValueError(
             f"X does not hold sums of the counts of its cells: at {row_name(row)}, "
             f"feature {feature_ids[feature]!r}, X holds {values[row, feature]}, but "
@@ -1223,7 +1224,7 @@ def _check_fractions_pattern(
         least = np.where(detecting, fractions / rarest[:, None], 0.0)
     short = values < least * (1 - _TOTAL_SLACK)
     if short.any():
-        row, feature = _first(short)
+        row, feature = first_index(short)
         raise ValueError(
             f"X does not hold sums of the counts of its cells: at {row_name(row)}, "
             f"feature {feature_ids[feature]!r}, X holds {values[row, feature]}, but at "
@@ -1263,7 +1264,7 @@ def _detected_from_fractions(
     fractions = values.astype(np.float64, copy=False)
     bad = ~(np.isfinite(fractions) & (fractions >= 0) & (fractions <= 1))
     if bad.any():
-        index = _first(bad)
+        index = first_index(bad)
         raise ValueError(
             f"{what} holds {fractions[index]} at {where(index)}; fractions of cells are "
             "from 0 to 1"
@@ -1283,7 +1284,7 @@ def _detected_from_fractions(
         (cells[:, None] == 0) & (fractions > 0)
     )
     if off.any():
-        index = _first(off)
+        index = first_index(off)
         raise ValueError(
             f"{what} holds the fraction {float(fractions[index])!r} of the "
             f"{cells[index[0]]} cells of {where(index)}, which is "
@@ -1305,18 +1306,18 @@ def _check_counts(
         return
     kind = values.dtype.kind
     if kind == "f" and not np.isfinite(values).all():
-        index = _first(~np.isfinite(values))
+        index = first_index(~np.isfinite(values))
         raise ValueError(
             f"{what} has a non-finite value ({values[index]}) at {where(index)}"
         )
     if kind == "u" and values.dtype.itemsize == 8 and values.max() > _INT64_MAX:
-        index = _first(values > _INT64_MAX)
+        index = first_index(values > _INT64_MAX)
         raise ValueError(
             f"{what} has a value above 2**63 - 1 ({values[index]}) at {where(index)}; "
             "counts are at most 2**63 - 1, the largest int64"
         )
     if kind != "u" and values.min() < 0:
-        index = _first(values < 0)
+        index = first_index(values < 0)
         raise ValueError(
             f"{what} has a negative value ({values[index]}) at {where(index)}; counts "
             "of molecules and of cells are non-negative"
