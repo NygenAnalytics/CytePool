@@ -101,6 +101,7 @@ from cytepool._linear_algebra import column_space
 from cytepool._masked_arrays import unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import checked_flag, real_number
+from cytepool._ranks import average_ranks
 from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
@@ -1103,7 +1104,7 @@ def _fit_robust(
     scale_values = np.exp(log_scale + trend)
     ratio = values / scale_values
     tail = _as_array(f_sf(ratio, df1, df2))
-    not_outlier = np.minimum(1.0, tail / ((_average_ranks(-ratio) - 0.5) / n))
+    not_outlier = np.minimum(1.0, tail / ((average_ranks(-ratio) - 0.5) / n))
     if math.isinf(df2):
         # A cumulative maximum alone, and pi_g times the df of all n variances on
         # the common df (found by probing).
@@ -1312,18 +1313,6 @@ def _brent_root(function: Callable[[float], float], low: float, high: float) -> 
         b += step if abs(step) > tolerance else math.copysign(tolerance, middle)
         fb = function(b)
     return b
-
-
-def _average_ranks(values: FloatArray) -> FloatArray:
-    """Ranks from 1 for the smallest value, with ties given their average rank."""
-    order = np.argsort(values, kind="stable")
-    ordered = values[order]
-    starts = np.flatnonzero(np.r_[True, ordered[1:] != ordered[:-1]])
-    ends = np.r_[starts[1:], ordered.size]
-    average = 0.5 * (starts + ends - 1) + 1.0
-    ranks = np.empty(values.size)
-    ranks[order] = np.repeat(average, ends - starts)
-    return ranks
 
 
 def _monotone_in(
@@ -1582,7 +1571,7 @@ def _robust_likelihood(
     # The probability of not being an outlier, from the first fit's upper tail.
     upper = np.exp(log_upper)
     n = index.size
-    naive = np.minimum(1.0, upper / ((_average_ranks(-ratio) - 0.5) / n))
+    naive = np.minimum(1.0, upper / ((average_ranks(-ratio) - 0.5) / n))
     not_outlier = _monotone_in(log_upper, naive, pool_leading=True)
     if (not_outlier == 1.0).all():
         return LikelihoodFDistributionFit(robust_scale, df2, shrunk, math.nan)

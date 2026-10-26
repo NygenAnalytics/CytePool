@@ -63,6 +63,7 @@ from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
 from ._linear_algebra import column_space
 from ._masked_arrays import unmasked_array
 from ._options import non_negative_number, real_number
+from ._ranks import average_ranks_in_order
 
 __all__ = [
     "cpm",
@@ -704,21 +705,6 @@ def _leverages(design: FloatArray) -> FloatArray:
 # Compiled routines
 
 
-@jit
-def _average_ranks(values: FloatArray, n: int, ranks: FloatArray) -> None:
-    """Write the average ranks of values[:n] (from 1; ties share their mean rank)."""
-    order = np.argsort(values[:n], kind="mergesort")
-    i = 0
-    while i < n:
-        j = i
-        while j + 1 < n and values[order[j + 1]] == values[order[i]]:
-            j += 1
-        rank = (i + j + 2) / 2.0
-        for k in range(i, j + 1):
-            ranks[order[k]] = rank
-        i = j + 1
-
-
 @jit(error_model="numpy")
 def _tmm_log2_factors(
     counts: FloatArray,
@@ -776,8 +762,8 @@ def _tmm_log2_factors(
         high_m = n + 1.0 - low_m
         low_a = np.floor(n * sum_trim) + 1.0
         high_a = n + 1.0 - low_a
-        _average_ranks(m, n, rank_m)
-        _average_ranks(a, n, rank_a)
+        average_ranks_in_order(m, np.argsort(m[:n], kind="mergesort"), rank_m)
+        average_ranks_in_order(a, np.argsort(a[:n], kind="mergesort"), rank_a)
         top_high = 0.0
         top_low = 0.0
         bottom_high = 0.0

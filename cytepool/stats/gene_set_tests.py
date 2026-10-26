@@ -167,11 +167,12 @@ from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag
+from cytepool._ranks import average_ranks
 from cytepool._summation import observed_means
 from cytepool.design.contrasts import _is_named_contrasts, _weights_on_columns
 from cytepool.design.design import Design, _refuse_random_effects
 from cytepool.stats.distributions import beta_sf, norm_sf, t_sf
-from cytepool.stats.empirical_bayes import _average_ranks, squeeze_variances
+from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import (
     _aliased_columns,
     _design_matrix,
@@ -871,7 +872,7 @@ def _rank_sum_tails(
     P(T < (U - m1 m2/2 + 1/2) / sd), for T on ``df`` degrees of freedom.
     """
     n_genes = z.size
-    ranks = _average_ranks(z)
+    ranks = average_ranks(z)
     _, counts = np.unique(z, return_counts=True)
     ties = counts.astype(np.float64)
     tie_factor = 1.0 - float(np.sum(ties**3 - ties)) / (float(n_genes) ** 3 - n_genes)

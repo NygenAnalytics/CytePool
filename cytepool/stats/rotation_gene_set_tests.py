@@ -189,6 +189,7 @@ from numba import prange
 from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag, positive_integer
+from cytepool._ranks import average_ranks_in_order
 from cytepool._summation import observed_means
 from cytepool.stats.distributions import t_sf
 from cytepool.stats.empirical_bayes import (
@@ -1275,9 +1276,9 @@ def _alternative_ranks(
     """
     n = t.size
     order = np.argsort(t)
-    _average_ranks(t, order, up)
+    average_ranks_in_order(t, order, up)
     magnitude = np.abs(t)
-    _average_ranks(magnitude, _magnitude_order(t, order), mixed)
+    average_ranks_in_order(magnitude, _magnitude_order(t, order), mixed)
     for g in range(n):
         down[g] = n + 1.0 - up[g]  # the rank of -t
     if statistic != _FLOORMEAN:
@@ -1319,23 +1320,6 @@ def _magnitude_order(
             merged[k] = order[j]
             j += 1
     return merged
-
-
-@jit
-def _average_ranks(
-    values: FloatArray, order: npt.NDArray[np.int64], ranks: FloatArray
-) -> None:
-    """Fill ``ranks`` with the average ranks of ``values``, sorted by ``order``."""
-    n = values.size
-    i = 0
-    while i < n:
-        j = i + 1
-        while j < n and values[order[j]] == values[order[i]]:
-            j += 1
-        rank = 0.5 * (i + 1 + j)  # the mean of ranks i + 1 to j
-        for k in range(i, j):
-            ranks[order[k]] = rank
-        i = j
 
 
 @jit
