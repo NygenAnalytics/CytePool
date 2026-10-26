@@ -18,8 +18,9 @@ This page summarises the tables the scripts printed when they were run against t
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
 `variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
 `gsea.py`, `cube_collection.py`, `pathway_scores.py`,
-`combined_p_values_and_replication.py`, `activity.py` and `sumrank.py`, and for
-`dream.py`, which printed the same table again after changes to the code it checks; on
+`combined_p_values_and_replication.py`, `activity.py`, `sumrank.py`,
+`pca_and_dot_plots.py` and `distributions.py`, and for `dream.py`, which printed the
+same table again after changes to the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -73,9 +74,10 @@ covers and the largest difference among them. Run a script to see every check.
 | [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) | Combined p-values and replication | scipy 1.18.1, mpmath 1.3.0, R 4.4.3, metap 1.1, qvalue 2.38.0, metafor 5.0.1 | 54 | 47 pass, 7 deliberate differences | 67.4 s | 444 MiB |
 | [`sumrank.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sumrank.py) | SumRank and held-out prediction | R 4.4.3, the authors' code (commit 46392f66), mpmath 1.3.0, scipy 1.18.1, scikit-learn 1.9.1 | 23 | 13 pass, 9 information, 1 deliberate difference | 44.9 s | 399 MiB |
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
-| [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
+| [`pca_and_dot_plots.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pca_and_dot_plots.py) | Principal components and dot plots | R 4.4.3, DESeq2 1.46.0, edgeR 4.4.0, ggplot2 4.0.3, scanpy 1.12.4 | 13 | 11 pass, 1 deliberate difference, 1 information | 19.8 s | 671 MiB |
+| [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 51 | 51 pass | 12 min 28 s | 174 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,379** | **2,049 pass, none failed; 185 information, 143 deliberate differences, 2 controls** | | |
+| **All** | | | **2,397** | **2,065 pass, none failed; 186 information, 144 deliberate differences, 2 controls** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -2248,25 +2250,75 @@ difference: a gene without residual degrees of freedom, such as one without coun
 has no quasi-dispersion (its deviance and its degrees of freedom are 0); edgeR draws it
 at 0, and CytePool leaves it out.
 
+## Principal components and dot plots
+
+[`validation/pca_and_dot_plots.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pca_and_dot_plots.py)
+compares `principal_components` and `plot_pca` with DESeq2's `plotPCA`, run as a black
+box with `returnData = TRUE` and drawn, on the same values, and `plot_dotplot` with
+scanpy's `dotplot` on the cells a cube was pooled from. The principal components (seed
+20261103) are those of the log2 counts per million of negative binomial counts of 300
+genes in 12 samples of three conditions and two batches, with the 100 genes of largest
+variance and with 500, more than there are; of a matrix whose genes 19 to 22 have equal
+variance, with the 20 of largest variance; and of a cube of the counts, two of whose
+samples have 5 cells, which R prepares as the edgeR User's Guide does (`filterByExpr`,
+`normLibSizes`, `cpm(log = TRUE, prior.count = 2)`). The cells of the dot plots (seed
+20261104) are 4 cell types in 6 samples, one sample without cells of one type, with
+counts of 40 genes; scanpy normalizes them (`normalize_total`, `log1p`) and
+`from_cells` pools them. Reference: R 4.4.3, DESeq2 1.46.0, edgeR 4.4.0, ggplot2
+4.0.3; scanpy 1.12.4, anndata 0.13.4, matplotlib 3.11.2.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Principal components: the coordinates up to sign and the shares of variance, with the 100 genes of largest variance (components 1 and 2, and 3 and 4) and with 500; genes of equal variance; a cube's cell type prepared by edgeR | `plotPCA(returnData = TRUE)` | 1.1e-14 | 1e-10 | 3 pass |
+| The figure: the points up to sign, the axis labels, equal scales, the samples coloured by condition and batch | `plotPCA` | 6.9e-15 | 1e-10 | 1 pass |
+| Two samples: the first component; DESeq2 returns a second of rounding noise (share 9.5e-31), CytePool none | `plotPCA(returnData = TRUE)` | 8.9e-16 | n/a | 1 deliberate difference |
+| Components whose sign differs from R's | `plotPCA(returnData = TRUE)` | 2 of 10 | n/a | 1 information |
+| Dot plots: the areas and the fractions they encode, and the values the colours show, plain, scaled by gene or by group and over the expressing cells only, for every sample and for 3 samples and 3 cell types in a chosen order, and for genes in groups; the names of the rows and columns, and the key of the areas | `scanpy.pl.dotplot` | 1.0e-15 | 1e-10 | 6 pass |
+| The brackets of genes given in groups: their columns and names | `scanpy.pl.dotplot` | identical | 0 | 1 pass |
+
+Differences are scaled by max(\|reference\|, 1). R's `prcomp`, whose coordinates
+`plotPCA` returns, leaves the sign of each component arbitrary; CytePool makes each
+component's largest coordinate positive, so the coordinates are compared after each
+component takes the sign that matches R's. What DESeq2's help page leaves open was
+found by probing: the genes are ranked by their variance, genes of equal variance keep
+their order (the first are kept), `ntop` beyond the number of genes takes every gene,
+the shares are those of all the components (`percentVar`), the axes are labelled with
+them rounded to a whole percent, and the figure has equal scales. The dot plots
+compare the areas scanpy draws and the values its colours show (`dot_color_df`), and
+its fractions (`dot_size_df`) with those that CytePool's areas encode.
+
+Deliberate difference: with two samples, DESeq2's `plotPCA` returns, and draws, a
+second component of rounding noise; CytePool returns one component, since the centred
+values of n samples have at most n - 1 dimensions, and refuses to draw a second.
+
 ## Distributions and special functions
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
 checks every public function of `cytepool.stats.special` and
-`cytepool.stats.distributions` on 19,493 points against mpmath evaluated at the exact
+`cytepool.stats.distributions` on 20,375 points against mpmath evaluated at the exact
 binary values of the inputs, with 50 significant digits (70 for intermediate steps);
 quantile references are roots of the 70-digit tail probabilities. The grids reach
 probabilities of 1e-300 (and log probabilities far below), shapes from 1e-3 to 1e6
 (incomplete gamma shapes to 1e18 above the center), degrees of freedom from 0.5 to
 1e12 and infinity, hypergeometric populations up to 1e13, batches of 2,000 moderated t
-and quasi-likelihood F statistics, and cases where textbook methods lose accuracy.
-The incomplete beta reference is DLMF 8.17.22 in 70-digit arithmetic, and the
-hypergeometric reference sums exact ratios in fixed-point integer arithmetic.
-Reference: mpmath 1.3.0, Python 3.13.12, numpy 2.5.4.
+and quasi-likelihood F statistics, and cases where textbook methods lose accuracy. For
+the incomplete beta function they also hold the edges of the double range: every
+combination of the shapes 5e-324 (the smallest subnormal), 1e-300, 1e-8, 0.5,
+1 - 2^-53, 1, 2, 30, 1e8, 1e300 and 1.8e308 (the largest double) with the arguments 0,
+5e-324, 1e-300, 1e-8, 0.5, 1 - 2^-53 and 1, and 35 points within 1.5 standard
+deviations of the center of shapes from 1e10 to 1e20. The incomplete beta reference
+is DLMF 8.17.22 in 70-digit arithmetic, at the edges of the double range in 1,200 to
+2,400 bits, and near the center of large shapes, where the fraction converges too
+slowly, the beta density integrated numerically; the hypergeometric reference sums
+exact ratios in fixed-point integer arithmetic. Reference: mpmath 1.3.0, Python
+3.13.12, numpy 2.5.4.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
 | Log-gamma (x > 0, x < 0), digamma (x > 0, x < 0), trigamma, inverse trigamma, log-beta | mpmath | 9.99e-16 (digamma, x < 0) | 1e-15, or 2e-15 for digamma at x < 0 and log-beta | 7 pass |
 | Regularized incomplete gamma and beta functions, their complements and logarithms | mpmath | 2.44e-13 | 1e-12 | 8 pass |
+| The regularized incomplete beta function, its complement and their logarithms at the edges of the double range and near the center of large shapes | mpmath | 2.04e-13 | 1e-12 | 4 pass |
+| The time per value of the incomplete beta function at every combination of 0, 5e-324, 1e-300, 1e-8, 0.5, 1 - 2^-53, 1, 2, 30, 1e8, 1e300 and 1.8e308 as shapes and argument (1,728, those outside the domain included), the best of three calls | timed | 2.1e-4 s (median 2.5e-5 s) | 1e-2 s | 1 pass |
 | Normal: cdf, sf, logcdf, logsf, ppf, isf | mpmath | 6.22e-16 | 1e-12 | 6 pass |
 | t: cdf, sf, logsf, ppf, isf, and sf and logsf of 2,000 moderated t-statistics | mpmath | 1.95e-13 | 1e-12 | 7 pass |
 | F: cdf, sf, logsf, ppf, isf, and sf and logsf of 2,000 quasi-likelihood F statistics | mpmath | 2.12e-13 | 1e-12 | 7 pass |
@@ -2402,8 +2454,10 @@ genes 10 times: each permutation and study took 0.21 s with `limma_voom` and 0.1
 resident memory of 567 MiB for the run.
 
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
-`multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the
-references and CytePool 3.6 s to evaluate them, including compilation.
+`multiple_testing.py`. In `distributions.py`, mpmath took 746 s to compute the
+references, 128 s of them at the edges of the double range, and CytePool 1.8 s to
+evaluate them, including compilation; the incomplete beta function took at most
+2.1e-4 s for any value at those edges, with the time of a call from Python.
 
 `cube_reads.py` read every layer of each selection of its cube file into memory with
 `to_memory()`. The file holds 720 MB of values in chunks of one group, every sample
@@ -2472,6 +2526,7 @@ RSCRIPT=$REF/r-meta/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
     python validation/combined_p_values_and_replication.py
 RSCRIPT=$REF/r/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
     SPECKLE_RSCRIPT=$REF/r-speckle/bin/Rscript python validation/plotting.py
+SCANPY_PYTHON=$REF/python-scanpy/bin/python python validation/pca_and_dot_plots.py
 # variancePartition, in an R environment of its own with lme4 1.1-38 (below).
 RSCRIPT=$REF/r-dream/bin/Rscript python validation/dream.py
 RSCRIPT=$REF/r-dream/bin/Rscript python validation/kenward_roger_and_f_tests.py
@@ -2607,5 +2662,6 @@ The reference packages run only as separate programs that produce outputs to com
 against. CytePool implements the methods from their papers and documentation, and
 conventions that the documentation leaves open were found by running the packages on
 chosen inputs; the source of a package under a copyleft licence is never read, and
-what CytePool adapts from permissively licensed ones, fgsea and decoupler,
-`THIRD_PARTY_NOTICES.md` records.
+what CytePool adapts or follows from permissively licensed ones (fgsea, decoupler,
+the authors' code of SumRank, and the conventions of scanpy's dot plot that its
+documentation leaves open) `THIRD_PARTY_NOTICES.md` records.

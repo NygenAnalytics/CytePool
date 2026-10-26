@@ -7,8 +7,12 @@ are roots of the 70-digit tail probabilities. The grids cover deep
 tails (probabilities down to 1e-300, and log probabilities far below), shapes from 1e-3
 to 1e6 (incomplete gamma shapes to 1e18 above the center), degrees of freedom from 0.5
 to 1e12 and infinity, hypergeometric populations up to 1e13, and the hard cases where
-textbook methods and scipy lose accuracy. scipy, when installed, is evaluated on the
-same points for information only.
+textbook methods and scipy lose accuracy. For the incomplete beta function they also
+cover every combination of shapes and arguments at the edges of the double range,
+from the smallest subnormal to the largest double, and points near the center of
+shapes from 1e10, and time it per value at every combination of those values as
+shapes and arguments, those outside the domain included. scipy, when installed, is
+evaluated on the same points for information only.
 
 Requirements:
     Python: numpy and numba (for CytePool) and mpmath. scipy is optional.
@@ -24,11 +28,15 @@ The reference values are computed by a separate process, this script run as
 ``inputs.npz`` from the directory and writes ``reference.npz``, ``scipy.npz``,
 ``versions.json`` and ``notes.json`` back; it imports mpmath and scipy but not CytePool.
 The incomplete beta reference is DLMF 8.17.22 evaluated in 70-digit arithmetic, checked
-against mpmath's own ``betainc`` where that converges quickly; the hypergeometric
-reference sums exact ratios in fixed-point integer arithmetic. The script prints
+against mpmath's own ``betainc`` where that converges quickly; at the edges of the
+double range, it is evaluated in 1200 to 2400 bits, and near the center of large
+shapes, where it converges too slowly, the beta density is integrated numerically
+instead. The hypergeometric reference sums exact ratios in fixed-point integer
+arithmetic. The script prints
 the reference versions and a markdown table, and exits with status 1 when any check
 exceeds its tolerance. With ``--write-fixtures`` it writes a few hundred points per
-family, the hardest included, with their reference values to tests/data/distributions/.
+family, the hardest included, with their reference values to tests/data/distributions/,
+and every point of the extreme arguments of the incomplete beta function.
 """
 
 import argparse
@@ -58,9 +66,26 @@ CONTRACT = 1e-12
 NEAR_MACHINE = 1e-15
 # Probabilities below this are checked through their logarithm.
 SMALLEST_CHECKED = 1e-300
+# The edges of the double range for the incomplete beta function: shapes and
+# arguments of every size from the smallest subnormal to the largest double. The
+# timing runs every combination of TIMED_VALUES as a, b and x, those outside the
+# domain included, and every value must take at most MOST_TIME seconds (best of three).
+LARGEST = 1.7976931348623157e308
+EXTREME_SHAPES = [5e-324, 1e-300, 1e-8, 0.5, 1.0 - 2.0**-53, 1.0, 2.0, 30.0, 1e8]
+EXTREME_SHAPES += [1e300, LARGEST]
+EXTREME_ARGUMENTS = [0.0, 5e-324, 1e-300, 1e-8, 0.5, 1.0 - 2.0**-53, 1.0]
+TIMED_VALUES = [0.0, 5e-324, 1e-300, 1e-8, 0.5, 1.0 - 2.0**-53, 1.0, 2.0, 30.0, 1e8]
+TIMED_VALUES += [1e300, LARGEST]
+MOST_TIME = 1e-2
+# Where the reference integrates the beta density near its center: from 40 standard
+# deviations below it to 40 above, split at these.
+QUADRATURE_MARKS = (-40, -16, -8, -4, -2, -1, 0, 1, 2, 4, 8, 16, 40)
 # The tests check these quantiles through the tails, which have fixtures, and closed
 # forms; their families get no fixtures of their own.
 UNFIXTURED = {"f_quantile", "chi2_quantile"}
+# Families whose fixtures keep every point (and draw no random sample, so that the
+# samples of the other families stay as they are).
+FIXTURE_EVERY_POINT = {"betainc_extreme"}
 
 
 # ---------------------------------------------------------------------------------------
@@ -184,6 +209,27 @@ def build_inputs() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     beta_points = np.array(points)
     inputs["betainc__a"], inputs["betainc__b"], inputs["betainc__x"] = beta_points.T
     hard["betainc"] = np.arange(5)
+
+    # Incomplete beta at the edges of the double range: every shape and argument of
+    # EXTREME_SHAPES and EXTREME_ARGUMENTS; then points near the center of large shapes,
+    # within about one standard deviation, where the uniform expansion serves them, and
+    # just outside, where the continued fraction does.
+    points = [
+        (a_, b_, x) for a_ in EXTREME_SHAPES for b_ in EXTREME_SHAPES
+        for x in EXTREME_ARGUMENTS
+    ]  # fmt: skip
+    first_band = len(points)
+    pairs = [(1e10, 1e10), (1e10, 3e10), (1e12, 1e12), (1e12, 3e12), (2e15, 7e15)]
+    pairs += [(1e20, 1e20), (1e10, 1e20)]
+    for a_, b_ in pairs:
+        center = a_ / (a_ + b_)
+        sd = math.sqrt(a_ / (a_ + b_) * (b_ / (a_ + b_)) / (a_ + b_ + 1.0))
+        points += [(a_, b_, center + z * sd) for z in (0.0, 0.4, -0.9, 1.1, -1.5)]
+    extreme = np.array(points)
+    keys = ("betainc_extreme__a", "betainc_extreme__b", "betainc_extreme__x")
+    for key, column in zip(keys, extreme.T):
+        inputs[key] = column
+    hard["betainc_extreme"] = np.arange(first_band, len(points))
 
     # Normal distribution and quantiles.
     tails = np.concatenate([np.linspace(36.5, 38.6, 43), _log_grid(1, 150, 60)])
@@ -402,11 +448,21 @@ def reference_main(directory: Path) -> None:
     no_convergence = mp.libmp.libhyper.NoConvergence
     inputs = dict(np.load(directory / "inputs.npz"))
 
-    def ibeta_fraction(A: Any, B: Any, X: Any, Y: Any) -> Any:
+    def ibeta_fraction(
+        A: Any,
+        B: Any,
+        X: Any,
+        Y: Any,
+        log_x: Any = None,
+        log_y: Any = None,
+        digits: int = 55,
+    ) -> Any:
         """I_X(A, B) for X < (A + 1) / (A + B + 2) from DLMF 8.17.22.
 
         The plain continued fraction is evaluated backward in 70-digit arithmetic, with
-        the depth doubled until two values agree to 55 digits.
+        the depth doubled until two values agree to 55 digits (or ``digits``). log_x and
+        log_y, when given, replace log(X) and log(Y) in the prefactor (Y = 1 - X rounds
+        to 1 at 70 digits when X is tiny, but its logarithm need not).
         """
 
         def value(depth: int) -> Any:
@@ -425,12 +481,74 @@ def reference_main(directory: Path) -> None:
         while True:
             depth *= 2
             current = value(depth)
-            if abs(current - previous) <= mp.mpf(10) ** -55 * abs(current):
+            if abs(current - previous) <= mp.mpf(10) ** -digits * abs(current):
                 break
             previous = current
         log_beta = mp.loggamma(A) + mp.loggamma(B) - mp.loggamma(A + B)
-        log_pre = A * mp.log(X) + B * mp.log(Y) - mp.log(A) - log_beta
+        log_x = mp.log(X) if log_x is None else log_x
+        log_y = mp.log(Y) if log_y is None else log_y
+        log_pre = A * log_x + B * log_y - mp.log(A) - log_beta
         return mp.exp(log_pre) * current
+
+    def ibeta_by_quadrature(A: Any, B: Any, X: Any) -> tuple[Any, Any]:
+        """Both tails of the beta distribution near the center of large shapes.
+
+        The density t^(A-1) (1-t)^(B-1) / B(A, B) is integrated numerically on each side
+        of X, out to 40 standard deviations from the center, beyond which the mass is
+        below 1e-340, with enough digits for A log t to keep 50 after its cancellation.
+        """
+        digits = int(70 + mp.log10(A + B))
+        with mp.workdps(digits):
+            log_norm = mp.loggamma(A + B) - mp.loggamma(A) - mp.loggamma(B)
+            center = A / (A + B)
+            sd = mp.sqrt(A * B / (A + B) ** 2 / (A + B + 1))
+
+            def density(t: Any) -> Any:
+                return mp.exp(log_norm + (A - 1) * mp.log(t) + (B - 1) * mp.log1p(-t))
+
+            marks = [center + k * sd for k in QUADRATURE_MARKS]
+            below = [max(mp.mpf(0), marks[0])] + [s for s in marks if s < X] + [X]
+            above = [X] + [s for s in marks if s > X] + [min(mp.mpf(1), marks[-1])]
+            lower, upper = mp.quad(density, below), mp.quad(density, above)
+            if abs(lower + upper - 1) > mp.mpf(10) ** -45:
+                raise RuntimeError(f"the quadrature lost accuracy at {A}, {B}, {X}")
+        return lower, upper
+
+    def ibeta_extreme(A: Any, B: Any, X: Any) -> tuple[Any, Any]:
+        """I_X(A, B) and 1 - I_X(A, B) anywhere in the domain, at 50 digits.
+
+        I is 1/2 at the center of equal shapes; near the center of shapes from 1e9 the
+        density is integrated; elsewhere the continued fraction converges, as in
+        ibeta_pair, with 1200 bits, so that 1 - X is exact down to the smallest
+        subnormal X. When the tail it gives is within 1e-30 of 1, its complement would
+        keep fewer than 25 digits, and the fraction is evaluated again with 2400 bits,
+        enough for A + B when one shape is the smallest subnormal and the other the
+        largest double, and to 400 digits, which leaves more than 50 for a tail of
+        1e-324.
+        """
+        if X == 0:
+            return mp.mpf(0), mp.mpf(1)
+        if X == 1:
+            return mp.mpf(1), mp.mpf(0)
+        if A == B and X == mp.mpf(1) / 2:
+            return mp.mpf(1) / 2, mp.mpf(1) / 2
+        with mp.workdps(work):
+            center = A / (A + B)
+            sd = mp.sqrt(A * B / (A + B) ** 2 / (A + B + 1))
+            if min(A, B) >= 1e9 and abs(X - center) <= 3 * sd:
+                return ibeta_by_quadrature(A, B, X)
+        for bits, digits in ((1200, 55), (2400, 400)):
+            with mp.workprec(bits):
+                Y, log_x, log_y = 1 - X, mp.log(X), mp.log1p(-X)
+                if X * (A + B + 2) < A + 1:
+                    lower = ibeta_fraction(A, B, X, Y, log_x, log_y, digits)
+                    upper = 1 - lower
+                else:
+                    upper = ibeta_fraction(B, A, Y, X, log_y, log_x, digits)
+                    lower = 1 - upper
+            if min(lower, upper) > mp.mpf(10) ** -30:
+                break
+        return lower, upper
 
     def ibeta_pair(A: Any, B: Any, X: Any, Y: Any) -> tuple[Any, Any]:
         """I_X(A, B) and 1 - I_X(A, B) for Y = 1 - X.
@@ -831,6 +949,16 @@ def reference_main(directory: Path) -> None:
     store("betainc", ("I", "C", "logI", "logC"), rows)
 
     rows = []
+    for a_, b_, x in zip(
+        inputs["betainc_extreme__a"],
+        inputs["betainc_extreme__b"],
+        inputs["betainc_extreme__x"],
+    ):
+        lower, upper = ibeta_extreme(mp.mpf(a_), mp.mpf(b_), mp.mpf(x))
+        rows.append((float(lower), float(upper), *logs(lower, upper)))
+    store("betainc_extreme", ("I", "C", "logI", "logC"), rows)
+
+    rows = []
     for x in inputs["norm__x"]:
         with mp.workdps(work):
             lower, upper = normal_tails(mp.mpf(x))
@@ -1040,6 +1168,11 @@ def cytepool_values(inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     hyper = [i[f"hypergeom__{c}"] for c in "kMnN"]
     a_g, x_g = i["gammainc__a"], i["gammainc__x"]
     abx = (i["betainc__a"], i["betainc__b"], i["betainc__x"])
+    edges = (
+        i["betainc_extreme__a"],
+        i["betainc_extreme__b"],
+        i["betainc_extreme__x"],
+    )
     t_args = (i["t__x"], i["t__df"])
     tg_args = (i["t_genes__x"], i["t_genes__df"])
     f_args = (i["f__x"], i["f__dfn"], i["f__dfd"])
@@ -1064,6 +1197,10 @@ def cytepool_values(inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "betainc__C": s.betaincc(*abx),
         "betainc__logI": s.log_betainc(*abx),
         "betainc__logC": s.log_betaincc(*abx),
+        "betainc_extreme__I": s.betainc(*edges),
+        "betainc_extreme__C": s.betaincc(*edges),
+        "betainc_extreme__logI": s.log_betainc(*edges),
+        "betainc_extreme__logC": s.log_betaincc(*edges),
         "norm__cdf": d.norm_cdf(i["norm__x"]),
         "norm__sf": d.norm_sf(i["norm__x"]),
         "norm__logcdf": d.norm_logcdf(i["norm__x"]),
@@ -1180,6 +1317,17 @@ def checks() -> list[Check]:
     ]:
         add(name, key, "probability", CONTRACT)
         add(f"log_{name}", key.replace("__", "__log"), "log", CONTRACT)
+    for name, key in [
+        ("betainc", "betainc_extreme__I"),
+        ("betaincc", "betainc_extreme__C"),
+    ]:
+        add(f"{name}, extreme arguments", key, "probability", CONTRACT)
+        add(
+            f"log_{name}, extreme arguments",
+            key.replace("__", "__log"),
+            "log",
+            CONTRACT,
+        )
     distributions = [
         ("norm", ("cdf", "sf", "logcdf", "logsf")),
         ("t", ("cdf", "sf", "logsf")),
@@ -1329,6 +1477,25 @@ def compare(
     return table, worst, scipy_table, passed, errors_by_family
 
 
+def time_extreme_arguments() -> np.ndarray:
+    """The time per value of log_betainc at every combination of TIMED_VALUES as a, b
+    and x, the best of three calls each, in seconds (after one call that compiles)."""
+    import itertools
+
+    from cytepool.stats import special as s
+
+    s.log_betainc(2.0, 3.0, 0.5)
+    times = []
+    for a_, b_, x in itertools.product(TIMED_VALUES, repeat=3):
+        best = math.inf
+        for _ in range(3):
+            start = time.perf_counter()
+            s.log_betainc(a_, b_, x)
+            best = min(best, time.perf_counter() - start)
+        times.append(best)
+    return np.array(times)
+
+
 def _markdown(header: list[str], rows: list[list[str]]) -> str:
     lines = [
         "| " + " | ".join(header) + " |",
@@ -1352,13 +1519,16 @@ def write_fixtures(
         keys_in = [k for k in inputs if _family(k) == family]
         keys_ref = [k for k in reference if _family(k) == family]
         size = len(inputs[keys_in[0]])
-        chosen = set(hard.get(family, np.array([], dtype=int)).tolist())
-        errors = errors_by_family.get(family, np.zeros(size))
-        chosen |= set(np.argsort(-errors)[:40].tolist())
-        remaining = np.setdiff1d(np.arange(size), np.fromiter(chosen, dtype=int))
-        extra = max(0, min(FIXTURE_POINTS - len(chosen), remaining.size))
-        chosen |= set(rng.choice(remaining, extra, replace=False).tolist())
-        index = np.array(sorted(chosen))
+        if family in FIXTURE_EVERY_POINT:
+            index = np.arange(size)
+        else:
+            chosen = set(hard.get(family, np.array([], dtype=int)).tolist())
+            errors = errors_by_family.get(family, np.zeros(size))
+            chosen |= set(np.argsort(-errors)[:40].tolist())
+            remaining = np.setdiff1d(np.arange(size), np.fromiter(chosen, dtype=int))
+            extra = max(0, min(FIXTURE_POINTS - len(chosen), remaining.size))
+            chosen |= set(rng.choice(remaining, extra, replace=False).tolist())
+            index = np.array(sorted(chosen))
         arrays = {k.split("__")[1]: inputs[k][index] for k in keys_in}
         arrays |= {k.split("__")[1]: reference[k][index] for k in keys_ref}
         np.savez_compressed(FIXTURE_DIRECTORY / f"{family}.npz", **arrays)
@@ -1398,6 +1568,19 @@ def main() -> int:
     )
     table, worst, scipy_table, passed, errors_by_family = compare(
         inputs, reference, ours, scipy_values
+    )
+    times = time_extreme_arguments()
+    fast = float(times.max()) <= MOST_TIME
+    passed &= fast
+    table.append(
+        [
+            f"betainc, time per value at {times.size} extreme arguments",
+            "timed",
+            f"largest (median {np.median(times):.1e} s)",
+            f"{times.max():.2e} s",
+            f"{MOST_TIME:.0e} s",
+            "pass" if fast else "FAIL",
+        ]
     )
 
     print("\nReference versions: " + ", ".join(f"{k} {v}" for k, v in versions.items()))

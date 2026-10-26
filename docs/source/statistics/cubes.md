@@ -1,5 +1,5 @@
 ---
-description: What a CytePool cube holds, why every layer is a sum over cells, how merging cell types and pooling samples stay exact, and how the cubes of several studies are aligned.
+description: What a CytePool cube holds, why every layer is a sum over cells, how merging cell types and pooling samples stay exact, the principal components of its samples and the dot plot of its cells, and how the cubes of several studies are aligned.
 ---
 
 # The cube and its additive layers
@@ -55,6 +55,38 @@ features. Integer layers are summed exactly, and a sum that would exceed the lar
 64-bit integer raises an error instead of wrapping around. Means and variances, which
 are not sums, cannot be merged this way; that is why the cube keeps sums and derives
 them.
+
+## Samples and cells at a glance
+
+Two figures show a cube's data before any test. {api}`principal_components` places the
+samples of one cell type on the principal components of their most variable genes
+[@pearson1901], as DESeq2's `plotPCA` does [@love2014]. The samples are prepared as
+for an MDS plot: those with fewer than 10 cells are left out, genes are kept by
+{api}`filter_by_expression`, and the values are log-CPM with TMM factors and an average
+count of 2 added. The `top` genes of largest variance over the samples (500 by
+default), each centred on its mean, form a samples x genes matrix $X = U S V^\top$;
+the samples' coordinates are $U S$, each component's share of the variance is its
+squared singular value over their sum, and the result, a {api}`PrincipalComponents`,
+keeps the loadings $V$ of the genes. The sign of a component is arbitrary; the
+coordinate of largest absolute value is made positive. `plot_pca` draws two
+components, labelled with their shares as `plotPCA` labels them.
+
+The dot plot shows, for chosen genes and cell types, the fraction of the cells that
+express each gene and their mean expression, as scanpy draws it [@wolf2018]. A cube
+holds what it needs without the cells. Because every layer is a sum, the fraction and
+the mean over the cells of all the samples pooled,
+
+$$
+f_{gf} = \frac{\sum_j \text{detected}_{gjf}}{\sum_j n_{jg}}, \qquad
+m_{gf} = \frac{\sum_j \text{log\_sum}_{gjf}}{\sum_j n_{jg}},
+$$
+
+are those computed from the cells themselves, and so is the mean over the cells that
+express the gene, $\sum_j \text{log\_sum}_{gjf} / \sum_j \text{detected}_{gjf}$,
+since $\log(1 + 0) = 0$ for the others. {api}`Cube.fraction_detected` and {api}`Cube.mean`
+give the same quantities per sample. `plot_dotplot` draws them, pooled over every sample
+or some, with scanpy's scaling of the means by gene or by cell type and its groups of
+genes.
 
 ## What a cube carries
 

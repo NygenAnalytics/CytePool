@@ -8,8 +8,9 @@ count models call the logarithms of gamma ratios from compiled code. The methods
 those that :mod:`cytepool.stats.special` describes: Dekker's (1971) exact products,
 Loader's (2000) deviance form of Stirling's series, Maechler's (2012) log(1 - exp(-a)),
 the power series and continued fractions of DLMF 8.7, 8.9 and 8.17 evaluated by the
-modified Lentz method (Lentz 1976; Thompson and Barnett 1986), and Temme's (1979)
-uniform expansion of the incomplete gamma function.
+modified Lentz method (Lentz 1976; Thompson and Barnett 1986), and Temme's uniform
+expansions of the incomplete gamma function (Temme 1979) and of the incomplete beta
+function (Temme 1982).
 
 ``elementwise`` runs a compiled loop over broadcast arguments: every argument reaches
 the loop as a read-only, contiguous, one-dimensional float64 array, so that each loop
@@ -39,6 +40,10 @@ References:
 
     Temme NM (1979). The asymptotic expansion of the incomplete gamma functions. SIAM
     Journal on Mathematical Analysis 10, 757-766. doi:10.1137/0510071
+
+    Temme NM (1982). The uniform asymptotic expansion of a class of integrals related to
+    cumulative distribution functions. SIAM Journal on Mathematical Analysis 13,
+    239-253. doi:10.1137/0513017
 """
 
 import math
@@ -72,6 +77,36 @@ _CF_TOLERANCE = 3e-16
 _TINY = 1e-300  # replaces a zero denominator in the modified Lentz method
 
 _MAX_ITERATIONS = 10_000_000
+
+# Arguments beyond the range of the usual forms. Deviance terms halve their arguments
+# from this sum (2^1023). two_product splits factors below 1e290 only; a larger factor
+# is scaled by 2^-600 first and its parts by 2^600 after. From shapes of 2^500, the
+# products of the incomplete beta function's continued fraction and prefactor could
+# overflow, so such shapes take forms of them ordered to stay in range.
+_HALF_RANGE = 8.98846567431158e307
+_SPLIT_LIMIT = 1e290
+_SCALE_DOWN = 2.0**-600
+_SCALE_UP = 2.0**600
+_HUGE_SHAPE = 2.0**500
+# Below this shape, the continued fraction's first elements, a times numbers of order
+# one, could be subnormal; it is evaluated divided by a.
+_TINY_SHAPE = 1e-280
+# From this ratio of two shapes, the direct form of a deviance term subtracts
+# logarithms that can be 40 times its own.
+_FAR_SHAPES = 1e17
+# Below this shape, and where the exponent s of the small-shape series is below the
+# second number in absolute value, the series takes s / a instead of s, whose terms
+# the Stirling corrections it adds and subtracts would absorb.
+_SMALL_SERIES_SHAPE = 1e-3
+_ABSORBED_EXPONENT = 1e-4
+
+# Near its center, where x is within about one standard deviation of a / (a + b), the
+# incomplete beta function of two shapes from 1e10 comes from Temme's uniform expansion
+# instead of the continued fraction, whose number of steps there grows like the cube
+# root of the shapes (about 11,600 at 1e10, found by counting them). The band is
+# D = bd0(a, (a + b) x) + bd0(b, (a + b)(1 - x)) <= 1/2.
+_UNIFORM_BETA_SHAPE = 1e10
+_UNIFORM_BETA_BAND = 0.5
 
 # log Gamma(1 + a) = -euler a + sum_{k>=2} c_k a^k with c_k = (-1)^k zeta(k) / k
 # (DLMF 5.7.3), k = 2..30; used for |a| <= 1/4.
@@ -123,6 +158,23 @@ _STIRLING_ERROR_AT_INTEGERS = np.array(
         0.01189670994589177,
         0.010411265261972096,
         0.009255462182712733,
+    ]
+)
+
+# The coefficients B_2k / (2k (2k - 1)) of Stirling's series for delta(z), k = 1..10
+# (DLMF 5.11.1), which stirling_error sums for z >= 10.
+_STIRLING_SERIES = np.array(
+    [
+        1.0 / 12.0,
+        -1.0 / 360.0,
+        1.0 / 1260.0,
+        -1.0 / 1680.0,
+        1.0 / 1188.0,
+        -691.0 / 360360.0,
+        1.0 / 156.0,
+        -3617.0 / 122400.0,
+        43867.0 / 244188.0,
+        -174611.0 / 125400.0,
     ]
 )
 
@@ -369,11 +421,16 @@ def deviance_term(x: float, m: float, d: float) -> float:
     """Return Loader's bd0(x, m) = x log(x / m) + m - x, given d = x - m.
 
     The caller forms d accurately; near x = m the series in v = d / (x + m) avoids the
-    cancellation of the direct form (Loader 2000).
+    cancellation of the direct form (Loader 2000). bd0 is homogeneous of degree one:
+    where x + m, or 2 x, would overflow, x, m and d are halved and the result doubled.
     """
     if x == 0.0:
         return m
+    scale = 1.0
     s = x + m
+    if not s < _HALF_RANGE:
+        x, m, d, scale = 0.5 * x, 0.5 * m, 0.5 * d, 2.0
+        s = x + m
     if abs(d) < 0.5 * s:
         v = d / s
         v2 = v * v
@@ -384,10 +441,10 @@ def deviance_term(x: float, m: float, d: float) -> float:
             term *= v2
             updated = total + term / (2.0 * j + 1.0)
             if updated == total:
-                return total
+                return scale * total
             total = updated
             j += 1.0
-    return x * math.log(x / m) - d
+    return scale * (x * math.log(x / m) - d)
 
 
 @jit_numpy_errors
@@ -624,22 +681,21 @@ def log_beta_prefactor(
     deviance terms bd0(a, (a + b) x) and bd0(b, (a + b) y) replace the logarithms, whose
     differences a - (a + b) x = lam and b - (a + b) y = -lam are known accurately. With one
     large parameter L and a small one, the term c log L of the gamma ratio is merged with
-    c log v of the small parameter's power into c log(L v).
+    c log v of the small parameter's power into c log(L v). Where a + b overflows, a b /
+    (a + b) is formed as b / (1 + b / a) and the deviance terms at half scale.
     """
     if a >= 10.0 and b >= 10.0:
         n = a + b
-        m = n * x
-        if abs(lam) < 0.5 * (a + m):
-            dev_a = deviance_term(a, m, lam)
+        if n < INF:
+            dev_a = _shape_deviance(a, b, n * x, lam, log_x)
+            dev_b = _shape_deviance(b, a, n * y, -lam, log_y)
+            half_log = 0.5 * math.log(a / n * b)
         else:
-            dev_a = a * (-math.log1p(b / a) - log_x) - lam
-        m = n * y
-        if abs(lam) < 0.5 * (b + m):
-            dev_b = deviance_term(b, m, -lam)
-        else:
-            dev_b = b * (-math.log1p(a / b) - log_y) + lam
+            dev_a = _halved_shape_deviance(a, b, lam, log_x)
+            dev_b = _halved_shape_deviance(b, a, -lam, log_y)
+            half_log = 0.5 * math.log(b / (1.0 + b / a))
         return (
-            0.5 * math.log(a / n * b)
+            half_log
             - _LN_SQRT_2PI
             - dev_a
             - dev_b
@@ -666,6 +722,33 @@ def log_beta_prefactor(
             - math.lgamma(a)
         )
     return a * log_x + b * log_y - log_beta_positive(a, b)
+
+
+@jit_numpy_errors
+def _shape_deviance(a: float, b: float, m: float, lam: float, log_x: float) -> float:
+    """Return bd0(a, m) for m = (a + b) x, lam = a - m and log_x = log x, a and b
+    from 10, as log_beta_prefactor takes it.
+
+    Near m = a, Loader's series. Further, a log(a / m) - lam, with a log(a / m) as
+    a (-log1p(b / a) - log x), which needs no m; but where b exceeds 1e17 a and x is
+    tiny the two logarithms cancel, and m, a product rounded once, gives the quotient
+    better.
+    """
+    if abs(lam) < 0.5 * (a + m):
+        return deviance_term(a, m, lam)
+    if b > _FAR_SHAPES * a and m >= _SMALLEST_NORMAL and a / m < INF:
+        return a * math.log(a / m) - lam
+    return a * (-math.log1p(b / a) - log_x) - lam
+
+
+@jit_numpy_errors
+def _halved_shape_deviance(a: float, b: float, lam: float, log_x: float) -> float:
+    """Return bd0(a, (a + b) x) for a + b beyond the double range, from bd0(a / 2,
+    (a - lam) / 2) = bd0(a, a - lam) / 2, which stays in range."""
+    half = 0.5 * a - 0.5 * lam  # (a + b) x / 2
+    if abs(lam) < 0.5 * a + half:
+        return 2.0 * deviance_term(0.5 * a, half, 0.5 * lam)
+    return a * (-math.log1p(b / a) - log_x) - lam
 
 
 @jit_numpy_errors
@@ -719,6 +802,126 @@ def _beta_continued_fraction(
 
 
 @jit_numpy_errors
+def _log_beta_continued_fraction_in_range(
+    a: float, b: float, x: float, y: float, lam: float
+) -> float:
+    """Return log K, for the K of :func:`_beta_continued_fraction`, for shapes from 2^500,
+    or for a below 1e-280.
+
+    The same fraction, its products ordered so that none leaves the float64 range:
+    a (1 + lam) / (a + 1) as (1 + lam) (a / (a + 1)); (a + b + k - 1) x / (s - 1) as
+    x (a + k - 1) / (s - 1) + x b / (s - 1); lam (a - 2k / (s - 1)) / (s + 1) with the
+    quotient first. The modified Lentz method keeps its second sequence as the
+    denominators e_k = den + num / e_(k-1) instead of their reciprocals, which would be
+    subnormal, and so inexact, for denominators beyond 2^1022; the value is scaled by
+    2^-600 when it is that large. For a tiny a, whose products with the first two
+    elements, both proportional to a, would be subnormal, it evaluates K / a: their
+    quotients by a and the later elements as they are. A step whose terms are not finite
+    ends it with NaN, instead of the remaining steps running on NaN.
+    """
+    tiny = a < _TINY_SHAPE
+    if tiny:
+        f = (1.0 + lam) / (a + 1.0)
+        scale = math.log(a)
+    else:
+        f = (1.0 + lam) * (a / (a + 1.0))
+        scale = 0.0
+    c = f
+    if f > _HUGE_SHAPE:
+        f *= _SCALE_DOWN
+        scale += 600.0 * _LN2
+    e = INF
+    k = 1.0
+    while k < _MAX_ITERATIONS:
+        s = a + 2.0 * k
+        ratio = (a + k - 1.0) / (s - 1.0)
+        first = 1.0 / (s - 1.0) if tiny and k == 1.0 else ratio
+        num = first * (x * ratio + x * (b / (s - 1.0))) * (k * ((b - k) * x))
+        den = (
+            2.0 * k * (1.0 + y) * ((a + k) / (s - 1.0)) * (s / (s + 1.0))
+            + ((a - 1.0) / (s - 1.0)) * (s / (s + 1.0))
+            + lam * ((a - 2.0 * k / (s - 1.0)) / (s + 1.0))
+        )
+        if not (abs(num) < INF and abs(den) < INF):
+            return NAN
+        e = den + num / e
+        if e == 0.0:
+            e = _TINY
+        c = den + num / c
+        if c == 0.0:
+            c = _TINY
+        delta = c / e
+        f *= delta
+        if abs(delta - 1.0) < _CF_TOLERANCE:
+            return math.log(f) + scale
+        k += 1.0
+    return NAN
+
+
+@jit_numpy_errors
+def _log_beta_fraction(a: float, b: float, x: float, y: float, lam: float) -> float:
+    """Return log K, for the K of :func:`_beta_continued_fraction`, for any shapes."""
+    if _TINY_SHAPE <= a < _HUGE_SHAPE and b < _HUGE_SHAPE:
+        return math.log(_beta_continued_fraction(a, b, x, y, lam))
+    return _log_beta_continued_fraction_in_range(a, b, x, y, lam)
+
+
+@jit_numpy_errors
+def _log_betainc_uniform(
+    a: float, b: float, lam: float, deviance: float
+) -> tuple[float, float]:
+    """Return log I_x(a, b) and log(1 - I_x(a, b)) near the center, for a, b >= 1e10.
+
+    Temme's (1982) uniform expansion, as the incomplete gamma function's above. With
+    r = a + b, x0 = a / r and eta of the sign of x - x0 (so of -lam, lam = r (x0 - x))
+    defined by r eta^2 / 2 = bd0(a, r x) + bd0(b, r (1 - x)) = deviance,
+
+        I_x(a, b) = erfc(-eta sqrt(r / 2)) / 2 - G exp(-deviance) c0(eta) / sqrt(2 pi r)
+
+    up to terms of relative order min(a, b)^(-3/2), below 1e-15 from 1e10; G is
+    Gamma*(r) / (Gamma*(a) Gamma*(b)), the ratio of the Stirling series' corrections,
+    and 1 - I has the opposite signs. The density in eta is
+    sqrt(r / (2 pi)) G exp(-r eta^2 / 2) f(eta) with f(eta) = sqrt(x0 (1 - x0)) eta /
+    (t - x0) at the t of eta, and c0(eta) = (f(eta) - 1) / eta. Its Taylor series,
+    derived by reverting the series of eta in t - x0 (and checked against mpmath), is
+
+        c0(eta) = (p - q) / (3 s) + (1 - s^2) / (12 s^2) eta
+                  + (p - q)(2 + s^2) / (135 s^3) eta^2 + O(eta^3),
+
+    with p = x0, q = 1 - x0 and s^2 = p q. In the band, r eta^2 / 2 <= 1/2, so that the
+    omitted terms are below 1e-15 of c0, itself of order min(a, b)^(-1/2) of I. Every
+    quantity is formed from p, q and a q = a b / r, so that r itself, which may
+    overflow, is never needed.
+    """
+    if a <= b:
+        ratio = a / b
+        p = ratio / (1.0 + ratio)
+        q = 1.0 / (1.0 + ratio)
+    else:
+        ratio = b / a
+        p = 1.0 / (1.0 + ratio)
+        q = ratio / (1.0 + ratio)
+    pq = p * q
+    pqr = a * q  # a b / r
+    difference = (0.5 * a - 0.5 * b) / (0.5 * a + 0.5 * b)  # p - q
+    root = math.sqrt(deviance)  # |eta| sqrt(r / 2)
+    side = 1.0 if lam > 0.0 else -1.0  # x below the center: I is the smaller tail
+    # c0(eta) / sqrt(r), with eta / sqrt(r) = -side sqrt(2 deviance) / r
+    c0 = (
+        difference / (3.0 * math.sqrt(pqr))
+        - side * math.sqrt(2.0 * deviance) * (1.0 - pq) / (12.0 * pqr)
+        + difference * (2.0 + pq) * 2.0 * deviance / (135.0 * pqr * math.sqrt(pqr))
+    )
+    gamma_ratio = math.exp(
+        stirling_error(a + b) - stirling_error(a) - stirling_error(b)
+    )
+    correction = gamma_ratio * math.exp(-deviance) * c0 * _INV_SQRT_2PI
+    lower = 0.5 * math.erfc(side * root) - correction
+    upper = 0.5 * math.erfc(-side * root) + correction
+    return math.log(lower), math.log(upper)
+
+
+@jit_numpy_errors
 def _beta_upper_small_shape(a: float, b: float, x: float, log_x: float) -> float:
     """Return 1 - I_x(a, b) for 0 < a < 1 and b x < 2, without forming 1 - I.
 
@@ -728,18 +931,31 @@ def _beta_upper_small_shape(a: float, b: float, x: float, log_x: float) -> float
     point of the continued fraction, where b x < a + 1, so 1 - I would lose accuracy;
     here the two parts cancel by at most a factor of about ten.
     """
+    s = _small_shape_exponent_sum(a, b, x, log_x)
+    return -math.expm1(s) - math.exp(s) * a * _small_shape_series(a, b, x)
+
+
+@jit_numpy_errors
+def _small_shape_exponent_sum(a: float, b: float, x: float, log_x: float) -> float:
+    """Return the s = a log x - log(a B(a, b)) of :func:`_beta_upper_small_shape`, as a
+    sum of its terms."""
     if b >= 10.0:
         # log Gamma(a + b) - log Gamma(b) = a log b + ..., merged with a log x into
         # a log(b x), as in the prefactor, so that no large logarithms cancel
-        s = (
+        return (
             a * _log_product(b, x, log_x)
             + ((a + b - 0.5) * math.log1p(a / b) - a)
             + stirling_error(a + b)
             - stirling_error(b)
             - _lgamma1p(a)
         )
-    else:
-        s = a * log_x - (_lgamma1p(a) - log_gamma_increment(b, a))
+    return a * log_x - (_lgamma1p(a) - log_gamma_increment(b, a))
+
+
+@jit_numpy_errors
+def _small_shape_series(a: float, b: float, x: float) -> float:
+    """Return sum_{n>=1} (1 - b)_n x^n / (n! (a + n)), the series of
+    :func:`_beta_upper_small_shape`."""
     total = 0.0
     term = 1.0  # (1 - b)_n x^n / n!
     n = 1.0
@@ -750,7 +966,94 @@ def _beta_upper_small_shape(a: float, b: float, x: float, log_x: float) -> float
         if abs(contribution) <= 0.25 * EPS * abs(total):
             break
         n += 1.0
-    return -math.expm1(s) - math.exp(s) * a * total
+    return total
+
+
+@jit_numpy_errors
+def _log_beta_upper_small_shape(a: float, b: float, x: float, log_x: float) -> float:
+    """Return log(1 - I_x(a, b)) for 0 < a < 1 and b x < 2.
+
+    The logarithm of :func:`_beta_upper_small_shape`, unless a is below 1e-3 and s
+    below 1e-4 in absolute value. The sum that forms s adds and subtracts Stirling
+    corrections of up to 0.0084, whose rounding leaves an error of about 1e-18 in s:
+    a relative error of 1e-14 or more there, all of s at shapes below about 1e-20,
+    and a subnormal a rounds its terms too. There the same formula is taken as
+    1 - I = a [-sigma expm1(a sigma) / (a sigma) - exp(a sigma) S], with sigma = s / a
+    and S the series; sigma is log x - log Gamma(1 + a) / a
+    + (log Gamma(b + a) - log Gamma(b)) / a, with every quotient by a taken from its
+    series.
+    """
+    s = _small_shape_exponent_sum(a, b, x, log_x)
+    sigma = NAN
+    if a < _SMALL_SERIES_SHAPE and abs(s) < _ABSORBED_EXPONENT:
+        sigma = _small_shape_exponent(a, b, x, log_x)
+    if not abs(sigma) < INF:  # not needed, or beyond the range for subnormal shapes
+        return math.log(-math.expm1(s) - math.exp(s) * a * _small_shape_series(a, b, x))
+    t = a * sigma
+    ratio = math.expm1(t) / t if t != 0.0 else 1.0
+    bracket = -sigma * ratio - math.exp(t) * _small_shape_series(a, b, x)
+    return math.log(a) + math.log(bracket)
+
+
+@jit_numpy_errors
+def _small_shape_exponent(a: float, b: float, x: float, log_x: float) -> float:
+    """Return s / a = log x - log(a B(a, b)) / a for 0 < a < 1e-3 (any b > 0).
+
+    log(a B(a, b)) = log Gamma(1 + a) - (log Gamma(b + a) - log Gamma(b)). The first
+    quotient comes from the Taylor series of log Gamma(1 + a); the second, for b from
+    10, from log Gamma(b + a) - log Gamma(b) = a log b + (b + a - 1/2) log1p(a / b) - a
+    + delta(b + a) - delta(b), its log b merged with log x into log(b x) as in the
+    prefactor; for b below 10, b is shifted up to 10 or more first, as
+    :func:`log_gamma_increment` shifts it.
+    """
+    c = _LGAMMA1P_TAYLOR
+    poly: float = c[c.size - 1]
+    for k in range(c.size - 2, -1, -1):
+        poly = poly * a + c[k]
+    lgamma1p_over = a * poly - _EULER  # log Gamma(1 + a) / a
+    if b >= 10.0:
+        return _log_product(b, x, log_x) + _gamma_ratio_slope(b, a) - lgamma1p_over
+    total = 0.0  # sum_j log1p(a / (b + j)) / a over the shifts
+    z = b
+    while z < 10.0:
+        total += _log1p_ratio(a / z) / z
+        z += 1.0
+    return log_x + ((math.log(z) + _gamma_ratio_slope(z, a)) - total) - lgamma1p_over
+
+
+@jit_numpy_errors
+def _gamma_ratio_slope(z: float, a: float) -> float:
+    """Return (log Gamma(z + a) - log Gamma(z)) / a - log z for z >= 10 and 0 < a < 1.
+
+    That is (z + a - 1/2) log1p(u) / (u z) - 1 + (delta(z + a) - delta(z)) / a with
+    u = a / z, each quotient from a form that stays accurate as u goes to 0, where
+    their limits are -1/(2 z) and delta'(z).
+    """
+    u = a / z
+    g = _log1p_ratio(u)
+    # (z + a - 1/2) g / z - 1 = (g - 1) + g (a - 1/2) / z
+    g_minus_one = -u * (0.5 - u / 3.0) if u < 1e-8 else g - 1.0
+    # (delta(z + a) - delta(z)) / a = sum_k c_k z^-2k [(1 + u)^-(2k-1) - 1] / u
+    slope = 0.0
+    inverse_square = 1.0 / (z * z)
+    power = inverse_square
+    for k in range(_STIRLING_SERIES.size):
+        m = 2.0 * k + 1.0
+        if u < 1e-8:
+            h = -m * (1.0 - 0.5 * (m + 1.0) * u)
+        else:
+            h = math.expm1(-m * math.log1p(u)) / u
+        slope += _STIRLING_SERIES[k] * power * h
+        power *= inverse_square
+    return g_minus_one + g * (a - 0.5) / z + slope
+
+
+@jit_numpy_errors
+def _log1p_ratio(u: float) -> float:
+    """Return log1p(u) / u for u >= 0, 1 at u = 0."""
+    if u < 1e-8:
+        return 1.0 - u * (0.5 - u / 3.0)
+    return math.log1p(u) / u
 
 
 @jit_numpy_errors
@@ -767,25 +1070,30 @@ def log_betainc_pair(
         return -INF, 0.0
     if log_y == -INF:
         return 0.0, -INF
+    if a >= _UNIFORM_BETA_SHAPE and b >= _UNIFORM_BETA_SHAPE:
+        # (a + b) x = a - lam and (a + b) y = b + lam
+        deviance = deviance_term(a, a - lam, lam) + deviance_term(b, b + lam, -lam)
+        if deviance <= _UNIFORM_BETA_BAND:
+            return _log_betainc_uniform(a, b, lam, deviance)
     # The continued fraction gives the tail on its own side of the branch point; the
     # logarithm of the other tail is taken through it, log(1 - s) = log1p(-s), unless the
     # computed tail exceeds 1/2 with a shape below 1, where the other tail comes from the
     # small-shape series instead.
     if lam > x - y:  # x < (a + 1) / (a + b + 2)
-        log_i = log_beta_prefactor(a, b, x, y, log_x, log_y, lam) - math.log(
-            _beta_continued_fraction(a, b, x, y, lam)
+        log_i = log_beta_prefactor(a, b, x, y, log_x, log_y, lam) - _log_beta_fraction(
+            a, b, x, y, lam
         )
         log_i = min(log_i, 0.0)
         if a < 1.0 and log_i > -_LN2:
-            log_c = math.log(_beta_upper_small_shape(a, b, x, log_x))
+            log_c = _log_beta_upper_small_shape(a, b, x, log_x)
             return log1mexp(-log_c), log_c
         return log_i, log1mexp(-log_i)
-    log_c = log_beta_prefactor(b, a, y, x, log_y, log_x, -lam) - math.log(
-        _beta_continued_fraction(b, a, y, x, -lam)
+    log_c = log_beta_prefactor(b, a, y, x, log_y, log_x, -lam) - _log_beta_fraction(
+        b, a, y, x, -lam
     )
     log_c = min(log_c, 0.0)
     if b < 1.0 and log_c > -_LN2:
-        log_i = math.log(_beta_upper_small_shape(b, a, y, log_y))
+        log_i = _log_beta_upper_small_shape(b, a, y, log_y)
         return log_i, log1mexp(-log_i)
     return log1mexp(-log_c), log_c
 
@@ -802,10 +1110,25 @@ def log_betainc_pair_at(a: float, b: float, x: float) -> tuple[float, float]:
         y_low = 0.0  # 1 - x is exact
         log_x = math.log1p(-y)
         log_y = math.log(y)
-    p, p_low = two_product(a, y)
-    q, q_low = two_product(b, x)
+    if a < _SPLIT_LIMIT and b < _SPLIT_LIMIT:
+        p, p_low = two_product(a, y)
+        q, q_low = two_product(b, x)
+    else:
+        p, p_low = _scaled_two_product(a, y)
+        q, q_low = _scaled_two_product(b, x)
     lam = (p - q) + ((p_low - q_low) + a * y_low)
     return log_betainc_pair(a, b, x, y, log_x, log_y, lam)
+
+
+@jit_numpy_errors
+def _scaled_two_product(c: float, v: float) -> tuple[float, float]:
+    """Return two_product(c, v) for finite c >= 0 and 0 <= v <= 1, c up to the largest
+    double: from 1e290, c is scaled by 2^-600 before Dekker's split, which would
+    overflow, and both parts are scaled back, all exactly."""
+    if c < _SPLIT_LIMIT:
+        return two_product(c, v)
+    p, e = two_product(c * _SCALE_DOWN, v)
+    return p * _SCALE_UP, e * _SCALE_UP
 
 
 def elementwise(
