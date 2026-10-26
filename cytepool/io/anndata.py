@@ -189,11 +189,12 @@ from typing import Any
 import numpy as np
 
 from .. import __version__
+from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..cube.cube import LAYER_NAMES, Cube, _as_n_cells, _first
 from ..cube.pool import _axis_codes, _count_dtype
 from ..cube.provenance import _source_record
-from ..table import Table, _values_equal, _with_missing
+from ..table import Table
 
 __all__ = ["to_anndata", "from_anndata", "to_mudata", "from_mudata"]
 
@@ -957,7 +958,7 @@ class _Rows:
                 if name in _TEXT_COLUMNS[axis] and column.dtype != object:
                     continue  # the table holds this column as text only
                 if stands_for is not None and bool(
-                    _values_equal(
+                    values_equal(
                         column[compared], column[stands_for[codes[compared]]]
                     ).all()
                 ):
@@ -993,7 +994,7 @@ class _Rows:
                 column = Table({name: frame[name]})[name]
             except (TypeError, ValueError):
                 continue
-            added[name] = _with_missing(column[np.where(lacking, 0, rows)], lacking)
+            added[name] = with_missing(column[np.where(lacking, 0, rows)], lacking)
         if added:
             self.samples = self.samples.with_columns(added)
         return list(added)

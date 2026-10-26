@@ -122,7 +122,7 @@ from typing import Any, Literal
 import numpy as np
 
 from ._analysis_records import cube_record, design_record, software_versions
-from ._columns import text_column
+from ._columns import is_data_frame, text_column
 from ._masked_arrays import reject_masked, unmasked_array
 from ._messages import listing, quoted
 from ._options import checked_choice, checked_flag
@@ -134,7 +134,7 @@ from .design.design import _refuse_random_effects
 from .stats.empirical_bayes import ModeratedFit, moderated_statistics
 from .stats.linear_models import LinearModelFit, contrasts_fit, fit_linear_model
 from .stats.multiple_testing import adjust_p_values
-from .table import Table, _is_data_frame
+from .table import Table
 
 __all__ = ["CompositionResult", "propeller"]
 
@@ -668,7 +668,7 @@ def _matched_samples(
 
 def _read_table(data: Any) -> tuple[list[Any], list[Any], list[Any]]:
     """The sample ids, group ids and cell-number columns of a table."""
-    if _is_data_frame(data):
+    if is_data_frame(data):
         if _SAMPLE_ID in data.columns:
             ids = data[_SAMPLE_ID].tolist()
             names = [name for name in data.columns if name != _SAMPLE_ID]

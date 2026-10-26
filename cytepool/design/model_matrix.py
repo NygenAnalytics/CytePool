@@ -58,8 +58,9 @@ from typing import Any
 
 import numpy as np
 
+from .._columns import is_data_frame, missing_mask
 from .._masked_arrays import reject_masked
-from ..table import Table, _is_data_frame, _missing_mask
+from ..table import Table
 from .formula import FormulaTerms, _close_matches, parse_formula, quote_name
 
 __all__ = ["INTERCEPT", "ModelMatrix", "model_matrix"]
@@ -226,7 +227,7 @@ def _read_samples(data: Any, name: str) -> tuple[Table, dict[str, tuple[str, ...
     if isinstance(data, Table):
         return data, {}
     categories: dict[str, tuple[str, ...]] = {}
-    if _is_data_frame(data):
+    if is_data_frame(data):
         replaced: dict[int, np.ndarray] = {}
         for position, name in enumerate(data.columns):
             text = _categorical_as_text(data.iloc[:, position])
@@ -372,7 +373,7 @@ def _read_variables(
         )
     gaps = []
     for name in names:
-        missing = np.flatnonzero(_missing_mask(table[name]))
+        missing = np.flatnonzero(missing_mask(table[name]))
         if missing.size:
             gaps.append(f"{name!r} in {_describe_rows(table, missing)}")
     if gaps:

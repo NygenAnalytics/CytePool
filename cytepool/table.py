@@ -31,6 +31,7 @@ from typing import Any
 
 import numpy as np
 
+from ._columns import is_data_frame, values_equal
 from ._masked_arrays import reject_masked, unmasked_array
 
 _REPR_ROWS = 5  # rows shown at each end of a long table
@@ -75,7 +76,7 @@ class Table:
             for name, values in data.items():
                 _check_column_name(name)
                 columns[name] = _as_column(name, values)
-        elif _is_data_frame(data):
+        elif is_data_frame(data):
             columns = _columns_from_data_frame(data)
         else:
             raise TypeError(
@@ -350,7 +351,7 @@ class Table:
             theirs = other._columns[name]
             if column.dtype != theirs.dtype:
                 return False
-            if not _values_equal(column, theirs).all():
+            if not values_equal(column, theirs).all():
                 return False
         return True
 
@@ -524,13 +525,6 @@ def _is_missing_object(value: object) -> bool:
     return type(value).__name__ in ("NAType", "NaTType")
 
 
-def _is_data_frame(data: object) -> bool:
-    return all(
-        hasattr(data, attribute)
-        for attribute in ("columns", "index", "iloc", "to_numpy", "isna")
-    )
-
-
 def _columns_from_data_frame(frame: Any) -> dict[str, np.ndarray]:
     index_names = [level for level in frame.index.names if level is not None]
     if index_names:
@@ -556,48 +550,6 @@ def _columns_from_data_frame(frame: Any) -> dict[str, np.ndarray]:
         missing = series.isna().to_numpy() if values.dtype == object else None
         columns[name] = _as_column(name, values, missing)
     return columns
-
-
-def _missing_mask(column: np.ndarray) -> np.ndarray:
-    """Return where a column holds missing values (None, NaN or NaT)."""
-    kind = column.dtype.kind
-    if kind == "O":
-        return np.array([value is None for value in column.tolist()], dtype=bool)
-    if kind in "fc":
-        return np.isnan(column)
-    if kind in "mM":
-        return np.isnat(column)
-    return np.zeros(column.shape, dtype=bool)
-
-
-def _values_equal(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Compare two columns of one dtype elementwise; missing equals missing.
-
-    Text compares with Python's ``==``, under which None equals only None.
-    """
-    equal = np.asarray(a == b, dtype=bool)
-    if a.dtype.kind in "fcmM":
-        equal |= _missing_mask(a) & _missing_mask(b)
-    return equal
-
-
-def _with_missing(column: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Return a read-only copy of a column with missing values where mask is true.
-
-    Integer and boolean columns have no missing value and become float64.
-    """
-    if not mask.any():
-        return column
-    kind = column.dtype.kind
-    result = column.astype(np.float64) if kind in "biu" else column.copy()
-    if kind == "O":
-        result[mask] = None
-    elif kind in "mM":
-        result[mask] = np.array("NaT", dtype=result.dtype)
-    else:
-        result[mask] = np.nan
-    result.flags.writeable = False
-    return result
 
 
 def _repeated(names: list[Any]) -> list[Any]:

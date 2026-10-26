@@ -30,9 +30,10 @@ import numpy as np
 from numba import prange
 
 from .. import __version__
+from .._columns import is_data_frame
 from .._jit import jit, thread_limit
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
-from ..table import Table, _is_data_frame
+from ..table import Table
 from .cube import LAYER_NAMES, Cube, _axis_table
 from .provenance import _source_record
 
@@ -1271,7 +1272,7 @@ def _categorical_parts(labels: Any) -> tuple[np.ndarray, list[Any]] | None:
 
 def _frame_labels(counts: Any, axis: str) -> np.ndarray | None:
     """Return the index or columns of a pandas DataFrame when they hold text."""
-    if not _is_data_frame(counts):
+    if not is_data_frame(counts):
         return None
     labels = np.asarray(getattr(counts, axis), dtype=object)
     if all(isinstance(label, str) and label for label in labels.tolist()):
@@ -1288,7 +1289,7 @@ def _id_origin(value: Any, counts: Any, labels: str) -> str:
     if value is None:
         found = _frame_labels(counts, labels)
         return "positions" if found is None else f"data_frame_{labels}"
-    if isinstance(value, Table | Mapping) or _is_data_frame(value):
+    if isinstance(value, Table | Mapping) or is_data_frame(value):
         return "table"
     return "ids"
 
@@ -1300,7 +1301,7 @@ def _ids_or_table(value: Any, n: int, axis: str, id_column: str) -> Table:
         ids = np.empty(n, dtype=object)
         ids[:] = [f"{axis[:-1]}_{i}" for i in range(n)]
         return Table({id_column: ids})
-    if isinstance(value, Table | Mapping) or _is_data_frame(value):
+    if isinstance(value, Table | Mapping) or is_data_frame(value):
         reject_masked_table(value, axis, id_column)
         table = Table(value)
         if len(table) != n:

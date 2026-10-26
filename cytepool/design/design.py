@@ -21,8 +21,9 @@ from typing import Any
 
 import numpy as np
 
+from .._columns import missing_mask
 from .._masked_arrays import reject_masked
-from ..table import Table, _missing_mask
+from ..table import Table
 from .checks import DesignReport, _same_partition, check_design
 from .contrasts import Contrasts, _is_pandas, make_contrasts
 from .formula import (
@@ -492,7 +493,7 @@ def _random_parts(
                 f"; columns are: {', '.join(table.columns)}"
             )
         for name in effect.grouping:
-            missing = np.flatnonzero(_missing_mask(table[name]))
+            missing = np.flatnonzero(missing_mask(table[name]))
             if missing.size:
                 raise ValueError(
                     f"the grouping column {name!r} of the random effect {label} has "

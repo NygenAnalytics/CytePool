@@ -7,8 +7,9 @@ from typing import Any
 
 import numpy as np
 
+from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
-from ..table import Table, _values_equal, _with_missing
+from ..table import Table
 from .fingerprints import (
     _block_digest,
     _cells_digest,
@@ -2710,14 +2711,14 @@ def _pool_rows(
         column = table[name]
         first = column[first_rows]
         if starts.size:
-            same = _values_equal(column[order], np.repeat(first, sizes))
+            same = values_equal(column[order], np.repeat(first, sizes))
             agree = np.logical_and.reduceat(same, starts)
         else:
             agree = np.ones(0, dtype=bool)
         if agree.all():
             columns[name] = first
         elif keep_varying:
-            columns[name] = _with_missing(first, ~agree)
+            columns[name] = with_missing(first, ~agree)
     return Table(columns)
 
 
