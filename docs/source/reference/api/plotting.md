@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: Figures of CytePool's results in one call each, drawn as limma, edgeR, DESeq2, speckle and metafor draw them, with matplotlib as an optional dependency.
+    description: Figures of CytePool's results in one call each, drawn as limma, edgeR, DESeq2, speckle and metafor draw them, and of the replication of studies, with matplotlib as an optional dependency.
 ---
 
 # Figures

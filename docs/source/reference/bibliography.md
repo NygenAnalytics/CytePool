@@ -63,6 +63,10 @@ Scores of gene sets in every sample [@haenzelmann2013; @barbie2009; @lee2008;
 @higgins2002; @hartung1999; @sidik2002; @knapp2003; @urbut2019; @benjamini1995;
 @benjamini2001; @holm1979; @hochberg1988; @hommel1988; @simes1986]
 
+Combined p-values, partial conjunctions and replication [@fisher1932; @stouffer1949;
+@liptak1958; @tippett1931; @wilkinson1951; @pearson1933; @george1983; @zaykin2011;
+@owen2009; @benjamini2008; @heller2014; @storey2002; @storey2003; @storey2004].
+
 ## Smoothing, distributions and numerical methods
 
 [@cleveland1979; @cleveland1981; @deboor1978; @hastie1992; @scott1979; @freedman1981;

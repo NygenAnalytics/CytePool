@@ -57,6 +57,7 @@ from cytepool.meta_analysis import differential_expression_meta_analysis
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
 from cytepool.over_representation import over_representation
 from cytepool.pathway_scores import gsva
+from cytepool.replication import differential_expression_replication
 from cytepool.stats import distributions, special
 from cytepool.stats.deseq2 import deseq2_dispersions, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
@@ -450,6 +451,45 @@ def _meta_analysis_arguments(context: Context) -> dict[str, Any]:
         "contrasts": ["stim"],
         "min_studies": 2,
     }
+
+
+@functools.cache
+def _replication_studies() -> tuple[CubeCollection, dict[str, Any]]:
+    """Two studies of the bulk cube of COUNTS, each tested on its aligned cube."""
+    collection = CubeCollection({"A": _bulk_cube(), "B": _bulk_cube()})
+    results = {}
+    for study in collection.studies:
+        cube = collection.aligned_cube(study)
+        results[study] = limma_voom(
+            cube,
+            Design(cube.samples, "~ condition", levels=LEVELS),
+            contrasts={"stim": [0.0, 1.0]},
+            expression_filter=False,
+        )
+    return collection, results
+
+
+def _replication_arguments(context: Context | None) -> dict[str, Any]:
+    """The replication of the two studies, with a value for every argument."""
+    collection, results = _replication_studies()
+    return {
+        "collection": collection,
+        "results": results,
+        "group": "bulk",
+        "contrast": "stim",
+        "alpha": 0.5,
+        "method": "stouffer",
+        "at_least": 2,
+        "conjunction_method": "fisher",
+        "weights": {"A": 1.0, "B": 2.0},
+        "meta_method": "dl",
+        "null_proportion": {"lambdas": [0.2, 0.4, 0.6, 0.8]},
+    }
+
+
+@functools.cache
+def _replication() -> Any:
+    return differential_expression_replication(**_replication_arguments(None))
 
 
 def _axes() -> Any:
@@ -1782,6 +1822,62 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("method", "test", "level"),
         objects=("results",),
     ),
+    # Combined p-values and pi0: NaN marks a study that did not test a feature, or a
+    # missing p-value.
+    "cytepool.stats.combined_p_values.combine_p_values": Entry(
+        lambda c: {
+            "p_values": [[0.01, 0.4], [0.3, np.nan], [0.02, 0.5]],
+            "method": "stouffer",
+            "weights": [1.0, 2.0, 3.0],
+            "directions": [[1.0, -1.0], [1.0, np.nan], [-1.0, 1.0]],
+        },
+        {"p_values": "NaN", "weights": "NaN", "directions": "NaN"},
+        options=("method",),
+    ),
+    "cytepool.stats.combined_p_values.combine_p_values[wilkinson]": Entry(
+        lambda c: {"p_values": [0.01, 0.3, 0.02], "method": "wilkinson", "rank": 2},
+        {},
+        options=("rank",),
+    ),
+    "cytepool.stats.combined_p_values.partial_conjunction": Entry(
+        lambda c: {
+            "p_values": [[0.01, 0.4], [0.3, np.nan], [0.02, 0.5]],
+            "at_least": 2,
+            "method": "fisher",
+            "directions": [[1.0, -1.0], [1.0, np.nan], [-1.0, 1.0]],
+        },
+        {"p_values": "NaN", "directions": "NaN"},
+        options=("at_least", "method"),
+    ),
+    "cytepool.stats.multiple_testing.proportion_of_true_nulls": Entry(
+        lambda c: {
+            "p": np.linspace(0.0, 1.0, 21),
+            "lambdas": [0.2, 0.4, 0.6, 0.8],
+            "method": "bootstrap",
+            "smooth_df": 3.0,
+            "smooth_log": False,
+        },
+        {"p": "NaN", "lambdas": None},
+        options=("method", "smooth_df", "smooth_log"),
+    ),
+    # Replication: a mapping of weights by study, and options of
+    # proportion_of_true_nulls; the collection and results were checked when they
+    # were built.
+    "cytepool.replication.differential_expression_replication": Entry(
+        _replication_arguments,
+        {"weights": None, "null_proportion": None},
+        options=(
+            "group",
+            "contrast",
+            "alpha",
+            "method",
+            "at_least",
+            "conjunction_method",
+            "meta_method",
+        ),
+        objects=("collection", "results"),
+        keys={"weights": "A", "null_proportion": "lambdas"},
+    ),
     # Figures, each drawn into an Axes that pyplot does not keep. A variable of the
     # samples is an array of labels, or a name; the other inputs are objects.
     "cytepool.plotting.plot_mds": Entry(
@@ -2087,6 +2183,22 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("feature", "group", "contrast"),
         objects=("meta", "studies", "ax"),
     ),
+    "cytepool.plotting.plot_study_agreement": Entry(
+        lambda c: {
+            "result": _replication(),
+            "measure": "sign_agreement",
+            "numbers": True,
+            "ax": _axes(),
+        },
+        {},
+        options=("measure", "numbers"),
+        objects=("result", "ax"),
+    ),
+    "cytepool.plotting.plot_replicated_genes": Entry(
+        lambda c: {"result": _replication(), "ax": _axes()},
+        {},
+        objects=("result", "ax"),
+    ),
     "cytepool.plotting.plot_variance_fractions": Entry(
         lambda c: {
             "data": _variance_partition(),
@@ -2251,6 +2363,11 @@ NO_ARRAY_INPUT = {
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
     ),
+    "cytepool.replication.ReplicationResult": (
+        ("genes", "study_pairs", "found_in", "studies", "provenance"),
+        "Tables, which were checked when they were built, and a record kept as JSON, "
+        "which cannot hold an array",
+    ),
     "cytepool.meta_analysis.align_study_results": (
         ("collection", "results", "group", "contrast"),
         "a CubeCollection and results, which were checked when they were built, and a "
@@ -2285,6 +2402,8 @@ RECORDS = {
     "cytepool.stats.mixed_models.FixedEffectTests",
     "cytepool.stats.mixed_models.MixedModelFit",
     "cytepool.meta_analysis.MetaAnalysisFit",
+    "cytepool.stats.combined_p_values.CombinedPValues",
+    "cytepool.stats.multiple_testing.TrueNullProportion",
     "cytepool.stats.dream.ModeratedFixedEffectTests",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodFit",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",

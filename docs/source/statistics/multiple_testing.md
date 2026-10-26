@@ -49,3 +49,8 @@ Gene-set tests adjust over the sets ({api}`camera`, {api}`fry`, {api}`mroast`);
 {api}`romer`'s p-values are not adjusted, as in limma, and {api}`adjust_p_values`
 adjusts them. A composition test adjusts over the cell types, and a meta-analysis over
 the genes of each cell type and contrast.
+
+{api}`proportion_of_true_nulls` estimates the share of the tests without an effect,
+$\pi_0$, as qvalue's `pi0est` does [@storey2002]; the
+[replication of studies](meta_analysis.md#the-proportion-of-true-nulls-and-pi1) reads
+$\pi_1 = 1 - \pi_0$ of one study's p-values among the genes another finds.

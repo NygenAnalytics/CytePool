@@ -80,6 +80,11 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.smoothing", "_quantile_knots"): (
         "the knots of the public natural_spline_basis, placed as R's ns() places them"
     ),
+    ("cytepool.stats.smoothing", "_smoothing_spline_fit"): (
+        "R's smooth.spline, built from the B-splines of the public "
+        "natural_spline_basis next to them, with which multiple_testing smooths "
+        "qvalue's estimates of pi0"
+    ),
     ("cytepool.stats.smoothing", "_weighted_lowess"): (
         "tests and validation/empirical_bayes.py import it from smoothing"
     ),
