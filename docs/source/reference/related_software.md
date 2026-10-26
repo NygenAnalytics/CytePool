@@ -27,6 +27,7 @@ current releases below.
 | [lme4](https://cran.r-project.org/package=lme4) and [lmerTest](https://cran.r-project.org/package=lmerTest) | Linear mixed models; Satterthwaite's and Kenward-Roger's tests [@bates2015; @kuznetsova2017] | GPL (>= 2) | CRAN 2.1-0 and 3.2-1 |
 | [fgsea](https://bioconductor.org/packages/fgsea) | Fast preranked gene set enrichment analysis, with p-values by multilevel splitting [@korotkevich2021]; CytePool's `gsea` adapts its algorithms, as `THIRD_PARTY_NOTICES.md` records | MIT | Bioconductor 1.38.0 |
 | [GSVA](https://bioconductor.org/packages/GSVA) | Scores of gene sets in every sample: GSVA, ssGSEA, combined z-scores and PLAGE [@haenzelmann2013] | Artistic-2.0 (GPL (>= 2) up to version 2.0) | Bioconductor 2.6.14 |
+| [progeny](https://bioconductor.org/packages/progeny) | PROGENy's weights of the genes that respond to 14 pathways, and its pathway scores [@schubert2018]; CytePool reads its weights | Apache-2.0 | Bioconductor 1.34.0 |
 | [PyDESeq2](https://github.com/scverse/PyDESeq2) | A Python implementation of DESeq2 [@muzellec2023]; CytePool also adapts some of its constants, as `THIRD_PARTY_NOTICES.md` records | MIT | PyPI 0.5.4 |
 
 Because limma, edgeR, DESeq2, variancePartition, speckle, metafor, lme4, lmerTest and
@@ -43,7 +44,7 @@ cube files are Zarr v3 stores.
 | Tool | What it does | Licence | Current release |
 | --- | --- | --- | --- |
 | [scanpy](https://github.com/scverse/scanpy) | Single-cell analysis; `get.aggregate` sums cells into pseudobulk profiles [@wolf2018] | BSD 3-Clause | PyPI 1.12.4 |
-| [decoupler](https://github.com/scverse/decoupler) | Activity scores of pathways and regulators; `pp.pseudobulk` [@badiaimompel2022] | BSD 3-Clause | PyPI 2.3.0 |
+| [decoupler](https://github.com/scverse/decoupler) | Activity scores of pathways and regulators; `pp.pseudobulk` [@badiaimompel2022]; CytePool's `ulm`, `mlm` and `weighted_aggregate` compute its activities and are validated against it, as `THIRD_PARTY_NOTICES.md` records | BSD 3-Clause | PyPI 2.3.0 |
 | [LIANA+](https://github.com/saezlab/liana-py) | Cell-cell communication; `adata_to_views` makes a MuData of pseudobulk views [@dimitrov2024] | BSD 3-Clause | PyPI 1.10.0 |
 | [anndata](https://github.com/scverse/anndata) and [mudata](https://github.com/scverse/mudata) | Annotated data matrices and multimodal containers [@virshup2024; @bredikhin2022] | BSD 3-Clause | PyPI 0.13.4 and 0.4.1 |
 | [zarr-python](https://github.com/zarr-developers/zarr-python) | The Python implementation of Zarr; opens cube files | MIT | PyPI 3.4.1 |

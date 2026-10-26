@@ -1,5 +1,5 @@
 ---
-description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; gene set enrichment analysis of ranked genes, as fgsea computes it; over-representation analysis of the genes called significant, as limma's kegga computes it; scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE, as the GSVA package computes them; gene sets read from GMT files; and how to choose between the tests.
+description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; gene set enrichment analysis of ranked genes, as fgsea computes it; over-representation analysis of the genes called significant, as limma's kegga computes it; scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE, as the GSVA package computes them; activities of transcription factors and pathways from the networks CollecTRI and PROGENy, as decoupler computes them; gene sets read from GMT files; and how to choose between the tests.
 ---
 
 # Gene-set tests
@@ -249,6 +249,86 @@ genes with the same low counts in different samples, can be ordered by the last 
 R's probabilities: their ranks, and the scores of their sets, can then differ slightly
 from GSVA's.
 
+## Activities of regulators and pathways
+
+A transcription factor raises some of its target genes and lowers others, and a
+signalling pathway leaves a footprint of genes that respond to it. A network gives each
+such source signed weights on its targets: 1 for a target that a transcription factor
+activates and -1 for one it represses in CollecTRI's regulons [@muellerdott2023], and
+in PROGENy the z-scores with which genes responded to the perturbation of each of 14
+pathways in hundreds of experiments [@schubert2018; @holland2020b]. A source is active
+in a profile, the expression of a sample or the statistics of a contrast, when its
+targets are high where their weights are positive and low where they are negative.
+{api}`ulm`, {api}`mlm` and {api}`weighted_aggregate` score every source in every
+profile as decoupler does [@badiaimompel2022], from a samples x genes matrix, a cell
+type of a cube (its log-CPM, as for the pathway scores) or a differential-expression
+result, one profile per group and contrast, by default of its moderated t-statistics.
+They return an {api}`Activities`, profiles x sources, which
+{api}`fit_linear_model` takes with a design built from its profiles, as it takes
+pathway scores; {api}`Activities.table` lists the scores one per row.
+
+**ULM**, the univariate linear model, fits for each source a line through the values
+of the profile's $n$ genes against the source's weights $x_g$, zero for the genes that
+are not its targets,
+
+$$
+y_g = \beta_0 + \beta_1 x_g + \varepsilon_g,
+$$
+
+and the score is the t-statistic of the slope,
+$t = \hat\beta_1 / \mathrm{se}(\hat\beta_1) = r \sqrt{(n - 2) / (1 - r^2)}$, with $r$
+the correlation of $y$ and $x$, tested on $n - 2$ degrees of freedom. Each source is
+tested against all the other genes, those of other sources included. **MLM**, the
+multivariate linear model, fits all the sources at once, with an intercept,
+$y_g = \beta_0 + \sum_s \beta_s x_{gs} + \varepsilon_g$, so that each score, the
+t-statistic of $\beta_s$ on $n - m - 1$ degrees of freedom for $m$ sources, measures a
+source beyond what the others explain: where two regulators share targets, ULM
+credits both with their response and MLM splits it between them. MLM needs more genes
+than sources, and sources whose weights are not linear combinations of the weights of
+others; it refuses those it cannot tell apart, by name. The **weighted aggregate** is
+the weighted mean of the values of a source's targets, $\sum_g w_g y_g / \sum_g |w_g|$,
+or their weighted sum, which is PROGENy's original score [@schubert2018]. With random
+permutations of the genes (1,000 by default, as decoupler draws them), the score is
+normalized by those of the permutations, $(\mathrm{ES} - \text{mean}) / \text{sd}$, and
+its p-value doubles the smaller of the two one-sided permutation p-values
+[@phipson2010].
+
+Targets are matched to the genes' ids exactly, and genes whose values are zero in
+every profile are left out, as decoupler leaves them out. A source with fewer than
+`min_targets` targets among a profile's genes (5, decoupler's `tmin`) has no score
+there; NaN marks a missing value, so that each profile of a differential-expression
+result uses the genes its group tested. The adjusted p-values are Benjamini and
+Hochberg's over the sources of each profile [@benjamini1995]. {api}`plot_activities`
+draws the activities as a heatmap, and {api}`plot_top_activities` the sources with the
+largest scores of one profile as bars, as decoupler's `pl.barplot` draws them.
+
+The networks are a {api}`Network`: each source with its targets and weights, and the
+network's name, version, licence and citation. {api}`collectri` and {api}`progeny`
+download their files on first use from where they were published, check them against
+pinned SHA-256 digests, and keep them in a cache, so that a machine without a
+connection can use a file copied there. CollecTRI gathers twelve resources, each with
+its own terms, which OmniPath records [@tuerei2021]: `licence="commercial"`, the
+default, keeps the 39,896 interactions that a resource listed for commercial use
+supports, leaving out the 3,279 that GEREDB alone supports, which OmniPath lists for
+academic use; `licence="academic"` keeps all 43,175 (the
+[Datasets](../reference/datasets.md#networks) page gives the terms). PROGENy's weights
+are those of the R package progeny, under the Apache License 2.0, for human and mouse;
+{api}`progeny` keeps the genes with a p-value below 0.05, as decoupler does, or the
+`top` genes of each pathway, as progeny's `getModel` does, 100 by default there. Its
+genes are named by the symbols of its release; decoupler reads PROGENy through
+OmniPath, which renames some of them to their current symbols. Any network given as a
+table of `source`, `target` and `weight`, or gene sets with weights of 1, works the
+same way, and {api}`Network.select` keeps some of its sources.
+
+The scores, estimates and p-values agree with decoupler's to rounding, and PROGENy's
+weights with progeny's. CytePool differs on purpose in three places: it adjusts MLM's
+p-values, which decoupler reports unadjusted as its adjusted ones; its permutation
+p-values double the smaller tail, where decoupler's send a score near zero to $2/n$ for
+$n$ permutations; and it gives a profile whose values are all zero NaN scores, where
+decoupler leaves it out. decoupler's VIPER is not offered,
+because the licence of its reference implementation allows only non-profit academic
+use.
+
 ## Choices
 
 - **Competitive or self-contained.** Rank a collection with camera; ask about one set
@@ -273,3 +353,10 @@ from GSVA's.
   the genes' own statistics, where scores first reduce each set to one number per
   sample. GSVA and ssGSEA compare a set's genes with the other genes of each sample;
   combined z-scores and PLAGE follow each set across samples.
+- **Activities or scores.** Activities use the signs and sizes of a network's weights,
+  so that a regulator's repressed targets count against it; pathway scores treat every
+  gene of a set alike. ULM is decoupler's default for regulators and pathways alike;
+  MLM separates sources whose targets overlap, provided the network gives it fewer
+  sources than genes and no two sources it cannot tell apart. For a contrast, score its
+  statistics; to compare samples, or to test activities with a design, score the
+  samples.

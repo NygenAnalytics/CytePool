@@ -53,6 +53,10 @@ random numbers of its tests [@matsumoto1998; @durstenfeld1964].
 Scores of gene sets in every sample [@haenzelmann2013; @barbie2009; @lee2008;
 @tomfohr2005].
 
+Activities of regulators and pathways, and their networks [@badiaimompel2022;
+@muellerdott2023; @schubert2018; @holland2020b; @tuerei2021], and the running mean and
+variance of their permutations [@welford1962].
+
 ## Composition
 
 [@phipson2022; @buttner2021; @mangiola2023; @hoffman2026b; @dann2022; @yi2024]

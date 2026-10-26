@@ -1,5 +1,5 @@
 """Figures of pseudobulk and bulk analyses, drawn as limma, edgeR, DESeq2, speckle,
-metafor, variancePartition and fgsea draw them.
+metafor, variancePartition, fgsea and decoupler draw them.
 
 Each function draws one figure from the objects that CytePool's analyses return: a
 cube, a voom result, a fit, the table of a differential-expression or gene-set test,
@@ -39,6 +39,10 @@ The figures:
   (Korotkevich et al. 2021); :func:`plot_pathway_scores`, the scores of gene sets in
   every sample as a heatmap, as GSVA's guide draws them (Haenzelmann, Castelo and
   Guinney 2013).
+- Activities: :func:`plot_activities`, the activities of transcription factors or
+  pathways in every sample or contrast as a heatmap, and :func:`plot_top_activities`,
+  the sources with the largest scores of one profile as bars, as decoupler's
+  ``pl.barplot`` draws them (Badia-i-Mompel et al. 2022).
 - Count models: :func:`plot_dispersions`, DESeq2's ``plotDispEsts`` (Love et al.
   2014); :func:`plot_quasi_dispersions`, edgeR's ``plotQLDisp`` (Chen et al. 2016).
 - Meta-analysis: :func:`plot_forest`, the forest plot (Lewis and Clarke 2001) that
@@ -137,6 +141,11 @@ References:
     microarray and RNA-seq data. BMC Bioinformatics 14, 7.
     doi:10.1186/1471-2105-14-7
 
+    Badia-i-Mompel P, Velez Santiago J, Braunger J, Geiss C, Dimitrov D, Mueller-Dott S,
+    Taus P, Dugourd A, Holland CH, Ramirez Flores RO, Saez-Rodriguez J (2022).
+    decoupleR: ensemble of computational methods to infer biological activities from
+    omics data. Bioinformatics Advances 2, vbac016. doi:10.1093/bioadv/vbac016
+
     Lewis S, Clarke M (2001). Forest plots: trying to see the wood and the trees. BMJ
     322, 1479-1480. doi:10.1136/bmj.322.7300.1479
 
@@ -193,6 +202,7 @@ from ._ranked_genes import (
     ranked_genes,
     running_sum,
 )
+from .activity import Activities
 from .composition import CompositionResult
 from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
@@ -218,6 +228,7 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
 __all__ = [
+    "plot_activities",
     "plot_barcode",
     "plot_cell_numbers",
     "plot_composition",
@@ -240,6 +251,7 @@ __all__ = [
     "plot_sample_weights",
     "plot_significant_genes",
     "plot_study_agreement",
+    "plot_top_activities",
     "plot_variance_fractions",
     "plot_volcano",
 ]
@@ -2826,15 +2838,7 @@ def plot_pathway_scores(
         groups = ([labels[i] for i in order.tolist()], hues)
     values = values[:, order]
     if scaled:
-        # Each row's mean and standard deviation over its observed scores; NaN for a
-        # row of fewer than two, or of equal scores.
-        observed = np.isfinite(values)
-        counts = observed.sum(axis=1, keepdims=True).astype(np.float64)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            means = np.where(observed, values, 0.0).sum(axis=1, keepdims=True) / counts
-            centred = values - means
-            squares = np.where(observed, centred**2, 0.0).sum(axis=1, keepdims=True)
-            values = centred / np.sqrt(squares / (counts - 1.0))
+        values = _standardized_rows(values)
     label = _SCORE_LABELS[scores.method]
     ax = _axes(
         ax,
@@ -2929,6 +2933,245 @@ def _draw_heatmap(
             borderaxespad=0.0,
         )
     ax.figure.colorbar(image, ax=ax, label=colorbar_label, shrink=0.8)
+
+
+def _standardized_rows(values: FloatArray) -> FloatArray:
+    """Each row centred on the mean of its finite values and divided by their
+    standard deviation, as R's ``heatmap(scale = "row")``; NaN for a row of fewer
+    than two values, or of equal ones."""
+    observed = np.isfinite(values)
+    counts = observed.sum(axis=1, keepdims=True).astype(np.float64)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        means = np.where(observed, values, 0.0).sum(axis=1, keepdims=True) / counts
+        centred = values - means
+        squares = np.where(observed, centred**2, 0.0).sum(axis=1, keepdims=True)
+        scaled: FloatArray = centred / np.sqrt(squares / (counts - 1.0))
+    return scaled
+
+
+# Activities.
+
+
+def plot_activities(
+    activities: Activities,
+    *,
+    sources: Sequence[str] | None = None,
+    top: int | None = 25,
+    color_by: str | Sequence[Any] | None = None,
+    standardize: bool = False,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the activities of the sources of a network in every profile as a
+    heatmap.
+
+    A row for each source and a column for each profile, a sample or a contrast, each
+    cell coloured by the source's score in the profile, on the scale of
+    :func:`plot_pathway_scores`, from blue (low) through grey (zero) to red (high),
+    symmetric about zero. The sources are those named by ``sources``, top to bottom,
+    or else the ``top`` sources whose largest absolute score over the profiles is
+    largest, in the order of the network. ``color_by`` groups the profiles under a
+    strip of the groups' colours, and ``standardize`` centres and scales each
+    source's scores across the profiles, as for :func:`plot_pathway_scores`. NaN
+    scores, of sources with too few targets among a profile's genes, are dark grey.
+
+    Draws the cells (gid ``"scores"``) and, with ``color_by``, the strip (gid
+    ``"groups"``) and the lines between groups (gid ``"group boundaries"``).
+
+    Args:
+        activities: The activities of :func:`~cytepool.activity.ulm`,
+            :func:`~cytepool.activity.mlm` or
+            :func:`~cytepool.activity.weighted_aggregate`.
+        sources: The sources to show, top to bottom; by default the ``top``
+            sources.
+        top: When ``sources`` is None, how many sources to show, at least 1; None
+            shows every source.
+        color_by: A column of ``activities.profiles``, such as ``"condition"`` for
+            the activities of a cube's group, or one label per profile, at most
+            eight levels.
+        standardize: Whether to standardize each source's scores across the
+            profiles.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes of the heatmap.
+
+    Raises:
+        TypeError: If ``activities`` is not an ``Activities``, an option has the
+            wrong type, or an argument is or holds a numpy masked array.
+        ValueError: If a source is not among the activities or is named twice, an
+            option is out of range, the labels do not match the profiles, or
+            ``color_by`` has more than eight levels.
+        KeyError: If ``color_by`` names a column the profiles do not have.
+    """
+    _check_axes(ax)
+    _check_activities(activities)
+    scaled = checked_flag(standardize, "standardize")
+    reject_masked(top, "top")
+    count = None if top is None else positive_integer(top, "top")
+    names = list(activities.sources)
+    if sources is not None:
+        chosen = _chosen_sources(sources, names)
+    elif count is None:
+        chosen = names
+    else:
+        with np.errstate(invalid="ignore"):
+            largest = np.nanmax(np.abs(activities.scores), axis=0, initial=-np.inf)
+        shown = np.argsort(-largest, kind="stable")[:count]
+        chosen = [names[j] for j in np.sort(shown).tolist()]
+    values = activities.scores[:, [names.index(name) for name in chosen]].T
+    table = activities.profiles
+    n_profiles = values.shape[1]
+    profiles = _Samples(
+        ids=[str(value) for value in table["profile_id"].tolist()],
+        rows=list(range(n_profiles)),
+        n_rows=n_profiles,
+        variables={name: table[name] for name in table.columns},
+        source="the activities' profiles",
+    )
+    order = np.arange(n_profiles)
+    groups = None
+    if color_by is not None:
+        _check_variable(color_by, "color_by")
+        labels, levels = profiles.labels(color_by, "color_by")
+        hues = _hues(levels, "color_by", "merge levels or give fewer labels")
+        position = {level: i for i, level in enumerate(levels)}
+        order = np.argsort([position[label] for label in labels], kind="stable")
+        groups = ([labels[i] for i in order.tolist()], hues)
+    values = values[:, order]
+    if scaled:
+        values = _standardized_rows(values)
+    ax = _axes(
+        ax,
+        (min(14.0, 3.5 + 0.22 * n_profiles), min(14.0, 1.8 + 0.28 * len(chosen))),
+    )
+    _draw_heatmap(
+        ax,
+        values,
+        chosen,
+        [profiles.ids[i] for i in order.tolist()],
+        "Standardized activity" if scaled else _activity_label(activities),
+        groups,
+    )
+    return ax
+
+
+def plot_top_activities(
+    activities: Activities,
+    profile: str | None = None,
+    *,
+    top: int = 25,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the sources with the largest activity scores of one profile as bars.
+
+    decoupler's ``pl.barplot`` (Badia-i-Mompel et al. 2022): the ``top`` sources with
+    the largest absolute scores in the profile, in decreasing order of their scores
+    from top to bottom, each bar as long as the score and coloured by it on the
+    scale of :func:`plot_activities`, symmetric about zero. Sources without a score
+    in the profile (NaN) are left out.
+
+    Draws the bars (gid ``"activities"``).
+
+    Args:
+        activities: The activities of :func:`~cytepool.activity.ulm`,
+            :func:`~cytepool.activity.mlm` or
+            :func:`~cytepool.activity.weighted_aggregate`.
+        profile: The ``profile_id`` of the profile to show; it may be left out when
+            the activities have one profile.
+        top: How many sources to show, at least 1.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``activities`` is not an ``Activities``, an option has the
+            wrong type, or an argument is or holds a numpy masked array.
+        ValueError: If ``profile`` is left out of several profiles, ``top`` is below
+            1, or the profile has no score.
+        KeyError: If no profile has the id ``profile``.
+    """
+    _check_axes(ax)
+    _check_activities(activities)
+    count = positive_integer(top, "top")
+    ids = [str(value) for value in activities.profiles["profile_id"].tolist()]
+    if profile is None:
+        if len(ids) != 1:
+            raise ValueError(
+                f"the activities have {len(ids)} profiles; name the one to show with "
+                f"profile, one of {quoted(ids)}"
+            )
+        row = 0
+    else:
+        if not isinstance(profile, str):
+            reject_masked(profile, "profile")
+            raise TypeError(
+                f"profile must be a profile id (str), got {type(profile).__name__}"
+            )
+        if profile not in ids:
+            raise KeyError(
+                f"no profile {profile!r} among the activities: {quoted(ids)}"
+            )
+        row = ids.index(profile)
+    scores = activities.scores[row]
+    scored = np.flatnonzero(~np.isnan(scores))
+    if scored.size == 0:
+        raise ValueError(f"the profile {ids[row]!r} has no score")
+    shown = scored[np.argsort(-np.abs(scores[scored]), kind="stable")[:count]]
+    shown = shown[np.argsort(-scores[shown], kind="stable")]
+    values = scores[shown]
+    names = [activities.sources[j] for j in shown.tolist()]
+    colors = _module("matplotlib.colors")
+    ramp = colors.LinearSegmentedColormap.from_list("cytepool_diverging", _DIVERGING)
+    limit = float(np.max(np.abs(values))) or 1.0
+    shades = ramp(colors.Normalize(vmin=-limit, vmax=limit)(values))
+    ax = _axes(ax, (5.0, min(14.0, 1.2 + 0.26 * values.size)))
+    positions = np.arange(values.size, dtype=np.float64)
+    ax.barh(positions, values, color=shades, height=0.8, gid="activities")
+    ax.axvline(0.0, color=_INK, linewidth=0.8)
+    ax.set_yticks(positions, names)
+    ax.set_ylim(values.size - 0.5, -0.5)
+    ax.tick_params(axis="y", length=0)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_xlabel(_activity_label(activities))
+    ax.set_title(ids[row], loc="left")
+    return ax
+
+
+def _check_activities(activities: Any) -> None:
+    if not isinstance(activities, Activities):
+        raise TypeError(
+            "activities must be an Activities, as ulm, mlm and weighted_aggregate "
+            f"return, got {type(activities).__name__}"
+        )
+
+
+def _chosen_sources(sources: Any, names: list[str]) -> list[str]:
+    """The sources named, checked against those of the activities."""
+    reject_masked(sources, "sources")
+    chosen = [sources] if isinstance(sources, str) else list(sources)
+    for name in chosen:
+        if not isinstance(name, str):
+            raise TypeError(f"sources must hold source names (str), got {name!r}")
+        if name not in names:
+            raise ValueError(
+                f"no source {name!r} among the activities; they hold {quoted(names)}"
+            )
+    if len(set(chosen)) != len(chosen):
+        raise ValueError("sources names a source twice")
+    if not chosen:
+        raise ValueError("sources is empty; name at least one source")
+    return chosen
+
+
+def _activity_label(activities: Activities) -> str:
+    """What the scores of the activities are, for an axis."""
+    if activities.method != "weighted_aggregate":
+        return "Activity (t-statistic)"
+    kind = "mean" if activities.settings.get("statistic") == "mean" else "sum"
+    if activities.settings.get("n_permutations"):
+        return f"Normalized weighted {kind}"
+    return f"Weighted {kind}"
 
 
 # Count models.

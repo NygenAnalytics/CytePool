@@ -45,6 +45,7 @@ from numpy.testing import assert_array_equal
 
 import cytepool
 from cytepool._masked_arrays import reject_masked
+from cytepool.activity import ulm
 from cytepool.composition import propeller
 from cytepool.cube import Cube, CubeCollection, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
@@ -54,6 +55,7 @@ from cytepool.gsea import gsea
 from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.meta_analysis import differential_expression_meta_analysis
+from cytepool.networks import Network
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
 from cytepool.over_representation import over_representation
 from cytepool.pathway_scores import gsva
@@ -508,6 +510,23 @@ def _pathway_scores() -> Any:
     """GSVA scores of two sets in the four samples of COUNTS."""
     genes = [f"g{j}" for j in range(COUNTS.shape[1])]
     return gsva(log_cpm(COUNTS), {"set": genes[:3], "other": genes[3:]}, gene_ids=genes)
+
+
+@functools.cache
+def _activities() -> Any:
+    """ULM activities of two sources in the four samples of COUNTS."""
+    genes = [f"g{j}" for j in range(COUNTS.shape[1])]
+    network = {"A": {"g1": 1.0, "g2": -1.0, "g5": 0.5}, "B": ["g0", "g3", "g4"]}
+    return ulm(log_cpm(COUNTS), network, gene_ids=genes,
+               sample_ids=SAMPLE_TABLE["sample_id"], min_targets=2)  # fmt: skip
+
+
+# Two sources of a network, over the genes of COUNTS or the features of a cube.
+NETWORK = {"A": {"g1": 1.0, "g2": -1.0, "g5": 0.5}, "B": ["g0", "g3", "g4"]}
+FEATURE_NETWORK = {
+    "A": ["feature_1", "feature_2", "feature_5"],
+    "B": ["feature_0", "feature_3", "feature_4"],
+}
 
 
 @functools.cache
@@ -1648,6 +1667,94 @@ ENTRY_POINTS: dict[str, Entry] = {
         )
         for name in ("gsva", "ssgsea", "combined_z_scores", "plage")
     },
+    # Values, gene ids and sample ids of an array, and a network as a mapping, which
+    # Network reads as its edges; a cube's options and a result's are refused.
+    **{
+        f"cytepool.activity.{name}": Entry(
+            lambda c, options=options: {
+                "data": c.expression,
+                "network": NETWORK,
+                "gene_ids": [f"g{j}" for j in range(7)] + [None],
+                "sample_ids": ["S1", "S2", "S3", "S4"],
+                "min_targets": 2,
+                **options,
+            },
+            {
+                "data": "NaN",
+                "network": "None or NaN",
+                "gene_ids": "None",
+                "sample_ids": None,
+            },
+            options=("min_targets", *options),
+            keys={"network": "A"},
+            names={"network": "edges"},
+        )
+        for name, options in (
+            ("ulm", {"n_threads": 1}),
+            ("mlm", {}),
+            (
+                "weighted_aggregate",
+                {"statistic": "sum", "n_permutations": 10, "rng": 1, "n_threads": 1},
+            ),
+        )
+    },
+    # A cube's group, its genes named by a column of its features table.
+    **{
+        f"cytepool.activity.{name}[cube]": Entry(
+            lambda c: {
+                "data": _bulk_cube(),
+                "network": FEATURE_NETWORK,
+                "gene_ids": "feature_id",
+                "group": "bulk",
+                "min_cells": 1,
+                "expression_filter": False,
+                "min_targets": 2,
+            },
+            {},
+            options=("gene_ids", "group", "min_cells", "expression_filter"),
+            objects=("data", "network"),
+        )
+        for name in ("ulm", "mlm", "weighted_aggregate")
+    },
+    # The statistics of a group and contrast of a differential-expression result.
+    **{
+        f"cytepool.activity.{name}[result]": Entry(
+            lambda c: {
+                "data": _tested(c),
+                "network": FEATURE_NETWORK,
+                "group": "bulk",
+                "contrast": "stim",
+                "id_column": "feature_id",
+                "statistic_column": "t",
+                "min_targets": 2,
+            },
+            {},
+            options=("group", "contrast", "id_column", "statistic_column"),
+            objects=("data", "network"),
+        )
+        for name in ("ulm", "mlm", "weighted_aggregate")
+    },
+    # Edges as a mapping of source to targets, and text that the network keeps.
+    "cytepool.networks.Network": Entry(
+        lambda c: {
+            "edges": {"A": {"g1": 1.0, "g2": -1.0}, "B": ["g3"]},
+            "name": "mine",
+            "version": "1",
+            "url": "https://example.org/network.csv",
+            "licence": "CC0",
+            "citation": "a paper",
+            "file": "network.csv",
+            "sha256": "0" * 64,
+        },
+        {"edges": "None or NaN"},
+        options=("name", "version", "url", "licence", "citation", "file", "sha256"),
+        keys={"edges": "A"},
+    ),
+    "cytepool.networks.Network.select": Entry(
+        lambda c: {"sources": ["B", "A"]},
+        {"sources": None},
+        instance=lambda c: Network({"A": ["g1", "g2"], "B": ["g3"]}),
+    ),
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
         lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
@@ -2151,6 +2258,31 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("standardize",),
         objects=("scores", "ax"),
     ),
+    # The sources shown and the profiles' labels.
+    "cytepool.plotting.plot_activities": Entry(
+        lambda c: {
+            "activities": _activities(),
+            "sources": ["B", "A"],
+            "top": 2,
+            "color_by": ["a", "b", "a", "b"],
+            "standardize": True,
+            "ax": _axes(),
+        },
+        {"sources": None, "color_by": None},
+        options=("top", "standardize"),
+        objects=("activities", "ax"),
+    ),
+    "cytepool.plotting.plot_top_activities": Entry(
+        lambda c: {
+            "activities": _activities(),
+            "profile": "S2",
+            "top": 2,
+            "ax": _axes(),
+        },
+        {},
+        options=("profile", "top"),
+        objects=("activities", "ax"),
+    ),
     "cytepool.plotting.plot_dispersions": Entry(
         lambda c: {
             "dispersions": deseq2_dispersions(
@@ -2379,6 +2511,16 @@ NO_ARRAY_INPUT = {
         ("path", "source", "version", "licence"),
         "a path, and text that the collection keeps",
     ),
+    "cytepool.networks.Network.__getitem__": (("source",), "a source, looked up"),
+    "cytepool.networks.Network.__contains__": (("source",), "a source, looked up"),
+    "cytepool.networks.collectri": (
+        ("licence", "cache_dir"),
+        "a licence level and a directory",
+    ),
+    "cytepool.networks.progeny": (
+        ("organism", "top", "max_p_value", "cache_dir"),
+        "an organism, a number of genes, a p-value and a directory",
+    ),
 }
 
 # Result containers: they store their fields as given, so a masked field keeps its
@@ -2410,6 +2552,7 @@ RECORDS = {
     "cytepool.stats.quasi_likelihood.UnitDevianceMoments",
     "cytepool.variance_partitioning.VarianceFractions",
     "cytepool.pathway_scores.PathwayScores",
+    "cytepool.activity.Activities",
 }
 
 # Callables that modules with __all__ define but do not export.

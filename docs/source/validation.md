@@ -17,9 +17,9 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
 `variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
-`gsea.py`, `cube_collection.py`, `pathway_scores.py` and
-`combined_p_values_and_replication.py`, and for `dream.py`, which printed the same
-table again after changes to the code it checks; on
+`gsea.py`, `cube_collection.py`, `pathway_scores.py`,
+`combined_p_values_and_replication.py` and `activity.py`, and for `dream.py`, which
+printed the same table again after changes to the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -60,6 +60,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py) | Gene-set files and over-representation | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | 34 | 29 pass, 5 deliberate differences | 4.7 s | 297 MiB |
 | [`gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py) | Gene set enrichment analysis | R 4.4.3, fgsea 1.32.2 | 24 | 23 pass, 1 deliberate difference | 7 min 3 s | 323 MiB |
 | [`pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py) | Pathway scores | R 4.4.3, GSVA 2.0.0 | 24 | 19 pass, 3 deliberate differences, 2 information | 10.7 s | 949 MiB |
+| [`activity.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/activity.py) | Pathway and regulator activity | decoupler 2.2.0, progeny 1.28.0, scipy 1.18.1 | 89 | 82 pass, 5 deliberate differences, 2 information | 2 min 39 s | 987 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
@@ -73,7 +74,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,267** | **1,954 pass, none failed; 174 information, 137 deliberate differences, 2 controls** | | |
+| **All** | | | **2,356** | **2,036 pass, none failed; 176 information, 142 deliberate differences, 2 controls** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1344,6 +1345,75 @@ Deliberate differences:
   the enrichment scores in ssGSEA, likely due to NA values in the input expression
   data"); CytePool gives that set NaN and normalizes the other scores by their range.
 
+## Pathway and regulator activity
+
+[`validation/activity.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/activity.py)
+checks the activities of regulators and pathways, their bar plot and the networks
+against decoupler 2.2.0 and progeny 1.28.0. CytePool's loaders download the networks
+into its cache. CollecTRI's file and progeny's package are compared with the MD5
+digests and sizes their sources publish (Zenodo's record, Bioconductor's `PACKAGES`
+and the server's `Content-Length`); `collectri(licence="academic")` with decoupler's
+`op.collectri`; the commercial level with the licence purposes that OmniPath's
+resources service lists, applied to the file by the script; and the weights and
+p-values of `progeny` with progeny's `model_human_full` and `model_mouse_full`, and its
+`top` with `getModel` (100 human genes; 500 mouse genes, with ties). The inputs of the
+activities are simulated from fixed seeds: log-expression values of 6 samples over
+CollecTRI's 6,693 targets and 2,000 other genes, the targets of 6 regulators shifted in
+the last 3 samples, with 3 genes zero in every sample; a profile of t-statistics; the
+values with 3% missing in two samples, which decoupler, refusing missing values,
+scores one profile at a time over its observed genes; 6 samples over the targets of
+PROGENy's top 500 genes and 1,000 others; a cube of one cell type, scored as its
+log-CPM; and limma_voom's moderated t-statistics in two cell types that test different
+genes. `ulm`, `mlm` and `weighted_aggregate` run as decoupler's `mt.ulm`, `mt.mlm` and
+`mt.waggr` with `tmin` 5, or 3 for a network of weights of one sign. Reference:
+decoupler 2.2.0 with scipy 1.18.1, and progeny 1.28.0 on R 4.4.3.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| ULM's t-statistics and slopes, in 10 cases | `mt.ulm` | 2.3e-13 | 1e-10 | 20 pass |
+| ULM's p-values, and their Benjamini-Hochberg adjustment, in 10 cases | `mt.ulm`; scipy's `false_discovery_control` of its p-values | 4.4e-11 | 1e-10 | 20 pass |
+| ULM's adjusted p-values, in single precision | `mt.ulm` | 0 | 1.2e-7 | 10 pass |
+| MLM's t-statistics and coefficients, in 6 cases | `mt.mlm` | 3.2e-14 | 1e-10 | 12 pass |
+| MLM's p-values | scipy's `t.sf` of `mt.mlm`'s t-statistics | 3.3e-12 | 1e-10 | 6 pass |
+| Weighted means and sums, and the normalized scores given decoupler's permutations (100 and 1,000) | `mt.waggr` | 1.1e-14 | 1e-10 | 4 pass |
+| Weighted sums of PROGENy's top 100 genes | progeny's `progeny(scale = FALSE)` | 6.5e-16 | 1e-10 | 1 pass |
+| `plot_top_activities`: the 15 bars of a sample, their sources and lengths | `pl.barplot` | 4.8e-14 | 1e-10 | 1 pass |
+| CollecTRI at the academic level; at the commercial level; PROGENy's weights and p-values, human and mouse; its top 100 human and 500 mouse genes | `op.collectri`, OmniPath's resources, progeny's models and `getModel` | 0 | 0 | 6 pass |
+| The files downloaded: sizes and MD5 digests | Zenodo, Bioconductor | 0 | 0 | 2 pass |
+| decoupler's `op.collectri` at its levels; PROGENy through OmniPath | `op.collectri`, `op.progeny` | n/a | n/a | 2 information |
+| The weighted aggregate's p-values; a sample of zeros; MLM with two sources alike; CollecTRI's interactions without a reference | `mt.waggr`, `mt.ulm`, `mt.mlm`, `op.collectri` | 0.97 | n/a | 5 deliberate differences |
+
+Scores and estimates are compared relative to the largest absolute value of a case,
+p-values relative to each value, and NaN must stand where the reference has none; the
+networks and the bars must be identical. decoupler keeps its adjusted p-values in
+single precision, so CytePool's are rounded to it first. decoupler computes MLM's
+p-values as one minus the distribution function, which loses their digits below about
+1e-12, so CytePool's are compared with scipy's upper tail at decoupler's t-statistics.
+The normalized scores are compared given decoupler's permutations: the genes in the
+order in which decoupler shuffles them, and its seed, so that both draw the same
+permutations. decoupler 2.2.0 accepts a licence for CollecTRI but returns the whole
+file at every level. Its `op.progeny` reads PROGENy from OmniPath's annotations, which
+name genes by their current symbols, leave out genes OmniPath does not map to a
+protein, and merge some genes: of its 62,421 edges with a p-value below 0.05, where the
+progeny package has 69,827, 59,617 are named alike, and 59,599 of them have the same
+weight and p-value.
+
+Deliberate differences:
+
+- The weighted aggregate's p-values (largest difference 0.97 with 100 permutations,
+  2.0e-3 with 1,000): decoupler counts the permutations whose absolute score exceeds
+  the absolute observed score and then folds that share as it would fold a one-sided
+  one, so that a score near zero gets a p-value near 2 / n for n permutations; CytePool
+  doubles the smaller of the two one-sided p-values (1 + b) / (1 + n).
+- A sample whose values are all zero: decoupler leaves it out of its result; CytePool
+  gives it NaN scores. The other samples agree exactly.
+- MLM with two sources of the same targets and weights: decoupler inverts a singular
+  matrix and gives NaN t-statistics for both (12 in 6 samples); CytePool refuses,
+  naming the source it cannot tell apart from the other.
+- CollecTRI's 185 interactions whose field of references is empty: decoupler's loader
+  drops them, through pandas' `dropna`; CytePool keeps them, as the file holds them and
+  the paper counts them (43,175 interactions).
+
 ## Multiple testing
 
 [`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
@@ -2321,6 +2391,8 @@ python validation/gene_set_files_and_ora.py
 RSCRIPT=$REF/r-gsea/bin/Rscript python validation/gsea.py
 RSCRIPT=$REF/r-gsea/bin/Rscript python validation/pathway_scores.py
 RSCRIPT=$REF/r-gsea/bin/Rscript python validation/pathway_scores.py --benchmark
+# Downloads CollecTRI and progeny into ~/.cache/cytepool/networks on its first run.
+RSCRIPT=$REF/r-progeny/bin/Rscript python validation/activity.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py
@@ -2429,6 +2501,14 @@ conda create -p $REF/r-gsea -c conda-forge -c bioconda r-base=4.4.3 \
     r-data.table=1.18.6.1 r-jsonlite=2.0.0
 ```
 
+progeny 1.28.0 (Bioconductor 3.20), which `activity.py` runs for PROGENy's weights, has
+one too, with R 4.4.3 and jsonlite 2.0.0:
+
+```bash
+conda create -p $REF/r-progeny -c conda-forge -c bioconda r-base=4.4.3 \
+    bioconductor-progeny=1.28.0 r-jsonlite=2.0.0
+```
+
 The Python environments use Python 3.13.12. scanpy has its own environment, and
 `cube_files.py` ran CytePool on Python 3.14.4 for the zstd cases:
 
@@ -2457,6 +2537,8 @@ uv pip install --python $REF/python-liana/bin/python liana==1.10.0 decoupler==2.
 ```
 
 The reference packages run only as separate programs that produce outputs to compare
-against. Their source code is not read or copied: CytePool implements the methods from
-their papers and documentation, and conventions that the documentation leaves open
-were found by running the packages on chosen inputs.
+against. CytePool implements the methods from their papers and documentation, and
+conventions that the documentation leaves open were found by running the packages on
+chosen inputs; the source of a package under a copyleft licence is never read, and
+what CytePool adapts from permissively licensed ones, fgsea and decoupler,
+`THIRD_PARTY_NOTICES.md` records.
