@@ -3,7 +3,18 @@
 Several reference implementations accumulate in extended precision (R's ``sum``,
 ``mean`` and ``rowMeans``), and some decisions they make, such as which values tie,
 depend on the last bit. These routines give the exactly rounded results with error-free
-transformations: Knuth's two-sum, Veltkamp's splitting and Dekker's product.
+transformations: Knuth's two-sum (Knuth 1997), and Veltkamp's splitting and Dekker's
+product (Dekker 1971), and with the cascaded summation of Ogita, Rump and Oishi (2005).
+
+References:
+    Knuth DE (1997). The Art of Computer Programming, Volume 2: Seminumerical
+    Algorithms, 3rd edition. Addison-Wesley, Reading.
+
+    Dekker TJ (1971). A floating-point technique for extending the available precision.
+    Numerische Mathematik 18, 224-242. doi:10.1007/BF01397083
+
+    Ogita T, Rump SM, Oishi S (2005). Accurate sum and dot product. SIAM Journal on
+    Scientific Computing 26, 1955-1988. doi:10.1137/030601818
 """
 
 import numpy as np
@@ -16,7 +27,7 @@ FloatArray = npt.NDArray[np.float64]
 
 @jit
 def two_sum(a: float, b: float) -> tuple[float, float]:
-    """a + b as the rounded sum and its exact rounding error (Knuth)."""
+    """a + b as the rounded sum and its exact rounding error (Knuth 1997)."""
     s = a + b
     t = s - a
     return s, (a - (s - t)) + (b - t)
@@ -26,8 +37,8 @@ def two_sum(a: float, b: float) -> tuple[float, float]:
 def accurate_sum(values: FloatArray) -> tuple[float, float]:
     """Sum accurate to twice the working precision, as rounded value and remainder.
 
-    This is the cascaded summation of Ogita, Rump and Oishi (2005, SIAM J Sci
-    Comput 26:1955); the rounded value is the sum rounded once.
+    This is the cascaded summation of Ogita, Rump and Oishi (2005); the rounded value
+    is the sum rounded once.
     """
     high = 0.0
     low = 0.0
@@ -64,7 +75,8 @@ def rounded_quotient(total: float, remainder: float, n: float) -> float:
 
 @jit
 def split_double(a: float) -> tuple[float, float]:
-    """Split a into two halves of 26 bits each, a = high + low (Veltkamp)."""
+    """Split a into two halves of 26 bits each, a = high + low (Veltkamp's splitting,
+    Dekker 1971)."""
     c = 134217729.0 * a
     high = c - (c - a)
     return high, a - high

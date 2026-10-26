@@ -1,14 +1,16 @@
 """Converting cubes to and from AnnData and MuData, the data structures of scverse.
 
-A cube holds a samples x features matrix for every group, and an AnnData holds 2-D
-matrices only (since anndata 0.13, ``X`` and every layer must be 2-D). scverse
-therefore keeps pseudobulk profiles in one of two layouts, and CytePool reads and
-writes both:
+A cube holds a samples x features matrix for every group, and an AnnData (Virshup et
+al. 2024) holds 2-D matrices only (since anndata 0.13, ``X`` and every layer must be
+2-D). scverse therefore keeps pseudobulk profiles in one of two layouts, and CytePool
+reads and writes both:
 
-- a long AnnData, with one row per sample and group, as ``scanpy.get.aggregate`` and
-  ``decoupler.pp.pseudobulk`` make it: ``to_anndata`` and ``from_anndata``;
-- a MuData with one modality per group and the samples as its observations, as
-  LIANA's ``liana.multi.adata_to_views`` makes it: ``to_mudata`` and ``from_mudata``.
+- a long AnnData, with one row per sample and group, as ``scanpy.get.aggregate``
+  (Wolf, Angerer and Theis 2018) and ``decoupler.pp.pseudobulk`` (Badia-i-Mompel et
+  al. 2022) make it: ``to_anndata`` and ``from_anndata``;
+- a MuData (Bredikhin, Kats and Stegle 2022) with one modality per group and the
+  samples as its observations, as LIANA's ``liana.multi.adata_to_views`` (Dimitrov et
+  al. 2024) makes it: ``to_mudata`` and ``from_mudata``.
 
 anndata and mudata are optional dependencies: install CytePool's ``anndata`` or
 ``mudata`` extra, or the packages themselves. Only ``to_anndata`` and ``to_mudata``
@@ -107,8 +109,8 @@ Export:
     ``Cube.regroup``.
 
     anndata writes only some columns, so table columns are written in a form it
-    stores and reads back as they were: datetimes as ISO 8601 text, ``NaT`` where
-    missing, timedeltas as int64 counts of their unit, and a text column without
+    stores and reads back as they were: datetimes as ISO 8601 text (ISO 2019), ``NaT``
+    where missing, timedeltas as int64 counts of their unit, and a text column without
     any value as float64 NaN. Column names have ``_`` in place of ``/`` and NUL,
     and ``.``, ``..`` and ``_index``, which anndata reserves, end in ``_``. A sample
     or group column whose name is taken is prefixed with ``sample_`` or ``group_``.
@@ -150,6 +152,31 @@ Example:
     ['S1_B', 'S2_B', 'S1_T']
     >>> from_anndata(adata).fingerprint() == cube.fingerprint()  # doctest: +SKIP
     True
+
+References:
+    Virshup I, Rybakov S, Theis FJ, Angerer P, Wolf FA (2024). anndata: access and store
+    annotated data matrices. Journal of Open Source Software 9, 4371.
+    doi:10.21105/joss.04371
+
+    Bredikhin D, Kats I, Stegle O (2022). MUON: multimodal omics analysis framework.
+    Genome Biology 23, 42. doi:10.1186/s13059-021-02577-8
+
+    Wolf FA, Angerer P, Theis FJ (2018). SCANPY: large-scale single-cell gene expression
+    data analysis. Genome Biology 19, 15. doi:10.1186/s13059-017-1382-0
+
+    Badia-i-Mompel P, Velez Santiago J, Braunger J, Geiss C, Dimitrov D, Mueller-Dott S,
+    Taus P, Dugourd A, Holland CH, Ramirez Flores RO, Saez-Rodriguez J (2022).
+    decoupleR: ensemble of computational methods to infer biological activities from
+    omics data. Bioinformatics Advances 2, vbac016. doi:10.1093/bioadv/vbac016
+
+    Dimitrov D, Schaefer PSL, Farr E, Rodriguez-Mier P, Lobentanzer S, Badia-i-Mompel P,
+    Dugourd A, Tanevski J, Ramirez Flores RO, Saez-Rodriguez J (2024). LIANA+ provides
+    an all-in-one framework for cell-cell communication inference. Nature Cell Biology
+    26, 1613-1622. doi:10.1038/s41556-024-01469-w
+
+    ISO (2019). ISO 8601-1:2019, Date and time: representations for information
+    interchange, part 1: basic rules. International Organization for Standardization,
+    Geneva.
 """
 
 import importlib

@@ -58,21 +58,33 @@ Limits:
     than an inaccurate value.
 
 References:
-    - DLMF, NIST Digital Library of Mathematical Functions, https://dlmf.nist.gov,
-      sections 5, 8.
-    - Dekker TJ (1971). A floating-point technique for extending the available
-      precision. Numerische Mathematik 18:224-242.
-    - Lentz WJ (1976). Generating Bessel functions in Mie scattering calculations using
-      continued fractions. Applied Optics 15:668-671.
-    - Thompson IJ, Barnett AR (1986). Coulomb and Bessel functions of complex arguments
-      and order. Journal of Computational Physics 64:490-509.
-    - Loader C (2000). Fast and accurate computation of binomial probabilities.
-    - Maechler M (2012). Accurately computing log(1 - exp(-|a|)). Rmpfr package vignette.
-    - Temme NM (1979). The asymptotic expansion of the incomplete gamma functions. SIAM
-      Journal on Mathematical Analysis 10:757-766.
-    - Smyth GK (2004). Linear models and empirical Bayes methods for assessing
-      differential expression in microarray experiments. Statistical Applications in
-      Genetics and Molecular Biology 3(1):3.
+    Olver FWJ, Olde Daalhuis AB, Lozier DW, Schneider BI, Boisvert RF, Clark CW,
+    Miller BR, Saunders BV, Cohl HS, McClain MA, eds (2026). NIST Digital Library of
+    Mathematical Functions, release 1.2.8 of 2026-09-15. https://dlmf.nist.gov/
+
+    Dekker TJ (1971). A floating-point technique for extending the available precision.
+    Numerische Mathematik 18, 224-242. doi:10.1007/BF01397083
+
+    Lentz WJ (1976). Generating Bessel functions in Mie scattering calculations using
+    continued fractions. Applied Optics 15, 668-671. doi:10.1364/AO.15.000668
+
+    Thompson IJ, Barnett AR (1986). Coulomb and Bessel functions of complex arguments
+    and order. Journal of Computational Physics 64, 490-509.
+    doi:10.1016/0021-9991(86)90046-X
+
+    Loader C (2000). Fast and accurate computation of binomial probabilities. Technical
+    note, Lucent Technologies, Murray Hill; the version of 5 February 2002 is available
+    at https://www.r-project.org/doc/reports/CLoader-dbinom-2002.pdf
+
+    Maechler M (2012). Accurately computing log(1 - exp(-|a|)) assessed by the Rmpfr
+    package. Vignette of the R package Rmpfr, https://cran.r-project.org/package=Rmpfr
+
+    Temme NM (1979). The asymptotic expansion of the incomplete gamma functions. SIAM
+    Journal on Mathematical Analysis 10, 757-766. doi:10.1137/0510071
+
+    Smyth GK (2004). Linear models and empirical Bayes methods for assessing
+    differential expression in microarray experiments. Statistical Applications in
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
 """
 
 import math

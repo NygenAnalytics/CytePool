@@ -14,17 +14,17 @@ Effects:
     Both tests work with the effects of each gene's least squares fit (Wu et al. 2010,
     section 4.1). The design X, n samples by p coefficients, is reparametrised so that
     the contrast is its last coefficient: a contrast given as a column of the design
-    moves that column last; a contrast given as weights c becomes the last column,
-    X c / (c'c), after the columns X h_2, ..., X h_p, where h_1, ..., h_p are the
-    columns of the Householder reflection H of c, so that the last coefficient is
-    c'alpha (limma's ``contrastAsCoef``, found by probing). With the Householder QR
-    decomposition of this design in R's sign convention, a gene's data y give the
+    moves that column last; a contrast given as weights c becomes the last column, X c /
+    (c'c), after the columns X h_2, ..., X h_p, where h_1, ..., h_p are the columns of
+    the Householder reflection H of c, so that the last coefficient is c'alpha (limma's
+    ``contrastAsCoef``, found by probing). With the Householder QR decomposition (Golub
+    and Van Loan 2013) of this design in R's sign convention, a gene's data y give the
     effects Q'y; the p-th is the contrast effect u_0, which divided by the residual
     standard deviation is the gene's t-statistic, and the last d = n - p are its
     residual effects u_1, ..., u_d, independent with variance sigma^2 under the model.
-    With precision weights W each gene's data and design are whitened by W^(1/2)
-    first. Every sample must be observed, with a positive weight, in every gene, so
-    that all genes have the same residual degrees of freedom d.
+    With precision weights W each gene's data and design are whitened by W^(1/2) first.
+    Every sample must be observed, with a positive weight, in every gene, so that all
+    genes have the same residual degrees of freedom d.
 
     The residual effects are coordinates in a basis of the residual space, which the
     QR decomposition chooses. With observation weights each gene has a basis of its
@@ -114,30 +114,44 @@ Deliberate differences from limma:
 
 References:
     Wu D, Smyth GK (2012). Camera: a competitive gene set test accounting for inter-gene
-    correlation. Nucleic Acids Research 40, e133.
+    correlation. Nucleic Acids Research 40, e133. doi:10.1093/nar/gks461
 
-    Wu D, Lim E, Vaillant F, Asselin-Labat M-L, Visvader JE, Smyth GK (2010). ROAST:
+    Wu D, Lim E, Vaillant F, Asselin-Labat ML, Visvader JE, Smyth GK (2010). ROAST:
     rotation gene set tests for complex microarray experiments. Bioinformatics 26,
-    2176-2182.
+    2176-2182. doi:10.1093/bioinformatics/btq401
 
-    Giner G, Smyth GK (2016). FRY: a fast approximation to ROAST gene set test with
-    mean aggregated set statistics. F1000Research 5, 2605 (slides).
+    Giner G, Smyth GK (2016). FRY: a fast approximation to ROAST gene set test with mean
+    aggregated set statistics [version 1; not peer reviewed]. F1000Research 5, 2605
+    (slides). doi:10.7490/f1000research.1113351.1
 
-    Goeman JJ, Buhlmann P (2007). Analyzing gene expression data in terms of gene sets:
-    methodological issues. Bioinformatics 23, 980-987.
+    Goeman JJ, Buehlmann P (2007). Analyzing gene expression data in terms of gene sets:
+    methodological issues. Bioinformatics 23, 980-987. doi:10.1093/bioinformatics/btm051
 
     Barry WT, Nobel AB, Wright FA (2008). A statistical framework for testing functional
     categories in microarray data. Annals of Applied Statistics 2, 286-315.
+    doi:10.1214/07-AOAS146
 
-    Hill GW (1970). Algorithm 395: Student's t-distribution. Communications of the ACM
-    13, 617-620. Brophy AL (1987). Efficient estimation of probabilities in the t
-    distribution. Behavior Research Methods 19, 462-466.
+    Hill GW (1970). ACM Algorithm 395: Student's t-distribution. Communications of the
+    ACM 13, 617-619. doi:10.1145/355598.355599
 
-    Zar JH (1999). Biostatistical Analysis, 4th edition. Prentice Hall, section 8.10.
+    Brophy AL (1987). Efficient estimation of probabilities in the t distribution.
+    Behavior Research Methods, Instruments, & Computers 19, 462-466.
+    doi:10.3758/BF03205616
+
+    Zar JH (1999). Biostatistical Analysis, 4th edition. Prentice Hall, Upper Saddle
+    River.
 
     Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust hyperparameter
     estimation protects against hypervariable genes and improves power to detect
     differential expression. Annals of Applied Statistics 10, 946-963.
+    doi:10.1214/16-AOAS920
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Golub GH, Van Loan CF (2013). Matrix Computations, 4th edition. Johns Hopkins
+    University Press, Baltimore.
 """
 
 import math
@@ -252,7 +266,8 @@ def camera(
         the estimated inter-gene correlation (NaN for a set of one gene) or the given
         one; ``direction``, ``"up"`` or ``"down"`` (None where the p-value is NaN);
         ``p_value``, two-sided; and ``adjusted_p_value``, Benjamini-Hochberg over the
-        sets. A set with no genes, or with every gene, has NaN p-values.
+        sets (Benjamini and Hochberg 1995). A set with no genes, or with every gene,
+        has NaN p-values.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked

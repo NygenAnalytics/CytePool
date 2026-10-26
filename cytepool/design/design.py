@@ -1,4 +1,20 @@
-"""The design of an analysis: samples, formula, model matrix, random effects, contrasts."""
+"""The design of an analysis: samples, formula, model matrix, random effects, contrasts.
+
+The fixed effects are an R model formula, in the notation of Wilkinson and Rogers
+(1973) as R reads it (Chambers and Hastie 1992), and the random effects are terms in
+lme4's notation (Bates et al. 2015).
+
+References:
+    Wilkinson GN, Rogers CE (1973). Symbolic description of factorial models for
+    analysis of variance. Journal of the Royal Statistical Society C 22, 392-399.
+    doi:10.2307/2346786
+
+    Chambers JM, Hastie TJ (1992). Statistical models. Chapter 2 of Statistical Models
+    in S, eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole, Pacific Grove.
+
+    Bates D, Maechler M, Bolker B, Walker S (2015). Fitting linear mixed-effects models
+    using lme4. Journal of Statistical Software 67(1), 1-48. doi:10.18637/jss.v067.i01
+"""
 
 from collections.abc import Mapping, Sequence
 from typing import Any

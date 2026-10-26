@@ -70,8 +70,8 @@ The steps:
    referred to the F distribution on r and min(d0 + d_g, sum of n - k over the genes)
    degrees of freedom, with d0 the prior and d_g the adjusted residual degrees of
    freedom (found by probing). Log fold changes are the coefficients shrunk with a
-   prior count of 0.125, divided by log 2, and adjusted p-values are Benjamini and
-   Hochberg's, as edgeR's ``topTags`` gives them.
+   prior count of 0.125 (Phipson 2013), divided by log 2, and adjusted p-values are
+   Benjamini and Hochberg's (1995), as edgeR's ``topTags`` gives them.
 
 Prior weights (found by probing). edgeR uses them in the fits as prior weights, and
 in the Cox-Reid likelihood as the number of independent counts each count averages
@@ -129,28 +129,59 @@ References:
     Lund SP, Nettleton D, McCarthy DJ, Smyth GK (2012). Detecting differential
     expression in RNA-sequence data using quasi-likelihood with shrunken dispersion
     estimates. Statistical Applications in Genetics and Molecular Biology 11(5),
-    article 8.
+    article 8. doi:10.1515/1544-6115.1826
 
     Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2025). edgeR v4: powerful
     differential analysis of sequencing data with expanded functionality and improved
     support for small counts and larger datasets. Nucleic Acids Research 53, gkaf018.
+    doi:10.1093/nar/gkaf018
 
     Baldoni PL, Chen L, Smyth GK (2024). Faster and more accurate assessment of
-    differential transcript expression with Gibbs sampling and edgeR v4. NAR
-    Genomics and Bioinformatics 6, lqae151.
+    differential transcript expression with Gibbs sampling and edgeR v4. NAR Genomics
+    and Bioinformatics 6, lqae151. doi:10.1093/nargab/lqae151
 
     McCarthy DJ, Chen Y, Smyth GK (2012). Differential expression analysis of
-    multifactor RNA-Seq experiments with respect to biological variation. Nucleic
-    Acids Research 40, 4288-4297.
+    multifactor RNA-Seq experiments with respect to biological variation. Nucleic Acids
+    Research 40, 4288-4297. doi:10.1093/nar/gks042
 
     Cox DR, Reid N (1987). Parameter orthogonality and approximate conditional
-    inference. Journal of the Royal Statistical Society B 49, 1-39.
+    inference. Journal of the Royal Statistical Society B 49, 1-18.
+    doi:10.1111/j.2517-6161.1987.tb01422.x
 
-    Loader C (2000). Fast and accurate computation of binomial probabilities.
+    Loader C (2000). Fast and accurate computation of binomial probabilities. Technical
+    note, Lucent Technologies, Murray Hill; the version of 5 February 2002 is available
+    at https://www.r-project.org/doc/reports/CLoader-dbinom-2002.pdf
 
-    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust
-    hyperparameter estimation protects against hypervariable genes and improves power
-    to detect differential expression. Annals of Applied Statistics 10, 946-963.
+    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust hyperparameter
+    estimation protects against hypervariable genes and improves power to detect
+    differential expression. Annals of Applied Statistics 10, 946-963.
+    doi:10.1214/16-AOAS920
+
+    Robinson MD, Smyth GK (2008). Small-sample estimation of negative binomial
+    dispersion, with applications to SAGE data. Biostatistics 9, 321-332.
+    doi:10.1093/biostatistics/kxm030
+
+    Brent RP (1973). Algorithms for Minimization without Derivatives. Prentice-Hall,
+    Englewood Cliffs.
+
+    Neumaier A (1974). Rundungsfehleranalyse einiger Verfahren zur Summation endlicher
+    Summen. Zeitschrift fuer Angewandte Mathematik und Mechanik 54, 39-51.
+    doi:10.1002/zamm.19740540106
+
+    Giraud L, Langou J, Rozloznik M (2005). The loss of orthogonality in the
+    Gram-Schmidt orthogonalization process. Computers & Mathematics with Applications
+    50, 1069-1075. doi:10.1016/j.camwa.2005.08.009
+
+    Berrut JP, Trefethen LN (2004). Barycentric Lagrange interpolation. SIAM Review 46,
+    501-517. doi:10.1137/S0036144502417715
+
+    Phipson B (2013). Empirical Bayes modelling of expression profiles and their
+    associations. PhD thesis, University of Melbourne.
+    https://hdl.handle.net/11343/38162
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
 """
 
 import math
@@ -588,11 +619,11 @@ def _scales_one_dispersion(mu: FloatArray, phi: float) -> tuple[FloatArray, Floa
     """Scales and degrees of freedom of the chi-squared match at the means ``mu``, all
     with dispersion ``phi``.
 
-    The logs of both, as functions of t = log(mu), are interpolated on panels of
-    width _PANEL by the barycentric formula on _PANEL_NODES Chebyshev points; a panel
-    is computed when a mean falls in it. Means below _TABLE_LEAST are summed. Both
-    are smooth in t, and the interpolation agrees with the sums to about 3e-14
-    relative for dispersions from 0 to 1e4.
+    The logs of both, as functions of t = log(mu), are interpolated on panels of width
+    _PANEL by the barycentric formula on _PANEL_NODES Chebyshev points (Berrut and
+    Trefethen 2004); a panel is computed when a mean falls in it. Means below
+    _TABLE_LEAST are summed. Both are smooth in t, and the interpolation agrees with the
+    sums to about 3e-14 relative for dispersions from 0 to 1e4.
     """
     n = mu.size
     scale = np.empty(n)
@@ -713,8 +744,9 @@ def _orthonormal_columns(
 ) -> tuple[int, float]:
     """Orthonormal columns spanning W^(1/2) X, by Gram-Schmidt orthogonalised twice.
 
-    ``basis`` gets the kept columns in its first rows. A column whose part orthogonal
-    to the columns before it has a norm of at most _ALIASING times its own carries no
+    Twice is enough for orthogonality to rounding (Giraud, Langou and Rozloznik 2005).
+    ``basis`` gets the kept columns in its first rows. A column whose part orthogonal to
+    the columns before it has a norm of at most _ALIASING times its own carries no
     information and is left out.
 
     Returns:
@@ -1052,14 +1084,14 @@ def common_dispersion(
     1e-12 of the gene's largest, carry no information and are left out of the
     determinant, whose remaining factor does not depend on phi.
 
-    As edgeR does (its help pages): genes with fewer than ``min_row_sum`` counts in
-    all are left out; when more than ``subset`` genes remain, a systematic subset of
-    them, evenly spaced in average log CPM, is used (``systematicSubset``: every s-th
-    gene in increasing average log CPM, s = floor(G / subset), from gene floor(s / 2)
-    + 1; found by probing), which keeps all G genes while G < 2 ``subset`` and from
-    ``subset`` to about 1.5 ``subset`` of them otherwise; and the maximum is searched
-    over ``interval``. The search, Brent's method as R's ``optimize``, locates the maximum
-    to about 1e-7 relative, as closely as the rounding of the likelihood allows;
+    As edgeR does (its help pages): genes with fewer than ``min_row_sum`` counts in all
+    are left out; when more than ``subset`` genes remain, a systematic subset of them,
+    evenly spaced in average log CPM, is used (``systematicSubset``: every s-th gene in
+    increasing average log CPM, s = floor(G / subset), from gene floor(s / 2) + 1; found
+    by probing), which keeps all G genes while G < 2 ``subset`` and from ``subset`` to
+    about 1.5 ``subset`` of them otherwise; and the maximum is searched over
+    ``interval``. The search, Brent's (1973) method as R's ``optimize``, locates the
+    maximum to about 1e-7 relative, as closely as the rounding of the likelihood allows;
     edgeR's stops within its tolerance of 1e-5. A maximum at an end of the interval is
     returned with a warning.
 
@@ -1184,7 +1216,7 @@ def _adjusted_profile_likelihood(
     The log-likelihood of a count y with weight w is that of w y under NB(w mu,
     phi / w), in Loader's deviance form, whose unit deviance is w d(y, mu, phi); the
     adjustment is -1/2 log det(X' W X) over the columns that the weights inform, W =
-    w mu / (1 + phi mu). The sum is compensated (Neumaier).
+    w mu / (1 + phi mu). The sum is compensated (Neumaier 1974).
     """
     n_genes, n_samples = counts.shape
     n_coefficients = design.shape[1]

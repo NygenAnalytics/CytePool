@@ -5,6 +5,11 @@ coefficient, contrast or variance impossible to estimate; warnings point at desi
 that can be fitted but deserve a second look. Each message says what is wrong and
 how to fix it.
 
+The leverage of a sample is its diagonal element of the hat matrix (Hoaglin and
+Welsch 1978). A contrast is estimable when it is a linear combination of the rows of
+the design matrix, that is, when it is orthogonal to the matrix's null space (Searle
+1971). Random effects are those of lme4's notation (Bates et al. 2015).
+
 Errors:
     empty_design: the formula has no columns.
     duplicate_columns: two columns have the same name.
@@ -49,6 +54,15 @@ Warnings:
         value, which then forms a group of its own.
     similar_levels: factor levels that differ only in case or surrounding spaces,
         which usually split one group in two.
+
+References:
+    Hoaglin DC, Welsch RE (1978). The hat matrix in regression and ANOVA. The American
+    Statistician 32, 17-22. doi:10.1080/00031305.1978.10479237
+
+    Searle SR (1971). Linear Models. Wiley, New York.
+
+    Bates D, Maechler M, Bolker B, Walker S (2015). Fitting linear mixed-effects models
+    using lme4. Journal of Statistical Software 67(1), 1-48. doi:10.18637/jss.v067.i01
 """
 
 import textwrap

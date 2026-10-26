@@ -8,7 +8,7 @@ For the count y_gi of gene g in sample i, the model is
 with x_i the design row of sample i, phi_gi a known dispersion and o_gi an offset,
 usually the log effective library size log(N_i f_i) (McCarthy, Chen and Smyth 2012).
 The coefficients beta_g, on the natural log scale, maximize the log-likelihood weighted
-by prior weights w_gi; equivalently they minimize the deviance
+by prior weights w_gi; equivalently they minimize the deviance (Dunn and Smyth 2018)
 
     D_g = sum_i w_gi d(y_gi, mu_gi, phi_gi),
     d(y, mu, phi) = 2 [y log(y / mu) - (y + 1 / phi) log((1 + phi y) / (1 + phi mu))],
@@ -26,33 +26,33 @@ Each gene is fitted as edgeR's documentation describes ``glmFit``:
   when the group's offsets and dispersions are equal, and solving the group's score
   equation by Newton's method kept inside a bracket, to the last bits. The coefficients
   solve the distinct rows of the design for the group means.
-- Other designs are fitted by Newton's method with Levenberg damping, from the fit of
-  one group of all samples, edgeR's default start (the null model). The iteration
+- Other designs are fitted by Newton's method with Levenberg (1944) damping, from the
+  fit of one group of all samples, edgeR's default start (the null model). The iteration
   works with an orthonormal basis Q of the design's column space, design = Q R, which
   McCarthy, Chen and Smyth (2012) describe for ``glmFit``, so that neither the scale of
   the columns nor how nearly collinear they are affects it; only the coefficients,
   R^(-1) times those of the basis, carry the conditioning of the design. Each step
   solves (X' W X) step = X' s, with s the scores and W the information of the
-  observations, from the triangular factor of a Householder QR factorization of
-  W^(1/2) X and with X' s formed directly; a least squares solution would carry the
-  rounding of residuals W^(-1/2) s that can be far larger than their rows, as for zero
-  counts with a large dispersion times mean. A column whose part orthogonal to the
-  columns before it has a norm of at most 1e-11 times its own is aliased and not
-  moved: a step along it would be rounding. Zero counts whose fitted values are below
-  1e-30 of the largest are left out of the fit, since the deviance no longer depends on
-  them.
+  observations, from the triangular factor of a Householder QR factorization (Golub and
+  Van Loan 2013) of W^(1/2) X and with X' s formed directly; a least squares solution
+  would carry the rounding of residuals W^(-1/2) s that can be far larger than their
+  rows, as for zero counts with a large dispersion times mean. A column whose part
+  orthogonal to the columns before it has a norm of at most 1e-11 times its own is
+  aliased and not moved: a step along it would be rounding. Zero counts whose fitted
+  values are below 1e-30 of the largest are left out of the fit, since the deviance no
+  longer depends on them.
 - A step that would increase the deviance is damped, by adding a multiple of the
-  diagonal of the information matrix (Marquardt's scaling), until it does not. A step
-  is shortened so that it raises no log fitted value, and lowers none of a positive
-  count, by more than 2, where the quadratic model of the step can fail; lowers no
-  fitted value of a zero count below a thousandth of that 1e-30 level, beyond which
-  lowering it further would only enlarge the coefficients, and with them the rounding
-  of every fitted value; and changes no log fitted value by more than 1e3. A whole
-  step that lowers the deviance by more than 1.1 times what it predicts is doubled
+  diagonal of the information matrix (Marquardt's scaling, Marquardt 1963), until it
+  does not. A step is shortened so that it raises no log fitted value, and lowers none
+  of a positive count, by more than 2, where the quadratic model of the step can fail;
+  lowers no fitted value of a zero count below a thousandth of that 1e-30 level, beyond
+  which lowering it further would only enlarge the coefficients, and with them the
+  rounding of every fitted value; and changes no log fitted value by more than 1e3. A
+  whole step that lowers the deviance by more than 1.1 times what it predicts is doubled
   while the deviance keeps falling: so it does where fitted values of zero counts tend
-  to zero, and the deviance falls exponentially. The weights of each gene are divided
-  by a power of two that brings the largest into [0.5, 1), which changes no fitted
-  value, so that the tolerances refer to weights of order one.
+  to zero, and the deviance falls exponentially. The weights of each gene are divided by
+  a power of two that brings the largest into [0.5, 1), which changes no fitted value,
+  so that the tolerances refer to weights of order one.
 - The steps are Newton's: they use the observed information where edgeR's
   documentation describes Fisher scoring, which uses the expected information. For
   this model the observed information, w mu (1 + phi y) / (1 + phi mu)^2 for each
@@ -133,18 +133,30 @@ Known limits:
 
 References:
     McCarthy DJ, Chen Y, Smyth GK (2012). Differential expression analysis of
-    multifactor RNA-Seq experiments with respect to biological variation. Nucleic
-    Acids Research 40, 4288-4297.
+    multifactor RNA-Seq experiments with respect to biological variation. Nucleic Acids
+    Research 40, 4288-4297. doi:10.1093/nar/gks042
 
-    Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2024). edgeR 4.0: powerful
+    Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2025). edgeR v4: powerful
     differential analysis of sequencing data with expanded functionality and improved
-    support for small counts and larger datasets. bioRxiv 2024.01.21.576131.
+    support for small counts and larger datasets. Nucleic Acids Research 53, gkaf018.
+    doi:10.1093/nar/gkaf018
 
     Phipson B (2013). Empirical Bayes modelling of expression profiles and their
-    associations. PhD thesis, University of Melbourne (prior counts).
+    associations. PhD thesis, University of Melbourne.
+    https://hdl.handle.net/11343/38162
 
-    Dunn PK, Smyth GK (2018). Generalized Linear Models With Examples in R. Springer
-    (deviances).
+    Dunn PK, Smyth GK (2018). Generalized Linear Models With Examples in R. Springer,
+    New York. doi:10.1007/978-1-4419-0118-7
+
+    Golub GH, Van Loan CF (2013). Matrix Computations, 4th edition. Johns Hopkins
+    University Press, Baltimore.
+
+    Levenberg K (1944). A method for the solution of certain non-linear problems in
+    least squares. Quarterly of Applied Mathematics 2, 164-168. doi:10.1090/qam/10666
+
+    Marquardt DW (1963). An algorithm for least-squares estimation of nonlinear
+    parameters. Journal of the Society for Industrial and Applied Mathematics 11,
+    431-441. doi:10.1137/0111030
 """
 
 import math
@@ -238,9 +250,10 @@ class NegativeBinomialFit:
             ``unshrunk.coefficients``. A coefficient whose estimate is infinite is
             large and finite instead; see the module description.
         shrunk_coefficients: ``(n_features, n_coefficients)`` coefficients estimated
-            after adding ``prior_count`` to the counts as edgeR's ``predFC`` does,
-            which shrinks log fold changes towards zero and keeps them finite (edgeR's
-            ``coefficients``). The same as ``coefficients`` when ``prior_count`` is 0.
+            after adding ``prior_count`` to the counts as edgeR's ``predFC`` does
+            (Phipson 2013), which shrinks log fold changes towards zero and keeps them
+            finite (edgeR's ``coefficients``). The same as ``coefficients`` when
+            ``prior_count`` is 0.
         fitted_values: ``(n_samples, n_features)`` fitted means.
         deviance: ``(n_features,)`` deviances: ``negative_binomial_deviance`` of the
             counts at the fitted values.

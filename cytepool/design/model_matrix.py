@@ -22,10 +22,10 @@ Coding:
     first. A factor ``F`` in a term ``T`` is coded by indicators of all its levels
     instead when the term without ``F`` is not contained in an earlier term (for a
     main effect, the empty term is the intercept), the rule of Chambers and Hastie
-    (1992, chapter 2) as R applies it: in ``~ a + a:b`` the term ``a:b`` codes ``a``
-    by all its levels and ``b`` by contrasts, one set of ``b`` contrasts within each
-    level of ``a``. Without an intercept, the first term that contains a factor
-    codes it by all its levels (R-intro section 11.1.1), as in ``~ 0 + group``. A
+    (1992) as R applies it: in ``~ a + a:b`` the term ``a:b`` codes ``a`` by all its
+    levels and ``b`` by contrasts, one set of ``b`` contrasts within each level of
+    ``a``. Without an intercept, the first term that contains a factor codes it by all
+    its levels (Venables et al. 2025, section 11.1.1), as in ``~ 0 + group``. A
     term's columns are products of the columns of its variables, with the variable
     that appears first in the formula varying fastest, and are named by joining the
     parts with ``:``, as in ``conditionstim:sexM`` and ``x:groupB``.
@@ -37,6 +37,13 @@ the categorical) is passed itself: a ``Table`` holds the values as text. Categor
 that are numbers or booleans are labelled as R labels factor levels (``1e+05``,
 ``TRUE``). Missing values in any column the formula uses raise an error that names
 the column and the rows: samples are never dropped silently.
+
+References:
+    Chambers JM, Hastie TJ (1992). Statistical models. Chapter 2 of Statistical Models
+    in S, eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole, Pacific Grove.
+
+    Venables WN, Smith DM, R Core Team (2025). An Introduction to R, version 4.4.3.
+    https://cran.r-project.org/doc/manuals/R-intro.html
 """
 
 import itertools

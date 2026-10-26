@@ -2,7 +2,10 @@
 
 CytePool is distributed under the BSD 3-Clause license (see [LICENSE](LICENSE)).
 This file records material adapted from other permissively licensed projects, and the
-source and license of every dataset used by the tests or the validation scripts.
+source and license of every dataset used by the tests, the validation scripts or the
+documentation. Methods, formulas and coefficients taken from papers, books and
+specifications are cited in the `References` section of the module that implements
+them, not here.
 
 ## Adapted material
 
@@ -13,8 +16,12 @@ source and license of every dataset used by the tests or the validation scripts.
 distances (`trimmed_cell_variance`, `trimmed_variance`, `robust_method_of_moments_disp`:
 trimmed fractions 1/3, 1/4 and 1/8 with scales 2.04, 1.86 and 1.51 by group size, the
 maximum over design cells, and the floor 0.04), and its rough dispersions follow
-`fit_rough_dispersions` and `fit_moments_dispersions`. PyDESeq2 is distributed under
-the MIT License:
+`fit_rough_dispersions` and `fit_moments_dispersions`. Where the parametric dispersion
+trend does not converge with positive coefficients, it uses the mean trend with a
+warning, as `DeseqDataSet._fit_parametric_dispersion_trend` (`pydeseq2/dds.py`) does.
+PyDESeq2 is described in Muzellec B, Telenczuk M, Cabeli V, Andreux M (2023). PyDESeq2:
+a python package for bulk RNA-seq differential expression analysis. Bioinformatics 39,
+btad547. doi:10.1093/bioinformatics/btad547. It is distributed under the MIT License:
 
 ```text
 MIT License
@@ -40,11 +47,48 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Test and validation data
+### numba
+
+`cytepool/_jit.py` places the cache of its compiled routines with subclasses of numba's
+cache classes (`numba/core/caching.py`), and its `PackageLocator` follows numba 0.68.0's
+`UserProvidedCacheLocator` and `_SourceFileBackedLocatorMixin`: the same attributes
+(`_py_file`, `_lineno`, `_cache_path`), the line number as disambiguator, and a
+`from_function` that returns no locator when the cache directory cannot be made. numba
+(https://github.com/numba/numba) is distributed under the BSD 2-Clause License:
+
+```text
+Copyright (c) 2012, Anaconda, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## Test, validation and documentation data
 
 The files under `tests/data/` are written by the scripts in `validation/`. Except for
 the dataset below, their inputs are generated with fixed random seeds. Reference values
-in those files come from the packages each script names.
+in those files come from the packages each script names. The pages of the
+documentation (`docs/source/`) simulate their data with fixed seeds and use no dataset.
 
 ### GEO series GSE96583 (Kang et al. 2018)
 
@@ -54,8 +98,10 @@ Expression Omnibus (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583)
 cache outside the repository, and `tests/data/interferon_stimulated_pbmcs/limma.npz`
 holds pseudobulk counts derived from them.
 
-Kang HM, Subramaniam M, Targ S, et al. (2018). Multiplexed droplet single-cell
-RNA-sequencing using natural genetic variation. Nature Biotechnology 36, 89-94.
+Kang HM, Subramaniam M, Targ S, Nguyen M, Maliskova L, McCarthy E, Wan E, Wong S,
+Byrnes L, Lanata CM, Gate RE, Mostafavi S, Marson A, Zaitlen N, Criswell LA, Ye CJ
+(2018). Multiplexed droplet single-cell RNA-sequencing using natural genetic variation.
+Nature Biotechnology 36, 89-94. doi:10.1038/nbt.4042
 
 Terms, from NCBI's GEO disclaimer (https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html):
 "NCBI places no restrictions on the use or distribution of the GEO data. However, some
@@ -66,13 +112,16 @@ concerning the use, copying, or distribution of the information contained in GEO
 
 ### MSigDB Hallmark gene set HALLMARK_INTERFERON_ALPHA_RESPONSE
 
-The gene symbols of this set (M5911) appear in
-`validation/interferon_stimulated_pbmcs.py`.
+The 97 gene symbols of this set (M5911, MSigDB release v2026.2.Hs, from
+https://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_INTERFERON_ALPHA_RESPONSE)
+appear in `validation/interferon_stimulated_pbmcs.py`.
 
-Liberzon A, et al. (2015). The Molecular Signatures Database hallmark gene set
-collection. Cell Systems 1, 417-425.
+Liberzon A, Birger C, Thorvaldsdottir H, Ghandi M, Mesirov JP, Tamayo P (2015). The
+Molecular Signatures Database hallmark gene set collection. Cell Systems 1, 417-425.
+doi:10.1016/j.cels.2015.12.004
 
-The contents of MSigDB are copyright (c) 2004-2025 Broad Institute, Inc., Massachusetts
-Institute of Technology, and Regents of the University of California, and are
-distributed under the Creative Commons Attribution 4.0 International License
+The contents of this gene set are protected by copyright (c) 2004-2026 Broad Institute,
+Inc., Massachusetts Institute of Technology, and Regents of the University of
+California, as its page states. MSigDB versions v6.0 to v7.5.1, and v2022.1 and above,
+are distributed under the Creative Commons Attribution 4.0 International License
 (https://www.gsea-msigdb.org/gsea/msigdb_license_terms.jsp).

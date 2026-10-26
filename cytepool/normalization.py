@@ -10,14 +10,17 @@ float64 range (about 1.8e308) raises OverflowError instead of becoming infinite
 or NaN. The functions reproduce edgeR and DESeq2:
 
 - normalization factors as edgeR's ``normLibSizes`` (``calcNormFactors``)
-  computes them: :func:`tmm_factors`, :func:`upper_quartile_factors` and
-  :func:`rle_factors`. They multiply the library sizes into effective library
-  sizes, ``library_sizes * norm_factors``, and have geometric mean one;
+  computes them: :func:`tmm_factors`, the trimmed mean of M values (Robinson and
+  Oshlack 2010), :func:`upper_quartile_factors` (Bullard et al. 2010) and
+  :func:`rle_factors` (Anders and Huber 2010). They multiply the library sizes into
+  effective library sizes, ``library_sizes * norm_factors``, and have geometric
+  mean one;
 - DESeq2's size factors, which take the place of the library sizes:
-  :func:`median_ratio_size_factors`;
+  :func:`median_ratio_size_factors`, the median-of-ratios method of Anders and
+  Huber (2010);
 - counts per million and log counts per million as edgeR's ``cpm`` computes
   them: :func:`cpm` and :func:`log_cpm`;
-- edgeR's ``filterByExpr``: :func:`filter_by_expression`.
+- edgeR's ``filterByExpr`` (Chen, Lun and Smyth 2016): :func:`filter_by_expression`.
 
 The routines repeat R's floating-point operations wherever an operation
 decides a discrete outcome: the rank-based trimming and the reference sample
@@ -31,10 +34,20 @@ Conventions that the documentation of edgeR, DESeq2 or R leaves open were
 found by running them as black boxes; comments mark them "found by probing".
 
 References:
-    Robinson MD, Oshlack A (2010). Genome Biology 11:R25 (TMM).
-    Bullard JH et al. (2010). BMC Bioinformatics 11:94 (upper quartile).
-    Anders S, Huber W (2010). Genome Biology 11:R106 (median of ratios).
-    Chen Y, Lun ATL, Smyth GK (2016). F1000Research 5:1438 (filterByExpr).
+    Robinson MD, Oshlack A (2010). A scaling normalization method for differential
+    expression analysis of RNA-seq data. Genome Biology 11, R25.
+    doi:10.1186/gb-2010-11-3-r25
+
+    Bullard JH, Purdom E, Hansen KD, Dudoit S (2010). Evaluation of statistical methods
+    for normalization and differential expression in mRNA-Seq experiments. BMC
+    Bioinformatics 11, 94. doi:10.1186/1471-2105-11-94
+
+    Anders S, Huber W (2010). Differential expression analysis for sequence count data.
+    Genome Biology 11, R106. doi:10.1186/gb-2010-11-10-r106
+
+    Chen Y, Lun ATL, Smyth GK (2016). From reads to genes to pathways: differential
+    expression analysis of RNA-Seq experiments using Rsubread and the edgeR
+    quasi-likelihood pipeline. F1000Research 5, 1438. doi:10.12688/f1000research.8987.2
 """
 
 import math

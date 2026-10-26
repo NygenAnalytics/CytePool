@@ -2,17 +2,24 @@
 
 The checks read the sources and do not build the site. Reading the table of contents
 needs PyYAML, a documentation dependency (``uv sync --group docs``); that test is
-skipped without it.
+skipped without it. The last checks read the References sections of the package's
+module docstrings, from the source files.
 """
 
+import ast
 import copy
 import importlib
 import importlib.util
 import inspect
+import io
 import json
 import pkgutil
 import re
+import textwrap
+import tokenize
+from collections import defaultdict
 from collections.abc import Callable, Iterator
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -575,3 +582,256 @@ def test_link_check_finds_broken_links() -> None:
 
     assert [t for t in broken if not _link_problem(page, t, {"validation"}, api)] == []
     assert [t for t in working if _link_problem(page, t, set(), api)] == []
+
+
+# The references of the package's modules.
+
+PACKAGE = ROOT / "cytepool"
+# The modules that implement no published method, algorithm, notation, specification
+# or file format, and so have no References section, with the reason.
+NO_PUBLISHED_WORK = {
+    "cytepool": "the package's namespace; its modules cite their sources",
+    "cytepool._analysis_records": "assembles CytePool's records of an analysis",
+    "cytepool._columns": "names the columns of result tables",
+    "cytepool._jit": "compiles and caches routines with numba; THIRD_PARTY_NOTICES.md "
+    "records what its cache locator follows of numba",
+    "cytepool._masked_arrays": "refuses numpy masked arrays at the public boundary",
+    "cytepool._messages": "formats lists of ids and names in error messages",
+    "cytepool._options": "checks flags and choices among names",
+    "cytepool._version": "holds the version that the build writes",
+    "cytepool.cube": "the package's namespace; its modules cite their sources",
+    "cytepool.cube.cube": "CytePool's own structure of sums per sample, group and "
+    "feature; its digests are those of cytepool.cube.fingerprints",
+    "cytepool.cube.provenance": "CytePool's own record of how a cube was made, "
+    "written as JSON by the standard library",
+    "cytepool.design": "the package's namespace; its modules cite their sources",
+    "cytepool.io": "the package's namespace; its modules cite their sources",
+    "cytepool.stats": "the package's namespace; its modules cite their sources",
+    "cytepool.table": "CytePool's own table of named, equal-length columns",
+}
+# An entry: "Authors (year). Title. Journal Volume, pages. doi:10....".
+REFERENCE = re.compile(
+    r"^(?P<authors>[^()]+?) \((?P<year>\d{4})[a-z]?\)\. (?P<rest>\S.*)$"
+)
+DOI = re.compile(r"doi:(10\.\d{4,9}/\S+)")
+# A month before a year, as in "October 2026", dates a statement; it cites no work.
+MONTHS = {
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
+}  # fmt: skip
+# A work cited in the text by an author and a year, such as "Smyth (2004", "Wu et al.
+# 2010" or "Hill's (1970"; the surname just before the year is the one looked up.
+CITATION = re.compile(
+    r"\b(?P<name>[A-Z][a-z][\w-]*)(?:'s)?(?: et al\.)? \(?(?P<year>(?:1[6-9]|20)\d\d)\b"
+)
+
+
+def _reference_section(doc: str) -> tuple[list[str] | None, str]:
+    """The entries of a docstring's References section, each reflowed to one line,
+    and the docstring without the section; None for a docstring without one."""
+    lines = doc.splitlines()
+    if "References:" not in lines:
+        return None, doc
+    start = lines.index("References:")
+    end = next(
+        (
+            number
+            for number in range(start + 1, len(lines))
+            if lines[number] and not lines[number].startswith(" ")
+        ),
+        len(lines),
+    )
+    body = "\n".join(lines[start + 1 : end])
+    entries = [" ".join(part.split()) for part in re.split(r"\n\s*\n", body)]
+    return [entry for entry in entries if entry], "\n".join(lines[:start] + lines[end:])
+
+
+def _parse_references(source: str) -> tuple[list[str] | None, list[str]]:
+    """The reference entries of a module's source (None without a section), and its
+    other prose: the rest of its docstring, the docstrings of its functions, classes
+    and constants, and its comments, each block reflowed to one line."""
+    tree = ast.parse(source)
+    entries, rest = _reference_section(ast.get_docstring(tree, clean=True) or "")
+    texts = [rest]
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            and node is not tree.body[0]
+        ):
+            texts.append(node.value.value)
+    # Comments on consecutive lines are one block of text.
+    previous_row = -2
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            comment = token.string.lstrip("#")
+            if token.start[0] == previous_row + 1:
+                texts[-1] += " " + comment
+            else:
+                texts.append(comment)
+            previous_row = token.start[0]
+    return entries, [" ".join(text.split()) for text in texts if text.strip()]
+
+
+@cache
+def _module_references() -> dict[str, tuple[list[str] | None, list[str]]]:
+    """Every module of the package, by its import name: its reference entries and
+    its other prose, read from the source without importing the module."""
+    modules = {}
+    for path in sorted(PACKAGE.rglob("*.py")):
+        parts = path.relative_to(ROOT).with_suffix("").parts
+        name = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+        modules[name] = _parse_references(path.read_text())
+    return modules
+
+
+def _style_problem(entry: str) -> str | None:
+    """Why an entry is not in the style "Authors (year). Title. ... doi:10....", or
+    None when it is."""
+    if entry.startswith("- ") or not REFERENCE.match(entry):
+        return "does not start with the authors and the year in parentheses"
+    dois = DOI.findall(entry)
+    if len(dois) > 1 or (dois and not entry.endswith(dois[0])):
+        return "has a DOI that does not end it"
+    return None
+
+
+def _citation_problems(
+    name: str, entries: list[str] | None, texts: list[str]
+) -> list[str]:
+    """The works that a module's prose cites by author and year but its References
+    section does not list."""
+    listed = [
+        (match["authors"], match["year"])
+        for entry in entries or []
+        if (match := REFERENCE.match(entry))
+    ]
+    cited = {
+        (m["name"], m["year"])
+        for text in texts
+        for m in CITATION.finditer(text)
+        if m["name"] not in MONTHS
+    }
+    return [
+        f"{name} cites {surname} {year}, which its References do not list"
+        for surname, year in sorted(cited)
+        if not any(
+            year == listed_year and re.search(rf"\b{re.escape(surname)}\b", authors)
+            for authors, listed_year in listed
+        )
+    ]
+
+
+def _variants(entries: list[str]) -> list[list[str]]:
+    """Works cited in different words: entries with the same DOI, or with the same
+    first author, year and title (up to the first period), that differ."""
+    groups = defaultdict(set)
+    for entry in entries:
+        if match := REFERENCE.match(entry):
+            first_author = match["authors"].split(",")[0]
+            title = re.sub(r"\W+", " ", match["rest"].split(". ")[0].casefold()).strip()
+            groups["work", first_author, match["year"], title].add(entry)
+        for doi in DOI.findall(entry):
+            groups["doi", doi.casefold()].add(entry)
+    differing = {tuple(sorted(texts)) for texts in groups.values() if len(texts) > 1}
+    return [list(texts) for texts in sorted(differing)]
+
+
+def test_every_module_cites_its_sources_or_says_why_it_has_none() -> None:
+    modules = _module_references()
+    without = {name for name, (entries, _) in modules.items() if entries is None}
+
+    assert sorted(without - set(NO_PUBLISHED_WORK)) == []
+    # Every module listed exists, has no References section and has a reason.
+    assert sorted(set(NO_PUBLISHED_WORK) - without) == []
+    assert all(reason.strip() for reason in NO_PUBLISHED_WORK.values())
+
+
+def test_every_reference_names_its_year_in_parentheses() -> None:
+    entries = [
+        (name, entry)
+        for name, (found, _) in _module_references().items()
+        for entry in found or []
+    ]
+    problems = [
+        f"{name}: {entry} {problem}"
+        for name, entry in entries
+        if (problem := _style_problem(entry))
+    ]
+
+    assert problems == []
+    # The sections were read: the package cites well over a hundred works.
+    assert len({entry for _, entry in entries}) > 100
+
+
+def test_a_work_is_cited_in_the_same_words_everywhere() -> None:
+    entries = [
+        entry for found, _ in _module_references().values() for entry in found or []
+    ]
+
+    assert _variants(entries) == []
+
+
+def test_every_work_a_module_cites_is_in_its_references() -> None:
+    problems = [
+        problem
+        for name, (entries, texts) in _module_references().items()
+        for problem in _citation_problems(name, entries, texts)
+    ]
+
+    assert problems == []
+
+
+def test_reference_checks_find_what_is_wrong() -> None:
+    source = textwrap.dedent(
+        '''
+        """Moderated tests.
+
+        The variances are moderated as Smyth (2004) and Wu et al. (2010) describe.
+
+        References:
+            Smyth GK (2004). Linear models and empirical Bayes methods. Statistical
+            Applications in Genetics and Molecular Biology 3, article 3.
+            doi:10.2202/1544-6115.1027
+
+            - Hill GW (1970). ACM Algorithm 395: Student's t-distribution.
+
+            Wu D, Smyth GK (2010) ROAST. Bioinformatics 26, 2176-2182.
+        """
+
+        # Workers take segments by the longest-processing-time rule (Graham
+        # 1969), as measured in October 2026.
+
+
+        def f():
+            """Fitted as lme4 fits it (Bates et al. 2015)."""
+        '''
+    )
+    entries, texts = _parse_references(source)
+
+    assert entries is not None and len(entries) == 3
+    assert [_style_problem(entry) is None for entry in entries] == [True, False, False]
+    # Wu (2010) is cited, but its entry has no period after the year; Graham's
+    # citation spans two comment lines.
+    assert _citation_problems("example", entries, texts) == [
+        "example cites Bates 2015, which its References do not list",
+        "example cites Graham 1969, which its References do not list",
+        "example cites Wu 2010, which its References do not list",
+    ]
+    assert _parse_references('"""No sources."""\n') == (None, ["No sources."])
+    # A DOI ends its entry; the same work is cited in the same words everywhere.
+    assert (
+        _style_problem("Smyth GK (2004). Title. doi:10.2202/1. Journal 3.") is not None
+    )
+    same_doi = [
+        "Smyth GK (2004). Linear models. SAGMB 3, 3. doi:10.2202/1544-6115.1027",
+        "Smyth GK (2004). Linear models. SAGMB 3(1):3. doi:10.2202/1544-6115.1027",
+    ]
+    same_work = [
+        "Searle SR (1971). Linear Models. Wiley.",
+        "Searle SR (1971). Linear Models.",
+    ]
+    assert _variants(same_doi) == [sorted(same_doi)]
+    assert _variants(same_work) == [sorted(same_work)]
+    assert _variants(same_doi[:1] + same_work[:1]) == []

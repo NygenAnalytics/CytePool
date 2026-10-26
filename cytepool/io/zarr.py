@@ -1,21 +1,25 @@
 """A minimal reader and writer for Zarr v3 arrays and groups on a local file system.
 
 This module implements, with numpy and the standard library only, the part of the
-Zarr v3 core specification (version 3.1,
-https://zarr-specs.readthedocs.io/en/latest/v3/core/) that cube files need.
+Zarr core specification, version 3.1 (Miles et al. 2025), that cube files need, with
+the ``bytes`` and ``gzip`` codecs of the Zarr specifications (Zarr developers 2023)
+and the ``zstd`` codec of its registered extensions (Maitin-Shepard 2025).
 
 Reading supports:
 
 - group and array metadata documents (``zarr.json``);
 - the core data types bool, int8 to int64, uint8 to uint64, float16, float32,
-  float64, complex64 and complex128;
+  float64, complex64 and complex128, the floating-point types in the binary formats
+  of IEEE 754 (IEEE 2019);
 - the regular chunk grid, and the default and v2 chunk key encodings with either
   separator;
 - fill values in every form the specification permits; a chunk that is not stored
   reads as the fill value;
-- the ``bytes`` codec in either byte order, followed by any sequence of ``gzip`` and
-  ``zstd`` codecs (``zstd`` needs the ``compression.zstd`` module of Python 3.14 or
-  newer).
+- the ``bytes`` codec in either byte order, followed by any sequence of ``gzip``
+  codecs, whose chunks are gzip streams (RFC 1952) of DEFLATE data (RFC 1951; both
+  Deutsch 1996), and ``zstd`` codecs, whose chunks are Zstandard frames (RFC 8878;
+  Collet and Kucherawy 2021); ``zstd`` needs the ``compression.zstd`` module of
+  Python 3.14 or newer.
 
 Anything else, such as another data type, the ``blosc``, ``crc32c``, ``transpose`` or
 ``sharding_indexed`` codec, another chunk grid or a storage transformer, raises a
@@ -29,21 +33,46 @@ zstd's default level of 3. A chunk compressed twice holds the output of both ste
 Selections take integers and slices, and, through ``ZarrArray.oindex``, integer arrays
 and boolean masks along any axes.
 
-Reading is strict. A metadata document must be a JSON object without repeated keys or
-NaN and Infinity tokens, and every field must be valid; a field the specification does
-not define is an error unless its value is an object with ``"must_understand":
-false``. A chunk must decode to exactly the bytes its shape needs, compressed streams
-must be complete and pass their checksums, and bool chunks may hold only the bytes 0
-and 1. Memory and time stay bounded on malformed files: arrays whose chunks would hold
-more than 2 GiB (``MAX_CHUNK_BYTES``) are refused, at most the bytes a valid encoding
-of a chunk can take are read from disk, every decoding step stops just past the most
-bytes a valid chunk can produce, and a chunk may hold at most 1,024 gzip members or
-zstd frames (writers use one).
+Reading is strict. A metadata document must be a JSON object (Bray 2017) without
+repeated keys or NaN and Infinity tokens, and every field must be valid; a field the
+specification does not define is an error unless its value is an object with
+``"must_understand": false``. A chunk must decode to exactly the bytes its shape
+needs, compressed streams must be complete and pass their checksums, and bool chunks
+may hold only the bytes 0 and 1. Memory and time stay bounded on malformed files:
+arrays whose chunks would hold more than 2 GiB (``MAX_CHUNK_BYTES``) are refused, at
+most the bytes a valid encoding of a chunk can take are read from disk, every
+decoding step stops just past the most bytes a valid chunk can produce, and a chunk
+may hold at most 1,024 gzip members or zstd frames (writers use one).
 
 Writing produces arrays with a regular chunk grid, the default chunk key encoding with
 ``/``, a fill value of zero (``false`` for bool) and the ``bytes`` codec, little
 endian, followed by ``gzip``, ``zstd`` (with a checksum) or no compression. A chunk
 whose bytes are all zero equals the fill value and is not stored.
+
+References:
+    Miles A, Striebel J, Rzepka N, Maitin-Shepard J, Moore J, eds (2025). Zarr core
+    specification, version 3.1. https://zarr-specs.readthedocs.io/en/latest/v3/core/
+
+    Zarr developers (2023). Bytes codec, version 1.0, and gzip codec, version 1.0. Zarr
+    specifications, https://zarr-specs.readthedocs.io/en/latest/v3/codecs/
+
+    Maitin-Shepard J (2025). Zstd codec. Zarr extensions,
+    https://github.com/zarr-developers/zarr-extensions/tree/main/codecs/zstd
+
+    Deutsch P (1996). GZIP file format specification version 4.3. RFC 1952, RFC Editor.
+    doi:10.17487/RFC1952
+
+    Deutsch P (1996). DEFLATE Compressed Data Format Specification version 1.3.
+    RFC 1951, RFC Editor. doi:10.17487/RFC1951
+
+    Collet Y, Kucherawy M (2021). Zstandard Compression and the 'application/zstd' Media
+    Type. RFC 8878, RFC Editor. doi:10.17487/RFC8878
+
+    Bray T (2017). The JavaScript Object Notation (JSON) Data Interchange Format.
+    RFC 8259, RFC Editor. doi:10.17487/RFC8259
+
+    IEEE (2019). IEEE Standard for Floating-Point Arithmetic. IEEE Std 754-2019.
+    doi:10.1109/IEEESTD.2019.8766229
 """
 
 import gzip

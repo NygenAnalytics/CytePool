@@ -1,9 +1,9 @@
 """Parse R-style model formulas into terms.
 
-A formula such as ``"~ condition * batch"`` describes the columns of a design matrix. It
-is expanded to an intercept flag and a list of terms, each term a set of variables, by
-the rules of R's ``terms.formula`` (Chambers and Hastie 1992, chapter 2; R-intro
-section 11.1):
+A formula such as ``"~ condition * batch"`` describes the columns of a design matrix,
+in the notation of Wilkinson and Rogers (1973) as S and R adapted it. It is expanded to
+an intercept flag and a list of terms, each term a set of variables, by the rules of
+R's ``terms.formula`` (Chambers and Hastie 1992; Venables et al. 2025, section 11.1):
 
 - ``a + b`` includes the terms of both sides; ``a - b`` removes the terms of ``b``.
 - ``a:b`` is the interaction, every term of ``a`` combined with every term of ``b``,
@@ -28,6 +28,23 @@ is ``~ x`` in R), ``^`` applied to a single term (R reads ``~ age^2`` as ``~ age
 and a power that is not a whole number (R truncates ``^2.5`` to ``^2``). Function
 calls such as ``log(age)`` or ``I(age^2)`` are rejected with a suggestion to add a
 column with the computed values.
+
+Random-effect terms, such as ``(1 | donor)``, are written in lme4's notation (Bates et
+al. 2015) and read by ``parse_random_effects``.
+
+References:
+    Wilkinson GN, Rogers CE (1973). Symbolic description of factorial models for
+    analysis of variance. Journal of the Royal Statistical Society C 22, 392-399.
+    doi:10.2307/2346786
+
+    Chambers JM, Hastie TJ (1992). Statistical models. Chapter 2 of Statistical Models
+    in S, eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole, Pacific Grove.
+
+    Venables WN, Smith DM, R Core Team (2025). An Introduction to R, version 4.4.3.
+    https://cran.r-project.org/doc/manuals/R-intro.html
+
+    Bates D, Maechler M, Bolker B, Walker S (2015). Fitting linear mixed-effects models
+    using lme4. Journal of Statistical Software 67(1), 1-48. doi:10.18637/jss.v067.i01
 """
 
 import difflib
