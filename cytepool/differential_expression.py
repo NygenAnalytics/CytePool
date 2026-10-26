@@ -257,6 +257,7 @@ import numpy as np
 
 from ._analysis_records import cube_record, design_record, software_versions
 from ._columns import text_column
+from ._counts import effective_library_sizes
 from ._jit import thread_limit
 from ._masked_arrays import reject_masked
 from ._messages import listing, quoted
@@ -275,7 +276,6 @@ from .design import Contrasts, Design, make_contrasts
 from .design.checks import _aliasing, _contrast_violations
 from .design.design import _is_random_intercept, _refuse_random_effects
 from .normalization import (
-    _effective_library_sizes,
     filter_by_expression,
     library_sizes,
     log_cpm,
@@ -1386,7 +1386,7 @@ def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             f"features with counts, and {with_counts} of the {n_tested} features "
             f"tested {'has' if with_counts == 1 else 'have'} counts",
         )
-    sizes = np.array(_effective_library_sizes(y, None, data.factors))
+    sizes = np.array(effective_library_sizes(y, None, data.factors))
     fraction = _trend_span(settings["span"], n_tested)
     prior = None if data.prior is None else _scaled_prior_weights(data.prior, y.shape)
     with thread_limit(settings["n_threads"]):

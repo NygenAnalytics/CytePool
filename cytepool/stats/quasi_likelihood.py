@@ -205,7 +205,7 @@ from cytepool._options import (
     real_number,
 )
 from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts
+from cytepool._counts import as_counts, dispersion_matrix, offset_matrix, weight_matrix
 from cytepool.stats.distributions import f_sf
 from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import _contrast_matrix, _design_matrix
@@ -213,12 +213,9 @@ from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.negative_binomial_models import (
     _SERIES_LIMIT,
     NegativeBinomialFit,
-    _dispersion_matrix,
-    _offset_matrix,
     _read_only,
     _unit_deviance,
     _unit_deviances,
-    _weight_matrix,
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
@@ -1026,7 +1023,7 @@ def average_log_cpm(
             :func:`~cytepool.stats.negative_binomial_models.fit_negative_binomial_model`,
             or if ``prior_count`` is negative.
     """
-    y = _as_counts(counts)
+    y = as_counts(counts)
     prior = non_negative_number(prior_count, "prior_count")
     fit = fit_negative_binomial_model(
         y,
@@ -1123,7 +1120,7 @@ def common_dispersion(
             if an option is out of range, or if no gene has ``min_row_sum`` counts.
     """
     with thread_limit(n_threads):
-        y = _as_counts(counts)
+        y = as_counts(counts)
         n_samples, n_features = y.shape
         x, names = _design_matrix(design, coefficient_names)
         _refuse_random_effects(design, "common_dispersion")
@@ -1135,8 +1132,8 @@ def common_dispersion(
         limit = positive_integer(
             max_iterations, "max_iterations", expected="a positive integer"
         )
-        log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
-        w = _weight_matrix(weights, n_samples, n_features)
+        log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
+        w = weight_matrix(weights, n_samples, n_features)
         return _common_dispersion(
             y, x, names, log_sizes, w, low, high, least, most, limit
         )
@@ -1492,7 +1489,7 @@ def fit_quasi_likelihood(
             so that limma's prior cannot be estimated.
     """
     with thread_limit(n_threads):
-        y = _as_counts(counts)
+        y = as_counts(counts)
         n_samples, n_features = y.shape
         x, names = _design_matrix(design, coefficient_names)
         _refuse_random_effects(design, "fit_quasi_likelihood")
@@ -1514,8 +1511,8 @@ def fit_quasi_likelihood(
         limit = positive_integer(
             max_iterations, "max_iterations", expected="a positive integer"
         )
-        log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
-        w = _weight_matrix(weights, n_samples, n_features)
+        log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
+        w = weight_matrix(weights, n_samples, n_features)
         covariate = _trend_values(trend, n_features)
         if dispersion is not None and top_proportion is not None:
             raise ValueError(
@@ -1559,7 +1556,7 @@ def fit_quasi_likelihood(
                 dispersion=value,
             )
         else:
-            phi = _dispersion_matrix(dispersion, n_samples, n_features)
+            phi = dispersion_matrix(dispersion, n_samples, n_features)
             _check_moment_range(phi, "dispersion", _LARGEST_DISPERSION)
             reported = _as_given(_argument(phi))
             # With a dispersion given, the trends follow the average log CPM at that

@@ -62,6 +62,12 @@ from ._jit import jit
 from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
 from ._linear_algebra import column_space
 from ._masked_arrays import unmasked_array
+from ._counts import (
+    as_counts,
+    effective_library_sizes,
+    library_sizes_of,
+    sums_in_range,
+)
 from ._options import non_negative_number, real_number
 from ._ranks import average_ranks_in_order
 
@@ -108,7 +114,7 @@ def library_sizes(counts: npt.ArrayLike) -> FloatArray:
             non-negative values.
         OverflowError: If a library size exceeds the float64 range.
     """
-    return _sums_in_range(_as_counts(counts), 1)
+    return sums_in_range(as_counts(counts), 1)
 
 
 def tmm_factors(
@@ -170,8 +176,8 @@ def tmm_factors(
             size zero.
         OverflowError: If a library size exceeds the float64 range.
     """
-    y = _as_counts(counts)
-    sizes = _library_sizes_of(y, library_sizes)
+    y = as_counts(counts)
+    sizes = library_sizes_of(y, library_sizes)
     if reference is not None:
         reference = _sample_index(reference, y.shape[0])
     trim_m = _fraction(log_ratio_trim, "log_ratio_trim")
@@ -220,8 +226,8 @@ def upper_quartile_factors(
             NaN factors).
         OverflowError: If a library size exceeds the float64 range.
     """
-    y = _as_counts(counts)
-    sizes = _library_sizes_of(y, library_sizes)
+    y = as_counts(counts)
+    sizes = library_sizes_of(y, library_sizes)
     p = real_number(p, "p", finite=True)
     if not 0.0 <= p <= 1.0:
         raise ValueError(f"p must be in [0, 1], got {p}")
@@ -265,8 +271,8 @@ def rle_factors(
             positive counts in every sample (edgeR then returns NaN factors).
         OverflowError: If a library size exceeds the float64 range.
     """
-    y = _as_counts(counts)
-    sizes = _library_sizes_of(y, library_sizes)
+    y = as_counts(counts)
+    sizes = library_sizes_of(y, library_sizes)
     medians = _rle_median_ratios(y)
     if np.isnan(medians[0]):
         raise ValueError(
@@ -308,7 +314,7 @@ def median_ratio_size_factors(
             positive counts in every sample; with ``"poscounts"``, if a sample
             has no positive count.
     """
-    y = _as_counts(counts)
+    y = as_counts(counts)
     if method not in ("ratio", "poscounts"):
         raise ValueError(f'method must be "ratio" or "poscounts", got {method!r}')
     positive_only = method == "poscounts"
@@ -353,8 +359,8 @@ def cpm(
         OverflowError: If a library size, or a count per million as edgeR forms
             it, exceeds the float64 range.
     """
-    y = _as_counts(counts)
-    sizes = _effective_library_sizes(y, library_sizes, norm_factors)
+    y = as_counts(counts)
+    sizes = effective_library_sizes(y, library_sizes, norm_factors)
     try:
         with np.errstate(over="raise"):
             return _cpm(y, sizes)
@@ -400,8 +406,8 @@ def log_cpm(
         OverflowError: If a library size, or the sum of the library sizes,
             exceeds the float64 range.
     """
-    y = _as_counts(counts)
-    sizes = _effective_library_sizes(y, library_sizes, norm_factors)
+    y = as_counts(counts)
+    sizes = effective_library_sizes(y, library_sizes, norm_factors)
     prior = non_negative_number(prior_count, "prior_count")
     result: FloatArray = _log2_cpm(y, sizes, prior, math.log(1e6), math.log(2.0))
     return result
@@ -466,9 +472,9 @@ def filter_by_expression(
         OverflowError: If a library size, or the total count of a feature,
             exceeds the float64 range.
     """
-    y = _as_counts(counts)
+    y = as_counts(counts)
     n_samples = y.shape[0]
-    sizes = _effective_library_sizes(y, library_sizes, norm_factors)
+    sizes = effective_library_sizes(y, library_sizes, norm_factors)
     min_count = non_negative_number(min_count, "min_count")
     min_total_count = non_negative_number(min_total_count, "min_total_count")
     large_n = non_negative_number(large_n, "large_n")
@@ -497,89 +503,12 @@ def filter_by_expression(
     cutoff = min_count / float(np.median(sizes)) * 1e6
     with np.errstate(over="ignore"):  # an infinite CPM still reaches the cutoff
         n_expressed = np.count_nonzero(_cpm(y, sizes) >= cutoff, axis=0)
-    totals = _sums_in_range(y, 0)
+    totals = sums_in_range(y, 0)
     keep: npt.NDArray[np.bool_] = n_expressed >= min_samples - _FILTER_SLACK
     return keep & (totals >= min_total_count - _FILTER_SLACK)
 
 
 # Argument checks
-
-
-def _as_counts(counts: npt.ArrayLike) -> FloatArray:
-    array = unmasked_array(counts, "counts")
-    if array.dtype.kind not in "iuf":
-        raise TypeError(
-            f"counts must be a dense integer or float array, got dtype {array.dtype}"
-        )
-    if array.ndim != 2:
-        raise ValueError(
-            "counts must be a 2-D array of samples x features, "
-            f"got {array.ndim} dimension(s)"
-        )
-    if 0 in array.shape:
-        raise ValueError(
-            "counts must have at least one sample and one feature, "
-            f"got shape {array.shape}"
-        )
-    # Writeable, aligned C order: the compiled routines then compile once.
-    values = np.require(array, np.float64, ["C", "A", "W"])
-    bad = np.argwhere(~(np.isfinite(values) & (values >= 0)))
-    if bad.size:
-        i, j = bad[0]
-        raise ValueError(
-            "counts must be finite and non-negative; "
-            f"sample {i}, feature {j} is {values[i, j]}"
-        )
-    return values
-
-
-def _positive_vector(values: npt.ArrayLike, name: str, n_samples: int) -> FloatArray:
-    array = unmasked_array(values, name)
-    if array.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must be numeric, got dtype {array.dtype}")
-    if array.ndim != 1 or array.shape[0] != n_samples:
-        raise ValueError(
-            f"{name} must have one value per sample ({n_samples}), "
-            f"got shape {array.shape}"
-        )
-    vector = np.require(array, np.float64, ["C", "A", "W"])
-    bad = np.flatnonzero(~(np.isfinite(vector) & (vector > 0)))
-    if bad.size:
-        raise ValueError(
-            f"{name} must be finite and positive; sample {bad[0]} has {vector[bad[0]]}"
-        )
-    return vector
-
-
-def _library_sizes_of(
-    counts: FloatArray, library_sizes: npt.ArrayLike | None
-) -> FloatArray:
-    if library_sizes is not None:
-        return _positive_vector(library_sizes, "library_sizes", counts.shape[0])
-    sizes = _sums_in_range(counts, 1)
-    empty = np.flatnonzero(sizes == 0)
-    if empty.size:
-        raise ValueError(
-            f"sample(s) {empty.tolist()} have no counts, so their library size is "
-            "zero; remove them"
-        )
-    return sizes
-
-
-def _effective_library_sizes(
-    counts: FloatArray,
-    library_sizes: npt.ArrayLike | None,
-    norm_factors: npt.ArrayLike | None,
-) -> FloatArray:
-    sizes = _library_sizes_of(counts, library_sizes)
-    if norm_factors is None:
-        return sizes
-    factors = _positive_vector(norm_factors, "norm_factors", counts.shape[0])
-    with np.errstate(over="ignore", under="ignore"):
-        sizes = sizes * factors
-    if not np.all(np.isfinite(sizes) & (sizes > 0)):
-        raise ValueError("library_sizes * norm_factors must be finite and positive")
-    return sizes
 
 
 def _fraction(value: object, name: str) -> float:
@@ -635,19 +564,6 @@ def _design_matrix(design: object, n_samples: int) -> FloatArray:
 
 
 # Shared pieces
-
-
-def _sums_in_range(counts: FloatArray, axis: int) -> FloatArray:
-    """Return ``accurate_sums(counts, axis)``; a sum beyond float64 raises OverflowError."""
-    sums: FloatArray = accurate_sums(counts, axis)
-    beyond = np.flatnonzero(~np.isfinite(sums))
-    if beyond.size:
-        unit = "sample" if axis == 1 else "feature"
-        raise OverflowError(
-            f"the counts of {unit} {beyond[0]} sum beyond the float64 range (about "
-            "1.8e308)"
-        )
-    return sums
 
 
 def _expressed(counts: FloatArray) -> FloatArray:

@@ -169,10 +169,16 @@ import numpy.typing as npt
 from numba import prange
 
 from cytepool._jit import by_chunks, jit, thread_limit
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import reject_masked
 from cytepool._options import non_negative_number, positive_integer
 from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts, _effective_library_sizes
+from cytepool._counts import (
+    as_counts,
+    dispersion_matrix,
+    offset_matrix,
+    real_values,
+    weight_matrix,
+)
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
 from cytepool.stats.linear_models import _aliased_columns, _design_matrix
 
@@ -372,7 +378,7 @@ def fit_negative_binomial_model(
             size is zero, or ``prior_count`` or ``max_iterations`` is out of range.
     """
     with thread_limit(n_threads):
-        y = _as_counts(counts)
+        y = as_counts(counts)
         n_samples, n_features = y.shape
         x, names = _design_matrix(design, coefficient_names)
         _refuse_random_effects(design, "fit_negative_binomial_model")
@@ -389,9 +395,9 @@ def fit_negative_binomial_model(
                 "combinations of the preceding columns; remove them or reparametrise "
                 "the design"
             )
-        phi = _dispersion_matrix(dispersion, n_samples, n_features)
-        log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
-        w = _weight_matrix(weights, n_samples, n_features)
+        phi = dispersion_matrix(dispersion, n_samples, n_features)
+        log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
+        w = weight_matrix(weights, n_samples, n_features)
         prior = non_negative_number(prior_count, "prior_count")
         reject_masked(max_iterations, "max_iterations")
         limit = positive_integer(
@@ -550,106 +556,8 @@ def negative_binomial_deviance(
 # Arguments.
 
 
-def _dispersion_matrix(dispersion: Any, n_samples: int, n_features: int) -> FloatArray:
-    """Dispersions as a C-ordered float64 matrix, genes x samples, of shape
-    (1 or n_features, 1 or n_samples)."""
-    phi = _real_values(dispersion, "dispersion")
-    if phi.shape == ():
-        matrix = phi.reshape(1, 1)
-    elif phi.shape == (n_features,):
-        matrix = phi.reshape(n_features, 1)
-    elif phi.shape == (n_samples, n_features):
-        matrix = phi.T
-    else:
-        raise ValueError(
-            "dispersion must be one value, one per feature "
-            f"({n_features},) or one per observation ({n_samples}, {n_features}), "
-            f"got shape {phi.shape}"
-        )
-    with np.errstate(invalid="ignore"):
-        bad = ~(np.isfinite(matrix) & (matrix >= 0.0))
-    if bad.any():
-        raise ValueError(
-            "dispersion must be finite and non-negative; "
-            f"{int(np.count_nonzero(bad))} values are not"
-        )
-    return np.ascontiguousarray(matrix, dtype=np.float64)
-
-
-def _offset_matrix(
-    offsets: Any,
-    library_sizes: npt.ArrayLike | None,
-    norm_factors: npt.ArrayLike | None,
-    counts: FloatArray,
-) -> FloatArray:
-    """Offsets as a C-ordered float64 matrix, genes x samples, of shape
-    (1 or n_features, n_samples)."""
-    n_samples, n_features = counts.shape
-    if offsets is None:
-        sizes = _effective_library_sizes(counts, library_sizes, norm_factors)
-        return np.log(sizes).reshape(1, n_samples)
-    if library_sizes is not None or norm_factors is not None:
-        raise ValueError(
-            "give offsets, or library sizes and normalization factors, not both: the "
-            "offsets are the log library sizes times normalization factors"
-        )
-    values = _real_values(offsets, "offsets")
-    if values.shape == ():
-        matrix = np.full((1, n_samples), float(values))
-    elif values.shape == (n_samples,):
-        matrix = values.reshape(1, n_samples)
-    elif values.shape == (n_samples, n_features):
-        matrix = values.T
-    else:
-        raise ValueError(
-            f"offsets must be one value, one per sample ({n_samples},) or one per "
-            f"observation ({n_samples}, {n_features}), got shape {values.shape}"
-        )
-    if not np.isfinite(matrix).all():
-        raise ValueError("offsets must be finite")
-    return np.ascontiguousarray(matrix, dtype=np.float64)
-
-
-def _weight_matrix(weights: Any, n_samples: int, n_features: int) -> FloatArray:
-    """Prior weights as a C-ordered float64 matrix, genes x samples, of shape
-    (1 or n_features, 1 or n_samples)."""
-    if weights is None:
-        return np.ones((1, 1))
-    values = _real_values(weights, "weights")
-    if values.shape == ():
-        matrix = values.reshape(1, 1)
-    elif values.shape == (n_samples,):
-        matrix = values.reshape(1, n_samples)
-    elif values.shape == (n_samples, n_features):
-        matrix = values.T
-    else:
-        raise ValueError(
-            f"weights must be one value, one per sample ({n_samples},) or one per "
-            f"observation ({n_samples}, {n_features}), got shape {values.shape}"
-        )
-    with np.errstate(invalid="ignore"):
-        bad = ~(np.isfinite(matrix) & (matrix > 0.0))
-    if bad.any():
-        raise ValueError(
-            "weights must be finite and positive, as edgeR requires; "
-            f"{int(np.count_nonzero(bad))} values are not"
-        )
-    return np.ascontiguousarray(matrix, dtype=np.float64)
-
-
-def _real_values(values: Any, name: str) -> FloatArray:
-    """An argument as a new float64 array; booleans and non-numbers are refused.
-
-    A copy, so that a fit does not change with the caller's array.
-    """
-    array = unmasked_array(values, name)
-    if array.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
-    return np.array(array, dtype=np.float64)
-
-
 def _non_negative_array(values: Any, name: str) -> FloatArray:
-    array = _real_values(values, name)
+    array = real_values(values, name)
     with np.errstate(invalid="ignore"):
         bad = ~(np.isfinite(array) & (array >= 0.0))
     if bad.any():

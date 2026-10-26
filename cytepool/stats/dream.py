@@ -119,7 +119,7 @@ import numpy.typing as npt
 from cytepool._jit import thread_limit
 from cytepool._masked_arrays import unmasked_array
 from cytepool.design.design import Design
-from cytepool.normalization import _as_counts, _effective_library_sizes
+from cytepool._counts import as_counts, effective_library_sizes
 from cytepool.stats.distributions import norm_isf, norm_logsf, t_logsf, t_sf
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import LinearModelFit, _real_array
@@ -270,7 +270,7 @@ def voom_with_dream_weights(
             fewer than two features with counts can be fitted, or the trend is not
             positive where weights are read from it.
     """
-    y = _as_counts(counts)
+    y = as_counts(counts)
     if y.shape[1] < 2:
         raise ValueError(
             f"a mean-variance trend needs at least two features, got {y.shape[1]}"
@@ -289,7 +289,7 @@ def voom_with_dream_weights(
             f"{parts.x.shape[0]}; both need one row per sample"
         )
     # A copy, so that the result does not change with the caller's array.
-    sizes = np.array(_effective_library_sizes(y, library_sizes, norm_factors))
+    sizes = np.array(effective_library_sizes(y, library_sizes, norm_factors))
     fraction = _trend_span(span, y.shape[1])
     prior = _scaled_prior_weights(weights, y.shape)
     with thread_limit(n_threads):

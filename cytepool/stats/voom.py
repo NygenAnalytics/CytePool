@@ -107,7 +107,7 @@ import numpy.typing as npt
 from cytepool._masked_arrays import reject_masked
 from cytepool._summation import accurate_mean
 from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts, _effective_library_sizes
+from cytepool._counts import as_counts, effective_library_sizes
 from cytepool.stats.linear_models import (
     LinearModelFit,
     _design_matrix,
@@ -491,7 +491,7 @@ def _voom_inputs(
     function: str,
 ) -> tuple[FloatArray, FloatArray, float]:
     """The counts, effective library sizes and span, checked for ``function``."""
-    y = _as_counts(counts)
+    y = as_counts(counts)
     n_samples, n_features = y.shape
     if n_features < 2:
         raise ValueError(
@@ -505,7 +505,7 @@ def _voom_inputs(
             f"{n_design_rows}; both need one row per sample"
         )
     # A copy, so that the result does not change with the caller's array.
-    sizes = np.array(_effective_library_sizes(y, library_sizes, norm_factors))
+    sizes = np.array(effective_library_sizes(y, library_sizes, norm_factors))
     return y, sizes, _trend_span(span, n_features)
 
 

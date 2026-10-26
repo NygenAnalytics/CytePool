@@ -214,7 +214,8 @@ from cytepool._options import real_number
 from cytepool._summation import accurate_sums
 from cytepool.design.contrasts import make_contrasts
 from cytepool.design.design import Design, _refuse_random_effects
-from cytepool.normalization import _as_counts, median_ratio_size_factors
+from cytepool._counts import as_counts
+from cytepool.normalization import median_ratio_size_factors
 from cytepool.stats.distributions import chi2_sf, f_ppf, norm_sf
 from cytepool.stats.linear_models import (
     _aliased_columns,
@@ -1674,7 +1675,7 @@ def _reduced_design(reduced: Any, fit: DESeq2Fit) -> FloatArray:
 def _whole_counts(counts: npt.ArrayLike) -> FloatArray:
     """The counts as a new float64 array, so that a fit does not change with the
     caller's array; whole numbers are required."""
-    y = _as_counts(counts)
+    y = as_counts(counts)
     if isinstance(counts, np.ndarray) and np.shares_memory(y, counts):
         y = y.copy()
     bad = np.argwhere(y != np.floor(y))
