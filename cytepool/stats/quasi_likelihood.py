@@ -225,7 +225,7 @@ from cytepool.stats.negative_binomial_models import (
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
-from cytepool.stats.special import _stirling_error
+from cytepool.stats._scalar_special_functions import stirling_error
 
 __all__ = [
     "QuasiLikelihoodFit",
@@ -401,13 +401,13 @@ def _check_moment_range(values: FloatArray, name: str, largest: float) -> None:
 def _log_probability(y: float, phi: float, deviance: float) -> float:
     """log P(Y = y) for y > 0, Y ~ NB(mu, phi), in Loader's deviance form."""
     if phi == 0.0:
-        return -0.5 * deviance - 0.5 * (_LOG_2PI + math.log(y)) - _stirling_error(y)
+        return -0.5 * deviance - 0.5 * (_LOG_2PI + math.log(y)) - stirling_error(y)
     r = 1.0 / phi
     return (
         -0.5 * deviance
         - 0.5 * (_LOG_2PI + math.log(y) + math.log1p(phi * y))
-        + (_stirling_error(y + r) - _stirling_error(r))
-        - _stirling_error(y)
+        + (stirling_error(y + r) - stirling_error(r))
+        - stirling_error(y)
     )
 
 
@@ -1255,11 +1255,11 @@ def _adjusted_profile_likelihood(
             term = (
                 -0.5 * deviance
                 - 0.5 * (_LOG_2PI + math.log(z) + math.log1p(phi * y))
-                - _stirling_error(z)
+                - stirling_error(z)
             )
             if phi > 0.0:
                 size = w / phi
-                term += _stirling_error(z + size) - _stirling_error(size)
+                term += stirling_error(z + size) - stirling_error(size)
             log_likelihood += term
         _, log_determinant = _orthonormal_columns(design, root, basis)
         value = log_likelihood - 0.5 * log_determinant

@@ -222,13 +222,8 @@ from cytepool.stats.negative_binomial_models import (
     negative_binomial_deviance,
 )
 from cytepool.stats.smoothing import lowess
-from cytepool.stats.special import (
-    _log_gamma_increment,
-    _stirling_error,
-    digamma_scalar,
-    lgamma_scalar,
-    trigamma,
-)
+from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
+from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
 
 __all__ = [
     "DESeq2Dispersions",
@@ -1816,11 +1811,11 @@ def _log_gamma_shift(y: float, r: float) -> float:
         shift: float = (
             (r + y - 0.5) * math.log1p(y / r)
             - y
-            + _stirling_error(r + y)
-            - _stirling_error(r)
+            + stirling_error(r + y)
+            - stirling_error(r)
         )
         return shift
-    value: float = _log_gamma_increment(r, y) - y * math.log(r)
+    value: float = log_gamma_increment(r, y) - y * math.log(r)
     return value
 
 
