@@ -155,11 +155,11 @@ def _effects_of_last_coefficient(
             for j in range(p):
                 work[i, j] = scale * design[i, j]
             work[i, p] = scale * responses[g, i]
-        # The norm after the earlier reflections is the reference of the rank rule, a
-        # head within _ZERO_PIVOT of zero counts as zero, and v'v is summed.
+        # The norm after the earlier reflections is the reference of the rank rule,
+        # and a head within _ZERO_PIVOT of zero counts as zero.
         rank = householder_qr(
-            work, n_samples, p, tolerance, True, _ZERO_PIVOT, True, norms, aliased,
-            kept, products,
+            work, n_samples, p, tolerance, True, _ZERO_PIVOT, norms, aliased, kept,
+            products,
         )  # fmt: skip
         if rank < p:
             effects[g, :] = np.nan  # aliased: the design is rank deficient

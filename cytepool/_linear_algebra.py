@@ -221,7 +221,6 @@ def householder_qr(
     tolerance: float,
     current_norm: bool,
     zero_pivot: float,
-    summed_scale: bool,
     norms: FloatArray,
     aliased: npt.NDArray[np.bool_],
     kept: npt.NDArray[np.int64],
@@ -242,8 +241,8 @@ def householder_qr(
     zero, which it is in exact arithmetic in some designs, so that the sign does not
     follow rounding noise. Each reflection, I - 2 v v' / (v'v) for the column's part
     v from the pivot row down, is applied to every other column, those kept before it
-    being zero where it acts; v'v is 2 norm (norm + |head|), or with
-    ``summed_scale`` the sum of squares of v. Sums over rows run in increasing order.
+    being zero where it acts, with v'v = 2 norm (norm + |head|). Sums over rows run in
+    increasing order.
 
     Args:
         work: The columns, a 2-D array with one row per observation.
@@ -253,7 +252,6 @@ def householder_qr(
         current_norm: Whether the reference norm is that after the earlier
             reflections.
         zero_pivot: The relative size below which a head counts as zero.
-        summed_scale: Whether v'v is summed rather than formed from the norm.
         norms: Workspace of ``n_columns`` values: the norms of the columns.
         aliased: Workspace of ``n_columns`` values: whether each column is aliased.
         kept: Workspace of ``n_columns`` values: the kept columns, in order.
@@ -296,14 +294,8 @@ def householder_qr(
         head = work[rank, j]
         alpha = -norm if head >= -zero_pivot * norm else norm
         work[rank, j] = head - alpha
-        if summed_scale:
-            total = 0.0
-            for i in range(rank, n_rows):
-                total += work[i, j] * work[i, j]
-            scale = 2.0 / total
-        else:
-            # v'v = 2 norm (norm + |head|).
-            scale = 1.0 / (norm * (norm + abs(head)))
+        # v'v = 2 norm (norm + |head|).
+        scale = 1.0 / (norm * (norm + abs(head)))
         products[:] = 0.0
         for i in range(rank, n_rows):
             v = work[i, j]

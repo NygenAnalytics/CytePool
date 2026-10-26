@@ -769,7 +769,7 @@ def _fit_features(
                 block_counts,
             )
         rank = householder_qr(
-            work, m, last, tolerance, False, 0.0, False, norms, aliased, kept, products
+            work, m, last, tolerance, False, 0.0, norms, aliased, kept, products
         )
 
         df = m - rank
