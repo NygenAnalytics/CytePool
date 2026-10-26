@@ -66,6 +66,11 @@ tests](../statistics/gene_set_tests.md#gene-set-enrichment-analysis)
 **Group.** The second axis of a cube, usually a cell type: the cells of one sample are
 pooled per group. A bulk cube has one group.
 
+**Pathway score.** One number per sample for a gene set, such as a GSVA or ssGSEA score,
+that summarizes the expression of the set's genes in that sample, so that pathways can
+be compared across samples and tested like genes. [Gene-set
+tests](../statistics/gene_set_tests.md#pathway-scores-per-sample)
+
 **Heterogeneity.** How much the studies of a meta-analysis disagree beyond their
 sampling error, measured by the between-study variance tau², Cochran's Q and I².
 [Meta-analysis](../statistics/meta_analysis.md)

@@ -17,8 +17,8 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
 `variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
-`gsea.py` and `cube_collection.py`, and for `dream.py`, which printed the same table again after changes to
-the code it checks; on
+`gsea.py`, `cube_collection.py` and `pathway_scores.py`, and for `dream.py`, which
+printed the same table again after changes to the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -58,6 +58,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
 | [`gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py) | Gene-set files and over-representation | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | 34 | 29 pass, 5 deliberate differences | 4.7 s | 297 MiB |
 | [`gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py) | Gene set enrichment analysis | R 4.4.3, fgsea 1.32.2 | 24 | 23 pass, 1 deliberate difference | 7 min 3 s | 323 MiB |
+| [`pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py) | Pathway scores | R 4.4.3, GSVA 2.0.0 | 24 | 19 pass, 3 deliberate differences, 2 information | 10.7 s | 949 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
@@ -70,7 +71,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,189** | **1,888 pass, none failed; 172 information, 127 deliberate differences, 2 controls** | | |
+| **All** | | | **2,213** | **1,907 pass, none failed; 174 information, 130 deliberate differences, 2 controls** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1281,6 +1282,66 @@ Deliberate difference:
   sets with a p-value. The tests check that CytePool's are Benjamini and Hochberg's of
   the p-values it reports.
 
+## Pathway scores
+
+[`validation/pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py)
+checks the scores of gene sets in every sample, and their heatmap, against GSVA 2.0.0,
+whose `gsva()` runs with a `gsvaParam`, `ssgseaParam`, `zscoreParam` or `plageParam`,
+and the CytePool function with the same options. The inputs are simulated from fixed
+seeds: log-expression values of 2,000 genes in 24 samples, 200 genes higher in the
+second 12, with two constant genes, a gene equal to another, a gene of whole numbers
+and a gene with an outlier sample; negative binomial counts of the same genes in 16
+samples, stored as integers and as decimals; Poisson counts with means from 0.3 to 6
+(low counts); 400 genes in 210 samples; the log-expression values rounded to one
+decimal; the same values with 2% of those of the first 12 samples missing; and a cube of
+one cell type with the counts, whose samples have 3 to 60 cells. The 66 gene sets have
+1 to 300 genes, a fifth of each outside the data: random sets, a set of one gene, one
+with the constant genes, one that lists genes twice, two identical sets and a set of
+every gene, which is left out for ssGSEA but in one case. Reference: R 4.4.3, GSVA
+2.0.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| GSVA's method: the Gaussian kernel, tau 0.5 with maxDiff FALSE, tau 2 with absRanking, no kernel, sizes 10 to 100, counts stored as integers (the Poisson kernel), as decimals (the Gaussian kernel) and 210 samples (no kernel), in 8 cases | `gsva` with `gsvaParam` | 0 | 1e-10 | 8 pass |
+| ssGSEA: the defaults, alpha 1 without normalization, alpha 0 on tied values, in 3 cases | `ssgseaParam` | 1.8e-15 | 1e-10 | 3 pass |
+| Combined z-scores | `zscoreParam` | 2.7e-15 | 1e-10 | 1 pass |
+| PLAGE, the sets of two genes or more, up to sign | `plageParam` | 8.7e-14 | 1e-10 | 1 pass |
+| Missing values: GSVA's method in the samples without any, ssGSEA and combined z-scores | `gsvaParam` and `ssgseaParam` with `use = "na.rm"`, `zscoreParam` | 2.0e-15 | 1e-10 | 3 pass |
+| A cube's cell type: its log-CPM and its counts | `gsva` with `gsvaParam` | 0 | 1e-10 | 2 pass |
+| `plot_pathway_scores`: the 1,584 cells of the standardized heatmap, the samples grouped | GSVA, R's `heatmap(scale = "row")` | 3.2e-16 | 1e-10 | 1 pass |
+| PLAGE: the share of sets whose sign is GSVA's | `plageParam` | 0.42 | n/a | 1 information |
+| GSVA's method with the Poisson kernel on low counts | `gsvaParam` | 2.2e-3 | n/a | 1 information |
+| GSVA's method in the samples with missing values; PLAGE's sets of one gene; ssGSEA with a set of every gene | `gsvaParam`, `plageParam`, `ssgseaParam` | 1.6 | n/a | 3 deliberate differences |
+
+Differences are relative to the largest absolute score of a case, NaN must stand where
+GSVA gives NA, and the sets scored must be GSVA's, in its order. The scores depend on
+the ranks of the genes in each sample, which come from comparisons of their kernel
+estimates; CytePool evaluates the normal distribution function from a table at steps
+of 0.001, as GSVA does, and sums the estimates over the samples in their order, so that
+the ranks, and with them the scores, are GSVA's on continuous values and on counts of
+the sizes of the cases above. With low counts, many genes have kernel estimates that
+are equal in exact arithmetic, such as genes with the same counts in different
+samples, and GSVA orders them by the last bit of R's Poisson probabilities, which
+CytePool computes as accurately but not always to the same bit: the scores of the sets
+that hold them then differ by up to 2.2e-3 of the largest score. PLAGE's sign is that
+of R's singular value decomposition, which agrees with CytePool's convention for 42% of
+the sets.
+
+Deliberate differences:
+
+- GSVA's method in samples with missing values: with `use = "na.rm"`, GSVA's walk
+  falls by 1/(p - k) at a sample's observed genes outside a set, p counting the genes
+  missing in the sample too, so that it ends above zero, and it scores the set of every
+  gene there; CytePool's walk falls by 1/(p_j - k_j), with p_j and k_j counting the
+  genes observed in the sample, and ends at zero (largest difference 4.8e-2, where both
+  give a score). The samples without missing values agree exactly.
+- PLAGE's sets of one gene: GSVA gives 1 in every sample; CytePool gives the gene's
+  standardized values, scaled to length one, its first right singular vector (largest
+  difference 1.6).
+- ssGSEA with a set of every gene: GSVA stops ("Cannot calculate normalizing factor for
+  the enrichment scores in ssGSEA, likely due to NA values in the input expression
+  data"); CytePool gives that set NaN and normalizes the other scores by their range.
+
 ## Multiple testing
 
 [`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
@@ -2128,6 +2189,20 @@ defaults, fgsea's `fgsea` took 2.9 s and `gsea` 4.1 s, both on one thread, after
 first call of `gsea` that compiled it; with plain permutations (10,000), fgsea took
 1.9 s and `gsea` 1.5 s, on 2 threads.
 
+`pathway_scores.py --benchmark` scores 500 sets of 15 to 500 genes in 50 samples of
+15,000 genes, log-expression values or, for the Poisson kernel, negative binomial
+counts. GSVA ran on one thread, as R measured it; CytePool on 2 threads, the best of
+three runs after a first call that compiled it. The peak resident memory of the run was
+952 MiB.
+
+| Method | GSVA (s) | CytePool (s) |
+| --- | --- | --- |
+| GSVA, Gaussian kernel | 4.13 | 0.83 |
+| GSVA, Poisson kernel | 17.61 | 7.32 |
+| ssGSEA | 2.21 | 0.22 |
+| Combined z-scores | 0.67 | 0.15 |
+| PLAGE | 1.95 | 0.96 |
+
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
 `multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the
 references and CytePool 3.6 s to evaluate them, including compilation.
@@ -2179,6 +2254,8 @@ python validation/gene_set_tests.py
 python validation/rotation_gene_set_tests.py
 python validation/gene_set_files_and_ora.py
 RSCRIPT=$REF/r-gsea/bin/Rscript python validation/gsea.py
+RSCRIPT=$REF/r-gsea/bin/Rscript python validation/pathway_scores.py
+RSCRIPT=$REF/r-gsea/bin/Rscript python validation/pathway_scores.py --benchmark
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py
@@ -2265,8 +2342,8 @@ conda create -p $REF/r-dream -c conda-forge -c bioconda r-base=4.4.3 \
     r-minqa=1.2.8 r-nloptr=2.2.1 r-jsonlite=2.0.0
 ```
 
-fgsea 1.32.2 (Bioconductor 3.20), which `gsea.py` runs, has an R environment of its own,
-with R 4.4.3, limma 3.62.1, GSVA 2.0.0, BiocParallel 1.40.0, data.table 1.18.6.1 and
+fgsea 1.32.2 (Bioconductor 3.20), which `gsea.py` runs, and GSVA 2.0.0 (Bioconductor
+3.20), which `pathway_scores.py` runs, have an R environment of their own, with R 4.4.3, limma 3.62.1, GSVA 2.0.0, BiocParallel 1.40.0, data.table 1.18.6.1 and
 jsonlite 2.0.0, from conda-forge and bioconda:
 
 ```bash

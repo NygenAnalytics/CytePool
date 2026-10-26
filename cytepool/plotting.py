@@ -36,7 +36,9 @@ The figures:
   them (Yu et al. 2012); :func:`plot_enrichment`, GSEA's enrichment plot (Subramanian
   et al. 2005), and :func:`plot_gsea_table`, the top sets of a GSEA with their genes
   on the ranking, as fgsea's ``plotEnrichment`` and ``plotGseaTable`` draw them
-  (Korotkevich et al. 2021).
+  (Korotkevich et al. 2021); :func:`plot_pathway_scores`, the scores of gene sets in
+  every sample as a heatmap, as GSVA's guide draws them (Haenzelmann, Castelo and
+  Guinney 2013).
 - Count models: :func:`plot_dispersions`, DESeq2's ``plotDispEsts`` (Love et al.
   2014); :func:`plot_quasi_dispersions`, edgeR's ``plotQLDisp`` (Chen et al. 2016).
 - Meta-analysis: :func:`plot_forest`, the forest plot (Lewis and Clarke 2001) that
@@ -58,9 +60,10 @@ Colours:
     deuteranopia (Machado et al. 2009), and so do any two of the first three. A
     scatter plot of more than three levels therefore also gives each level a marker
     of its own, so that colour is never the only cue. Up and down are red and blue,
-    values shown for context are grey, and numbers take shades of blue. A figure that
-    would need more than eight hues raises an error that says how to merge or select
-    the categories.
+    values shown for context are grey, and numbers take shades of blue; values about
+    zero, as in a heatmap of scores, run from blue through a neutral grey to red, the
+    two arms of equal lightness at each step. A figure that would need more than eight
+    hues raises an error that says how to merge or select the categories.
 
 References:
     Ritchie ME, Phipson B, Wu D, Hu Y, Law CW, Shi W, Smyth GK (2015). limma powers
@@ -125,6 +128,10 @@ References:
     Fast gene set enrichment analysis. bioRxiv 060012, version 3.
     doi:10.1101/060012
 
+    Haenzelmann S, Castelo R, Guinney J (2013). GSVA: gene set variation analysis for
+    microarray and RNA-seq data. BMC Bioinformatics 14, 7.
+    doi:10.1186/1471-2105-14-7
+
     Lewis S, Clarke M (2001). Forest plots: trying to see the wood and the trees. BMJ
     322, 1479-1480. doi:10.1136/bmj.322.7300.1479
 
@@ -178,6 +185,7 @@ from .differential_expression import DifferentialExpressionResult
 from .gene_sets import GeneSets
 from .meta_analysis import MetaAnalysisResult
 from .normalization import filter_by_expression, log_cpm, tmm_factors
+from .pathway_scores import PathwayScores
 from .stats.deseq2 import DESeq2Dispersions, DESeq2Fit, DESeq2Results
 from .stats.distributions import f_cdf, f_sf, norm_isf
 from .stats.empirical_bayes import ModeratedFit, TreatFit
@@ -209,6 +217,7 @@ __all__ = [
     "plot_mean_variance",
     "plot_over_representation",
     "plot_p_values",
+    "plot_pathway_scores",
     "plot_proportions",
     "plot_quasi_dispersions",
     "plot_residual_variances",
@@ -250,6 +259,21 @@ _BLUES = (
     "#104281",
     "#0d366b",
 )
+# A diverging ramp for values about zero: the blue ramp, dark to light, a neutral
+# grey midpoint, and a red ramp of the same lightness at each step, light to dark.
+_DIVERGING = (
+    "#0d366b",
+    "#1c5cab",
+    "#3987e5",
+    "#86b6ef",
+    "#cde2fb",
+    "#f0efec",
+    "#fad6d2",
+    "#ea9a93",
+    "#d75853",
+    "#9e3432",
+    "#621b1a",
+)
 _MARKERS = ("o", "s", "^", "D", "v", "P", "X", "<", ">", "p", "h", "*")
 _DENSE = 8.0  # area of the points of scatter plots of genes, in points squared
 _SPARSE = 48.0  # and of samples
@@ -280,6 +304,17 @@ _TINY = np.finfo(np.float64).tiny  # the smallest p-value shown on a log scale
 _TABLE_BAR = 0.45
 _TABLE_COLUMNS = (0.5, 1.04, 1.17, 1.37)
 _TABLE_WIDTH = 1.55
+# A heatmap labels its rows and columns up to these numbers, and draws the strip of
+# its columns' groups about a third of a row high, within these shares of its height.
+_LABELLED_ROWS = 80
+_LABELLED_COLUMNS = 60
+_STRIP_HEIGHT = (0.04, 0.1)
+_SCORE_LABELS = {
+    "gsva": "GSVA score",
+    "ssgsea": "ssGSEA score",
+    "combined_z_scores": "Combined z-score",
+    "plage": "PLAGE score",
+}
 _METHODS = {
     "reml": "REML",
     "dl": "DerSimonian-Laird",
@@ -2682,6 +2717,201 @@ def _power_of_ten(value: float) -> str:
         return f"{value:g}"
     exponent = math.floor(math.log10(value))
     return rf"${value / 10.0**exponent:.1f} \cdot 10^{{{exponent}}}$"
+
+
+def plot_pathway_scores(
+    scores: PathwayScores,
+    *,
+    sets: Sequence[str] | None = None,
+    color_by: str | Sequence[Any] | None = None,
+    standardize: bool = False,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the scores of gene sets in every sample as a heatmap.
+
+    The heatmap of GSVA's guide (Haenzelmann, Castelo and Guinney 2013): a row for
+    each set and a column for each sample, each cell coloured by the set's score in
+    the sample, on a scale from blue (low) through grey (zero) to red (high) that is
+    symmetric about zero. With ``color_by``, the samples are grouped by its levels,
+    in the order the levels first appear, under a strip of the groups' colours, as
+    the guide's ``heatmap(ColSideColors = ...)`` shows them, with white lines between
+    the groups; within a group they keep their order. ``standardize`` centres each
+    set's scores on their mean over the samples shown and divides them by their
+    standard deviation, as R's ``heatmap(scale = "row")`` does, so that sets whose
+    scores spread differently compare. NaN scores are dark grey.
+
+    Draws the cells (gid ``"scores"``) and, with ``color_by``, the strip (gid
+    ``"groups"``) and the lines between groups (gid ``"group boundaries"``).
+
+    Args:
+        scores: The scores of :func:`~cytepool.pathway_scores.gsva`,
+            :func:`~cytepool.pathway_scores.ssgsea`,
+            :func:`~cytepool.pathway_scores.combined_z_scores` or
+            :func:`~cytepool.pathway_scores.plage`.
+        sets: The sets to show, top to bottom; by default every set, in order.
+        color_by: A column of ``scores.samples``, such as ``"condition"`` for the
+            scores of a cube's group, or one label per sample, at most eight levels.
+        standardize: Whether to standardize each set's scores across the samples.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes of the heatmap.
+
+    Raises:
+        TypeError: If ``scores`` is not a ``PathwayScores``, an option has the wrong
+            type, or an argument is or holds a numpy masked array.
+        ValueError: If a set is not among the scores or is named twice, the labels do
+            not match the samples, or ``color_by`` has more than eight levels.
+        KeyError: If ``color_by`` names a column the samples do not have.
+    """
+    _check_axes(ax)
+    if not isinstance(scores, PathwayScores):
+        raise TypeError(
+            "scores must be a PathwayScores, as gsva, ssgsea, combined_z_scores and "
+            f"plage return, got {type(scores).__name__}"
+        )
+    scaled = checked_flag(standardize, "standardize")
+    names = list(scores.gene_sets)
+    if sets is None:
+        chosen = names
+    else:
+        reject_masked(sets, "sets")
+        chosen = [sets] if isinstance(sets, str) else list(sets)
+        for name in chosen:
+            if not isinstance(name, str):
+                raise TypeError(f"sets must hold set names (str), got {name!r}")
+            if name not in scores.gene_sets:
+                raise ValueError(
+                    f"no set {name!r} among the scores; they hold {quoted(names)}"
+                )
+        if len(set(chosen)) != len(chosen):
+            raise ValueError("sets names a set twice")
+        if not chosen:
+            raise ValueError("sets is empty; name at least one set")
+    values = scores.scores[:, [names.index(name) for name in chosen]].T
+    table = scores.samples
+    n_samples = values.shape[1]
+    samples = _Samples(
+        ids=[str(value) for value in table["sample_id"].tolist()],
+        rows=list(range(n_samples)),
+        n_rows=n_samples,
+        variables={name: table[name] for name in table.columns},
+        source="the scores' sample table",
+    )
+    order = np.arange(n_samples)
+    groups = None
+    if color_by is not None:
+        _check_variable(color_by, "color_by")
+        labels, levels = samples.labels(color_by, "color_by")
+        hues = _hues(levels, "color_by", "merge levels or give fewer labels")
+        position = {level: i for i, level in enumerate(levels)}
+        order = np.argsort([position[label] for label in labels], kind="stable")
+        groups = ([labels[i] for i in order.tolist()], hues)
+    values = values[:, order]
+    if scaled:
+        # Each row's mean and standard deviation over its observed scores; NaN for a
+        # row of fewer than two, or of equal scores.
+        observed = np.isfinite(values)
+        counts = observed.sum(axis=1, keepdims=True).astype(np.float64)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            means = np.where(observed, values, 0.0).sum(axis=1, keepdims=True) / counts
+            centred = values - means
+            squares = np.where(observed, centred**2, 0.0).sum(axis=1, keepdims=True)
+            values = centred / np.sqrt(squares / (counts - 1.0))
+    label = _SCORE_LABELS[scores.method]
+    ax = _axes(
+        ax,
+        (min(14.0, 3.5 + 0.22 * n_samples), min(14.0, 1.8 + 0.28 * len(chosen))),
+    )
+    _draw_heatmap(
+        ax,
+        values,
+        chosen,
+        [samples.ids[i] for i in order.tolist()],
+        "Standardized score" if scaled else label,
+        groups,
+    )
+    return ax
+
+
+def _draw_heatmap(
+    ax: "Axes",
+    values: FloatArray,
+    row_labels: list[str],
+    column_labels: list[str],
+    colorbar_label: str,
+    groups: tuple[list[str], dict[str, str]] | None,
+) -> None:
+    """Draw a rows x columns matrix of values about zero as a heatmap.
+
+    The scale is the diverging ramp, symmetric about zero; NaN is dark grey. Rows
+    are labelled when there are at most ``_LABELLED_ROWS`` of them, and columns when
+    there are at most ``_LABELLED_COLUMNS``. ``groups`` gives each column's group,
+    with the groups' hues: a strip above the matrix shows them, white lines part
+    them, and a legend above the strip names them.
+    """
+    colors = _module("matplotlib.colors")
+    ramp = colors.LinearSegmentedColormap.from_list("cytepool_diverging", _DIVERGING)
+    ramp = ramp.with_extremes(bad=_GREY)
+    finite = np.abs(values[np.isfinite(values)])
+    limit = float(finite.max()) if finite.size and finite.max() > 0.0 else 1.0
+    n_rows, n_columns = values.shape
+    image = ax.imshow(
+        values,
+        cmap=ramp,
+        norm=colors.Normalize(vmin=-limit, vmax=limit),
+        aspect="auto",
+        interpolation="none",
+    )
+    image.set_gid("scores")
+    ax.set_yticks(
+        range(n_rows) if n_rows <= _LABELLED_ROWS else [],
+        row_labels if n_rows <= _LABELLED_ROWS else [],
+    )
+    ax.set_xticks(
+        range(n_columns) if n_columns <= _LABELLED_COLUMNS else [],
+        column_labels if n_columns <= _LABELLED_COLUMNS else [],
+        rotation=90,
+    )
+    ax.tick_params(length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    if groups is not None:
+        labels, hues = groups
+        height = min(_STRIP_HEIGHT[1], max(_STRIP_HEIGHT[0], 0.3 / n_rows))
+        strip = ax.inset_axes((0.0, 1.01, 1.0, height), sharex=ax)
+        shown = colors.ListedColormap([hues[level] for level in hues])
+        codes = {level: i for i, level in enumerate(hues)}
+        bar = strip.imshow(
+            np.array([[codes[label] for label in labels]], dtype=float),
+            cmap=shown,
+            norm=colors.Normalize(vmin=-0.5, vmax=len(hues) - 0.5),
+            aspect="auto",
+            interpolation="none",
+        )
+        bar.set_gid("groups")
+        strip.set_axis_off()
+        boundaries = [
+            i + 0.5 for i in range(n_columns - 1) if labels[i] != labels[i + 1]
+        ]
+        for target in (ax, strip):
+            target.vlines(
+                boundaries,
+                -0.5,
+                (n_rows if target is ax else 1) - 0.5,
+                color="white",
+                linewidth=2.0,
+                gid="group boundaries",
+            )
+        strip.legend(
+            handles=[_patch(level, hue) for level, hue in hues.items()],
+            loc="lower left",
+            bbox_to_anchor=(0.0, 1.05),
+            ncol=min(len(hues), 4),
+            frameon=False,
+            borderaxespad=0.0,
+        )
+    ax.figure.colorbar(image, ax=ax, label=colorbar_label, shrink=0.8)
 
 
 # Count models.
