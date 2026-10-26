@@ -65,9 +65,7 @@ dev = [
 docs = [
     "ipykernel>=6.29",
     "matplotlib>=3.9",
-    # mystmd 1.8.2 and later need Node.js 20 or newer; 1.8.1 also runs on
-    # Node.js 18. Raise the pin once every machine that builds the site has 20.
-    "mystmd==1.8.1",
+    "mystmd==1.11.0",
     "myst-parser>=4",
     "nbclient>=0.10",
     "nbformat>=5.10",

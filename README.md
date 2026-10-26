@@ -1,4 +1,4 @@
-# CytePool
+<h1><img src="https://docs.nygen.io/assets/brand/logo/cytepool-dark.png" alt="" width="96" align="right"> CytePool</h1>
 
 CytePool is a Python library for statistics on aggregated omics data: pseudobulk
 profiles, built by pooling the cells of each sample and cell type, and ordinary bulk
@@ -307,8 +307,8 @@ start and guides, pages on how the statistics work, an API reference, a
 [Validation](docs/source/validation.md) page that reports, for every validation
 script, the reference, the measured differences, the tolerances and the outcome. Its
 sources are in [`docs/`](docs/); build it with
-`uv sync --extra test --group dev --group docs` and `make -C docs html` (Node.js 18,
-20, or 22 and newer), as
+`uv sync --extra test --group dev --group docs` and `make -C docs html` with Node.js
+20 or newer (CI uses Node.js 24), as
 [the installation page](docs/source/installation.md#build-this-documentation)
 describes.
 

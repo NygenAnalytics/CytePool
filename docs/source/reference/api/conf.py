@@ -40,8 +40,12 @@ napoleon_attr_annotations = False
 myst_all_links_external = True
 
 html_theme = "sphinx_book_theme"
+html_css_files = ["https://docs.nygen.io/assets/brand/docs.css"]
+html_logo = "https://docs.nygen.io/assets/brand/logo/cytepool.svg"
+html_favicon = "https://docs.nygen.io/assets/brand/logo/cytepool.ico"
 html_title = "CytePool API reference"
 html_theme_options = {
+    "logo": {"text": "CytePool", "alt_text": "CytePool"},
     "repository_url": "https://github.com/NygenAnalytics/CytePool",
     "path_to_docs": "docs/source/reference/api",
     "use_repository_button": True,

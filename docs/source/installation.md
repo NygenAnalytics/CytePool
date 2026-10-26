@@ -87,8 +87,8 @@ separately; see [reproducing the validation](#reproduce-validation).
 ## Build this documentation
 
 The site is built with [MyST](https://mystmd.org) and the API reference with Sphinx.
-MyST needs [Node.js](https://nodejs.org) 18, 20, or 22 and newer; the pinned MyST
-release is the last that runs on Node.js 18. From the repository root:
+MyST needs [Node.js](https://nodejs.org) 20 or newer. CI uses Node.js 24.
+From the repository root:
 
 ```bash
 uv sync --extra test --group dev --group docs
