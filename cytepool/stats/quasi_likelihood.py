@@ -197,6 +197,7 @@ import numpy.typing as npt
 from cytepool._jit import jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._messages import value_range
+from cytepool._options import checked_flag
 from cytepool.design.design import _refuse_random_effects
 from cytepool.normalization import _as_counts, _non_negative
 from cytepool.stats.distributions import f_sf
@@ -1505,7 +1506,8 @@ def fit_quasi_likelihood(
                 f"the design has {x.shape[1]} columns for {n_samples} samples, so it "
                 "leaves no residual degrees of freedom to estimate quasi-dispersions"
             )
-        _check_flag(robust, "robust")
+        reject_masked(robust, "robust")
+        checked_flag(robust, "robust", expected="a bool")
         prior = _non_negative(prior_count, "prior_count")
         limit = _iteration_limit(max_iterations)
         log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
@@ -1860,12 +1862,6 @@ def _as_given(value: Any) -> float | FloatArray:
     if isinstance(value, float):
         return value
     return _read_only(np.asarray(value, dtype=np.float64))
-
-
-def _check_flag(value: Any, name: str) -> None:
-    reject_masked(value, name)
-    if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
 
 
 def _proportion(value: Any) -> float:

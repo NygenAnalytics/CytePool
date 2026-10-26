@@ -5,18 +5,20 @@ from typing import Any
 import numpy as np
 
 
-def checked_flag(value: Any, name: str) -> bool:
+def checked_flag(value: Any, name: str, *, expected: str = "True or False") -> bool:
     """An option that is True or False, as a bool.
 
     Args:
         value: The option as given; a numpy bool is accepted.
         name: The option's name, for the message.
+        expected: What the message says the option must be: "True or False", or
+            "a bool" as the statistics' messages say.
 
     Raises:
         TypeError: If ``value`` is not a bool.
     """
     if not isinstance(value, bool | np.bool_):
-        raise TypeError(f"{name} must be True or False, got {type(value).__name__}")
+        raise TypeError(f"{name} must be {expected}, got {type(value).__name__}")
     return bool(value)
 
 

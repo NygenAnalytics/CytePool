@@ -166,6 +166,7 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._options import checked_flag
 from cytepool.design.contrasts import _is_named_contrasts, _weights_on_columns
 from cytepool.design.design import Design, _refuse_random_effects
 from cytepool.stats.distributions import beta_sf, norm_sf, t_sf
@@ -278,10 +279,12 @@ def camera(
             is not positive and finite, or no gene id of any set is among ``gene_ids``.
     """
     rho = _correlation_option(inter_gene_correlation)
-    allow_negative = _flag(allow_negative_correlation, "allow_negative_correlation")
-    ranks = _flag(use_ranks, "use_ranks")
-    with_trend = _flag(trend, "trend")
-    with_robust = _flag(robust, "robust")
+    allow_negative = checked_flag(
+        allow_negative_correlation, "allow_negative_correlation", expected="a bool"
+    )
+    ranks = checked_flag(use_ranks, "use_ranks", expected="a bool")
+    with_trend = checked_flag(trend, "trend", expected="a bool")
+    with_robust = checked_flag(robust, "robust", expected="a bool")
     values, precision = _expression(y, weights)
     n_genes = values.shape[1]
     if n_genes < 3:
@@ -406,8 +409,8 @@ def fry(
             "standardize must be one of "
             f"{', '.join(map(repr, _STANDARDIZATIONS))}, got {standardize!r}"
         )
-    with_trend = _flag(trend, "trend")
-    with_robust = _flag(robust, "robust")
+    with_trend = checked_flag(trend, "trend", expected="a bool")
+    with_robust = checked_flag(robust, "robust", expected="a bool")
     if (with_trend or with_robust) and standardize != "posterior_sd":
         raise ValueError(
             "trend and robust shape the prior of the posterior standard deviations, so "
@@ -1185,12 +1188,6 @@ def _correlation_option(value: Any) -> float | None:
             f"it, got {rho}"
         )
     return rho
-
-
-def _flag(value: Any, name: str) -> bool:
-    if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
-    return bool(value)
 
 
 def _real_array(values: npt.NDArray[Any], name: str) -> FloatArray:

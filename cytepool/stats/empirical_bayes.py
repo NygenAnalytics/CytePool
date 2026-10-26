@@ -101,6 +101,7 @@ from cytepool._jit import jit
 from cytepool._linear_algebra import column_space
 from cytepool._masked_arrays import unmasked_array
 from cytepool._messages import value_range
+from cytepool._options import checked_flag
 from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
@@ -629,7 +630,7 @@ def fit_f_distribution_likelihood(
     weights = _prior_weight_vector(prior_weights, x.size)
     usable = _likelihood_usable(x, d, weights)
     z = _covariate_vector(covariate, usable, _LIKELIHOOD_UNUSABLE)
-    _check_flag(robust, "robust")
+    checked_flag(robust, "robust", expected="a bool")
     _check_zero_variances(x, usable, robust=False)
     return _fit_likelihood(x, d, z, weights, bool(robust))
 
@@ -686,7 +687,7 @@ def squeeze_variances(
     usable = _usable(x, d)
     z = _covariate_vector(covariate, usable)
     lower, upper = _tail_proportions(winsor_tail_p)
-    _check_flag(robust, "robust")
+    checked_flag(robust, "robust", expected="a bool")
     estimator = _prior_estimator(prior_estimator, given)
     return _squeeze(x, d, z, usable, bool(robust), lower, upper, estimator)
 
@@ -1755,7 +1756,7 @@ def _moderate(
     prior_estimator: Any,
 ) -> tuple[SqueezedVariances, FloatArray, str]:
     """Squeezed variances of a fit, the total df of its tests and the estimator."""
-    _check_flag(robust, "robust")
+    checked_flag(robust, "robust", expected="a bool")
     lower, upper = _tail_proportions(winsor_tail_p)
     variances = fit.sigma**2
     df = _zero_tiny_df(fit.df_residual)
@@ -2097,11 +2098,6 @@ def _open_unit_interval(value: Any, name: str) -> float:
 def _check_fit(fit: Any) -> None:
     if not isinstance(fit, LinearModelFit):
         raise TypeError(f"fit must be a LinearModelFit, got {type(fit).__name__}")
-
-
-def _check_flag(value: Any, name: str) -> None:
-    if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
 
 
 def _prior_estimator(prior_estimator: Any, d: FloatArray) -> str:

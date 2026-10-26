@@ -189,6 +189,7 @@ from numba import prange
 
 from cytepool._jit import jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._options import checked_flag
 from cytepool.stats.distributions import t_sf
 from cytepool.stats.empirical_bayes import (
     _coefficient_prior_variance,
@@ -201,7 +202,6 @@ from cytepool.stats.gene_set_tests import (
     _contrast_design,
     _effects,
     _expression,
-    _flag,
     _id_positions,
     _positions,
     _set_label,
@@ -407,7 +407,7 @@ def mroast(
         ValueError: As :func:`roast`, or if ``gene_sets`` is empty or no gene id of
             any set is among ``gene_ids``.
     """
-    use_mid_p = _flag(mid_p, "mid_p")
+    use_mid_p = checked_flag(mid_p, "mid_p", expected="a bool")
     tests = _roast_tests(
         y,
         design,
@@ -510,7 +510,9 @@ def romer(
     """
     statistic = _statistic(set_statistic, _ROMER_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    shrink = _flag(shrink_contrast_effects, "shrink_contrast_effects")
+    shrink = checked_flag(
+        shrink_contrast_effects, "shrink_contrast_effects", expected="a bool"
+    )
     generator = _generator(rng)
     with thread_limit(n_threads):
         return _romer_sets(
@@ -619,8 +621,8 @@ def _roast_tests(
     """The active proportions and p-values of each set, for roast and mroast."""
     statistic = _statistic(set_statistic, _ROAST_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    with_trend = _flag(trend, "trend")
-    with_robust = _flag(robust, "robust")
+    with_trend = checked_flag(trend, "trend", expected="a bool")
+    with_robust = checked_flag(robust, "robust", expected="a bool")
     generator = _generator(rng)
     with thread_limit(n_threads):
         return _roast_sets(
