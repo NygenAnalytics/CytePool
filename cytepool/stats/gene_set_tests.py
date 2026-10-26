@@ -164,7 +164,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
-from cytepool._linear_algebra import RANK_TOLERANCE
+from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag
 from cytepool._ranks import average_ranks
@@ -604,6 +604,10 @@ def _effects_of_last_coefficient(
     p = design.shape[1]
     effects = np.empty((n_genes, n_samples - p + 1))
     work = np.empty((n_samples, p + 1))
+    norms = np.empty(p)
+    aliased = np.empty(p, dtype=np.bool_)
+    kept = np.empty(p, dtype=np.int64)
+    products = np.empty(p + 1)
     shared = weight_rows.shape[0] == 1
     for g in range(n_genes):
         w = 0 if shared else g
@@ -612,42 +616,17 @@ def _effects_of_last_coefficient(
             for j in range(p):
                 work[i, j] = scale * design[i, j]
             work[i, p] = scale * responses[g, i]
-        sign = 1.0
-        for j in range(p):
-            total = 0.0
-            for i in range(n_samples):
-                total += work[i, j] * work[i, j]
-            full = math.sqrt(total)
-            total = 0.0
-            for i in range(j, n_samples):
-                total += work[i, j] * work[i, j]
-            norm = math.sqrt(total)
-            if not norm > tolerance * full:
-                sign = math.nan  # aliased: the design is rank deficient
-                break
-            head = work[j, j]
-            # R's qr(): the diagonal element of R is -norm for a positive or zero
-            # head, and +norm for a negative one.
-            diagonal = norm if head < -_ZERO_PIVOT * norm else -norm
-            work[j, j] = head - diagonal
-            # The reflection I - 2 v v' / (v'v), v = work[j:, j], applied to the
-            # columns after j and to the response.
-            scale = 0.0
-            for i in range(j, n_samples):
-                scale += work[i, j] * work[i, j]
-            scale = 2.0 / scale
-            for k in range(j + 1, p + 1):
-                total = 0.0
-                for i in range(j, n_samples):
-                    total += work[i, j] * work[i, k]
-                total *= scale
-                for i in range(j, n_samples):
-                    work[i, k] -= total * work[i, j]
-            if j == p - 1 and diagonal < 0.0:
-                sign = -1.0
-        if math.isnan(sign):
-            effects[g, :] = np.nan
+        # The norm after the earlier reflections is the reference of the rank rule, a
+        # head within _ZERO_PIVOT of zero counts as zero, and v'v is summed.
+        rank = householder_qr(
+            work, n_samples, p, tolerance, True, _ZERO_PIVOT, True, norms, aliased,
+            kept, products,
+        )  # fmt: skip
+        if rank < p:
+            effects[g, :] = np.nan  # aliased: the design is rank deficient
             continue
+        # The diagonal element of R of the contrast, by R's sign convention.
+        sign = -1.0 if work[p - 1, p - 1] < 0.0 else 1.0
         effects[g, 0] = sign * work[p - 1, p]
         residual_sign = sign if signed_residuals else 1.0
         for i in range(p, n_samples):
