@@ -17,7 +17,6 @@ call uses.
 
 import hashlib
 import logging
-import operator
 import os
 import tempfile
 from collections.abc import Callable, Iterator
@@ -28,7 +27,7 @@ from typing import Any
 
 import numba
 
-from ._masked_arrays import reject_masked
+from ._options import index_integer
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +89,7 @@ def thread_limit(n_threads: int | None) -> Iterator[int]:
         return
     if isinstance(n_threads, bool):
         raise TypeError("n_threads must be a positive integer or None, not bool")
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(n_threads, "n_threads")
-    try:
-        limit = operator.index(n_threads)
-    except TypeError:
-        raise TypeError(
-            "n_threads must be a positive integer or None, got "
-            f"{type(n_threads).__name__}"
-        ) from None
+    limit = index_integer(n_threads, "n_threads", expected="a positive integer or None")
     if limit < 1:
         raise ValueError(f"n_threads must be at least 1, got {limit}")
     previous = numba.get_num_threads()

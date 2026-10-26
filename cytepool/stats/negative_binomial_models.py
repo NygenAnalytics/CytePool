@@ -160,8 +160,6 @@ References:
 """
 
 import math
-import numbers
-import operator
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -173,8 +171,9 @@ from numba import prange
 
 from cytepool._jit import jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._options import non_negative_number, positive_integer
 from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts, _effective_library_sizes, _non_negative
+from cytepool.normalization import _as_counts, _effective_library_sizes
 from cytepool._linear_algebra import RANK_TOLERANCE
 from cytepool.stats.linear_models import _aliased_columns, _design_matrix
 
@@ -394,8 +393,11 @@ def fit_negative_binomial_model(
         phi = _dispersion_matrix(dispersion, n_samples, n_features)
         log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
         w = _weight_matrix(weights, n_samples, n_features)
-        prior = _non_negative(prior_count, "prior_count")
-        limit = _iteration_limit(max_iterations)
+        prior = non_negative_number(prior_count, "prior_count")
+        reject_masked(max_iterations, "max_iterations")
+        limit = positive_integer(
+            max_iterations, "max_iterations", expected="a positive integer"
+        )
         layout = _layout(x)
 
         counts_by_gene = np.ascontiguousarray(y.T)
@@ -657,21 +659,6 @@ def _non_negative_array(values: Any, name: str) -> FloatArray:
             f"{int(np.count_nonzero(bad))} values are not"
         )
     return array
-
-
-def _iteration_limit(max_iterations: Any) -> int:
-    reject_masked(max_iterations, "max_iterations")
-    if isinstance(max_iterations, (bool, np.bool_)) or not isinstance(
-        max_iterations, numbers.Integral
-    ):
-        raise TypeError(
-            "max_iterations must be a positive integer, got "
-            f"{type(max_iterations).__name__}"
-        )
-    limit = operator.index(max_iterations)
-    if limit < 1:
-        raise ValueError(f"max_iterations must be at least 1, got {limit}")
-    return limit
 
 
 def _read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:

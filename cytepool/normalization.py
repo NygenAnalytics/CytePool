@@ -62,6 +62,7 @@ from ._jit import jit
 from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
 from ._linear_algebra import column_space
 from ._masked_arrays import unmasked_array
+from ._options import non_negative_number, real_number
 
 __all__ = [
     "cpm",
@@ -176,7 +177,7 @@ def tmm_factors(
     trim_a = _fraction(sum_trim, "sum_trim")
     if not isinstance(weighted, bool | np.bool_):
         raise TypeError(f"weighted must be a bool, got {type(weighted).__name__}")
-    cutoff = _real(a_cutoff, "a_cutoff", finite=False)
+    cutoff = real_number(a_cutoff, "a_cutoff", finite=False)
     expressed = _expressed(y)
     if expressed.shape[1] == 0:
         return np.ones(y.shape[0])
@@ -220,7 +221,7 @@ def upper_quartile_factors(
     """
     y = _as_counts(counts)
     sizes = _library_sizes_of(y, library_sizes)
-    p = _real(p, "p")
+    p = real_number(p, "p", finite=True)
     if not 0.0 <= p <= 1.0:
         raise ValueError(f"p must be in [0, 1], got {p}")
     expressed = _expressed(y)
@@ -400,7 +401,7 @@ def log_cpm(
     """
     y = _as_counts(counts)
     sizes = _effective_library_sizes(y, library_sizes, norm_factors)
-    prior = _non_negative(prior_count, "prior_count")
+    prior = non_negative_number(prior_count, "prior_count")
     result: FloatArray = _log2_cpm(y, sizes, prior, math.log(1e6), math.log(2.0))
     return result
 
@@ -467,10 +468,10 @@ def filter_by_expression(
     y = _as_counts(counts)
     n_samples = y.shape[0]
     sizes = _effective_library_sizes(y, library_sizes, norm_factors)
-    min_count = _non_negative(min_count, "min_count")
-    min_total_count = _non_negative(min_total_count, "min_total_count")
-    large_n = _non_negative(large_n, "large_n")
-    min_prop = _real(min_prop, "min_prop")
+    min_count = non_negative_number(min_count, "min_count")
+    min_total_count = non_negative_number(min_total_count, "min_total_count")
+    large_n = non_negative_number(large_n, "large_n")
+    min_prop = real_number(min_prop, "min_prop", finite=True)
     if not 0.0 <= min_prop <= 1.0:
         raise ValueError(f"min_prop must be in [0, 1], got {min_prop}")
     if group is not None and design is not None:
@@ -580,25 +581,8 @@ def _effective_library_sizes(
     return sizes
 
 
-def _real(value: object, name: str, *, finite: bool = True) -> float:
-    if isinstance(value, bool | np.bool_) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if math.isnan(number) or (finite and math.isinf(number)):
-        expected = "finite" if finite else "a number"
-        raise ValueError(f"{name} must be {expected}, got {number}")
-    return number
-
-
-def _non_negative(value: object, name: str) -> float:
-    number = _real(value, name)
-    if number < 0:
-        raise ValueError(f"{name} must be non-negative, got {number}")
-    return number
-
-
 def _fraction(value: object, name: str) -> float:
-    number = _real(value, name)
+    number = real_number(value, name, finite=True)
     if not 0.0 <= number < 0.5:
         raise ValueError(f"{name} must be in [0, 0.5), got {number}")
     return number

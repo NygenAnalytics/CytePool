@@ -197,9 +197,14 @@ import numpy.typing as npt
 from cytepool._jit import jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._messages import value_range
-from cytepool._options import checked_flag
+from cytepool._options import (
+    checked_flag,
+    non_negative_number,
+    positive_integer,
+    real_number,
+)
 from cytepool.design.design import _refuse_random_effects
-from cytepool.normalization import _as_counts, _non_negative
+from cytepool.normalization import _as_counts
 from cytepool.stats.distributions import f_sf
 from cytepool.stats.empirical_bayes import (
     _LIKELIHOOD_MIN_DF,
@@ -212,7 +217,6 @@ from cytepool.stats.negative_binomial_models import (
     _SERIES_LIMIT,
     NegativeBinomialFit,
     _dispersion_matrix,
-    _iteration_limit,
     _offset_matrix,
     _read_only,
     _unit_deviance,
@@ -1030,7 +1034,7 @@ def average_log_cpm(
             or if ``prior_count`` is negative.
     """
     y = _as_counts(counts)
-    prior = _non_negative(prior_count, "prior_count")
+    prior = non_negative_number(prior_count, "prior_count")
     fit = fit_negative_binomial_model(
         y,
         np.ones((y.shape[0], 1)),
@@ -1131,9 +1135,13 @@ def common_dispersion(
         x, names = _design_matrix(design, coefficient_names)
         _refuse_random_effects(design, "common_dispersion")
         low, high = _search_interval(interval)
-        least = _non_negative(min_row_sum, "min_row_sum")
-        most = _positive_integer(subset, "subset")
-        limit = _iteration_limit(max_iterations)
+        least = non_negative_number(min_row_sum, "min_row_sum")
+        reject_masked(subset, "subset")
+        most = positive_integer(subset, "subset", expected="a positive integer")
+        reject_masked(max_iterations, "max_iterations")
+        limit = positive_integer(
+            max_iterations, "max_iterations", expected="a positive integer"
+        )
         log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
         w = _weight_matrix(weights, n_samples, n_features)
         return _common_dispersion(
@@ -1508,8 +1516,11 @@ def fit_quasi_likelihood(
             )
         reject_masked(robust, "robust")
         checked_flag(robust, "robust", expected="a bool")
-        prior = _non_negative(prior_count, "prior_count")
-        limit = _iteration_limit(max_iterations)
+        prior = non_negative_number(prior_count, "prior_count")
+        reject_masked(max_iterations, "max_iterations")
+        limit = positive_integer(
+            max_iterations, "max_iterations", expected="a positive integer"
+        )
         log_sizes = _offset_matrix(offsets, library_sizes, norm_factors, y)
         w = _weight_matrix(weights, n_samples, n_features)
         covariate = _trend_values(trend, n_features)
@@ -1866,11 +1877,7 @@ def _as_given(value: Any) -> float | FloatArray:
 
 def _proportion(value: Any) -> float:
     reject_masked(value, "top_proportion")
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(
-            f"top_proportion must be a real number, got {type(value).__name__}"
-        )
-    share = float(value)
+    share = real_number(value, "top_proportion")
     if not 0.0 < share <= 1.0:
         raise ValueError(f"top_proportion must be in (0, 1], got {share}")
     return share
@@ -1906,18 +1913,6 @@ def _search_interval(interval: Any) -> tuple[float, float]:
             f"interval must satisfy 0 <= low < high, both finite; got ({low}, {high})"
         )
     return low, high
-
-
-def _positive_integer(value: Any, name: str) -> int:
-    reject_masked(value, name)
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(
-            f"{name} must be a positive integer, got {type(value).__name__}"
-        )
-    number = int(value)
-    if number < 1:
-        raise ValueError(f"{name} must be at least 1, got {number}")
-    return number
 
 
 def _coefficient_positions(

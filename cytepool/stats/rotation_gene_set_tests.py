@@ -189,7 +189,7 @@ from numba import prange
 
 from cytepool._jit import jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
-from cytepool._options import checked_flag
+from cytepool._options import checked_flag, positive_integer
 from cytepool.stats.distributions import t_sf
 from cytepool.stats.empirical_bayes import (
     _coefficient_prior_variance,
@@ -1625,14 +1625,7 @@ def _statistic(value: Any, options: tuple[str, ...]) -> int:
 
 def _rotation_count(value: Any) -> int:
     reject_masked(value, "n_rotations")
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(
-            f"n_rotations must be a positive integer, got {type(value).__name__}"
-        )
-    count = operator.index(value)
-    if count < 1:
-        raise ValueError(f"n_rotations must be at least 1, got {count}")
-    return count
+    return positive_integer(value, "n_rotations", expected="a positive integer")
 
 
 def _generator(rng: Any) -> np.random.Generator:

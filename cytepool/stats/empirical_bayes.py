@@ -87,7 +87,6 @@ References:
 """
 
 import math
-import numbers
 import os
 import warnings
 from collections.abc import Callable, Sequence
@@ -101,7 +100,7 @@ from cytepool._jit import jit
 from cytepool._linear_algebra import column_space
 from cytepool._masked_arrays import unmasked_array
 from cytepool._messages import value_range
-from cytepool._options import checked_flag
+from cytepool._options import checked_flag, real_number
 from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
@@ -2062,11 +2061,11 @@ def _treat_threshold(lfc: Any, fc: Any) -> float:
     if lfc is not None and fc is not None:
         raise ValueError("give the threshold as lfc or as fc, not both")
     if lfc is not None:
-        value = _real_scalar(lfc, "lfc")
+        value = real_number(lfc, "lfc")
         if not math.isfinite(value):
             raise ValueError(f"lfc must be finite, got {value}")
         return abs(value)
-    ratio = 1.2 if fc is None else _real_scalar(fc, "fc")
+    ratio = 1.2 if fc is None else real_number(fc, "fc")
     if not (math.isfinite(ratio) and ratio > 0.0):
         raise ValueError(f"fc must be positive and finite, got {ratio}")
     return abs(math.log2(ratio))
@@ -2089,7 +2088,7 @@ def _coefficient_limits(limits: Any) -> tuple[float, float]:
 
 
 def _open_unit_interval(value: Any, name: str) -> float:
-    number = _real_scalar(value, name)
+    number = real_number(value, name)
     if not 0.0 < number < 1.0:
         raise ValueError(f"{name} must lie strictly between 0 and 1, got {number}")
     return number
@@ -2146,12 +2145,6 @@ def _real_array(values: Any, name: str) -> FloatArray:
     if array.dtype.kind not in "iuf":
         raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
     return array.astype(np.float64, copy=False)
-
-
-def _real_scalar(value: Any, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    return float(value)
 
 
 # ---------------------------------------------------------------------------------------

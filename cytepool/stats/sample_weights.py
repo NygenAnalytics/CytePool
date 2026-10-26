@@ -104,7 +104,6 @@ References:
 """
 
 import math
-import numbers
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -115,6 +114,11 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._options import (
+    number_at_least,
+    positive_finite_number,
+    positive_integer,
+)
 from cytepool.design.design import Design, _refuse_random_effects
 from cytepool.stats.linear_models import (
     _aliased_columns,
@@ -563,10 +567,10 @@ def _variance_model(
         raise ValueError(f"method must be one of {listed}, got {method!r}")
     return _VarianceModel(
         basis=basis,
-        prior_n=_real_at_least(prior_n, "prior_n", 0.0),
+        prior_n=number_at_least(prior_n, "prior_n", 0.0),
         method=method,
-        max_iterations=_positive_integer(max_iterations, "max_iterations"),
-        tolerance=_positive_real(tolerance, "tolerance"),
+        max_iterations=positive_integer(max_iterations, "max_iterations"),
+        tolerance=positive_finite_number(tolerance, "tolerance"),
     )
 
 
@@ -616,32 +620,6 @@ def _variance_design_matrix(variance_design: Any, n_samples: int) -> FloatArray:
     if not np.isfinite(array).all():
         raise ValueError("variance_design must be finite")
     return array
-
-
-def _real_at_least(value: Any, name: str, lower: float) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if not (math.isfinite(number) and number >= lower):
-        raise ValueError(f"{name} must be finite and at least {lower:g}, got {number}")
-    return number
-
-
-def _positive_real(value: Any, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if not (math.isfinite(number) and number > 0.0):
-        raise ValueError(f"{name} must be positive and finite, got {number}")
-    return number
-
-
-def _positive_integer(value: Any, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
-        raise TypeError(f"{name} must be an integer, got {type(value).__name__}")
-    if value < 1:
-        raise ValueError(f"{name} must be at least 1, got {value}")
-    return int(value)
 
 
 @jit

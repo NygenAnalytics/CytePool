@@ -193,7 +193,6 @@ References:
 """
 
 import math
-import numbers
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -207,6 +206,7 @@ from numba import prange
 from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._options import real_number
 from cytepool._summation import accurate_sums
 from cytepool.design.contrasts import make_contrasts
 from cytepool.design.design import Design, _refuse_random_effects
@@ -1790,14 +1790,7 @@ def _trend_kind(trend: Any) -> str:
 
 def _real(value: Any, name: str, *, finite: bool = True) -> float:
     reject_masked(value, name)
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
-    number = float(value)
-    if math.isnan(number) or (finite and math.isinf(number)):
-        raise ValueError(
-            f"{name} must be {'finite' if finite else 'a number'}, got {number}"
-        )
-    return number
+    return real_number(value, name, finite=finite)
 
 
 def _positive(value: Any, name: str) -> float:

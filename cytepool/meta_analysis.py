@@ -148,7 +148,6 @@ References:
 
 import json
 import math
-import operator
 import os
 import warnings
 from collections.abc import Mapping, Sequence
@@ -164,9 +163,8 @@ from ._columns import text_column
 from ._jit import jit
 from ._masked_arrays import reject_masked, unmasked_array
 from ._messages import listing, quoted
-from ._options import checked_choice
+from ._options import checked_choice, index_integer, real_number
 from .differential_expression import DifferentialExpressionResult
-from .normalization import _real
 from .stats.distributions import (
     chi2_sf_scalar,
     norm_isf,
@@ -413,9 +411,9 @@ def _check_values(y: FloatArray, se: FloatArray) -> None:
 
 
 def _level(value: Any) -> float:
-    # _real would refuse a masked value too, but without saying how to fix it.
+    # real_number would refuse a masked value too, but without saying how to fix it.
     reject_masked(value, "level")
-    number = _real(value, "level")
+    number = real_number(value, "level", finite=True)
     if not 0.0 < number < 1.0:
         raise ValueError(
             f"level must be in (0, 1), such as 0.95 for 95% confidence intervals, got "
@@ -1377,16 +1375,9 @@ def _check_table(table: Table, study: str, group: str, contrast: str) -> None:
 
 
 def _min_studies(value: Any) -> int:
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, "min_studies")
     if isinstance(value, bool | np.bool_):
         raise TypeError("min_studies must be a whole number of studies, not bool")
-    try:
-        number = operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"min_studies must be a whole number of studies, got {type(value).__name__}"
-        ) from None
+    number = index_integer(value, "min_studies", expected="a whole number of studies")
     if number < 1:
         raise ValueError(f"min_studies must be at least 1, got {number}")
     return number

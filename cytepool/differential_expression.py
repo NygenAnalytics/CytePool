@@ -245,7 +245,6 @@ References:
 
 import json
 import numbers
-import operator
 import os
 import warnings
 from collections import Counter
@@ -261,15 +260,22 @@ from ._columns import text_column
 from ._jit import thread_limit
 from ._masked_arrays import reject_masked
 from ._messages import listing, quoted
-from ._options import checked_choice, checked_flag
+from ._options import (
+    checked_choice,
+    checked_flag,
+    index_integer,
+    non_negative_number,
+    number_at_least,
+    positive_finite_number,
+    positive_integer,
+    real_number,
+)
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design.checks import _aliasing, _contrast_violations
 from .design.design import _is_random_intercept, _refuse_random_effects
 from .normalization import (
     _effective_library_sizes,
-    _non_negative,
-    _real,
     filter_by_expression,
     library_sizes,
     log_cpm,
@@ -292,9 +298,6 @@ from .stats.mixed_models import (
 from .stats.multiple_testing import adjust_p_values
 from .stats.sample_weights import (
     _estimate,
-    _positive_integer,
-    _positive_real,
-    _real_at_least,
     _SingularInformation,
     _variance_model,
     _weights_of,
@@ -866,7 +869,7 @@ def limma_trend(
             positive.
         KeyError: If a group is not in the cube.
     """
-    count = _real(prior_count, "prior_count")
+    count = real_number(prior_count, "prior_count", finite=True)
     if not count > 0.0:
         raise ValueError(
             f"prior_count must be positive, so that zero counts have finite logs; got "
@@ -1642,25 +1645,18 @@ def _group_positions(cube: Cube, groups: str | Sequence[str] | None) -> list[int
 
 
 def _min_cells(value: Any) -> int:
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, "min_cells")
     if isinstance(value, bool | np.bool_):
         raise TypeError("min_cells must be a whole number of cells, not bool")
-    try:
-        number = operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"min_cells must be a whole number of cells, got {type(value).__name__}"
-        ) from None
+    number = index_integer(value, "min_cells", expected="a whole number of cells")
     if number < 0:
         raise ValueError(f"min_cells must be at least 0, got {number}")
     return number
 
 
 def _min_counts(value: Any) -> float:
-    # _real would refuse a masked value too, but without saying how to fix it.
+    # real_number would refuse a masked value too, but without saying how to fix it.
     reject_masked(value, "min_counts")
-    return _non_negative(value, "min_counts")
+    return non_negative_number(value, "min_counts")
 
 
 def _prior_weight_setting(prior_weights: Any) -> str | None:
@@ -1718,13 +1714,13 @@ def _quality_settings(value: Any, method: str) -> dict[str, Any] | None:
         "method": checked_choice(
             settings["method"], "quality_weights['method']", ("gene_by_gene", "reml")
         ),
-        "prior_n": _real_at_least(
+        "prior_n": number_at_least(
             settings["prior_n"], "quality_weights['prior_n']", 0.0
         ),
-        "max_iterations": _positive_integer(
+        "max_iterations": positive_integer(
             settings["max_iterations"], "quality_weights['max_iterations']"
         ),
-        "tolerance": _positive_real(
+        "tolerance": positive_finite_number(
             settings["tolerance"], "quality_weights['tolerance']"
         ),
     }
@@ -1750,16 +1746,9 @@ def _span(value: Any) -> float | None:
 def _threads(value: Any) -> int | None:
     if value is None:
         return None
-    # operator.index accepts a 0-d masked integer and ignores its mask.
-    reject_masked(value, "n_threads")
     if isinstance(value, bool | np.bool_):
         raise TypeError("n_threads must be a positive integer or None, not bool")
-    try:
-        number = operator.index(value)
-    except TypeError:
-        raise TypeError(
-            f"n_threads must be a positive integer or None, got {type(value).__name__}"
-        ) from None
+    number = index_integer(value, "n_threads", expected="a positive integer or None")
     if number < 1:
         raise ValueError(f"n_threads must be at least 1, got {number}")
     return number
@@ -1781,7 +1770,7 @@ def _filter_settings(value: Any) -> dict[str, float] | None:
                 f"expression_filter has the unknown setting {name!r}; the settings are "
                 f"{', '.join(_FILTER_DEFAULTS)}"
             )
-        settings[name] = _non_negative(number, f"expression_filter[{name!r}]")
+        settings[name] = non_negative_number(number, f"expression_filter[{name!r}]")
     if settings["min_prop"] > 1.0:
         raise ValueError(
             f"expression_filter['min_prop'] must be in [0, 1], got {settings['min_prop']}"
