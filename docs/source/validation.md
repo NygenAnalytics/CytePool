@@ -15,7 +15,8 @@ they compare bit for bit), runs CytePool, prints a table with one row per check,
 exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
-package in this revision of the repository: on **2026-10-26** for `plotting.py`; on
+package in this revision of the repository: on **2026-10-26** for `plotting.py` and
+`variance_partitioning.py`; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -56,13 +57,14 @@ covers and the largest difference among them. Run a script to see every check.
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
 | [`dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py) | dream | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | 63 | 53 pass, 5 information, 5 deliberate differences | 30.5 s | 390 MiB |
+| [`variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py) | Variance partitioning | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | 31 | 22 pass, 6 information, 3 deliberate differences | 63.1 s | 394 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,942** | **1,685 pass, none failed; 150 information, 106 deliberate differences, 1 control** | | |
+| **All** | | | **1,973** | **1,707 pass, none failed; 156 information, 109 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1323,6 +1325,78 @@ Deliberate differences:
   model failed"); `dream_voom` reports the status `random_effects_not_estimable` and
   goes on with the other cell types.
 
+(validation-variance-partitioning)=
+## Variance partitioning
+
+[`validation/variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py)
+compares `variance_fractions` and `variance_partitioning`, and the figures
+`plot_variance_fractions` and `plot_gene_variance_fractions`, with variancePartition's
+`fitExtractVarPartModel`, `calcVarPart`, `plotVarPart` and `plotPercentBars`, on data
+from fixed seeds (20261101 to 20261108), 60 genes each: one random donor intercept (10
+donors x 3 samples, a fifth of the genes without a donor effect); random donor, batch
+and condition intercepts with a donor's age and a sample's RNA integrity as fixed
+effects and precision weights for every observation (8 donors x 4 samples), also
+fitted by REML; unbalanced donors with 1 to 4 samples and sample weights; nested
+donor and tissue intercepts (6 donors x 2 tissues x 2 replicates); a linear model of
+the age, the RNA integrity, the batch and the condition with the same weights (which
+variancePartition fits with `lm`); negative binomial counts of 80 genes with the
+weights of `voomWithDreamWeights(span = 0.5)`; and `variance_partitioning` on three
+cell types of a cube of 8 donors x 2 conditions, with prior weights from the numbers
+of cells, three samples left out of one cell type for having fewer than 10 cells, and
+one sample per donor in the third. Reference: R 4.4.3, variancePartition 1.36.2,
+lme4 1.1-38, minqa 1.2.8 and ggplot2 4.0.3, in the R environment of `dream.py`.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Fractions and variances at the optimum, relative to the gene's total variance: one, several, unbalanced and nested random effects, and voom's weights | `fitExtractVarPartModel`, `calcVarPart` | 4.4e-8 | 1e-6 | 5 pass |
+| The same, fitted by REML | `fitExtractVarPartModel(REML = TRUE)` | 2.0e-7 | 1e-6 | 1 pass |
+| A linear model with factors and observation weights | `fitExtractVarPartModel` (`lm`) | 3.8e-15 | 1e-10 | 1 pass |
+| Variances at CytePool's estimates | lme4 (`maxeval = 1`), `calcVarPart` | 1.9e-13 | 1e-10 | 5 pass |
+| Random effects estimated at zero: CytePool's exact zeros and lme4's below 1e-10 | `fitExtractVarPartModel` | equal in every case (19 to 91) | n/a | 6 information |
+| `variance_partitioning`, in two cell types: samples used and features | the rules of `dream_voom` | 0 differences | 0 | 2 pass |
+| `variance_partitioning`: fractions | `voomWithDreamWeights`, `fitExtractVarPartModel` | 3.4e-8 | 1e-6 | 2 pass |
+| Figures: the variables and their order, the quartiles, whiskers and outliers of the violins, and the segments of the bars, in percent over 100 | `plotVarPart(sortCols())`, `plotPercentBars` | 5.3e-16 | 1e-10 | 3 pass |
+| The violins' half-widths at R's points, relative to the widest | `plotVarPart` | 5.9e-4 | 1e-3 | 1 pass |
+| Designs both refuse: a factor among the fixed effects of a mixed model, and a formula without an intercept | `fitExtractVarPartModel` | 0 differences | 0 | 2 pass |
+| Deliberate differences, listed below | variancePartition | 3 inputs | n/a | 3 deliberate differences |
+
+lme4 runs with Powell's BOBYQA with its trust region shrunk to 1e-10, as in `dream.py`,
+so the fractions at the optimum are compared to the close tier. Differences are taken
+relative to each gene's total variance, the scale of a fraction: lme4 leaves a variance
+component at the boundary at about 1e-16 of the total where CytePool holds it at zero,
+and the two found the same components at zero in every case. At CytePool's estimates,
+lme4 evaluated once and `calcVarPart` give closed forms, compared to the exact tier,
+as are linear models, which have closed forms. The figures are drawn by R from
+CytePool's fractions, so they compare the drawing alone. The violins agree to 1e-3 of
+their widest point: ggplot2 takes R's `density()`, which bins the values on a grid of
+512 points and convolves them by the fast Fourier transform, as its help page
+describes, and differs from the kernel density estimate that CytePool draws by up to
+5.9e-4 here. ggplot2 stacks a segment of no width anywhere in its bar, so only the
+segments with a width are compared by position.
+
+The conventions of variancePartition that its documentation leaves open, found by
+probing it and listed in the documentation of `cytepool.variance_partitioning`, are
+exercised here: the variance of a fixed effect is the weighted variance of its fitted
+contribution, with the denominator of a maximum likelihood variance; in a mixed model
+the terms share the variance of all the fitted fixed effects in proportion to their
+own, and in a linear model each term has its own; each gene's precision weights are
+divided by their mean. The two covariates of the second case have a correlation of
+-0.13 over its samples, and without the sharing its fractions would differ by up to
+0.034.
+
+Deliberate differences:
+
+- A gene constant within every donor: variancePartition reports the fractions of
+  lme4's fit with a residual variance near zero, a donor fraction of 1.0000; CytePool
+  leaves the gene unfitted, with NaN fractions, as its mixed models have no maximum
+  likelihood estimate for such a gene.
+- REML without random effects: variancePartition fits `lm` and takes the residual sum
+  of squares over n whatever `REML` says, so its fractions do not change; CytePool
+  takes REML's residual variance, over n - p, which changed a fraction by up to 0.052.
+- A cell type with one sample per donor: `voomWithDreamWeights` stops ("Initial model
+  failed"); `variance_partitioning` reports the status `random_effects_not_estimable`
+  and goes on with the other cell types.
+
 ## Differential expression on published data
 
 [`validation/interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py)
@@ -1841,6 +1915,7 @@ RSCRIPT=$REF/r/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
     SPECKLE_RSCRIPT=$REF/r-speckle/bin/Rscript python validation/plotting.py
 # variancePartition, in an R environment of its own with lme4 1.1-38 (below).
 RSCRIPT=$REF/r-dream/bin/Rscript python validation/dream.py
+RSCRIPT=$REF/r-dream/bin/Rscript python validation/variance_partitioning.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python \
@@ -1897,8 +1972,8 @@ conda create -p $REF/r-metafor -c conda-forge r-base=4.4.3 r-metafor=5.0.1 \
 R environment of its own on lme4 1.1-38, as variancePartition 1.36.2's `dream` fails
 for every gene with lme4 2.0 ("Unable to extract deviance function from model fit"):
 R 4.4.3, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3, Matrix 1.7-4, RcppEigen
-0.3.4.0.2, minqa 1.2.8, nloptr 2.2.1, BiocParallel 1.40.0 and jsonlite 2.0.0, from
-conda-forge and bioconda. lme4 1.1-35.5's conda build crashed in `lmer` with these
+0.3.4.0.2, minqa 1.2.8, nloptr 2.2.1, BiocParallel 1.40.0, jsonlite 2.0.0 and ggplot2
+4.0.3 (which variancePartition's figures use), from conda-forge and bioconda. lme4 1.1-35.5's conda build crashed in `lmer` with these
 versions of Matrix and RcppEigen:
 
 ```bash

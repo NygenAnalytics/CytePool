@@ -38,6 +38,7 @@ gene_set_tests
 rotation_gene_set_tests
 multiple_testing
 differential_expression
+variance_partitioning
 composition
 meta_analysis
 plotting

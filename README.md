@@ -30,9 +30,10 @@ what is planned.
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position | limma |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, and `dream_voom`: dream, with the design's random intercepts, such as a donor's, in every group's fits, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR, variancePartition; on simulated data and on published single-cell data |
+| Variance partitioning | `variance_fractions`: the fraction of every gene's variance that each variable of a design explains, as variancePartition's `fitExtractVarPartModel`: a mixed model of every gene by maximum likelihood (or REML), with the categorical variables as random intercepts, the continuous ones as fixed effects and precision weights such as voom's, or a linear model without random effects; `variance_partitioning`: the same on every cell type of a cube, with dream's precision weights, the samples each fit used and a provenance record | variancePartition, lme4 |
 | Meta-analysis | `meta_analysis`: for every gene, the fixed-effect (inverse-variance) or random-effects estimate of a common effect from the effects and standard errors of several studies, with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I² and H², z-tests or the Knapp-Hartung adjustment, and genes measured in some studies only; `differential_expression_meta_analysis`: the same for the `limma_voom` or `limma_trend` results of several cubes, matched by cell type, contrast and gene id, with p-values adjusted over the genes and a provenance record | metafor |
 | Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
-| Figures | `cytepool.plotting` (optional extra `plot`, matplotlib): the plots of limma, edgeR, DESeq2, speckle and metafor from CytePool's results, in one call each: MDS plots of pseudobulk samples (`plotMDS`), the cells pooled into each sample and cell type, cell-type composition and `propeller`'s results, voom's mean-variance trend, residual variances and their prior (`plotSA`), sample quality weights, MD and volcano plots, p-value histograms, the genes up and down in each cell type, barcode plots and summaries of gene-set tests, DESeq2's dispersions (`plotDispEsts`), edgeR's quasi-dispersions (`plotQLDisp`) and forest plots of meta-analyses | limma, edgeR, DESeq2, metafor, speckle |
+| Figures | `cytepool.plotting` (optional extra `plot`, matplotlib): the plots of limma, edgeR, DESeq2, speckle and metafor from CytePool's results, in one call each: MDS plots of pseudobulk samples (`plotMDS`), the cells pooled into each sample and cell type, cell-type composition and `propeller`'s results, voom's mean-variance trend, residual variances and their prior (`plotSA`), sample quality weights, MD and volcano plots, p-value histograms, the genes up and down in each cell type, barcode plots and summaries of gene-set tests, DESeq2's dispersions (`plotDispEsts`), edgeR's quasi-dispersions (`plotQLDisp`), forest plots of meta-analyses, and the fractions of variance of every variable over the genes (`plotVarPart`) and of chosen genes (`plotPercentBars`) | limma, edgeR, DESeq2, metafor, speckle, variancePartition |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
 
 ## Planned
@@ -45,8 +46,9 @@ These are not implemented yet:
 - DESeq2's shrunken log fold changes (`lfcShrink` with apeglm, ashr or normal priors),
   its replacement of outlier counts, and its local and glmGamPoi dispersion trends
 - The rest of dream (variancePartition): Kenward-Roger degrees of freedom (dream's
-  default for 20 samples or fewer), F-tests of several contrasts at once, random
-  slopes, and variance partitioning. dream with random intercepts and Satterthwaite's
+  default for 20 samples or fewer), F-tests of several contrasts at once, and random
+  slopes, with which variancePartition also partitions the variance within subsets of
+  the samples. dream with random intercepts and Satterthwaite's
   degrees of freedom is implemented (see the table above); `fit_linear_model` refuses
   a design whose random effects it would drop, and its message points to
   `fit_mixed_model`.
@@ -239,6 +241,16 @@ These are not implemented yet:
   does; `voomWithDreamWeights` uses 0.5 (`span=0.5`). A gene whose values the fixed
   and random effects reproduce is left out of the trend and untested, where
   variancePartition keeps it with a residual standard deviation near zero.
+- `variance_fractions` and `variance_partitioning` fit random intercepts only:
+  variancePartition's models of the variance within subsets of the samples, such as
+  `(tissue + 0 | donor)`, need random slopes, and generalized linear mixed models and
+  bootstrap intervals of the fractions (`varPartConfInf`) are not available. As
+  variancePartition requires, a design with random effects gives its categorical
+  variables as random effects. A gene whose values the fixed and random effects
+  reproduce has no fractions (NaN), where variancePartition reports those of lme4's
+  fit with a residual variance near zero; with `method="reml"` and no random effects
+  the residual variance is REML's, where variancePartition takes the maximum
+  likelihood one.
 - `from_anndata` and `from_mudata` take only sums and counts of cells: means,
   variances and medians, which `scanpy.get.aggregate` and `decoupler.pp.pseudobulk`
   can give, are refused, and counts are checked against the cells that detect each

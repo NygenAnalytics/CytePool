@@ -63,8 +63,9 @@ limma and its methods [@smyth2004; @smyth2005; @ritchie2015; @phipson2016;
 
 ## Figures
 
-Classical scaling for MDS plots, forest plots, and the check of the colour palette for
-colour-vision deficiency [@gower1966; @lewis2001; @machado2009].
+Classical scaling for MDS plots, forest plots, violin plots and the bandwidth of their
+densities, and the check of the colour palette for colour-vision deficiency [@gower1966;
+@lewis2001; @hintze1998; @silverman1986; @machado2009].
 
 ## Data structures, file formats and standards
 

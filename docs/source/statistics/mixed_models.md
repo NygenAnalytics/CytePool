@@ -1,5 +1,5 @@
 ---
-description: Linear mixed models with random intercepts fitted to every gene by REML, Satterthwaite's degrees of freedom, and dream's precision weights and moderated tests for repeated measures designs.
+description: Linear mixed models with random intercepts fitted to every gene by REML, Satterthwaite's degrees of freedom, dream's precision weights and moderated tests for repeated measures designs, and variance partitioning.
 ---
 
 # Mixed models, REML and dream
@@ -81,9 +81,58 @@ does, it moderates the residual variance of an observation of each gene's averag
 weight, which keeps the mean-variance trend that voom's weights remove; `trend=True`
 lets the prior follow it.
 
+## Variance partitioning
+
+Which variables drive the differences between samples, and which must be adjusted for?
+Variance partitioning [@hoffman2016] fits every gene with one mixed model that holds
+every variable of the design, the categorical ones as random intercepts (donor,
+condition, batch) and the continuous ones as fixed effects (age), and reports the
+fraction of the gene's variance that each variable explains:
+
+$$
+\frac{\hat\sigma^2_v}{\sum_k \hat\sigma^2_k + \sum_j \hat\sigma^2_{\beta_j} +
+\hat\sigma^2},
+$$
+
+where a random effect $k$ contributes its variance component $\hat\sigma^2_k$, a
+fixed-effect term $j$ the variance of its fitted contribution over the samples,
+$\hat\sigma^2_{\beta_j} = \operatorname{var}(X_j \hat\beta_j)$, and the residual its
+variance $\hat\sigma^2$. The fractions of a gene sum to one; without fixed effects,
+the fraction of a random effect is the intra-class correlation of two samples that
+share its level and no other.
+
+{api}`variance_fractions` computes them into a {api}`VarianceFractions`, as
+variancePartition's `fitExtractVarPartModel` does:
+
+- The variances are estimated by maximum likelihood, variancePartition's default: REML
+  estimates the variances after removing the fixed effects, which biases the fractions
+  of the fixed effects. `method="reml"` fits by REML.
+- With precision weights, such as voom's, each gene's weights are divided by their
+  mean, so that the residual variance is that of an observation of average weight, and
+  the variances of the fitted fixed effects are weighted.
+- With random effects, the fixed-effect terms share the variance of all the fitted
+  fixed effects in proportion to the variances of their own contributions (found by
+  probing variancePartition). A design without random effects is fitted by least
+  squares, and each of its terms, factors included, has the variance of its own
+  contribution.
+- A variance component estimated at zero, a singular fit in lme4, gives a fraction of
+  exactly zero.
+
+{api}`variance_partitioning` partitions the variance of every cell type of a cube
+after the steps of {api}`dream_voom` up to voom's precision weights, which come from
+the mean-variance trend of the mixed model, and records the samples each fit used in
+a {api}`VariancePartitioningResult`; {api}`VariancePartitioningResult.table` gives the
+fractions of one cell type. {api}`plot_variance_fractions` draws variancePartition's
+violins of the fractions over the genes [@hintze1998], with Silverman's bandwidth
+[@silverman1986], and {api}`plot_gene_variance_fractions` its bars for chosen genes.
+The residual fraction mixes biological variation, the precision of the measurements
+and technical variation that the design does not name, so its size alone does not say
+whether variables are missing from the design.
+
 ## Not yet implemented
 
 Kenward-Roger's degrees of freedom (dream's default for 20 samples or fewer), F-tests of
-several contrasts at once, random slopes and variance partitioning [@hoffman2016] are
-planned. A gene that the fixed and random effects reproduce exactly has no REML
-estimate; it is left unfitted rather than given a variance of zero.
+several contrasts at once and random slopes are planned; random slopes would also
+partition the variance within subsets of the samples, such as the variance between
+donors within each tissue. A gene that the fixed and random effects reproduce exactly
+has no REML estimate; it is left unfitted rather than given a variance of zero.

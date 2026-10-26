@@ -1,5 +1,5 @@
-"""Figures of pseudobulk and bulk analyses, drawn as limma, edgeR, DESeq2, speckle and
-metafor draw them.
+"""Figures of pseudobulk and bulk analyses, drawn as limma, edgeR, DESeq2, speckle,
+metafor and variancePartition draw them.
 
 Each function draws one figure from the objects that CytePool's analyses return: a
 cube, a voom result, a fit, the table of a differential-expression or gene-set test,
@@ -36,6 +36,11 @@ The figures:
   2014); :func:`plot_quasi_dispersions`, edgeR's ``plotQLDisp`` (Chen et al. 2016).
 - Meta-analysis: :func:`plot_forest`, the forest plot (Lewis and Clarke 2001) that
   metafor's ``forest`` draws (Viechtbauer 2010).
+- Variance partitioning: :func:`plot_variance_fractions`, the violins (Hintze and
+  Nelson 1998) of the fractions of variance of every variable over the genes, as
+  variancePartition's ``plotVarPart`` draws them (Hoffman and Schadt 2016);
+  :func:`plot_gene_variance_fractions`, the fractions of chosen genes as stacked
+  bars, as its ``plotPercentBars`` draws them.
 
 ``validation/plotting.py`` compares what each figure shows with what the R function it
 follows draws for the same data, where one exists.
@@ -111,10 +116,21 @@ References:
     Machado GM, Oliveira MM, Fernandes LAF (2009). A physiologically-based model for
     simulation of color vision deficiency. IEEE Transactions on Visualization and
     Computer Graphics 15, 1291-1298. doi:10.1109/TVCG.2009.113
+
+    Hoffman GE, Schadt EE (2016). variancePartition: interpreting drivers of variation
+    in complex gene expression studies. BMC Bioinformatics 17, 483.
+    doi:10.1186/s12859-016-1323-z
+
+    Hintze JL, Nelson RD (1998). Violin plots: a box plot-density trace synergism. The
+    American Statistician 52, 181-184. doi:10.1080/00031305.1998.10480559
+
+    Silverman BW (1986). Density Estimation for Statistics and Data Analysis. Chapman
+    and Hall, London.
 """
 
 import importlib
 import math
+import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -143,6 +159,11 @@ from .stats.multiple_testing import adjust_p_values
 from .stats.quasi_likelihood import QuasiLikelihoodFit, QuasiLikelihoodTest
 from .stats.voom import VoomResult
 from .table import Table
+from .variance_partitioning import (
+    RESIDUALS,
+    VarianceFractions,
+    VariancePartitioningResult,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -154,6 +175,7 @@ __all__ = [
     "plot_dispersions",
     "plot_forest",
     "plot_gene_sets",
+    "plot_gene_variance_fractions",
     "plot_md",
     "plot_mds",
     "plot_mean_variance",
@@ -163,6 +185,7 @@ __all__ = [
     "plot_residual_variances",
     "plot_sample_weights",
     "plot_significant_genes",
+    "plot_variance_fractions",
     "plot_volcano",
 ]
 
@@ -2569,3 +2592,444 @@ def _analysis(
             f"{pairs or '(none)'}"
         )
     return keys[0]
+
+
+# Variance partitioning.
+
+# plotVarPart's violins: a kernel density at 512 points from the smallest to the
+# largest value, every violin scaled to the same largest width, around a box of the
+# quartiles 0.07 wide whose whiskers reach the furthest values within 1.5
+# interquartile ranges, its labels turned by 20 degrees (the settings of its ggplot2
+# layers, found by probing variancePartition 1.36.2).
+_VIOLIN_POINTS = 512
+_VIOLIN_WIDTH = 0.9
+_BOX_WIDTH = 0.07
+_WHISKER_REACH = 1.5
+_LABEL_ANGLE = 20.0
+_DENSITY_BLOCK = 64  # grid points of the density computed at a time
+_FRACTIONS = "a VarianceFractions, a VariancePartitioningResult or one of its tables"
+_FEATURE_COLUMNS = ("feature_id", "symbol")
+
+
+@dataclass(frozen=True)
+class _Partition:
+    """The fractions of variance that a figure shows, and the names of the features."""
+
+    fractions: FloatArray  # features x variables
+    variables: list[str]
+    ids: list[str] | None  # the feature ids of a table
+    symbols: list[Any] | None  # the symbols of a table, None where missing
+
+
+def plot_variance_fractions(
+    data: Any,
+    *,
+    group: str | None = None,
+    sort: bool = True,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the fraction of variance each variable explains over the genes, as violins.
+
+    variancePartition's ``plotVarPart`` (Hoffman and Schadt 2016): for each variable
+    of a variance partition, and the residuals, the distribution over the genes of
+    the percentage of variance it explains, as a violin (Hintze and Nelson 1998)
+    around a narrow box plot. A violin is a Gaussian kernel density of the
+    percentages, with Silverman's (1986) rule-of-thumb bandwidth (R's ``bw.nrd0``:
+    0.9 min(sd, IQR / 1.34) n^(-1/5), the standard deviation alone where the
+    quartiles coincide), drawn from the smallest to the largest percentage; every
+    violin has the same largest width, as ``plotVarPart`` scales them. The box spans
+    the quartiles, with the median, whiskers to the furthest percentages within 1.5
+    interquartile ranges of the box, and the percentages beyond them as points.
+    With ``sort``, the variables are in decreasing order of their median, the
+    residuals last, as ``plotVarPart(sortCols(...))`` orders them. Genes without
+    fractions (NaN) are left out.
+
+    Draws the violins (gid ``"violins"``, labelled with their variable; none for a
+    variable whose percentages are all equal), the boxes (gid ``"boxes"``), the
+    medians (gid ``"medians"``), the whiskers (gid ``"whiskers"``, the lower one of a
+    variable first) and the outlying percentages (gid ``"outliers"``, one collection
+    per variable).
+
+    Args:
+        data: The fractions: a :class:`~cytepool.variance_partitioning.VarianceFractions`,
+            a :class:`~cytepool.variance_partitioning.VariancePartitioningResult`
+            (with ``group``), or a table of one.
+        group: The group (cell type) of a result; it may be left out when one group
+            was fitted.
+        sort: Whether to order the variables by their median, the residuals last;
+            False keeps the order of the design.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``data`` or an option has the wrong type.
+        ValueError: If no gene has fractions, there are more than eight variables
+            besides the residuals, a table has no ``residuals`` column, or
+            ``group`` is needed and not given, or given for data of one group.
+        KeyError: If ``group`` was not analysed or not fitted.
+    """
+    _check_axes(ax)
+    name = _optional_text(group, "group")
+    ordered = checked_flag(sort, "sort")
+    partition = _partition(data, name)
+    finite = np.all(np.isfinite(partition.fractions), axis=1)
+    if not finite.any():
+        raise ValueError(
+            "no gene has fractions of variance to plot: every gene's mixed model "
+            "lacks a fit"
+        )
+    fractions = partition.fractions[finite]
+    order = _variable_order(fractions, partition.variables, ordered)
+    names = [partition.variables[j] for j in order]
+    colors = _variable_colors(names)
+    percent = 100.0 * fractions[:, order]
+    labels = [_variable_label(variable) for variable in names]
+    ax = _axes(ax, (min(14.0, 2.0 + 0.9 * len(order)), 4.5))
+    for i, (label, color) in enumerate(zip(labels, colors, strict=True)):
+        x = i + 1.0
+        values = percent[:, i]
+        _draw_violin(ax, x, values, color, label)
+        _draw_box(ax, x, values)
+    ax.set_xticks(
+        range(1, len(order) + 1),
+        labels,
+        rotation=_LABEL_ANGLE,
+        ha="right",
+        rotation_mode="anchor",
+    )
+    ax.set_xlim(0.4, len(order) + 0.6)
+    ax.set_ylim(-3.0, 103.0)
+    ax.set_yticks([0, 25, 50, 75, 100])
+    ax.set_ylabel("Variance explained (%)")
+    return ax
+
+
+def plot_gene_variance_fractions(
+    data: Any,
+    genes: Any,
+    *,
+    group: str | None = None,
+    labels: Sequence[Any] | None = None,
+    sort: bool = True,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the fractions of variance of chosen genes as stacked bars.
+
+    variancePartition's ``plotPercentBars``: one horizontal bar per gene, the first
+    at the top, divided into the percentage of the gene's variance that each
+    variable explains, the residuals last. The variables are in the order of
+    :func:`plot_variance_fractions`: with ``sort``, in decreasing order of their
+    median over every gene of the data, as ``plotPercentBars(sortCols(x)[genes, ])``
+    orders them.
+
+    Draws the segments of each variable (gid ``"fractions"``, one bar container per
+    variable, labelled with it), with a legend of the variables.
+
+    Args:
+        data: The fractions, as for :func:`plot_variance_fractions`.
+        genes: The genes: feature ids, or symbols, of a table or result; names given
+            in ``labels``; or positions among the features.
+        group: The group (cell type) of a result; it may be left out when one group
+            was fitted.
+        labels: One name per feature of the data, to find and label the genes by;
+            a table's genes are named by their symbol, or else their id.
+        sort: Whether to order the variables by their median, the residuals last.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If an argument has the wrong type, or ``genes`` or ``labels`` is
+            or holds a numpy masked array.
+        ValueError: As :func:`plot_variance_fractions`, or if ``genes`` is empty or
+            names a gene twice, a symbol names several genes, a gene has no
+            fractions, or ``labels`` has the wrong length.
+        KeyError: If a gene is not among the data's, or ``group`` was not analysed
+            or not fitted.
+        IndexError: If a position is out of range.
+    """
+    _check_axes(ax)
+    reject_masked(genes, "genes")
+    if labels is not None:
+        reject_masked(labels, "labels")
+    name = _optional_text(group, "group")
+    ordered = checked_flag(sort, "sort")
+    partition = _partition(data, name)
+    n = partition.fractions.shape[0]
+    given = None if labels is None else _gene_labels(labels, n)
+    rows, shown = _chosen_genes(genes, partition, given)
+    chosen = partition.fractions[rows]
+    missing = [shown[i] for i in range(len(rows)) if not np.all(np.isfinite(chosen[i]))]
+    if missing:
+        raise ValueError(
+            f"{quoted(missing)} {'has' if len(missing) == 1 else 'have'} no fractions "
+            "of variance: the mixed model of such a gene lacks a fit"
+        )
+    finite = np.all(np.isfinite(partition.fractions), axis=1)
+    order = _variable_order(partition.fractions[finite], partition.variables, ordered)
+    names = [partition.variables[j] for j in order]
+    colors = _variable_colors(names)
+    percent = 100.0 * chosen[:, order]
+    ax = _axes(ax, (7.0, min(12.0, 1.4 + 0.35 * len(rows))))
+    positions = np.arange(len(rows), dtype=np.float64)[::-1]
+    left = np.zeros(len(rows))
+    handles = []
+    for j, (variable, color) in enumerate(zip(names, colors, strict=True)):
+        label = _variable_label(variable)
+        ax.barh(
+            positions,
+            percent[:, j],
+            left=left,
+            height=0.8,
+            color=color,
+            edgecolor="white",
+            linewidth=0.5,
+            label=label,
+            gid="fractions",
+        )
+        left = left + percent[:, j]
+        handles.append(_patch(label, color))
+    ax.set_yticks(positions, shown)
+    ax.tick_params(axis="y", length=0)
+    ax.set_xlim(0.0, 100.0)
+    ax.set_xlabel("Variance explained (%)")
+    _legend(ax, handles)
+    return ax
+
+
+def _partition(data: Any, group: str | None) -> _Partition:
+    """The fractions of variance of the data, with the names of the features."""
+    if isinstance(data, VariancePartitioningResult):
+        data = data.table(_partitioned_group(data, group))
+    elif group is not None:
+        raise ValueError(
+            "group names a group of a VariancePartitioningResult; the data hold one "
+            "group's fractions"
+        )
+    if isinstance(data, VarianceFractions):
+        return _Partition(
+            np.asarray(data.fractions, dtype=np.float64),
+            list(data.variables),
+            None,
+            None,
+        )
+    if isinstance(data, Table):
+        if RESIDUALS not in data:
+            raise ValueError(
+                f"the table has no {RESIDUALS!r} column: give a table of a "
+                "VariancePartitioningResult, whose columns besides feature_id and "
+                "symbol are the fractions of every variable"
+            )
+        variables = [
+            column for column in data.columns if column not in _FEATURE_COLUMNS
+        ]
+        fractions = np.column_stack(
+            [np.asarray(data[column], dtype=np.float64) for column in variables]
+        )
+        ids = data["feature_id"].tolist() if "feature_id" in data else None
+        symbols = data["symbol"].tolist() if "symbol" in data else None
+        return _Partition(fractions, variables, ids, symbols)
+    raise TypeError(f"data must be {_FRACTIONS}, got {type(data).__name__}")
+
+
+def _partitioned_group(result: VariancePartitioningResult, group: str | None) -> str:
+    """The group of a result that is meant: the one given, or the only one fitted."""
+    if group is not None:
+        return group
+    fitted = list(result.tables)
+    if len(fitted) != 1:
+        raise ValueError(
+            f"the result has {len(fitted)} fitted groups; name one with group, one of "
+            f"{quoted(fitted) or '(none)'}"
+        )
+    return fitted[0]
+
+
+def _variable_order(
+    fractions: FloatArray, variables: Sequence[str], ordered: bool
+) -> list[int]:
+    """The variables in decreasing order of their median fraction, ties in the order
+    given, the residuals last; or in the order given."""
+    others = [j for j, name in enumerate(variables) if name != RESIDUALS]
+    residual = [j for j, name in enumerate(variables) if name == RESIDUALS]
+    if ordered and fractions.shape[0]:
+        medians = np.median(fractions[:, others], axis=0)
+        others = [others[k] for k in np.argsort(-medians, kind="stable")]
+    return others + residual
+
+
+def _variable_colors(variables: list[str]) -> list[str]:
+    """A hue for each variable in order, and pale grey for the residuals."""
+    others = [name for name in variables if name != RESIDUALS]
+    hues = _hues(
+        others,
+        "the variance partition",
+        "partition the variance among fewer variables, or merge some",
+    )
+    return [_PALE if name == RESIDUALS else hues[name] for name in variables]
+
+
+def _variable_label(variable: str) -> str:
+    return "Residuals" if variable == RESIDUALS else variable
+
+
+def _chosen_genes(
+    genes: Any, partition: _Partition, labels: list[str] | None
+) -> tuple[list[int], list[str]]:
+    """The rows of the genes asked for, and the names to show for them."""
+    n = partition.fractions.shape[0]
+    if isinstance(genes, str | numbers.Integral):
+        genes = [genes]
+    if not isinstance(genes, Sequence | np.ndarray):
+        raise TypeError(
+            "genes must be a list of gene ids, symbols or positions, got "
+            f"{type(genes).__name__}"
+        )
+    if len(genes) == 0:
+        raise ValueError("genes is empty; give at least one gene")
+    names: list[str] | None = labels
+    if names is None and partition.ids is not None:
+        symbols = partition.symbols or [None] * n
+        names = [
+            str(symbol) if symbol is not None else str(identifier)
+            for symbol, identifier in zip(symbols, partition.ids, strict=True)
+        ]
+    rows: list[int] = []
+    for gene in list(genes):
+        if isinstance(gene, bool | np.bool_):
+            raise TypeError("genes must be gene ids, symbols or positions, not bool")
+        if isinstance(gene, numbers.Integral):
+            position = int(gene)
+            if not -n <= position < n:
+                raise IndexError(
+                    f"gene position {position} is out of range for {n} genes"
+                )
+            row = position % n
+        elif isinstance(gene, str):
+            row = _gene_row(gene, partition, labels)
+        else:
+            raise TypeError(
+                f"genes must be gene ids, symbols or positions, got "
+                f"{type(gene).__name__} {gene!r}"
+            )
+        if row in rows:
+            raise ValueError(f"the gene {gene!r} is given more than once")
+        rows.append(row)
+    shown = [names[row] if names is not None else str(row) for row in rows]
+    return rows, shown
+
+
+def _gene_row(gene: str, partition: _Partition, labels: list[str] | None) -> int:
+    """The row of a gene named by its id, its symbol or a label."""
+    for kind, values in (
+        ("label", labels),
+        ("feature id", partition.ids),
+        ("symbol", partition.symbols),
+    ):
+        if values is None:
+            continue
+        found = [row for row, value in enumerate(values) if value == gene]
+        if len(found) > 1:
+            raise ValueError(
+                f"the {kind} {gene!r} names {len(found)} genes; give their feature ids"
+            )
+        if found:
+            return found[0]
+    if labels is None and partition.ids is None:
+        raise KeyError(
+            f"gene {gene!r} cannot be found: the fractions name no genes; give "
+            "positions, or one name per gene with labels"
+        )
+    raise KeyError(f"no gene {gene!r} among the {partition.fractions.shape[0]} genes")
+
+
+def _draw_violin(
+    ax: "Axes", x: float, values: FloatArray, color: str, label: str
+) -> None:
+    """The violin of the values at x, unless they span no range."""
+    low, high = float(np.min(values)), float(np.max(values))
+    if values.size < 2 or not high > low:
+        return
+    grid = np.linspace(low, high, _VIOLIN_POINTS)
+    density = _kernel_density(values, grid, _bandwidth(values))
+    half = 0.5 * _VIOLIN_WIDTH * density / np.max(density)
+    ax.fill_betweenx(
+        grid,
+        x - half,
+        x + half,
+        facecolor=color,
+        edgecolor=_INK,
+        linewidth=0.6,
+        label=label,
+        gid="violins",
+    )
+
+
+def _bandwidth(values: FloatArray) -> float:
+    """Silverman's rule of thumb, R's bw.nrd0, for values that span a range.
+
+    Where the quartiles coincide, bw.nrd0 takes the standard deviation alone (found
+    by probing R 4.4.3; its help page says only that the result stays positive).
+    """
+    spread = float(np.std(values, ddof=1))
+    first, third = np.percentile(values, [25.0, 75.0])
+    quartiles = float(third - first) / 1.34
+    if quartiles > 0.0:
+        spread = min(spread, quartiles)
+    return 0.9 * spread * math.pow(values.size, -0.2)
+
+
+def _kernel_density(
+    values: FloatArray, grid: FloatArray, bandwidth: float
+) -> FloatArray:
+    """The Gaussian kernel density estimate of the values at the grid points."""
+    density = np.empty(grid.size)
+    for start in range(0, grid.size, _DENSITY_BLOCK):
+        z = (grid[start : start + _DENSITY_BLOCK, np.newaxis] - values) / bandwidth
+        density[start : start + _DENSITY_BLOCK] = np.sum(np.exp(-0.5 * z * z), axis=1)
+    scaled: FloatArray = density / (values.size * bandwidth * math.sqrt(2.0 * math.pi))
+    return scaled
+
+
+def _draw_box(ax: "Axes", x: float, values: FloatArray) -> None:
+    """A narrow box plot of the values at x."""
+    first, median, third = np.percentile(values, [25.0, 50.0, 75.0])
+    reach = _WHISKER_REACH * (third - first)
+    within = values[(values >= first - reach) & (values <= third + reach)]
+    low = float(np.min(within)) if within.size else float(first)
+    high = float(np.max(within)) if within.size else float(third)
+    outlying = values[(values < first - reach) | (values > third + reach)]
+    half = _BOX_WIDTH / 2.0
+    box = _module("matplotlib.patches").Rectangle(
+        (x - half, first),
+        _BOX_WIDTH,
+        third - first,
+        facecolor=_GREY,
+        edgecolor=_INK,
+        linewidth=0.6,
+        zorder=3,
+        gid="boxes",
+    )
+    ax.add_patch(box)
+    ax.plot([x, x], [first, low], color=_INK, linewidth=0.6, zorder=3, gid="whiskers")
+    ax.plot([x, x], [third, high], color=_INK, linewidth=0.6, zorder=3, gid="whiskers")
+    ax.plot(
+        [x - half, x + half],
+        [median, median],
+        color=_INK,
+        linewidth=1.2,
+        zorder=4,
+        gid="medians",
+    )
+    ax.scatter(
+        np.full(outlying.size, x),
+        outlying,
+        s=6.0,
+        color=_INK,
+        linewidths=0,
+        zorder=4,
+        gid="outliers",
+    )
