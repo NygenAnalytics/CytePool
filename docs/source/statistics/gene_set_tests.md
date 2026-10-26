@@ -1,5 +1,5 @@
 ---
-description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them, and how to choose between them.
+description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; over-representation analysis of the genes called significant, as limma's kegga computes it; gene sets read from GMT files; and how to choose between the tests.
 ---
 
 # Gene-set tests
@@ -10,18 +10,20 @@ of the linear model fitted to every gene. Two questions differ [@goeman2007]:
 - **Self-contained**: are the genes of the set differentially expressed at all?
   {api}`fry`, {api}`roast` and {api}`mroast`.
 - **Competitive**: are they more differentially expressed than the other genes?
-  {api}`camera` and {api}`romer`.
+  {api}`camera` and {api}`romer`, and {api}`over_representation`, which asks it of the
+  genes called significant.
 
 A self-contained test finds a set significant when its genes respond, however many other
 genes respond too: in a response that touches thousands of genes, many sets are. A
 competitive test asks whether a set stands out from the other genes, and so suits
-ranking many sets, such as a pathway collection. Every test here works on the linear
-model, so it allows any design and contrast and does not permute samples; all but romer
-take voom's precision weights.
+ranking many sets, such as a pathway collection. The five tests of limma work on the
+linear model, so they allow any design and contrast and do not permute samples; all but
+romer take voom's precision weights. Over-representation analysis needs only the genes
+that an analysis called significant.
 
 ## The effects of each gene
 
-All five tests start from the same decomposition [@wu2010, section 4.1]. The design is
+The five tests on the linear model start from the same decomposition [@wu2010, section 4.1]. The design is
 reparametrized so that the contrast is its last coefficient, and the QR decomposition of
 that design turns each gene's data into a contrast effect $u_0$ and $d$ residual effects
 $u_1, \dots, u_d$, independent with variance $\sigma^2$ under the model. The contrast
@@ -86,6 +88,62 @@ it works for any contrast with residual degrees of freedom. Before rotating, eac
 contrast effect is shrunk by its posterior probability of being differentially
 expressed, so that strongly responding genes do not inflate the rotated statistics.
 
+## Gene-set files
+
+Gene sets come from collections such as MSigDB [@liberzon2011; @liberzon2015],
+Reactome, WikiPathways and the Gene Ontology, which distribute them as GMT files: one
+set per line, with its name, a description and its genes, separated by tabs
+[@subramanian2005; @gsea2026]. {api}`read_gmt` reads such a file into a
+{api}`GeneSets`, a mapping of set name to gene ids, which every function on this page
+takes as its gene sets. CytePool bundles no collection: each provider states its own
+terms. The collection records the source, version and licence that you give when you
+read it, with the name of the file and the SHA-256 digest of its bytes, so that a
+result can say which sets it used; {api}`write_gmt` writes a collection back.
+
+Sets name genes by symbol, by Entrez id or by Ensembl id, and an analysis must name
+them the same way. {api}`GeneSets.restrict_to` keeps the genes of each set that an
+analysis measured, drops the sets left without genes, as limma's `ids2indices` does,
+and refuses ids that match no gene at all. {api}`GeneSets.filter_by_size` then keeps
+the sets of a range of sizes, counted within the analysis: GSEA leaves out sets of
+fewer than 15 or more than 500 genes by default, since two or three genes can make a
+small set significant [@gsea2026]. {api}`GeneSets.select` takes sets by name.
+
+## Over-representation analysis
+
+Over-representation analysis asks whether the genes called significant hold more of a
+set's genes than chance would give [@tavazoie1999]. Of a universe of $N$ genes, $n$
+are selected; a set has $K$ genes in the universe, and $k$ of them are selected. Were
+the $n$ genes drawn at random from the universe, $k$ would follow the hypergeometric
+distribution, and the p-value is the chance of an overlap at least as large:
+
+$$
+P(X \ge k) = \sum_{j=k}^{\min(K, n)}
+\frac{\binom{K}{j} \binom{N - K}{n - j}}{\binom{N}{n}},
+$$
+
+the one-sided p-value of Fisher's exact test of the table of genes in and out of the
+set, selected or not [@fisher1922; @rivals2007]. The expected overlap is $K n / N$.
+{api}`over_representation` computes it as limma's `kegga` and `goana` do [@young2010],
+for the genes that go up, those that go down and those that change either way in a
+group and contrast of a differential-expression result or in a table of results, or
+for a list of genes; the adjusted p-values are Benjamini and Hochberg's over the sets
+of each list. {api}`plot_over_representation` draws the top sets as dots for each
+list, as clusterProfiler compares lists of genes [@yu2012].
+
+The universe is the genes that could have been selected, by default the genes tested.
+The genes of the genome, or of all the sets, include genes that were never expressed
+or tested, and make the p-values too small [@timmons2015; @wijesooriya2022]. Genes of
+the universe that are in no set stay in it, as in `kegga`.
+
+The test takes genes, not samples, as the units drawn, independently of each other.
+The genes of a set are often correlated, as co-regulated genes are, so its p-values
+are too small for sets that respond together [@goeman2007], the problem that camera
+solves for a linear model [@wu2012]. The result also depends on the cutoff
+that selects the genes, and ignores how much each one changes. In RNA-seq data, long
+and highly expressed genes are called significant more often, which favours sets of
+such genes [@young2010]; the adjustment that `kegga` and `goana` offer for this is not
+implemented.
+
 ## Choices
 
 - **Competitive or self-contained.** Rank a collection with camera; ask about one set
@@ -97,3 +155,7 @@ expressed, so that strongly responding genes do not inflate the rotated statisti
   number of sets adjusted for.
 - **Weights.** Pass a voom result to use its precision weights; romer takes sample
   weights only.
+- **Over-representation or camera.** Over-representation analysis needs only the
+  genes called significant, so it takes the results of any method and lists from
+  elsewhere. camera uses every gene's statistic and allows for the correlation between
+  genes, so with a linear model at hand it is the sounder competitive test.

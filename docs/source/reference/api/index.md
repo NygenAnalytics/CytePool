@@ -34,8 +34,10 @@ negative_binomial_models
 quasi_likelihood
 deseq2
 empirical_bayes
+gene_sets
 gene_set_tests
 rotation_gene_set_tests
+over_representation
 multiple_testing
 differential_expression
 variance_partitioning

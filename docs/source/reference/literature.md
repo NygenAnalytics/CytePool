@@ -80,6 +80,9 @@ work is in the [Bibliography](bibliography.md).
 - @wu2010 introduced ROAST, which rotates the residuals of a linear model instead of
   permuting samples, so that it applies to almost any design.
 - @subramanian2005 introduced gene set enrichment analysis.
+- @timmons2015 and @wijesooriya2022 showed that over-representation analyses depend on
+  the universe of genes they test against: a universe of every gene of the genome,
+  rather than of the genes measured, makes sets look significant that are not.
 - @holland2020 found that tools for pathway and transcription-factor activity built for
   bulk data, with curated gene sets, work on single-cell data, and that their results
   depend more on the gene sets than on the statistic.

@@ -42,6 +42,10 @@ limma and its methods [@smyth2004; @smyth2005; @ritchie2015; @phipson2016;
 @dimitrov2022; @dimitrov2024; @routledge1994; @bailey1980; @hill1970; @brophy1987;
 @zar1999]
 
+Gene-set files and over-representation analysis [@gsea2026; @liberzon2011;
+@young2010; @fisher1922; @rivals2007; @tavazoie1999; @timmons2015; @wijesooriya2022;
+@yu2012].
+
 ## Composition
 
 [@phipson2022; @buttner2021; @mangiola2023; @hoffman2026b; @dann2022; @yi2024]

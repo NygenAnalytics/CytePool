@@ -49,10 +49,12 @@ from cytepool.composition import propeller
 from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
 from cytepool.differential_expression import limma_voom
+from cytepool.gene_sets import GeneSets
 from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.meta_analysis import differential_expression_meta_analysis
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
+from cytepool.over_representation import over_representation
 from cytepool.stats import distributions, special
 from cytepool.stats.deseq2 import deseq2_dispersions, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
@@ -1343,6 +1345,79 @@ ENTRY_POINTS: dict[str, Entry] = {
         ),
         keys={"gene_sets": "set"},
     ),
+    # Gene-set collections: no gene of a set may be missing; the genes of an
+    # analysis, a selection and a universe mark missing ids with None.
+    "cytepool.gene_sets.GeneSets": Entry(
+        lambda c: {
+            "sets": {"set": ["g1", "g2"]},
+            "descriptions": {"set": "two genes"},
+            "source": "a curated list",
+            "version": "1",
+            "licence": "CC0",
+            "file": "sets.gmt",
+            "sha256": "0" * 64,
+        },
+        {"sets": None},
+        options=("source", "version", "licence", "file", "sha256"),
+        objects=("descriptions",),
+        keys={"sets": "set"},
+    ),
+    "cytepool.gene_sets.GeneSets.select": Entry(
+        lambda c: {"names": ["other", "set"]},
+        {"names": None},
+        instance=lambda c: GeneSets({"set": ["g1", "g2"], "other": ["g3"]}),
+    ),
+    "cytepool.gene_sets.GeneSets.restrict_to": Entry(
+        lambda c: {"genes": ["g1", None, "g3"], "keep_empty": True},
+        {"genes": "None"},
+        options=("keep_empty",),
+        instance=lambda c: GeneSets({"set": ["g1", "g2"], "other": ["g3"]}),
+    ),
+    "cytepool.gene_sets.GeneSets.filter_by_size": Entry(
+        lambda c: {"min_size": 1, "max_size": 2},
+        {},
+        options=("min_size", "max_size"),
+        instance=lambda c: GeneSets({"set": ["g1", "g2"], "other": ["g3"]}),
+    ),
+    "cytepool.gene_sets.write_gmt": Entry(
+        lambda c: {
+            "gene_sets": {"set": ["g1", "g2"]},
+            "path": c.new_path(),
+            "overwrite": False,
+        },
+        {"gene_sets": None},
+        options=("overwrite",),
+        objects=("path",),
+        keys={"gene_sets": "set"},
+    ),
+    # A list of selected genes with a universe; the options that read a table are
+    # checked first.
+    "cytepool.over_representation.over_representation": Entry(
+        lambda c: {
+            "genes": ["g1", "g2", None],
+            "gene_sets": {"set": ["g1", "g3"]},
+            "universe": [f"g{j}" for j in range(COUNTS.shape[1])],
+            "alpha": 0.1,
+            "id_column": "feature_id",
+            "p_value_column": "adjusted_p_value",
+            "fold_change_column": "log2_fold_change",
+        },
+        {"genes": "None", "gene_sets": None, "universe": "None"},
+        options=("alpha", "id_column", "p_value_column", "fold_change_column"),
+        keys={"gene_sets": "set"},
+    ),
+    # A differential-expression result, of which a group and a contrast are tested.
+    "cytepool.over_representation.over_representation[result]": Entry(
+        lambda c: {
+            "genes": _tested(c),
+            "gene_sets": {"set": ["feature_1", "feature_2"]},
+            "group": "bulk",
+            "contrast": "stim",
+        },
+        {},
+        options=("group", "contrast"),
+        objects=("genes", "gene_sets"),
+    ),
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
         lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
@@ -1694,6 +1769,21 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("top", "alpha"),
         objects=("table", "ax"),
     ),
+    "cytepool.plotting.plot_over_representation": Entry(
+        lambda c: {
+            "table": over_representation(
+                ["g1", "g2"],
+                {"set": ["g1", "g3"], "other": ["g4"]},
+                universe=[f"g{j}" for j in range(COUNTS.shape[1])],
+            ),
+            "top": 5,
+            "alpha": 0.1,
+            "ax": _axes(),
+        },
+        {},
+        options=("top", "alpha"),
+        objects=("table", "ax"),
+    ),
     "cytepool.plotting.plot_dispersions": Entry(
         lambda c: {
             "dispersions": deseq2_dispersions(
@@ -1885,6 +1975,12 @@ NO_ARRAY_INPUT = {
     "cytepool.meta_analysis.MetaAnalysisResult.table": (
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
+    ),
+    "cytepool.gene_sets.GeneSets.__getitem__": (("name",), "a set name, looked up"),
+    "cytepool.gene_sets.GeneSets.__contains__": (("name",), "a set name, looked up"),
+    "cytepool.gene_sets.read_gmt": (
+        ("path", "source", "version", "licence"),
+        "a path, and text that the collection keeps",
     ),
 }
 

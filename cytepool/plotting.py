@@ -31,7 +31,9 @@ The figures:
   :func:`plot_volcano`, limma's ``volcanoplot``; :func:`plot_p_values`, a histogram of
   p-values; :func:`plot_significant_genes`, the genes up and down in every group.
 - Gene sets: :func:`plot_barcode`, limma's ``barcodeplot``; :func:`plot_gene_sets`, the
-  sets of a ``camera``, ``fry`` or ``mroast`` table.
+  sets of a ``camera``, ``fry`` or ``mroast`` table; :func:`plot_over_representation`,
+  the sets of an over-representation analysis, as clusterProfiler's dot plots show
+  them (Yu et al. 2012).
 - Count models: :func:`plot_dispersions`, DESeq2's ``plotDispEsts`` (Love et al.
   2014); :func:`plot_quasi_dispersions`, edgeR's ``plotQLDisp`` (Chen et al. 2016).
 - Meta-analysis: :func:`plot_forest`, the forest plot (Lewis and Clarke 2001) that
@@ -107,6 +109,9 @@ References:
     Wu D, Smyth GK (2012). Camera: a competitive gene set test accounting for inter-gene
     correlation. Nucleic Acids Research 40, e133. doi:10.1093/nar/gks461
 
+    Yu G, Wang LG, Han Y, He QY (2012). clusterProfiler: an R package for comparing
+    biological themes among gene clusters. OMICS 16, 284-287. doi:10.1089/omi.2011.0118
+
     Lewis S, Clarke M (2001). Forest plots: trying to see the wood and the trees. BMJ
     322, 1479-1480. doi:10.1136/bmj.322.7300.1479
 
@@ -179,6 +184,7 @@ __all__ = [
     "plot_md",
     "plot_mds",
     "plot_mean_variance",
+    "plot_over_representation",
     "plot_p_values",
     "plot_proportions",
     "plot_quasi_dispersions",
@@ -240,6 +246,11 @@ _WORM_SPAN = 0.45
 # bars (0 to 1).
 _WORM_BASE, _WORM_TOP = 1.1, 2.1
 _NUMBERED_ENTRIES = 800  # the most heatmap entries whose numbers are written
+# The area of the largest dot of a dot plot of gene sets, in points squared, and the
+# labels of its lists of genes.
+_LARGEST_DOT = 300.0
+_LIST_LABELS = {"up": "Up", "down": "Down", "either": "Either", None: "Selected"}
+_TINY = np.finfo(np.float64).tiny  # the smallest p-value shown on a log scale
 _METHODS = {
     "reml": "REML",
     "dl": "DerSimonian-Laird",
@@ -2223,6 +2234,156 @@ def plot_gene_sets(
             _key(f"Adjusted p-value {level:g}", marker="", linestyle="--", color=_INK),
         ],
     )
+    return ax
+
+
+def plot_over_representation(
+    table: Table,
+    *,
+    top: int = 20,
+    alpha: float = 0.05,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the most over-represented gene sets, a dot for each list of genes.
+
+    For the ``top`` sets with the smallest p-value in any list of a table of
+    :func:`~cytepool.over_representation.over_representation`, most significant at
+    the top, a dot in the column of each list of selected genes (up, down and either,
+    or the genes given), as clusterProfiler draws the lists of genes it compares (Yu
+    et al. 2012). The area of a dot is proportional to the overlap, the number of the
+    set's genes among the selected genes, and its colour gives the adjusted p-value
+    as -log10, darker for smaller; a dot whose adjusted p-value is not below
+    ``alpha`` is pale grey, and a list that holds none of the set's genes has no dot.
+    Each set is named with its number of genes in the universe, and each list with
+    its number of selected genes.
+
+    Draws the dots (gid ``"gene sets"``).
+
+    Args:
+        table: The table of ``over_representation``, with the columns ``gene_set``,
+            ``direction``, ``n_genes``, ``overlap``, ``p_value``,
+            ``adjusted_p_value`` and ``n_selected``.
+        top: How many sets to show, at least 1.
+        alpha: The adjusted p-value below which dots are coloured, in (0, 1).
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``table`` is not a Table or an option has the wrong type.
+        ValueError: If the table lacks a column or has no set with a p-value.
+    """
+    _check_axes(ax)
+    if not isinstance(table, Table):
+        raise TypeError(f"table must be a Table, got {type(table).__name__}")
+    count = positive_integer(top, "top")
+    level = _fraction(alpha, "alpha")
+    needed = (
+        "gene_set",
+        "direction",
+        "n_genes",
+        "overlap",
+        "p_value",
+        "adjusted_p_value",
+        "n_selected",
+    )
+    missing = [column for column in needed if column not in table]
+    if missing:
+        raise ValueError(
+            f"the table lacks the column(s) {quoted(missing)}; "
+            "plot_over_representation reads the tables of over_representation"
+        )
+    names = table["gene_set"].tolist()
+    directions = table["direction"].tolist()
+    p = np.asarray(table["p_value"], dtype=np.float64)
+    best: dict[str, float] = {}
+    for name, value in zip(names, p.tolist(), strict=True):
+        if math.isfinite(value) and value < best.get(name, math.inf):
+            best[name] = value
+    if not best:
+        raise ValueError("no gene set of the table has a p-value")
+    shown = sorted(best, key=best.__getitem__)[:count]  # stable: ties in table order
+    lists = list(dict.fromkeys(directions))
+    row_of = {name: len(shown) - 1 - i for i, name in enumerate(shown)}  # top first
+    column_of = {direction: j for j, direction in enumerate(lists)}
+    overlap = np.asarray(table["overlap"], dtype=np.float64)
+    drawn = np.array(
+        [
+            name in row_of and math.isfinite(value) and size > 0
+            for name, value, size in zip(
+                names, p.tolist(), overlap.tolist(), strict=True
+            )
+        ],
+        dtype=bool,
+    )
+    rows = np.flatnonzero(drawn)
+    x = np.array([column_of[directions[i]] for i in rows], dtype=np.float64)
+    y = np.array([row_of[names[i]] for i in rows], dtype=np.float64)
+    largest = float(overlap[rows].max(initial=1.0))
+    areas = _LARGEST_DOT * overlap[rows] / largest
+    strength = -np.log10(
+        np.maximum(np.asarray(table["adjusted_p_value"], dtype=np.float64)[rows], _TINY)
+    )
+    significant = strength > -math.log10(level)
+    colors = _module("matplotlib.colors")
+    ramp = colors.LinearSegmentedColormap.from_list("cytepool_blues", _BLUES)
+    floor = -math.log10(level)
+    norm = colors.Normalize(
+        vmin=floor, vmax=max(float(strength.max(initial=floor)), floor + 1.0)
+    )
+    faces = np.array([colors.to_rgba(_PALE)] * rows.size).reshape(-1, 4)
+    if significant.any():
+        faces[significant] = ramp(norm(strength[significant]))
+
+    # Tall enough for the colour bar and the key below it.
+    height = min(12.0, max(4.5, 1.8 + 0.32 * len(shown)))
+    ax = _axes(ax, (6.0 + 1.0 * len(lists), height))
+    ax.scatter(x, y, s=areas, c=faces, linewidths=0, gid="gene sets")
+    size_of = {name: int(n) for name, n in zip(names, table["n_genes"].tolist())}
+    ax.set_yticks(
+        [row_of[name] for name in shown],
+        [f"{name} ({size_of[name]:,})" for name in shown],
+    )
+    selected_of = {
+        direction: int(n)
+        for direction, n in zip(directions, table["n_selected"].tolist(), strict=True)
+    }
+    ax.set_xticks(
+        range(len(lists)),
+        [
+            f"{_LIST_LABELS.get(direction, str(direction))}\n({selected_of[direction]:,})"
+            for direction in lists
+        ],
+    )
+    ax.set_xlim(-0.6, len(lists) - 0.4)
+    ax.set_ylim(-0.6, len(shown) - 0.4)
+    ax.set_xlabel("Selected genes")
+    mappable = _module("matplotlib.cm").ScalarMappable(norm=norm, cmap=ramp)
+    bar = ax.figure.colorbar(
+        mappable, ax=ax, label="-log10 adjusted p-value", shrink=0.5, anchor=(0.0, 1.0)
+    )
+    keys = sorted({max(1, round(largest * share)) for share in (1.0, 0.5, 0.25)})
+    handles = [
+        *(
+            _key(
+                f"{n:,}", color=_GREY, markersize=math.sqrt(_LARGEST_DOT * n / largest)
+            )
+            for n in reversed(keys)
+        ),
+        _key(f"Adjusted p-value {level:g} or more", color=_PALE),
+    ]
+    # The key of the areas below the colour bar, as part of its Axes.
+    key = bar.ax.legend(
+        handles=handles,
+        title="Overlap",
+        loc="upper left",
+        bbox_to_anchor=(0.0, -0.06),
+        borderaxespad=0.0,
+        frameon=False,
+        alignment="left",
+    )
+    key.get_title().set_fontweight("bold")
     return ax
 
 
