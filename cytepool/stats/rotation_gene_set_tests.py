@@ -194,16 +194,16 @@ from cytepool._summation import observed_means
 from cytepool.stats.distributions import t_sf
 from cytepool.stats._moderation import coefficient_prior_variance, log_odds
 from cytepool.stats.empirical_bayes import squeeze_variances
-from cytepool.stats.gene_set_tests import (
-    _check_matched,
-    _checked_gene_sets,
-    _contrast_design,
-    _effects,
-    _expression,
-    _id_positions,
-    _positions,
-    _set_label,
-    _set_positions,
+from cytepool.stats._gene_sets import (
+    check_matched,
+    checked_gene_sets,
+    contrast_design,
+    expression_values,
+    gene_effects,
+    gene_positions,
+    id_positions,
+    set_label,
+    set_positions,
 )
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.table import Table
@@ -539,28 +539,28 @@ def _romer_sets(
     generator: np.random.Generator,
 ) -> Table:
     """:func:`romer` once its options are checked."""
-    values, precision = _expression(y, weights)
+    values, precision = expression_values(y, weights)
     if precision is not None and precision.ndim != 1:
         raise ValueError(
             "romer takes sample weights only, of shape (n_samples,); limma's romer "
             "has no observation weights, so a VoomResult or a matrix of weights "
             "cannot be used"
         )
-    index = _checked_gene_sets(gene_sets, gene_ids, values.shape[1])
+    index = checked_gene_sets(gene_sets, gene_ids, values.shape[1])
     names, members = [], []
     matched = 0
     for name, genes in gene_sets.items():
-        label = _set_label(name)
+        label = set_label(name)
         if isinstance(genes, Mapping):
             raise TypeError(
                 f"{label} maps genes to contribution weights, which romer does not "
                 "take; give the set's genes as a list"
             )
-        positions, found = _set_positions(genes, label, index, values.shape[1])
+        positions, found = set_positions(genes, label, index, values.shape[1])
         names.append(name)
         members.append(positions)
         matched += found
-    _check_matched(index, matched)
+    check_matched(index, matched)
     p_values = _romer_p_values(
         values,
         design,
@@ -655,14 +655,14 @@ def _roast_sets(
     function: str,
 ) -> _RoastTests:
     """:func:`_roast_tests` once its options are checked."""
-    values, precision = _expression(y, weights)
+    values, precision = expression_values(y, weights)
     n_genes = values.shape[1]
     contribution = _gene_weights(gene_weights, n_genes)
     names, members, set_weights = _weighted_sets(
         gene_sets, gene_ids, n_genes, contribution, single=function == "roast"
     )
-    reparametrised, d = _contrast_design(values, design, contrast, function)
-    effects = _effects(values, reparametrised, precision)
+    reparametrised, d = contrast_design(values, design, contrast, function)
+    effects = gene_effects(values, reparametrised, precision)
     variances = np.sum(effects[:, 1:] ** 2, axis=1) / d
     squeezed = squeeze_variances(
         variances,
@@ -1112,8 +1112,8 @@ def _romer_p_values(
     generator: np.random.Generator,
 ) -> FloatArray:
     """``(n_sets, 3)`` up, down and mixed p-values of romer."""
-    reparametrised, d = _contrast_design(values, design, contrast, "romer")
-    effects = _effects(values, reparametrised, weights, signed_residuals=True)
+    reparametrised, d = contrast_design(values, design, contrast, "romer")
+    effects = gene_effects(values, reparametrised, weights, signed_residuals=True)
     variances = np.sum(effects[:, 1:] ** 2, axis=1) / d
     squeezed = squeeze_variances(variances, d)
     n_genes = values.shape[1]
@@ -1489,13 +1489,13 @@ def _weighted_sets(
 ) -> tuple[list[str], list[IntArray], list[FloatArray]]:
     """Each set's name, the sorted positions of its genes and their contribution
     weights, with genes of weight zero left out."""
-    index = _checked_gene_sets(gene_sets, gene_ids, n_genes)
+    index = checked_gene_sets(gene_sets, gene_ids, n_genes)
     names: list[str] = []
     members: list[IntArray] = []
     weights: list[FloatArray] = []
     matched = 0
     for name, genes in gene_sets.items():
-        label = "gene_set" if single else _set_label(name)
+        label = "gene_set" if single else set_label(name)
         if isinstance(genes, Mapping):
             if gene_weights is not None:
                 raise ValueError(
@@ -1504,7 +1504,7 @@ def _weighted_sets(
                 )
             positions, set_weights, found = _mapped_set(genes, label, index, n_genes)
         else:
-            positions, found = _set_positions(genes, label, index, n_genes)
+            positions, found = set_positions(genes, label, index, n_genes)
             set_weights = (
                 np.ones(positions.size)
                 if gene_weights is None
@@ -1520,7 +1520,7 @@ def _weighted_sets(
             "no gene of gene_set is among gene_ids; the set and gene_ids must name "
             "genes the same way (for example both by symbol, or both by Ensembl id)"
         )
-    _check_matched(index, matched)
+    check_matched(index, matched)
     return names, members, weights
 
 
@@ -1547,10 +1547,10 @@ def _mapped_set(
     weights = np.array(values, dtype=np.float64)
     found = 0
     if index is None:
-        positions = _positions(unmasked_array(keys, label), label, n_genes)
+        positions = gene_positions(unmasked_array(keys, label), label, n_genes)
     else:
         present = [key in index for key in _hashable_keys(keys, label)]
-        positions = _id_positions(keys, label, index)
+        positions = id_positions(keys, label, index)
         weights = weights[np.array(present, dtype=bool)]
         found = positions.size
     order = np.argsort(positions, kind="stable")
