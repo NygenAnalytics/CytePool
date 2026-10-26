@@ -34,12 +34,18 @@ project:
       title: Installation
     - file: quickstart.ipynb
       title: Quick start
-    - file: differential_expression.ipynb
-      title: From cells to results
+    - file: why_pseudobulk.ipynb
+      title: Why pseudobulk
   - title: Build and share cubes
     children:
+    - file: guides/pool_cells.ipynb
+      title: Pool cells into pseudobulk profiles
+    - file: guides/save_and_trace_cubes.ipynb
+      title: Save, share and trace cubes
     - file: guides/export_cubes.ipynb
       title: Export a cube from another tool
+    - file: guides/anndata_and_mudata.ipynb
+      title: Work with AnnData and MuData
   - title: Compare conditions
     children:
     - file: guides/normalization_and_quality.ipynb

@@ -8,8 +8,9 @@ CytePool's tests compare samples, not cells: each takes one profile per sample, 
 a difference is measured against the variation between donors. Cells of one donor share
 its genetics and environment, and a test that treats them as independent replicates
 finds differences that do not hold across donors [@squair2021; @zimmerman2021;
-@murphy2022]. Pool the cells of each sample and cell type into a cube first
-({api}`from_cells`); the methods below then run on its pseudobulk profiles.
+@murphy2022], as [Why pseudobulk](../why_pseudobulk.ipynb) shows. Pool the cells of
+each sample and cell type into a cube first ({api}`from_cells`); the methods below then
+run on its pseudobulk profiles.
 
 ## Genes that change in each cell type
 

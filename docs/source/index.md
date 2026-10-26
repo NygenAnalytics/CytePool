@@ -15,10 +15,12 @@ the methods that are standard in R: limma, edgeR, DESeq2, dream, propeller and
 metafor. Its only required dependencies are numpy and numba, and every method is
 compared with the package that defined it ([Validation](validation.md)).
 
-[Installation](installation.md) · [Quick start](quickstart.ipynb) ·
-[From cells to results](differential_expression.ipynb) ·
-[Choosing a method](statistics/choosing_a_method.md) ·
-[Capability matrix](reference/capabilities.md) · [API reference](/api/index.html)
+Start with [Installation](installation.md) and the [Quick start](quickstart.ipynb),
+which goes from cells to results in a few minutes. [Why pseudobulk](why_pseudobulk.ipynb)
+shows why the tests compare samples, [Choosing a method](statistics/choosing_a_method.md)
+which function answers which question, and the [Capability
+matrix](reference/capabilities.md) and the [API reference](/api/index.html) list every
+method.
 
 :::{note} Early development
 Nothing is released yet, and the interface may still change.

@@ -8,7 +8,8 @@ A cube holds one pseudobulk profile for every sample and group (usually a cell t
 the sums, over the cells of that sample and group, of each feature's counts and of a few
 statistics of its normalized values. {api}`from_cells` builds it from a cells x features
 count matrix and the sample and group label of every cell; {api}`from_bulk` wraps a
-samples x features matrix as a cube with one group.
+samples x features matrix as a cube with one group. [Pool cells into pseudobulk
+profiles](../guides/pool_cells.ipynb) shows these steps on data.
 
 ## The layers
 
