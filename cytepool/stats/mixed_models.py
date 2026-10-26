@@ -167,12 +167,12 @@ import numpy.typing as npt
 
 from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, column_space, symmetric
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._summation import observed_means
 from cytepool.design.checks import _aliasing, _random_checks
 from cytepool.design.design import Design, _is_random_intercept
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.linear_models import _contrast_matrix, _real_array
+from cytepool.stats.linear_models import _contrast_matrix
 
 __all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
 
@@ -777,7 +777,7 @@ def _maximum_likelihood(method: Any) -> bool:
 
 
 def _response_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
-    values = _real_array(unmasked_array(y, "y"), "y", boolean=False)
+    values = real_array(unmasked_array(y, "y"), "y", boolean=False)
     if values.ndim != 2:
         raise ValueError(
             "y must be a 2-D array of shape (n_samples, n_features), "
@@ -807,7 +807,7 @@ def _positive_weights(
     """The weights as rows of samples, one per feature or one for all."""
     if weights is None:
         return np.ones((1, shape[0]))
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
+    w = real_array(unmasked_array(weights, "weights"), "weights")
     if w.shape == (shape[0],):
         rows = w[np.newaxis, :]
         kind = "sample weights"

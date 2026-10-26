@@ -27,7 +27,6 @@ References:
 """
 
 import math
-import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -44,7 +43,7 @@ from cytepool._linear_algebra import (
     householder_qr,
     symmetric,
 )
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool.design.contrasts import (
     _is_named_contrasts,
     _is_pandas,
@@ -915,7 +914,7 @@ def _design_matrix(
 ) -> tuple[FloatArray, tuple[str, ...]]:
     matrix, columns = _design_columns(design)
     reject_masked(coefficient_names, "coefficient_names")
-    x = _real_array(unmasked_array(matrix, "design"), "design")
+    x = real_array(unmasked_array(matrix, "design"), "design")
     if x.ndim != 2:
         raise ValueError(
             "design must be a 2-D array of shape (n_samples, n_coefficients), "
@@ -942,7 +941,7 @@ def _design_matrix(
 
 
 def _expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
-    values = _real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
+    values = real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
     if values.ndim != 2:
         raise ValueError(
             "y must be a 2-D array of shape (n_samples, n_features), "
@@ -967,7 +966,7 @@ def _precision_weights(
 ) -> FloatArray | None:
     if weights is None:
         return None
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
+    w = real_array(unmasked_array(weights, "weights"), "weights")
     with np.errstate(invalid="ignore"):
         valid = np.isfinite(w) & (w >= 0.0)
     if w.shape == (shape[0],):
@@ -1058,7 +1057,7 @@ def _contrast_matrix(
             target="the fit's coefficients",
             remedy=remedy,
         )
-        matrix = _real_array(weights, "contrasts")
+        matrix = real_array(weights, "contrasts")
         if matrix.shape[1] == 0:
             raise ValueError("contrasts must hold at least one contrast")
         contrast_names = _checked_names(
@@ -1076,7 +1075,7 @@ def _contrast_matrix(
                 target="the fit's coefficients",
                 remedy=remedy,
             )
-            values = _real_array(weights, f"contrast {key!r}")
+            values = real_array(weights, f"contrast {key!r}")
             if values.shape != (n_coefficients,):
                 raise ValueError(
                     f"contrast {key!r} must have one value per coefficient "
@@ -1101,7 +1100,7 @@ def _contrast_matrix(
             target="the fit's coefficients",
             remedy=remedy,
         )
-        matrix = _real_array(weights, "contrasts")
+        matrix = real_array(weights, "contrasts")
         if matrix.ndim == 1:
             matrix = matrix[:, np.newaxis]
         if matrix.ndim != 2 or matrix.shape[0] != n_coefficients:
@@ -1172,26 +1171,6 @@ def _checked_names(names: Any, count: int, label: str) -> tuple[str, ...]:
     if len(set(checked)) != count:
         raise ValueError(f"{label} must be unique, got {checked}")
     return checked
-
-
-def _real_array(values: Any, name: str, *, boolean: bool = True) -> FloatArray:
-    """Values as float64 without copying when possible; booleans optional.
-
-    Object arrays, such as a table whose columns mix booleans and floats, are
-    accepted when every element is a real number.
-    """
-    array = np.asarray(values)
-    if array.dtype.kind == "O":
-        flags = (bool, np.bool_)
-        kinds = {type(value) for value in array.flat}
-        if not all(issubclass(kind, (numbers.Real, np.bool_)) for kind in kinds) or (
-            not boolean and any(issubclass(kind, flags) for kind in kinds)
-        ):
-            raise TypeError(f"{name} must hold real numbers")
-        array = array.astype(np.float64)
-    if array.dtype.kind not in ("biuf" if boolean else "iuf"):
-        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
-    return array.astype(np.float64, copy=False)
 
 
 def _read_only(

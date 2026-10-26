@@ -1,4 +1,4 @@
-"""Refusing numpy masked arrays where CytePool reads array input.
+"""Refusing numpy masked arrays where CytePool reads array input, and reading reals.
 
 numpy's conversions (``numpy.asarray``, ``numpy.array``, ``numpy.ascontiguousarray``)
 keep the values under the mask of a ``numpy.ma.MaskedArray`` and drop the mask, so an
@@ -12,9 +12,11 @@ columns, the arguments of the distributions) and the values read from lazy sourc
 are converted with ``unmasked_array``, which also refuses an array-like that converts
 to a masked array, such as a netCDF4 variable; the small arrays that make up
 contrasts and result objects are searched only. pandas objects are not inspected:
-pandas marks missing values without numpy masks.
+pandas marks missing values without numpy masks. ``real_array`` then reads arrays
+of real numbers as float64.
 """
 
+import numbers
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
@@ -128,6 +130,32 @@ def unmasked_array(value: object, name: str, *, missing: Missing = None) -> np.n
     if isinstance(array, np.ma.MaskedArray):
         raise _refusal(name, array, missing, converted=True)
     return np.asarray(array)
+
+
+def real_array(
+    values: object, name: str, *, boolean: bool = True, objects: bool = True
+) -> np.ndarray:
+    """Values as float64 without copying when possible.
+
+    Integers and floats are read, booleans with ``boolean``, and object arrays whose
+    every element is a real number with ``objects``, such as a table whose columns mix
+    booleans and floats. The caller refuses masked arrays first.
+
+    Raises:
+        TypeError: If the values are not real numbers.
+    """
+    array = np.asarray(values)
+    if objects and array.dtype.kind == "O":
+        flags = (bool, np.bool_)
+        kinds = {type(value) for value in array.flat}
+        if not all(issubclass(kind, (numbers.Real, np.bool_)) for kind in kinds) or (
+            not boolean and any(issubclass(kind, flags) for kind in kinds)
+        ):
+            raise TypeError(f"{name} must hold real numbers")
+        array = array.astype(np.float64)
+    if array.dtype.kind not in ("biuf" if boolean else "iuf"):
+        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
+    return array.astype(np.float64, copy=False)
 
 
 def _refusal(

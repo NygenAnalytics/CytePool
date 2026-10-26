@@ -117,12 +117,12 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import thread_limit
-from cytepool._masked_arrays import unmasked_array
+from cytepool._masked_arrays import real_array, unmasked_array
 from cytepool.design.design import Design
 from cytepool._counts import as_counts, effective_library_sizes
 from cytepool.stats.distributions import norm_isf, norm_logsf, t_logsf, t_sf
 from cytepool.stats.empirical_bayes import moderated_statistics
-from cytepool.stats.linear_models import LinearModelFit, _real_array
+from cytepool.stats.linear_models import LinearModelFit
 from cytepool.stats.mixed_models import (
     FixedEffectTests,
     _fit,
@@ -475,7 +475,7 @@ def _scaled_prior_weights(
     """
     if weights is None:
         return None
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
+    w = real_array(unmasked_array(weights, "weights"), "weights")
     if w.shape not in ((shape[0],), shape):
         raise ValueError(
             f"weights must have shape ({shape[0]},) for sample weights or {shape} "

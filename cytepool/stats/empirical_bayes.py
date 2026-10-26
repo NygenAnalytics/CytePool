@@ -98,7 +98,7 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._linear_algebra import column_space, correlation_matrix
-from cytepool._masked_arrays import unmasked_array
+from cytepool._masked_arrays import real_array, unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import checked_flag, real_number
 from cytepool._ranks import average_ranks
@@ -1724,7 +1724,12 @@ def _f_statistics(
 
 
 def _variance_vector(values: Any) -> FloatArray:
-    x = _real_array(unmasked_array(values, "variances", missing="NaN"), "variances")
+    x = real_array(
+        unmasked_array(values, "variances", missing="NaN"),
+        "variances",
+        boolean=False,
+        objects=False,
+    )
     if x.ndim != 1:
         raise ValueError(f"variances must be a 1-D array, got shape {x.shape}")
     if x.size == 0:
@@ -1746,7 +1751,7 @@ def _df_vector(df: Any, n: int) -> FloatArray:
 
 def _df_values(df: Any, n: int) -> FloatArray:
     """The degrees of freedom as given, checked and one per variance."""
-    d = _real_array(unmasked_array(df, "df"), "df")
+    d = real_array(unmasked_array(df, "df"), "df", boolean=False, objects=False)
     if d.size == 1 and d.ndim <= 1:
         d = np.full(n, float(d.reshape(-1)[0]))
     elif d.shape != (n,):
@@ -1804,7 +1809,12 @@ def _covariate_vector(
 ) -> FloatArray | None:
     if covariate is None:
         return None
-    z = _real_array(unmasked_array(covariate, "covariate", missing="NaN"), "covariate")
+    z = real_array(
+        unmasked_array(covariate, "covariate", missing="NaN"),
+        "covariate",
+        boolean=False,
+        objects=False,
+    )
     if z.shape != usable.shape:
         raise ValueError(
             f"covariate must have one value per variance ({usable.size}), "
@@ -1841,7 +1851,9 @@ def _finite_covariate(z: FloatArray) -> FloatArray:
 
 def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
     proportions = unmasked_array(winsor_tail_p, "winsor_tail_p")
-    values = _real_array(proportions, "winsor_tail_p").reshape(-1)
+    values = real_array(
+        proportions, "winsor_tail_p", boolean=False, objects=False
+    ).reshape(-1)
     if values.size == 1:
         values = np.repeat(values, 2)
     if values.size != 2:
@@ -1859,7 +1871,12 @@ def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
 def _trend_covariate(trend: Any, fit: LinearModelFit) -> FloatArray | None:
     if isinstance(trend, (bool, np.bool_)):
         return np.asarray(fit.mean_expression, dtype=np.float64) if trend else None
-    z = _real_array(unmasked_array(trend, "trend", missing="NaN"), "trend")
+    z = real_array(
+        unmasked_array(trend, "trend", missing="NaN"),
+        "trend",
+        boolean=False,
+        objects=False,
+    )
     if z.shape != fit.sigma.shape:
         raise ValueError(
             "trend must be a bool or one covariate value per feature "
@@ -1899,7 +1916,12 @@ def _treat_threshold(lfc: Any, fc: Any) -> float:
 
 
 def _coefficient_limits(limits: Any) -> tuple[float, float]:
-    values = _real_array(unmasked_array(limits, "stdev_coef_lim"), "stdev_coef_lim")
+    values = real_array(
+        unmasked_array(limits, "stdev_coef_lim"),
+        "stdev_coef_lim",
+        boolean=False,
+        objects=False,
+    )
     values = values.reshape(-1)
     if values.size != 2:
         raise ValueError(
@@ -1955,7 +1977,12 @@ def _prior_estimator(prior_estimator: Any, d: FloatArray) -> str:
 def _prior_weight_vector(weights: Any, n: int) -> FloatArray:
     if weights is None:
         return np.ones(n)
-    w = _real_array(unmasked_array(weights, "prior_weights"), "prior_weights")
+    w = real_array(
+        unmasked_array(weights, "prior_weights"),
+        "prior_weights",
+        boolean=False,
+        objects=False,
+    )
     if w.shape != (n,):
         raise ValueError(
             f"prior_weights must have one value per variance ({n}), got shape {w.shape}"
@@ -1965,13 +1992,6 @@ def _prior_weight_vector(weights: Any, n: int) -> FloatArray:
             "prior_weights must be finite and non-negative (0 leaves a feature out)"
         )
     return w
-
-
-def _real_array(values: Any, name: str) -> FloatArray:
-    array = np.asarray(values)
-    if array.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
-    return array.astype(np.float64, copy=False)
 
 
 # ---------------------------------------------------------------------------------------

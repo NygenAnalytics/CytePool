@@ -165,7 +165,7 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._options import checked_flag
 from cytepool._ranks import average_ranks
 from cytepool.stats._moderation import posterior_variances
@@ -984,7 +984,7 @@ def _expression(y: Any, weights: Any) -> tuple[FloatArray, FloatArray | None]:
         return np.asarray(y.log_cpm, dtype=np.float64), np.asarray(
             y.weights, dtype=np.float64
         )
-    values = _real_array(unmasked_array(y, "y"), "y")
+    values = real_array(unmasked_array(y, "y"), "y", boolean=False, objects=False)
     if values.ndim != 2:
         raise ValueError(
             "y must be a 2-D array of shape (n_samples, n_genes), or a VoomResult, got "
@@ -999,7 +999,9 @@ def _expression(y: Any, weights: Any) -> tuple[FloatArray, FloatArray | None]:
         )
     if weights is None:
         return values, None
-    w = _real_array(unmasked_array(weights, "weights"), "weights")
+    w = real_array(
+        unmasked_array(weights, "weights"), "weights", boolean=False, objects=False
+    )
     n_samples, n_genes = values.shape
     if w.shape not in ((n_samples,), (n_samples, n_genes)):
         raise ValueError(
@@ -1159,9 +1161,3 @@ def _correlation_option(value: Any) -> float | None:
             f"it, got {rho}"
         )
     return rho
-
-
-def _real_array(values: npt.NDArray[Any], name: str) -> FloatArray:
-    if values.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must hold real numbers, got dtype {values.dtype}")
-    return values.astype(np.float64, copy=False)

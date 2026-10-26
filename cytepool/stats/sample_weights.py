@@ -119,7 +119,7 @@ from cytepool._linear_algebra import (
     column_space,
     orthogonalise,
 )
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._options import (
     number_at_least,
     positive_finite_number,
@@ -130,7 +130,6 @@ from cytepool.stats.linear_models import (
     _aliased_columns,
     _design_matrix,
     _expression_matrix,
-    _real_array,
 )
 
 __all__ = ["sample_quality_weights"]
@@ -510,7 +509,7 @@ def _prior_weights(
     """
     if weights is None:
         return None
-    array = _real_array(unmasked_array(weights, "weights"), "weights")
+    array = real_array(unmasked_array(weights, "weights"), "weights")
     n_samples, n_features = shape
     if array.shape == (n_samples,):
         kind, relevant = "sample weights", observed.any(axis=1)
@@ -615,7 +614,7 @@ def _variance_design_matrix(variance_design: Any, n_samples: int) -> FloatArray:
             "takes the span of fixed columns; build the Design without random="
         )
     matrix = getattr(variance_design, "matrix", variance_design)
-    array = _real_array(unmasked_array(matrix, "variance_design"), "variance_design")
+    array = real_array(unmasked_array(matrix, "variance_design"), "variance_design")
     if array.ndim == 1:
         array = array[:, np.newaxis]
     if array.ndim != 2 or array.shape[0] != n_samples or array.shape[1] == 0:
