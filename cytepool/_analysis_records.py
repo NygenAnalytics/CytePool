@@ -7,12 +7,14 @@ it fitted, with the contrasts it tested; and the versions of the software.
 """
 
 import platform
+from collections import Counter
 from typing import Any
 
 import numba
 import numpy as np
 
 from . import __version__
+from ._messages import listing, quoted
 from .cube import Cube
 from .design import Contrasts, Design
 
@@ -65,3 +67,52 @@ def software_versions() -> dict[str, str]:
         "numba": numba.__version__,
         "python": platform.python_version(),
     }
+
+
+def matched_samples(
+    cube: Cube, design: Design, *, no_ids: str, text_ids: str, data: str, data_ids: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """The position of every design sample in the cube, increasing, and its design row.
+
+    The workflows word the messages for what they read: ``no_ids`` is the whole
+    message for a sample table without a 'sample_id' column; ``text_ids`` ends the
+    one for ids that are not text ("as ..."); ``data`` names the data and ``data_ids``
+    its sample ids in the one for samples it does not have.
+
+    Raises:
+        TypeError, ValueError: If the design's samples cannot be matched to those of
+            the data by ``sample_id``.
+    """
+    table = design.samples
+    if "sample_id" not in table:
+        raise ValueError(no_ids)
+    ids = table["sample_id"]
+    if ids.dtype != object:
+        raise TypeError(
+            f"the design's 'sample_id' column must hold text ids, as {text_ids}, got "
+            f"dtype {ids.dtype}"
+        )
+    values = ids.tolist()
+    blank = [row for row, value in enumerate(values) if value is None]
+    if blank:
+        raise ValueError(
+            f"the design's 'sample_id' column is missing in row(s) {listing(blank)}; "
+            "every sample needs an id"
+        )
+    repeated = [value for value, count in Counter(values).items() if count > 1]
+    if repeated:
+        raise ValueError(
+            f"the design's sample table repeats the sample id(s) {quoted(repeated)}; "
+            "each sample must appear once"
+        )
+    index = {value: i for i, value in enumerate(cube.samples["sample_id"].tolist())}
+    unknown = [value for value in values if value not in index]
+    if unknown:
+        raise ValueError(
+            f"{len(unknown)} of the design's {len(values)} samples are not samples of "
+            f"{data}: {quoted(unknown)}; the design's 'sample_id' must hold "
+            f"{data_ids}, such as {quoted(list(index)[:3])}"
+        )
+    positions = np.array([index[value] for value in values], dtype=np.intp)
+    order = np.argsort(positions, kind="stable")
+    return positions[order], order

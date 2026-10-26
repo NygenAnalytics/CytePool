@@ -1,6 +1,7 @@
 """Text in messages and reprs: lists of ids and names, hints, ranges of values."""
 
 import difflib
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -8,6 +9,10 @@ import numpy as np
 
 LISTED = 8
 """The most items a message names before it says how many more there are."""
+
+PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
+"""The package's directory, ending in a separator: warnings skip the files under it,
+so that a warning is attributed to the first caller outside the package."""
 
 
 def listing(items: Sequence[Any]) -> str:

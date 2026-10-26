@@ -87,7 +87,6 @@ References:
 """
 
 import math
-import os
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -99,7 +98,7 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._linear_algebra import column_space, correlation_matrix
 from cytepool._masked_arrays import real_array, unmasked_array
-from cytepool._messages import value_range
+from cytepool._messages import PACKAGE_DIRECTORY, value_range
 from cytepool._options import checked_flag, real_number
 from cytepool._ranks import average_ranks
 from cytepool.stats._moderation import (
@@ -201,10 +200,6 @@ _MOMENT_UNUSABLE = "is NaN or has zero degrees of freedom"
 _LIKELIHOOD_UNUSABLE = (
     f"is NaN, has fewer than {LIKELIHOOD_MIN_DF} degrees of freedom or has a zero "
     "prior weight"
-)
-# Warnings are attributed to the first caller outside the package.
-_PACKAGE_DIRECTORY = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ""
 )
 _SMALLEST_NORMAL = float(np.finfo(np.float64).tiny)
 _LARGEST = float(np.finfo(np.float64).max)
@@ -1800,7 +1795,7 @@ def _check_zero_variances(
         "more than half of the variances are exactly zero, so the estimated prior "
         "is unreliable",
         RuntimeWarning,
-        skip_file_prefixes=(_PACKAGE_DIRECTORY,),
+        skip_file_prefixes=(PACKAGE_DIRECTORY,),
     )
 
 

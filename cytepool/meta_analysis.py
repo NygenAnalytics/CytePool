@@ -148,7 +148,6 @@ References:
 
 import json
 import math
-import os
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -162,7 +161,7 @@ from ._analysis_records import software_versions
 from ._columns import text_column
 from ._jit import jit
 from ._masked_arrays import reject_masked, unmasked_array
-from ._messages import listing, quoted
+from ._messages import PACKAGE_DIRECTORY, listing, quoted
 from ._options import checked_choice, index_integer, real_number
 from .differential_expression import DifferentialExpressionResult
 from .stats.distributions import (
@@ -212,8 +211,6 @@ _MAX_ITERATIONS = 1000
 # of tau^2, to bracket every maximum of the restricted likelihood.
 _GRID_PER_DECADE = 8
 _ANALYSED = "analysed"  # the status of a group and contrast that was meta-analysed
-# Warnings are attributed to the first caller outside the package.
-_PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -1168,7 +1165,7 @@ def differential_expression_meta_analysis(
                     f"{'' if len(failed) == 1 else 's'}, {quoted(failed)}; the record "
                     "lists them under not_converged",
                     RuntimeWarning,
-                    skip_file_prefixes=(_PACKAGE_DIRECTORY,),
+                    skip_file_prefixes=(PACKAGE_DIRECTORY,),
                 )
             rows.append(row)
     return MetaAnalysisResult(

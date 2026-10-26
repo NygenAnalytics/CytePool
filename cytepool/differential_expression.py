@@ -245,9 +245,7 @@ References:
 
 import json
 import numbers
-import os
 import warnings
-from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -255,12 +253,17 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ._analysis_records import cube_record, design_record, software_versions
+from ._analysis_records import (
+    cube_record,
+    design_record,
+    matched_samples,
+    software_versions,
+)
 from ._columns import text_column
 from ._counts import effective_library_sizes
 from ._jit import thread_limit
 from ._masked_arrays import reject_masked
-from ._messages import listing, quoted
+from ._messages import PACKAGE_DIRECTORY, listing
 from ._options import (
     checked_choice,
     checked_flag,
@@ -345,8 +348,6 @@ _DREAM_SETTINGS = {
     "df_method": "satterthwaite",
 }
 _METHODS = ("limma_voom", "limma_trend", "dream_voom")
-# Warnings are attributed to the first caller outside the package.
-_PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 
 
 class DifferentialExpressionResult:
@@ -1102,7 +1103,16 @@ def _analyse(
             "this cube does not record (a cube of bulk samples has none); leave "
             "prior_weights at None"
         )
-    cube_rows, order = _matched_samples(cube, design)
+    cube_rows, order = matched_samples(
+        cube,
+        design,
+        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
+        "be matched to the cube's samples; build the Design from cube.samples, or from "
+        "a table whose 'sample_id' column holds cube sample ids",
+        text_ids="the cube's does",
+        data="the cube",
+        data_ids="the cube's sample ids",
+    )
     tested = _contrasts_to_test(design, contrasts, method)
     positions = _group_positions(cube, groups)
     inputs = _Inputs(method, cube, order, cube_rows, tested, settings)
@@ -1114,7 +1124,7 @@ def _analyse(
             warnings.warn(
                 f"group {fit.group_id!r}: {message}",
                 RuntimeWarning,
-                skip_file_prefixes=(_PACKAGE_DIRECTORY,),
+                skip_file_prefixes=(PACKAGE_DIRECTORY,),
             )
         fits.append(fit)
     if settings["adjust_across_groups"]:
@@ -1546,52 +1556,6 @@ def _adjust_across_groups(fits: list[_GroupFit], contrasts: Sequence[str]) -> No
 
 
 # Checks of the arguments.
-
-
-def _matched_samples(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray]:
-    """The cube position of every design sample, increasing, and their design rows.
-
-    Raises:
-        TypeError, ValueError: If the design's samples cannot be matched to the
-            cube's by ``sample_id``.
-    """
-    table = design.samples
-    if "sample_id" not in table:
-        raise ValueError(
-            "the design's sample table has no 'sample_id' column, so its rows cannot "
-            "be matched to the cube's samples; build the Design from cube.samples, "
-            "or from a table whose 'sample_id' column holds cube sample ids"
-        )
-    ids = table["sample_id"]
-    if ids.dtype != object:
-        raise TypeError(
-            "the design's 'sample_id' column must hold text ids, as the cube's does, "
-            f"got dtype {ids.dtype}"
-        )
-    values = ids.tolist()
-    blank = [row for row, value in enumerate(values) if value is None]
-    if blank:
-        raise ValueError(
-            f"the design's 'sample_id' column is missing in row(s) {listing(blank)}; "
-            "every sample needs an id"
-        )
-    repeated = [value for value, count in Counter(values).items() if count > 1]
-    if repeated:
-        raise ValueError(
-            f"the design's sample table repeats the sample id(s) {quoted(repeated)}; "
-            "each sample must appear once"
-        )
-    index = {value: i for i, value in enumerate(cube.samples["sample_id"].tolist())}
-    unknown = [value for value in values if value not in index]
-    if unknown:
-        raise ValueError(
-            f"{len(unknown)} of the design's {len(values)} samples are not samples of "
-            f"the cube: {quoted(unknown)}; the design's 'sample_id' must hold the "
-            f"cube's sample ids, such as {quoted(list(index)[:3])}"
-        )
-    positions = np.array([index[value] for value in values], dtype=np.intp)
-    order = np.argsort(positions, kind="stable")
-    return positions[order], order
 
 
 def _contrasts_to_test(design: Design, contrasts: Any, function: str) -> Contrasts:
