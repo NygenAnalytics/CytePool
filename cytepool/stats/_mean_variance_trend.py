@@ -41,6 +41,7 @@ from cytepool._counts import as_counts, effective_library_sizes
 from cytepool._masked_arrays import real_array, unmasked_array
 from cytepool._summation import accurate_mean
 from cytepool.design._design_matrices import design_matrix, refuse_random_effects
+from cytepool.stats._interpolation import approx
 from cytepool.stats.smoothing import choose_lowess_span, lowess
 
 FloatArray = npt.NDArray[np.float64]
@@ -192,7 +193,7 @@ def trend_weights(
     fitted_log_count = np.log2(
         np.power(2.0, fitted) * (sizes + 1.0)[:, np.newaxis] * 1e-6
     )
-    predicted = _interpolate(knots_x, knots_y, fitted_log_count)
+    predicted = approx(knots_x, knots_y, fitted_log_count)
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         weights = 1.0 / np.power(predicted, 4.0)
     usable = (predicted > 0.0) & np.isfinite(weights)
@@ -207,28 +208,6 @@ def trend_weights(
             "more features"
         )
     return Trend(log_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
-
-
-def _interpolate(
-    knots_x: FloatArray, knots_y: FloatArray, at: FloatArray
-) -> FloatArray:
-    """Linear interpolation through sorted distinct knots, constant beyond them.
-
-    The value between knots j and j + 1 is y_j + (y_j+1 - y_j) ((v - x_j) /
-    (x_j+1 - x_j)), the operations of R's ``approx`` (found by probing); at a knot
-    it is the knot's value. NaN where ``at`` is NaN.
-    """
-    if knots_x.size == 1:
-        constant: FloatArray = np.where(np.isnan(at), np.nan, knots_y[0])
-        return constant
-    j = np.searchsorted(knots_x, at, side="right") - 1
-    np.clip(j, 0, knots_x.size - 2, out=j)
-    x0, x1 = knots_x[j], knots_x[j + 1]
-    y0, y1 = knots_y[j], knots_y[j + 1]
-    values: FloatArray = y0 + (y1 - y0) * ((at - x0) / (x1 - x0))
-    values[at <= knots_x[0]] = knots_y[0]
-    values[at >= knots_x[-1]] = knots_y[-1]
-    return values
 
 
 def scaled_prior_weights(

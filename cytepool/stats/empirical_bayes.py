@@ -102,6 +102,7 @@ from cytepool._messages import PACKAGE_DIRECTORY, value_range
 from cytepool._options import checked_flag, real_number
 from cytepool._ranks import average_ranks
 from cytepool._summation import accurate_sum, two_sum
+from cytepool.stats._interpolation import approx
 from cytepool.stats._moderation import (
     LIKELIHOOD_MIN_DF,
     coefficient_prior_variance,
@@ -1057,7 +1058,7 @@ def _fit_robust(
             full = np.empty(n)
             full[usable] = part.scale
             full[~usable] = np.exp(
-                _interpolate(covariate[usable], np.log(part.scale), covariate[~usable])
+                approx(covariate[usable], np.log(part.scale), covariate[~usable])
             )
             scale = full
         return RobustFDistributionFit(
@@ -1329,20 +1330,6 @@ def _monotone_in(
         ordered[: first_minimum + 1] = cumulative_mean[first_minimum]
     result = np.empty(values.size)
     result[order] = np.maximum.accumulate(ordered)
-    return result
-
-
-def _interpolate(x: FloatArray, y: FloatArray, at: FloatArray) -> FloatArray:
-    """Linear interpolation of y over x at ``at``, constant beyond the range.
-
-    Values of y at tied x are averaged first (R's ``approx`` with ``ties=mean``).
-    """
-    order = np.argsort(x, kind="stable")
-    xs, ys = x[order], y[order]
-    starts = np.flatnonzero(np.r_[True, xs[1:] != xs[:-1]])
-    unique_x = xs[starts]
-    mean_y = np.add.reduceat(ys, starts) / np.diff(np.r_[starts, xs.size])
-    result: FloatArray = np.interp(at, unique_x, mean_y)
     return result
 
 
