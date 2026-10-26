@@ -16,7 +16,7 @@ exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py` and
-`variance_partitioning.py`; on
+`variance_partitioning.py` and `gene_set_files_and_ora.py`; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -53,6 +53,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 150 | 146 pass, 4 deliberate differences | 4.8 s | 195 MiB |
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
+| [`gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py) | Gene-set files and over-representation | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | 34 | 29 pass, 5 deliberate differences | 4.7 s | 297 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
@@ -64,7 +65,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,973** | **1,707 pass, none failed; 156 information, 109 deliberate differences, 1 control** | | |
+| **All** | | | **2,007** | **1,736 pass, none failed; 156 information, 114 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1106,6 +1107,78 @@ Deliberate differences:
   listed twice counts once in CytePool, twice in limma. mroast tests every set with the
   same rotations, where limma draws new ones for each set. The tests check these.
 
+## Gene-set files and over-representation
+
+[`validation/gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py)
+checks the reading and writing of GMT files, the matching of gene sets to an analysis,
+and over-representation analysis. Four GMT files of 60 sets are simulated from fixed
+seeds in the styles of MSigDB (names in capitals, links as descriptions, symbols),
+Reactome (names with spaces and punctuation, lines ending in a carriage return and a
+line feed, tabs at the ends of lines), WikiPathways (names joined by %, Entrez ids, a
+byte-order mark, blank lines) and the GMT exports of the Gene Ontology (descriptions
+"na" or empty, genes listed twice, a set without genes, a name outside ASCII,
+compressed by gzip). `read_gmt` reads each file and `write_gmt` writes it back; R reads
+both files by hand (`readLines`, fields split at tabs), and decoupler's `read_gmt`
+reads the MSigDB-style file. A file of 60 sets of symbols is matched to the 2,000 genes
+of an analysis by `GeneSets.restrict_to` and by limma's `ids2indices`, the sets of 15
+to 200 genes are kept, and `camera` tests them on simulated log-expression, given the
+sets that CytePool read, against limma's `camera` given those that R read.
+
+`over_representation` runs on simulated results of 4,000 genes, 8% up and 6% down at
+an FDR of 5%, with a block of tied p-values, and 305 sets of up to 600 genes, a fifth
+of each set outside the results: sets enriched for genes up, down or both, or for none,
+two identical sets, a set that lists genes twice, a set of every gene, a set outside
+the universe, and a set with two features of one symbol, one up and one down. Its table
+is compared with limma's `kegga` of a fit with the same p-values and log fold changes,
+which selects the genes up and down itself, and with kegga's default method given the
+genes of each direction and the universe: by feature id; by symbol, which 160 features
+share in pairs; by symbol where 131 features lack one; with a universe of 60% of the
+genes, 100 genes of the sets outside the results and 50 genes of no set; with 416 genes
+without a p-value; and for a list of 230 genes, 30 of them outside the universe and
+some listed twice. The adjusted p-values are compared with `p.adjust` of kegga's
+p-values, the order of the sets with `topKEGG`'s, the p-values also with R's `phyper`
+on a grid of 247 points that reaches 1e-300 and underflow, and the dot plot's sets,
+dots and colours with kegga's counts and adjusted p-values. Reference: R 4.4.3, limma
+3.62.1, decoupler 2.2.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| GMT files in four styles: the names, descriptions and genes of every set, read, written and read again | R, by hand | 0 sets differ | 0 | 4 pass |
+| The MSigDB-style file: names and genes | decoupler `read_gmt` | 0 sets differ | 0 | 1 pass |
+| `restrict_to`: the sets kept and the positions of their genes | `ids2indices` | identical | 0 | 1 pass |
+| `filter_by_size(15, 200)`, then `camera` of the 34 sets kept | `camera` | 3.1e-15 | 1e-10 | 1 pass |
+| P(X >= k) at 247 points | `phyper` | 2.1e-12 | 1e-10 | 1 pass |
+| Genes up and down that kegga selects from a fit, by feature id and by shared symbols: numbers of genes, overlaps, p-values, adjusted p-values and the order of the sets | `kegga` of a fit, `p.adjust`, `topKEGG` | 6.2e-14 | 1e-10 | 4 pass |
+| Genes up, down and either way, by feature id, by shared or missing symbols, with a universe given and without p-values for some genes, and a list of genes: the same, and the numbers selected, the size of the universe and the expected overlaps | `kegga`, `p.adjust`, `topKEGG` | 9.7e-14 | 1e-10 | 16 pass |
+| The dot plot: the 20 sets shown and their order, the area and colour of its 60 dots | `kegga` | identical | 0 | 1 pass |
+| Features without a symbol, which kegga of a fit leaves out of its adjustment | `kegga` of a fit | 1.9 (relative) | n/a | 2 deliberate differences |
+| Genes without a p-value, which kegga of a fit keeps in the universe | `kegga` of a fit | 5.3 (relative) | n/a | 2 deliberate differences |
+| Sets without genes in the universe: rows with NaN p-values here, none in kegga's table | `kegga` | 1 to 23 sets per case | n/a | 1 deliberate difference |
+
+p-values, adjusted p-values and expected overlaps are compared relative to max(p,
+1e-300); numbers of genes, overlaps, names and orders must be identical. kegga selects
+the genes of a fit whose adjusted p-value is below its `FDR`, strictly, up or down by
+the sign of the coefficient; it counts a gene id on several features once, in both
+lists when one feature goes up and another down; it leaves out features without an id;
+and `topKEGG` orders sets by p-value, ties by the number of genes. These conventions
+were found by probing, and the checks by symbol confirm them. Half of the features
+without a symbol are changed genes, so that kegga's adjustment without them moves
+other genes across the cutoff and the difference shows.
+
+Deliberate differences:
+
+- A set without genes in the universe has a row with NaN p-values in CytePool, left
+  out of the adjustment of the others; kegga leaves the set out of its table.
+- Genes without a p-value, such as those DESeq2's independent filtering leaves out:
+  kegga's method for a fit keeps them in the universe, where CytePool, which takes them
+  as not tested, leaves them out. Given the universe of every gene, CytePool gives
+  kegga's values; the tests check this.
+- Features without an id, such as a symbol: kegga's method for a fit leaves them out
+  of its Benjamini-Hochberg adjustment, so that the genes it selects depend on which
+  features have a symbol. CytePool takes the adjusted p-values of the results, the
+  genes the analysis called significant. With the p-values adjusted over the features
+  with a symbol, CytePool gives kegga's values; the tests check this.
+
 ## Multiple testing
 
 [`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
@@ -1899,6 +1972,7 @@ RSCRIPT=$REF/r-mixed/bin/Rscript python validation/mixed_models.py --benchmark
 python validation/empirical_bayes.py
 python validation/gene_set_tests.py
 python validation/rotation_gene_set_tests.py
+python validation/gene_set_files_and_ora.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py

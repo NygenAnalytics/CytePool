@@ -617,6 +617,7 @@ NO_PUBLISHED_WORK = {
     "cytepool": "the package's namespace; its modules cite their sources",
     "cytepool._analysis_records": "assembles CytePool's records of an analysis",
     "cytepool._columns": "names the columns of result tables",
+    "cytepool._gene_ids": "reads lists of gene ids",
     "cytepool._jit": "compiles and caches routines with numba; THIRD_PARTY_NOTICES.md "
     "records what its cache locator follows of numba",
     "cytepool._masked_arrays": "refuses numpy masked arrays at the public boundary",

@@ -54,6 +54,10 @@ matrix.
 included, that names the cube however it was made. [Cube files and provenance
 records](cube_files.md)
 
+**Gene set.** A named list of genes, such as a pathway or a signature, from a collection
+such as MSigDB, often read from a GMT file. [Gene-set
+tests](../statistics/gene_set_tests.md#gene-set-files)
+
 **Group.** The second axis of a cube, usually a cell type: the cells of one sample are
 pooled per group. A bulk cube has one group.
 
@@ -71,6 +75,11 @@ factor, the effective library size.
 **Normalization factor and size factor.** Corrections for sequencing depth and
 composition: edgeR multiplies library sizes by normalization factors (such as TMM), and
 DESeq2 replaces them by size factors. [Count models](../statistics/count_models.md)
+
+**Over-representation analysis.** A test of whether the genes called significant hold
+more of a set's genes than chance would give, by the hypergeometric distribution against
+a universe of genes. [Gene-set
+tests](../statistics/gene_set_tests.md#over-representation-analysis)
 
 **Precision weight.** A weight for each observation, the inverse of its predicted
 variance, such as voom's. [Precision weights](../statistics/precision_weights.md)

@@ -241,6 +241,8 @@ def camera(
             ``gene_ids``; ids not among them are left out, as limma's ``ids2indices``
             does), 0-based positions of columns of ``y`` when ``gene_ids`` is not
             given, or a boolean mask over the genes. A gene listed twice counts once.
+            A :class:`~cytepool.gene_sets.GeneSets`, such as one read from a GMT file
+            by :func:`~cytepool.gene_sets.read_gmt`, is such a mapping, of gene ids.
         gene_ids: One id per gene (column of ``y``), unique, to name genes in
             ``gene_sets`` by id.
         weights: Precision weights, positive and finite: ``(n_samples,)`` for sample

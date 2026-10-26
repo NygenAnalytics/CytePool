@@ -275,7 +275,9 @@ def roast(
             them are left out), 0-based positions of columns of ``y`` when
             ``gene_ids`` is not given, or a boolean mask over the genes; or a mapping
             of gene (id or position) to its contribution weight. A gene listed twice
-            counts once, and a gene of weight zero leaves the set.
+            counts once, and a gene of weight zero leaves the set. One set of a
+            :class:`~cytepool.gene_sets.GeneSets`, ``gene_sets[name]``, is a tuple of
+            gene ids.
         gene_ids: One id per gene (column of ``y``), unique, to name genes by id.
         weights: Precision weights, positive and finite: ``(n_samples,)`` for sample
             weights or ``(n_samples, n_genes)`` for observation weights. Not with a
@@ -371,7 +373,9 @@ def mroast(
         contrast: The contrast to test, as for :func:`roast`.
         gene_sets: Mapping of set name to its genes, each as ``gene_set`` of
             :func:`roast`: gene ids, positions or a boolean mask, or a mapping of
-            gene to its contribution weight.
+            gene to its contribution weight. A
+            :class:`~cytepool.gene_sets.GeneSets`, such as one read from a GMT file
+            by :func:`~cytepool.gene_sets.read_gmt`, is such a mapping, of gene ids.
         gene_ids: One id per gene, unique, to name genes by id.
         weights: Precision weights, as for :func:`roast`.
         gene_weights: ``(n_genes,)`` contribution weights, as for :func:`roast`; not
@@ -476,7 +480,8 @@ def romer(
         contrast: The contrast to test, as for :func:`roast`.
         gene_sets: Mapping of set name to its genes: gene ids (matched to
             ``gene_ids``; ids not among them are left out), 0-based positions, or a
-            boolean mask over the genes. A gene listed twice counts once.
+            boolean mask over the genes. A gene listed twice counts once. A
+            :class:`~cytepool.gene_sets.GeneSets` is such a mapping, of gene ids.
         gene_ids: One id per gene, unique, to name genes by id.
         weights: ``(n_samples,)`` sample weights, positive and finite (limma's
             ``array.weights``). romer has no observation weights.
