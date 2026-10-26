@@ -170,9 +170,10 @@ from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, column_space, sym
 from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._summation import observed_means
 from cytepool.design.checks import _aliasing, _random_checks
-from cytepool.design.design import Design, _is_random_intercept
+from cytepool.design.design import Design
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.linear_models import _contrast_matrix
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import is_random_intercept
 
 __all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
 
@@ -588,7 +589,7 @@ def fixed_effect_tests(
         matrix = np.eye(len(fit.coefficient_names))
         contrast_names = fit.coefficient_names
     else:
-        matrix, contrast_names = _contrast_matrix(
+        matrix, contrast_names = contrast_matrix(
             contrasts, names, fit.coefficient_names
         )
     estimate = fit.coefficients @ matrix
@@ -734,7 +735,7 @@ def _random_intercepts(design: Any) -> None:
             "random='(1 | donor)'"
         )
     for effect in design.random:
-        if not _is_random_intercept(effect):
+        if not is_random_intercept(effect):
             raise ValueError(
                 f"fit_mixed_model fits random intercepts, such as (1 | "
                 f"{effect.group}), but the random effect {effect} has random slopes, "

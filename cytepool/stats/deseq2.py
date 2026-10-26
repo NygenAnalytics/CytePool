@@ -213,21 +213,23 @@ from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import real_number
 from cytepool._summation import accurate_sums
 from cytepool.design.contrasts import make_contrasts
-from cytepool.design.design import Design, _refuse_random_effects
+from cytepool.design.design import Design
 from cytepool._counts import as_counts
 from cytepool.normalization import median_ratio_size_factors
 from cytepool.stats.distributions import chi2_sf, f_ppf, norm_sf
-from cytepool.stats.linear_models import (
-    _aliased_columns,
-    _contrast_matrix,
-    _design_matrix,
-)
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats._negative_binomial import linear_predictors, log1p_ratio
 from cytepool.stats.negative_binomial_models import negative_binomial_deviance
 from cytepool.stats.smoothing import lowess
 from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
 from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import (
+    require_full_rank,
+    aliased_columns,
+    design_matrix,
+    refuse_random_effects,
+)
 
 __all__ = [
     "DESeq2Dispersions",
@@ -1445,7 +1447,7 @@ def _contrast(contrast: Any, names: tuple[str, ...]) -> tuple[FloatArray, str]:
         contrast = make_contrasts({contrast: contrast}, names)
     elif isinstance(contrast, Mapping):
         contrast = make_contrasts(contrast, names)
-    matrix, contrast_names = _contrast_matrix(contrast, None, names)
+    matrix, contrast_names = contrast_matrix(contrast, None, names)
     if matrix.shape[1] != 1:
         raise ValueError(
             "contrast must hold one contrast, as results() tests one at a time; got "
@@ -1634,15 +1636,15 @@ def _reduced_design(reduced: Any, fit: DESeq2Fit) -> FloatArray:
             "reduced must be a design matrix or a Design of the fit's samples, such as "
             f"Design(samples, {reduced!r}); a formula alone does not give the samples"
         )
-    x, _ = _design_matrix(reduced, None)
-    _refuse_random_effects(reduced, "deseq2_likelihood_ratio_test")
+    x, _ = design_matrix(reduced, None)
+    refuse_random_effects(reduced, "deseq2_likelihood_ratio_test")
     n_samples = fit.design.shape[0]
     if x.shape[0] != n_samples:
         raise ValueError(
             f"the reduced design has {x.shape[0]} rows but the fit has {n_samples} "
             "samples; both need one row per sample"
         )
-    aliased = _aliased_columns(x)
+    aliased = aliased_columns(x)
     if aliased:
         raise ValueError(
             "the reduced design is not of full column rank: column(s) "
@@ -1689,21 +1691,14 @@ def _whole_counts(counts: npt.ArrayLike) -> FloatArray:
 def _full_rank_design(
     design: Any, n_samples: int, function: str
 ) -> tuple[FloatArray, tuple[str, ...]]:
-    x, names = _design_matrix(design, None)
-    _refuse_random_effects(design, function)
+    x, names = design_matrix(design, None)
+    refuse_random_effects(design, function)
     if x.shape[0] != n_samples:
         raise ValueError(
             f"counts have {n_samples} rows (samples) but the design has "
             f"{x.shape[0]}; both need one row per sample"
         )
-    aliased = _aliased_columns(x)
-    if aliased:
-        listed = ", ".join(repr(names[j]) for j in aliased)
-        raise ValueError(
-            f"design is not of full column rank: column(s) {listed} are linear "
-            "combinations of the preceding columns; remove them or reparametrise the "
-            "design"
-        )
+    require_full_rank(x, names)
     if x.shape[1] >= n_samples:
         raise ValueError(
             f"the design has {x.shape[1]} columns for {n_samples} samples and leaves no "

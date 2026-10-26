@@ -106,13 +106,8 @@ import numpy.typing as npt
 
 from cytepool._masked_arrays import reject_masked
 from cytepool._summation import accurate_mean
-from cytepool.design.design import _refuse_random_effects
 from cytepool._counts import as_counts, effective_library_sizes
-from cytepool.stats.linear_models import (
-    LinearModelFit,
-    _design_matrix,
-    fit_linear_model,
-)
+from cytepool.stats.linear_models import LinearModelFit, fit_linear_model
 from cytepool.stats.sample_weights import (
     _estimate,
     _prior_weights,
@@ -122,6 +117,7 @@ from cytepool.stats.sample_weights import (
     _weights_of,
 )
 from cytepool.stats.smoothing import choose_lowess_span, lowess
+from cytepool.design._design_matrices import design_matrix, refuse_random_effects
 
 __all__ = ["VoomResult", "voom", "voom_with_quality_weights"]
 
@@ -451,7 +447,7 @@ def _quality_weighted_voom(
         fraction: The span.
         model: The variance model and the settings of its estimation.
     """
-    x, _ = _design_matrix(design, None)
+    x, _ = design_matrix(design, None)
     first, fitted = _voom_trend(y, design, sizes, fraction, None)
     notes = []
     if not fitted:
@@ -497,8 +493,8 @@ def _voom_inputs(
         raise ValueError(
             f"a mean-variance trend needs at least two features, got {n_features}"
         )
-    n_design_rows = _design_matrix(design, None)[0].shape[0]
-    _refuse_random_effects(design, function)
+    n_design_rows = design_matrix(design, None)[0].shape[0]
+    refuse_random_effects(design, function)
     if n_design_rows != n_samples:
         raise ValueError(
             f"counts have {n_samples} rows (samples) but the design has "

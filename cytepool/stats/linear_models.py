@@ -27,7 +27,7 @@ References:
 """
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -38,20 +38,19 @@ from numba import prange
 from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import (
     RANK_TOLERANCE,
-    column_space,
     correlation_matrix,
     householder_qr,
     symmetric,
 )
 from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
-from cytepool.design.contrasts import (
-    _is_named_contrasts,
-    _is_pandas,
-    _reject_masked_contrasts,
-    _weights_on_columns,
-)
-from cytepool.design.design import _design_columns, _refuse_dropped_random_effects
 from cytepool._summation import observed_means
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import (
+    require_full_rank,
+    aliased_columns,
+    design_matrix,
+    refuse_dropped_random_effects,
+)
 
 __all__ = ["LinearModelFit", "contrasts_fit", "fit_linear_model"]
 
@@ -309,27 +308,20 @@ def fit_linear_model(
             design column's name to another column.
     """
     with thread_limit(n_threads):
-        x, names = _design_matrix(design, coefficient_names)
+        x, names = design_matrix(design, coefficient_names)
         codes, counts, rho = _block_structure(block, correlation, x.shape[0])
-        _refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
+        refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
         values = _expression_matrix(y, x.shape[0])
         observed = ~np.isnan(values)
         precision = _precision_weights(weights, values.shape, observed)
 
-        aliased = _aliased_columns(x)
-        if aliased:
-            listed = ", ".join(repr(names[j]) for j in aliased)
-            raise ValueError(
-                f"design is not of full column rank: column(s) {listed} are linear "
-                "combinations of the preceding columns; remove them or "
-                "reparametrise the design"
-            )
+        require_full_rank(x, names)
         if precision is not None and precision.ndim == 1:
             # Sample weights apply to every feature, and a zero weight removes the
             # sample from every feature's fit.
             positive = precision > 0.0
             weighted = x[positive] * np.sqrt(precision[positive])[:, np.newaxis]
-            aliased = _aliased_columns(weighted)
+            aliased = aliased_columns(weighted)
             if aliased:
                 listed = ", ".join(repr(names[j]) for j in aliased)
                 raise ValueError(
@@ -442,7 +434,7 @@ def contrasts_fit(
             "contrasts_fit with method='limma'), so its contrasts cannot be exact; "
             "contrast the original fit, or use method='limma'"
         )
-    matrix, contrast_names = _contrast_matrix(contrasts, names, fit.coefficient_names)
+    matrix, contrast_names = contrast_matrix(contrasts, names, fit.coefficient_names)
     n_features = fit.coefficients.shape[0]
     n_contrasts = matrix.shape[1]
 
@@ -510,7 +502,7 @@ def _fit_shared_design(
     n_samples, n_coefficients = x.shape
     n_features = values.shape[1]
     whitened_design = _whiten(x, sample_weights, codes, counts, correlation)
-    aliased = _aliased_columns(whitened_design)
+    aliased = aliased_columns(whitened_design)
     if aliased:
         listed = ", ".join(repr(names[j]) for j in aliased)
         raise ValueError(
@@ -893,51 +885,10 @@ def _whiten(
     return within * z + shift[codes][:, np.newaxis] * sums[codes]
 
 
-def _aliased_columns(x: FloatArray) -> list[int]:
-    """Indices of the columns of x that are linear combinations of earlier ones.
-
-    The rule is R's ``qr()`` rule, as in :func:`column_space`; the compiled
-    :func:`~cytepool._linear_algebra.householder_qr` applies the same tolerance to each
-    feature.
-    """
-    return list(column_space(x).aliased)
-
-
 def _inverse_cross_product(r: FloatArray) -> FloatArray:
     """(R'R)^-1 from the triangular factor R of a QR factorisation."""
     r_inverse = np.linalg.solve(r, np.eye(r.shape[0]))
     return symmetric(r_inverse @ r_inverse.T)
-
-
-def _design_matrix(
-    design: Any, coefficient_names: Sequence[str] | None
-) -> tuple[FloatArray, tuple[str, ...]]:
-    matrix, columns = _design_columns(design)
-    reject_masked(coefficient_names, "coefficient_names")
-    x = real_array(unmasked_array(matrix, "design"), "design")
-    if x.ndim != 2:
-        raise ValueError(
-            "design must be a 2-D array of shape (n_samples, n_coefficients), "
-            f"got shape {x.shape}"
-        )
-    if x.shape[0] == 0 or x.shape[1] == 0:
-        raise ValueError(
-            f"design must have at least one row and one column, got shape {x.shape}"
-        )
-    if not np.isfinite(x).all():
-        raise ValueError("design must be finite; it contains NaN or infinite values")
-    if coefficient_names is not None:
-        names = _checked_names(coefficient_names, x.shape[1], "coefficient_names")
-        if columns is not None:
-            _check_renaming(
-                names, [str(c) for c in columns], "coefficient_names", "the design"
-            )
-    elif columns is not None:
-        names = _checked_names([str(c) for c in columns], x.shape[1], "design columns")
-    else:
-        names = tuple(f"x{j + 1}" for j in range(x.shape[1]))
-    # A copy, so that the fit does not change with the caller's array.
-    return np.array(x, dtype=np.float64, order="C"), names
 
 
 def _expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
@@ -1028,149 +979,6 @@ def _block_structure(
             f"the correlation matrix is positive definite only above {bound:.6g}"
         )
     return codes.astype(np.int64).reshape(n_samples), counts.astype(np.int64), rho
-
-
-def _contrast_matrix(
-    contrasts: Any, names: Sequence[str] | None, coefficient_names: tuple[str, ...]
-) -> tuple[FloatArray, tuple[str, ...]]:
-    """The contrast matrix, rows in the order of the coefficients, and its names.
-
-    Weights that name their coefficients are matched to them by name, by the
-    rule of :func:`cytepool.design.contrasts._weights_on_columns`; the others
-    are taken in order.
-    """
-    _reject_masked_contrasts(contrasts, "contrasts")
-    reject_masked(names, "names")
-    n_coefficients = len(coefficient_names)
-    remedy = _contrasts_remedy(coefficient_names)
-    named = _is_named_contrasts(contrasts)
-    if (named or isinstance(contrasts, Mapping)) and names is not None:
-        raise ValueError(
-            "names must not be given when contrasts is a mapping or a Contrasts, "
-            "which carry their own names"
-        )
-    if named:
-        weights = _weights_on_columns(
-            contrasts,
-            coefficient_names,
-            label="the contrasts",
-            target="the fit's coefficients",
-            remedy=remedy,
-        )
-        matrix = real_array(weights, "contrasts")
-        if matrix.shape[1] == 0:
-            raise ValueError("contrasts must hold at least one contrast")
-        contrast_names = _checked_names(
-            contrasts.names, matrix.shape[1], "contrast names"
-        )
-    elif isinstance(contrasts, Mapping):
-        if not contrasts:
-            raise ValueError("contrasts must hold at least one contrast")
-        vectors = []
-        for key, vector in contrasts.items():
-            weights = _weights_on_columns(
-                vector,
-                coefficient_names,
-                label=f"contrast {key!r}",
-                target="the fit's coefficients",
-                remedy=remedy,
-            )
-            values = real_array(weights, f"contrast {key!r}")
-            if values.shape != (n_coefficients,):
-                raise ValueError(
-                    f"contrast {key!r} must have one value per coefficient "
-                    f"({n_coefficients}), got shape {values.shape}"
-                )
-            vectors.append(values)
-        matrix = np.column_stack(vectors)
-        contrast_names = _checked_names(
-            list(contrasts.keys()), matrix.shape[1], "contrast names"
-        )
-    else:
-        # The columns of a DataFrame, or the name of a Series, name its contrasts;
-        # the index names its rows.
-        columns = getattr(contrasts, "columns", None)
-        if _is_pandas(contrasts) and columns is None:
-            name = getattr(contrasts, "name", None)
-            columns = [name] if isinstance(name, str) else None
-        weights = _weights_on_columns(
-            contrasts,
-            coefficient_names,
-            label="the contrasts",
-            target="the fit's coefficients",
-            remedy=remedy,
-        )
-        matrix = real_array(weights, "contrasts")
-        if matrix.ndim == 1:
-            matrix = matrix[:, np.newaxis]
-        if matrix.ndim != 2 or matrix.shape[0] != n_coefficients:
-            raise ValueError(
-                "contrasts must have one row per coefficient of the fit "
-                f"({n_coefficients}), got shape {matrix.shape}"
-            )
-        if matrix.shape[1] == 0:
-            raise ValueError("contrasts must hold at least one contrast")
-        if names is not None:
-            contrast_names = _checked_names(names, matrix.shape[1], "names")
-            if columns is not None:
-                _check_renaming(
-                    contrast_names, [str(c) for c in columns], "names", "the contrasts"
-                )
-        elif columns is not None:
-            contrast_names = _checked_names(
-                [str(c) for c in columns], matrix.shape[1], "contrast columns"
-            )
-        else:
-            contrast_names = tuple(f"contrast{j + 1}" for j in range(matrix.shape[1]))
-    if not np.isfinite(matrix).all():
-        raise ValueError("contrasts must be finite")
-    return np.array(matrix, dtype=np.float64, order="C"), contrast_names
-
-
-def _contrasts_remedy(coefficient_names: tuple[str, ...]) -> str:
-    """How to make contrasts that match a fit, for error messages."""
-    remedy = "make them with make_contrasts(..., fit.coefficient_names)"
-    if coefficient_names == tuple(f"x{j + 1}" for j in range(len(coefficient_names))):
-        remedy += (
-            "; the fit has the default names x1, x2, ..., so fit the Design itself, "
-            "not its matrix, to keep the names of its columns"
-        )
-    return remedy
-
-
-def _check_renaming(
-    given: tuple[str, ...], existing: Sequence[str], label: str, owner: str
-) -> None:
-    """Refuse new names that give a column the name another column already has.
-
-    Names given by position rename the columns in order. Coefficients and
-    contrasts are matched by name downstream, so moving a name to another
-    column would silently swap what it refers to.
-    """
-    existing = list(existing)
-    for position, name in enumerate(given):
-        own = position < len(existing) and existing[position] == name
-        if name in existing and not own:
-            raise ValueError(
-                f"{label} give column {position + 1} the name {name!r}, the name of "
-                f"column {existing.index(name) + 1} of {owner}; {label} rename "
-                f"the columns in order ({', '.join(map(repr, existing))}), so a name "
-                "already in use may only label its own column"
-            )
-
-
-def _checked_names(names: Any, count: int, label: str) -> tuple[str, ...]:
-    if isinstance(names, str):
-        raise TypeError(f"{label} must be a sequence of strings, not a single string")
-    checked = tuple(names)
-    if not all(isinstance(name, str) for name in checked):
-        raise TypeError(f"{label} must be strings")
-    checked = tuple(str(name) for name in checked)
-    if len(checked) != count:
-        raise ValueError(f"{label} must have {count} entries, got {len(checked)}")
-    if len(set(checked)) != count:
-        raise ValueError(f"{label} must be unique, got {checked}")
-    return checked
 
 
 def _read_only(

@@ -130,11 +130,11 @@ from ._summation import accurate_mean
 from .cube import Cube
 from .design import Contrasts, Design, ModelMatrix, make_contrasts
 from .design.checks import _aliasing, _relation
-from .design.design import _refuse_random_effects
 from .stats.empirical_bayes import ModeratedFit, moderated_statistics
 from .stats.linear_models import LinearModelFit, contrasts_fit, fit_linear_model
 from .stats.multiple_testing import adjust_p_values
 from .table import Table
+from .design._design_matrices import refuse_random_effects
 
 __all__ = ["CompositionResult", "propeller"]
 
@@ -483,7 +483,7 @@ def propeller(
             "design must be a Design whose sample table has a sample_id column with "
             f"the sample ids of the data, got {type(design).__name__}"
         )
-    _refuse_random_effects(design, _METHOD)
+    refuse_random_effects(design, _METHOD)
     settings: dict[str, Any] = {
         "transform": checked_choice(transform, "transform", ("logit", "asin")),
         "robust": checked_flag(robust, "robust"),

@@ -125,11 +125,12 @@ from cytepool._options import (
     positive_finite_number,
     positive_integer,
 )
-from cytepool.design.design import Design, _refuse_random_effects
-from cytepool.stats.linear_models import (
-    _aliased_columns,
-    _design_matrix,
-    _expression_matrix,
+from cytepool.design.design import Design
+from cytepool.stats.linear_models import _expression_matrix
+from cytepool.design._design_matrices import (
+    require_full_rank,
+    design_matrix,
+    refuse_random_effects,
 )
 
 __all__ = ["sample_quality_weights"]
@@ -231,10 +232,10 @@ def sample_quality_weights(
             of range, or the information matrix is singular (some sample carries no
             information about its variance, and ``prior_n`` is too small).
     """
-    x, names = _design_matrix(design, None)
-    _refuse_random_effects(design, "sample_quality_weights")
+    x, names = design_matrix(design, None)
+    refuse_random_effects(design, "sample_quality_weights")
     values = _expression_matrix(y, x.shape[0])
-    _require_full_rank(x, names)
+    require_full_rank(x, names)
     prior = _prior_weights(weights, values.shape, ~np.isnan(values))
     model = _variance_model(
         variance_design,
@@ -486,17 +487,6 @@ def _too_few_df_message(df: int) -> str:
         "sample quality weights need a design with at least two residual degrees of "
         f"freedom, got {df}; every weight is 1"
     )
-
-
-def _require_full_rank(x: FloatArray, names: tuple[str, ...]) -> None:
-    aliased = _aliased_columns(x)
-    if aliased:
-        listed = ", ".join(repr(names[j]) for j in aliased)
-        raise ValueError(
-            f"design is not of full column rank: column(s) {listed} are linear "
-            "combinations of the preceding columns; remove them or reparametrise "
-            "the design"
-        )
 
 
 def _prior_weights(

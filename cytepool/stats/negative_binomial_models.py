@@ -179,13 +179,16 @@ from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
 from cytepool._masked_arrays import reject_masked
 from cytepool._options import non_negative_number, positive_integer
-from cytepool.design.design import _refuse_random_effects
 from cytepool.stats._negative_binomial import (
     linear_predictors,
     unit_deviance,
     unit_deviances,
 )
-from cytepool.stats.linear_models import _aliased_columns, _design_matrix
+from cytepool.design._design_matrices import (
+    require_full_rank,
+    design_matrix,
+    refuse_random_effects,
+)
 
 __all__ = [
     "NegativeBinomialFit",
@@ -383,21 +386,14 @@ def fit_negative_binomial_model(
     with thread_limit(n_threads):
         y = as_counts(counts)
         n_samples, n_features = y.shape
-        x, names = _design_matrix(design, coefficient_names)
-        _refuse_random_effects(design, "fit_negative_binomial_model")
+        x, names = design_matrix(design, coefficient_names)
+        refuse_random_effects(design, "fit_negative_binomial_model")
         if x.shape[0] != n_samples:
             raise ValueError(
                 f"counts have {n_samples} rows (samples) but the design has "
                 f"{x.shape[0]}; both need one row per sample"
             )
-        aliased = _aliased_columns(x)
-        if aliased:
-            listed = ", ".join(repr(names[j]) for j in aliased)
-            raise ValueError(
-                f"design is not of full column rank: column(s) {listed} are linear "
-                "combinations of the preceding columns; remove them or reparametrise "
-                "the design"
-            )
+        require_full_rank(x, names)
         phi = dispersion_matrix(dispersion, n_samples, n_features)
         log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
         w = weight_matrix(weights, n_samples, n_features)

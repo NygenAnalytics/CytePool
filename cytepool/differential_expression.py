@@ -274,7 +274,6 @@ from ._options import (
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design.checks import _aliasing, _contrast_violations
-from .design.design import _is_random_intercept, _refuse_random_effects
 from .normalization import (
     filter_by_expression,
     library_sizes,
@@ -310,6 +309,7 @@ from .stats.voom import (
     voom,
 )
 from .table import Table
+from .design._design_matrices import is_random_intercept, refuse_random_effects
 
 __all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
 
@@ -1088,9 +1088,9 @@ def _analyse(
         _random_intercepts(design)
     else:
         try:
-            _refuse_random_effects(design, method)
+            refuse_random_effects(design, method)
         except ValueError as error:
-            if not all(_is_random_intercept(effect) for effect in design.random):
+            if not all(is_random_intercept(effect) for effect in design.random):
                 raise
             raise ValueError(
                 f"{error} On a cube, dream_voom fits these random intercepts in every "

@@ -36,7 +36,6 @@ References:
     Acids Research 43, e47. doi:10.1093/nar/gkv007
 """
 
-import numbers
 import re
 from collections.abc import (
     ItemsView,
@@ -53,7 +52,12 @@ from typing import Any
 import numpy as np
 
 from .._masked_arrays import reject_masked
-from .._messages import close_matches, listing, quoted
+from .._messages import close_matches
+from ._contrast_weights import (
+    is_named_contrasts,
+    reject_masked_contrasts,
+    weights_on_columns,
+)
 
 __all__ = ["Contrasts", "make_contrasts"]
 
@@ -213,11 +217,11 @@ def make_contrasts(
         ...                ["groupA", "groupB", "groupC"]).matrix[:, 0]
         array([-1.,  1.,  0.])
     """
-    _reject_masked_contrasts(contrasts, "contrasts")
+    reject_masked_contrasts(contrasts, "contrasts")
     names_of_columns = _column_names(columns)
-    if _is_named_contrasts(contrasts):
+    if is_named_contrasts(contrasts):
         named: Any = contrasts
-        aligned = _weights_on_columns(
+        aligned = weights_on_columns(
             named,
             names_of_columns,
             label="the contrasts",
@@ -309,7 +313,7 @@ def _specifications(contrasts: Any) -> list[tuple[str, Any]]:
 
 
 def _vector(name: str, values: Any, columns: tuple[str, ...]) -> np.ndarray:
-    values = _weights_on_columns(
+    values = weights_on_columns(
         values,
         columns,
         label=f"contrast {name!r}",
@@ -331,147 +335,6 @@ def _vector(name: str, values: Any, columns: tuple[str, ...]) -> np.ndarray:
     if not np.all(np.isfinite(vector)):
         raise ValueError(f"contrast {name!r} has weights that are not finite")
     return vector
-
-
-def _reject_masked_contrasts(contrasts: Any, name: str) -> None:
-    """Refuse numpy masked arrays in contrasts given to a function.
-
-    That is, in the contrasts themselves (a matrix, a vector, or the weights of a
-    mapping), and in the ``matrix``, ``names`` and ``columns`` of named contrasts
-    (see :func:`_is_named_contrasts`).
-    """
-    reject_masked(contrasts, name)
-    if _is_named_contrasts(contrasts):
-        for attribute in ("matrix", "names", "columns"):
-            reject_masked(getattr(contrasts, attribute), f"{name}.{attribute}")
-
-
-def _is_pandas(values: Any) -> bool:
-    """Whether values are a pandas Series or DataFrame, whose index labels its rows.
-
-    These attributes are pandas' own, which no column of a DataFrame can hide.
-    """
-    return all(hasattr(values, name) for name in ("index", "iloc", "to_numpy"))
-
-
-def _is_named_contrasts(values: Any) -> bool:
-    """Whether values are a ``Contrasts``, or laid out like one.
-
-    That is, they have a ``(n_columns, n_contrasts)`` ``matrix``, the contrast
-    ``names`` and the ``columns`` that name its rows. A pandas DataFrame is not,
-    even one with columns of those names (pandas shows columns as attributes).
-    """
-    return not _is_pandas(values) and all(
-        hasattr(values, name) for name in ("matrix", "names", "columns")
-    )
-
-
-def _weights_on_columns(
-    weights: Any, columns: Sequence[str], *, label: str, target: str, remedy: str
-) -> Any:
-    """Contrast weights with their rows in the order of ``columns``.
-
-    This decides, for every function that takes contrast weights, which weights
-    name their rows. A pandas Series or DataFrame names them by its index when
-    that holds strings, and named contrasts (see :func:`_is_named_contrasts`) by
-    their ``columns``. Such rows are matched to ``columns`` by name, so they must
-    be exactly those names, in any order. An index that is pandas' default 0, 1,
-    ..., n - 1 names no rows; any other index is an error, because its labels
-    could be meant either as names or as positions. Weights whose rows are not
-    named are returned as they are, to be read in the order of ``columns``.
-
-    Args:
-        weights: A vector, a matrix with one row per column, or named contrasts.
-        columns: The names the rows must match, in the order wanted; unique.
-        label: The weights in messages, such as "the contrasts".
-        target: ``columns`` in messages, such as "the fit's coefficients".
-        remedy: How to fix a mismatch, ending its message.
-
-    Returns:
-        The weights as an array with rows in the order of ``columns``, or
-        ``weights`` unchanged (a pandas object as an array) when its rows are not
-        named.
-
-    Raises:
-        TypeError: If ``weights`` has a matrix and columns but no contrast names,
-            as a design does.
-        ValueError: If the rows are named but not exactly by ``columns``, a name
-            repeats, or a pandas index neither holds strings nor is the default.
-    """
-    pandas = _is_pandas(weights)
-    if pandas:
-        values = weights.to_numpy()
-        names = list(weights.index)
-        if not all(isinstance(name, str) for name in names):
-            if _default_positions(names):
-                return values
-            raise ValueError(
-                f"the index of {label} must hold the names of {target}, or be the "
-                f"default 0, 1, ..., n - 1 for weights in the order of {target}; got "
-                + quoted(names)
-            )
-    elif _is_named_contrasts(weights):
-        values = np.asarray(weights.matrix)
-        names = list(weights.columns)
-        if values.ndim != 2 or values.shape[0] != len(names):
-            raise ValueError(
-                f"{label} must have one row of weights per name in their columns "
-                f"({len(names)}), got a matrix of shape {values.shape}"
-            )
-    elif hasattr(weights, "matrix") and hasattr(weights, "columns"):
-        raise TypeError(
-            f"a {type(weights).__name__} has a matrix and columns but no contrast "
-            f"names, as a design does, so it cannot give {label}; pass the contrasts "
-            "of a design (design.contrasts), contrasts from make_contrasts, or the "
-            "weights alone"
-        )
-    else:
-        return weights
-    rows: dict[Any, int] = {}
-    for row, name in enumerate(names):
-        if name in rows:
-            raise ValueError(
-                f"{name!r} labels more than one row of {label}; each row must weigh "
-                f"a different one of {target}"
-            )
-        rows[name] = row
-    missing = [name for name in columns if name not in rows]
-    known = set(columns)
-    unexpected = [name for name in names if name not in known]
-    if missing or unexpected:
-        problems = []
-        if missing:
-            problems.append(f"{quoted(missing)} {_is_or_are(missing)} missing")
-        if unexpected:
-            hinted = [
-                repr(name) + close_matches(str(name), [str(m) for m in missing])
-                for name in unexpected
-            ]
-            problems.append(f"{listing(hinted)} {_is_or_are(hinted)} not among them")
-        if pandas and not unexpected:
-            remedy += (
-                "; to give the missing ones zero weight, reindex the weights with "
-                "fill_value=0"
-            )
-        raise ValueError(
-            f"{label} must weigh exactly {target} ({quoted(columns)}), in any "
-            f"order, but {' and '.join(problems)}; {remedy}"
-        )
-    return values[[rows[name] for name in columns]]
-
-
-def _default_positions(labels: list[Any]) -> bool:
-    """Whether labels are 0, 1, ..., n - 1, as pandas' default RangeIndex."""
-    return all(
-        isinstance(label, numbers.Integral)
-        and not isinstance(label, bool)
-        and label == position
-        for position, label in enumerate(labels)
-    )
-
-
-def _is_or_are(items: Sequence[Any]) -> str:
-    return "is" if len(items) == 1 else "are"
 
 
 def _describe(vector: np.ndarray, columns: tuple[str, ...]) -> str:

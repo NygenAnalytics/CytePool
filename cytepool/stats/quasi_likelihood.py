@@ -204,11 +204,9 @@ from cytepool._options import (
     positive_integer,
     real_number,
 )
-from cytepool.design.design import _refuse_random_effects
 from cytepool._counts import as_counts, dispersion_matrix, offset_matrix, weight_matrix
 from cytepool.stats.distributions import f_sf
 from cytepool.stats.empirical_bayes import squeeze_variances
-from cytepool.stats.linear_models import _contrast_matrix, _design_matrix
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats._negative_binomial import (
     SERIES_LIMIT,
@@ -224,6 +222,8 @@ from cytepool.stats.smoothing import lowess
 from cytepool.stats._moderation import LIKELIHOOD_MIN_DF
 from cytepool.stats._optimize import brent_minimum
 from cytepool.stats._scalar_special_functions import stirling_error
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import design_matrix, refuse_random_effects
 
 __all__ = [
     "QuasiLikelihoodFit",
@@ -1124,8 +1124,8 @@ def common_dispersion(
     with thread_limit(n_threads):
         y = as_counts(counts)
         n_samples, n_features = y.shape
-        x, names = _design_matrix(design, coefficient_names)
-        _refuse_random_effects(design, "common_dispersion")
+        x, names = design_matrix(design, coefficient_names)
+        refuse_random_effects(design, "common_dispersion")
         low, high = _search_interval(interval)
         least = non_negative_number(min_row_sum, "min_row_sum")
         reject_masked(subset, "subset")
@@ -1493,8 +1493,8 @@ def fit_quasi_likelihood(
     with thread_limit(n_threads):
         y = as_counts(counts)
         n_samples, n_features = y.shape
-        x, names = _design_matrix(design, coefficient_names)
-        _refuse_random_effects(design, "fit_quasi_likelihood")
+        x, names = design_matrix(design, coefficient_names)
+        refuse_random_effects(design, "fit_quasi_likelihood")
         if x.shape[0] != n_samples:
             raise ValueError(
                 f"counts have {n_samples} rows (samples) but the design has "
@@ -1749,7 +1749,7 @@ def quasi_likelihood_f_test(
     if contrasts is not None:
         if coefficients is not None:
             raise ValueError("give coefficients or contrasts to test, not both")
-        matrix, tested = _contrast_matrix(contrasts, names, coefficient_names)
+        matrix, tested = contrast_matrix(contrasts, names, coefficient_names)
         if not np.isfinite(matrix).all():
             raise ValueError("contrasts must be finite")
         null_design, rank = _null_design(x, matrix)

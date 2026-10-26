@@ -170,17 +170,18 @@ from cytepool._options import checked_flag
 from cytepool._ranks import average_ranks
 from cytepool.stats._moderation import posterior_variances
 from cytepool._summation import observed_means
-from cytepool.design.contrasts import _is_named_contrasts, _weights_on_columns
-from cytepool.design.design import Design, _refuse_random_effects
+from cytepool.design.design import Design
 from cytepool.stats.distributions import beta_sf, norm_sf, t_sf
 from cytepool.stats.empirical_bayes import squeeze_variances
-from cytepool.stats.linear_models import (
-    _aliased_columns,
-    _design_matrix,
-)
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.voom import VoomResult
 from cytepool.table import Table
+from cytepool.design._contrast_weights import is_named_contrasts, weights_on_columns
+from cytepool.design._design_matrices import (
+    require_full_rank,
+    design_matrix,
+    refuse_random_effects,
+)
 
 __all__ = ["camera", "fry"]
 
@@ -505,22 +506,15 @@ def _contrast_design(
     values: FloatArray, design: Any, contrast: Any, function: str
 ) -> tuple[FloatArray, int]:
     """The design, checked, with the contrast as its last coefficient, and d."""
-    _refuse_random_effects(design, function)
-    x, names = _design_matrix(design, None)
+    refuse_random_effects(design, function)
+    x, names = design_matrix(design, None)
     n_samples, n_coefficients = x.shape
     if n_samples != values.shape[0]:
         raise ValueError(
             f"y has {values.shape[0]} rows but the design has {n_samples}; rows "
             "of both are samples"
         )
-    aliased = _aliased_columns(x)
-    if aliased:
-        listed = ", ".join(repr(names[j]) for j in aliased)
-        raise ValueError(
-            f"design is not of full column rank: column(s) {listed} are linear "
-            "combinations of the preceding columns; remove them or reparametrise the "
-            "design"
-        )
+    require_full_rank(x, names)
     d = n_samples - n_coefficients
     if d < 1:
         raise ValueError(
@@ -668,10 +662,10 @@ def _contrast(contrast: Any, design: Any, names: tuple[str, ...]) -> int | Float
                 f"design has {n_columns} columns, positions 0 to {n_columns - 1}"
             )
         return position % n_columns
-    if isinstance(contrast, Mapping) and not _is_named_contrasts(contrast):
+    if isinstance(contrast, Mapping) and not is_named_contrasts(contrast):
         return _weights_by_column(contrast, names)
     remedy = "give one weight per design column, in their order or named by them"
-    weights = _weights_on_columns(
+    weights = weights_on_columns(
         contrast,
         names,
         label="the contrast",
