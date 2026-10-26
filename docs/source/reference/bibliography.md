@@ -33,7 +33,8 @@ limma and its methods [@smyth2004; @smyth2005; @ritchie2015; @phipson2016;
 
 [@bates2015; @patterson1971; @harville1977; @henderson1975; @satterthwaite1946;
 @giesbrecht1985; @kuznetsova2017; @bertsekas1982; @hoffman2016; @hoffman2021;
-@hoffman2026a]
+@hoffman2026a]; Kenward and Roger's tests and F-tests [@kenward1997; @halekoh2014;
+@fai1996]
 
 ## Gene sets, pathways and interactions
 

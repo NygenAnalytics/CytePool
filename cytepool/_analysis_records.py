@@ -59,6 +59,18 @@ def design_record(design: Design, contrasts: Contrasts) -> dict[str, Any]:
     }
 
 
+def mixed_design_record(design: Design, contrasts: Contrasts) -> dict[str, Any]:
+    """``design_record`` with the random effects, as ``"random"``, and the values of
+    the variables they group by for every sample, among the ``"samples"``."""
+    record = design_record(design, contrasts)
+    record["random"] = [str(effect) for effect in design.random]
+    samples = design.samples
+    for effect in design.random:
+        for name in effect.grouping:
+            record["samples"].setdefault(name, samples[name].tolist())
+    return record
+
+
 def software_versions() -> dict[str, str]:
     """The versions of CytePool, numpy, numba and Python that run an analysis."""
     return {

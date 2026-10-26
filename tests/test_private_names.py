@@ -63,6 +63,10 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.distributions", "_f_tail_quantile"): _F_DISTRIBUTION,
     ("cytepool.stats.distributions", "_f_tails"): _F_DISTRIBUTION,
     ("cytepool.stats.dream", "_dream_weights"): _VOOM_RESULT,
+    ("cytepool.stats.dream", "_moderated_tests"): (
+        "builds the public ModeratedFixedEffectTests of cytepool.stats.dream from the "
+        "parts of tests that dream_voom chooses feature by feature"
+    ),
     ("cytepool.stats.mixed_models", "_fit"): (
         "builds the public MixedModelFit of cytepool.stats.mixed_models"
     ),

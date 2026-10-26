@@ -118,15 +118,16 @@ Sample weights:
 
 dream:
     :func:`dream_voom` takes the steps of limma-voom up to the normalization, then
-    those of variancePartition's ``voomWithDreamWeights``, ``dream(ddf =
-    "Satterthwaite")``, ``eBayes`` and ``topTable``: precision weights from the
-    mean-variance trend of the design's mixed model, fitted to every feature by
-    maximum likelihood (:func:`~cytepool.stats.dream.voom_with_dream_weights`); the
-    mixed model of every feature fitted by REML with those weights
-    (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); Satterthwaite's (1946)
-    t-tests of the estimable contrasts
-    (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`);
-    and their empirical Bayes moderation
+    those of variancePartition's ``voomWithDreamWeights``, ``dream``, ``eBayes`` and
+    ``topTable``: precision weights from the mean-variance trend of the design's
+    mixed model, fitted to every feature by maximum likelihood
+    (:func:`~cytepool.stats.dream.voom_with_dream_weights`); the mixed model of every
+    feature fitted by REML with those weights
+    (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); t-tests of the estimable
+    contrasts (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`) with the
+    degrees of freedom dream chooses by default (``ddf = "adaptive"``), Kenward and
+    Roger's (1997) in a group of fewer than 20 samples and Satterthwaite's (1946)
+    otherwise; F-tests of sets of contrasts; and their empirical Bayes moderation
     (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The random effects of
     a group are those of its samples: a grouping factor's levels without samples in
     the group drop out. :mod:`cytepool.stats.dream` documents the conventions found by
@@ -233,6 +234,9 @@ References:
     Satterthwaite FE (1946). An approximate distribution of estimates of variance
     components. Biometrics Bulletin 2, 110-114. doi:10.2307/3002019
 
+    Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
+    restricted maximum likelihood. Biometrics 53, 983-997. doi:10.2307/2533558
+
     Heumos L, Schaar AC, Lance C, Litinetskaya A, Drost F, Zappia L, Luecken MD,
     Strobl DC, Henao J, Curion F, Single-cell Best Practices Consortium, Schiller HB,
     Theis FJ (2023). Best practices for single-cell analysis across modalities. Nature
@@ -256,6 +260,7 @@ from ._analysis_records import (
     cube_record,
     design_record,
     matched_samples,
+    mixed_design_record,
     software_versions,
 )
 from ._columns import text_column
@@ -278,7 +283,7 @@ from ._group_fits import (
 )
 from ._jit import thread_limit
 from ._masked_arrays import reject_masked
-from ._messages import PACKAGE_DIRECTORY, listing
+from ._messages import PACKAGE_DIRECTORY, listing, quoted
 from ._options import (
     checked_choice,
     checked_flag,
@@ -291,13 +296,20 @@ from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design._design_matrices import is_random_intercept, refuse_random_effects
 from .normalization import log_cpm
+from .stats._fixed_effect_inference import (
+    InferenceParts,
+    chosen_parts,
+    contrast_tests,
+    kenward_roger_parts,
+    satterthwaite_parts,
+)
 from .stats._mean_variance_trend import scaled_prior_weights, trend_span, voom_inputs
 from .stats._mixed_model_designs import random_intercepts
-from .stats.dream import _dream_weights, moderated_fixed_effect_tests
+from .stats.dream import _dream_weights, _moderated_tests
 from .stats.empirical_bayes import moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
+from .stats.mixed_models import FixedEffectTests, MixedModelFit
 from .stats.mixed_models import _fit as _fit_mixed_model
-from .stats.mixed_models import fixed_effect_tests
 from .stats.multiple_testing import adjust_p_values
 from .stats.sample_weights import (
     _estimate,
@@ -325,13 +337,18 @@ _FIXED_SETTINGS = {
     "p_value_adjustment": "BH",
 }
 # dream's fits, recorded in the provenance: maximum likelihood for the weights, as
-# variancePartition's voomWithDreamWeights fits, REML and Satterthwaite's degrees of
-# freedom for the tests (dream's REML = TRUE, ddf = "Satterthwaite").
-_DREAM_SETTINGS = {
-    "weights_fit": "ml",
-    "fit": "reml",
-    "df_method": "satterthwaite",
-}
+# variancePartition's voomWithDreamWeights fits, and REML for the tests (dream's REML =
+# TRUE).
+_DREAM_SETTINGS = {"weights_fit": "ml", "fit": "reml"}
+_DF_METHODS = ("adaptive", "satterthwaite", "kenward_roger")
+# dream's ddf = "adaptive" uses Kenward and Roger's method for fewer samples than this.
+# variancePartition 1.36.2 documents "<= 20 samples", but gives Kenward and Roger's
+# degrees of freedom for 19 samples and Satterthwaite's for 20 (found by probing).
+_KENWARD_ROGER_SAMPLES = 20
+# dream tests a feature by Satterthwaite's method when Kenward and Roger's adjusted
+# covariance matrix of the coefficients is not positive definite or has a condition
+# number above this (variancePartition's NEWS for 1.31.16; the bound found by probing).
+_CONDITION_LIMIT = 1e6
 _METHODS = ("limma_voom", "limma_trend", "dream_voom")
 
 
@@ -360,10 +377,11 @@ class DifferentialExpressionResult:
       (``B``).
 
     Tables from :func:`dream_voom` also give ``df``, the degrees of freedom of each
-    test (Satterthwaite's plus the prior's, ``df.total``), after ``t``, and
-    ``z_statistic``, the z-statistic with the test's p-value (``topTable``'s
-    ``z.std``), after ``b_statistic``; a feature whose mixed model has no minimum has
-    NaN statistics.
+    test (Satterthwaite's or Kenward and Roger's plus the prior's, ``df.total``),
+    after ``t``, and ``z_statistic``, the z-statistic with the test's p-value
+    (``topTable``'s ``z.std``), after ``b_statistic``; a feature whose mixed model has
+    no minimum has NaN statistics. Its F-tests have tables of their own, whose
+    columns :func:`dream_voom` lists.
 
     The summary has one row per group: ``group_id``; ``status``, ``"fitted"`` or why
     the group was not fitted (``"no_samples"``, ``"no_residual_df"``,
@@ -373,10 +391,13 @@ class DifferentialExpressionResult:
     ``n_samples_used`` and ``n_samples_left_out``; ``n_features_tested``;
     ``df_residual``, for dream the median over the features of their approximate
     residual degrees of freedom (in a group not fitted, the residual degrees of
-    freedom of the fixed effects, as for limma); ``prior_df``, the prior degrees of freedom (their
-    median over features with robust moderation, where each feature has its own); and
-    ``not_estimable``, the contrasts the group's samples cannot estimate, separated
-    by ``", "``. Numbers are NaN, or 0, where a group was not fitted that far.
+    freedom of the fixed effects, as for limma); ``prior_df``, the prior degrees of
+    freedom (their median over features with robust moderation, where each feature
+    has its own); for dream, ``df_method``, the degrees of freedom of the group's
+    tests (``"satterthwaite"`` or ``"kenward_roger"``; empty where the group was not
+    fitted); and ``not_estimable``, the contrasts (and F-tests) the group's samples
+    cannot estimate, separated by ``", "``. Numbers are NaN, or 0, where a group was
+    not fitted that far.
 
     The sample table has one row per group and design sample, in the cube's sample
     order: ``group_id``, ``sample_id``, ``n_cells`` (when the cube records cell
@@ -509,8 +530,16 @@ class DifferentialExpressionResult:
 
     @property
     def tables(self) -> Mapping[tuple[str, str], Table]:
-        """The table of every group and contrast that was tested, by (group, contrast)."""
+        """The table of every group and contrast, or F-test, that was tested, by
+        (group, contrast) or (group, F-test)."""
         return self._tables
+
+    @property
+    def f_tests(self) -> dict[str, tuple[str, ...]]:
+        """The F-tests of :func:`dream_voom`, each with the contrasts it tests at
+        once, as a new dict; empty for the other methods or without F-tests."""
+        tests = json.loads(self._record)["settings"].get("f_tests") or {}
+        return {name: tuple(members) for name, members in tests.items()}
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -525,17 +554,21 @@ class DifferentialExpressionResult:
         It holds the method; the CytePool, numpy, numba and Python versions; the
         cube (``"cube"``): its fingerprint, the digests it is built from and its own
         provenance; the layer read; the design (formula, columns, levels, the values
-        of its variables for every sample, and the weights of every contrast); the
-        settings; and, for every group, its status, the samples that entered its
-        design, in the order they were fitted, those left out with the reason, the
-        design columns its samples cannot separate, the contrasts it cannot
-        estimate with the reason, the number of features tested, for limma-voom and
-        dream the span of its trend (``voom_span``, null where voom did not run), for
-        dream the number of features whose mixed model has no minimum
-        (``features_not_fitted``) and of those whose REML fit stopped without
-        converging (``features_not_converged``; their tests use the estimates where
-        it stopped), the
-        sample weights its fit used, in the order of its samples
+        of its variables for every sample, and the weights of every contrast; for
+        dream also its random effects, ``"random"``, and the values of the variables
+        they group by); the settings; and, for every group, its status, the samples
+        that entered its design, in the order they were fitted, those left out with
+        the reason, the design columns its samples cannot separate, the contrasts it
+        cannot estimate with the reason, the number of features tested, for
+        limma-voom and dream the span of its trend (``voom_span``, null where voom
+        did not run), for dream the number of features whose mixed model has no
+        minimum (``features_not_fitted``) and of those whose REML fit stopped
+        without converging (``features_not_converged``; their tests use the
+        estimates where it stopped), the degrees of freedom of its tests
+        (``df_method``), the number of features whose Kenward-Roger tests fell back
+        to Satterthwaite's (``features_satterthwaite_fallback``) and the numerator
+        degrees of freedom of each F-test (``f_test_df1``), the sample weights its
+        fit used, in the order of its samples
         (``prior_weights`` with ``prior_weights``, ``quality_weights`` with
         ``quality_weights``; null where the group was not fitted), and the warnings
         that the estimation of its sample quality weights gave (``warnings``, such as
@@ -550,11 +583,12 @@ class DifferentialExpressionResult:
         return record
 
     def table(self, group: str, contrast: str) -> Table:
-        """Return the table of one group and contrast.
+        """Return the table of one group and contrast, or F-test.
 
         Args:
             group: A group id.
-            contrast: A contrast name.
+            contrast: A contrast name, or the name of an F-test of
+                :func:`dream_voom`.
 
         Raises:
             KeyError: If the group or contrast was not analysed, or the group was
@@ -569,10 +603,12 @@ class DifferentialExpressionResult:
                 f"no group {group!r} was analysed; groups are: "
                 f"{listing(list(record)) or '(none)'}"
             )
-        if contrast not in self._contrasts.names:
+        f_tests = list(self.f_tests)
+        if contrast not in self._contrasts.names and contrast not in f_tests:
             raise KeyError(
                 f"no contrast {contrast!r} was tested; contrasts are: "
                 f"{listing(list(self._contrasts.names))}"
+                + (f"; F-tests are: {listing(f_tests)}" if f_tests else "")
             )
         entry = record[group]
         if entry["status"] != FITTED:
@@ -888,12 +924,15 @@ def dream_voom(
     *,
     groups: str | Sequence[str] | None = None,
     contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
+    f_tests: Mapping[str, Sequence[str]] | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
     expression_filter: bool | Mapping[str, float] = True,
     normalization: Literal["tmm"] | None = "tmm",
     span: float | None = None,
     prior_weights: Literal["n_cells"] | None = None,
+    df_method: Literal["adaptive", "satterthwaite", "kenward_roger"] = "adaptive",
+    kenward_roger_weights: Literal["average", "precision"] = "average",
     robust: bool = False,
     trend: bool = False,
     adjust_across_groups: bool = False,
@@ -910,9 +949,9 @@ def dream_voom(
     :func:`~cytepool.stats.dream.voom_with_dream_weights`); every feature's mixed
     model is fitted by REML with those weights (``dream``,
     :func:`~cytepool.stats.mixed_models.fit_mixed_model`); its estimable contrasts
-    are tested with Satterthwaite's degrees of freedom
-    (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`); and the tests are
-    moderated by empirical Bayes as variancePartition's ``eBayes`` moderates them
+    are tested (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`) with the
+    degrees of freedom of ``df_method``; and the tests are moderated by empirical
+    Bayes as variancePartition's ``eBayes`` moderates them
     (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The module
     documentation gives the steps and the differences from variancePartition.
 
@@ -923,9 +962,35 @@ def dream_voom(
     whose mixed model has no minimum, which the fixed and random effects reproduce,
     is tested with NaN statistics; its group's record counts them.
 
-    Satterthwaite's degrees of freedom are used for every group, as ``dream(...,
-    ddf = "Satterthwaite")``; dream's default, ``ddf = "adaptive"``, uses
-    Kenward-Roger's for 20 samples or fewer, which are not available yet.
+    Degrees of freedom:
+        As dream's ``ddf``, by default (``"adaptive"``) Kenward and Roger's method
+        in a group with fewer than 20 samples and Satterthwaite's otherwise.
+        variancePartition documents "20 samples or fewer"; with 20 its ``dream``
+        uses Satterthwaite's (found by probing variancePartition 1.36.2). By
+        default (``kenward_roger_weights="average"``), Kenward and Roger's
+        adjustment is computed as dream computes it with pbkrtest, with every
+        observation at its feature's average weight; with voom's weights that
+        adjustment can make standard errors smaller than the unadjusted ones,
+        which ``"precision"``, the method for the weighted model, never does (see
+        :func:`~cytepool.stats.mixed_models.fixed_effect_tests`). As dream does, a
+        feature whose adjusted covariance matrix is not positive definite or has a
+        condition number above 1e6 is tested by Satterthwaite's method instead;
+        the group's record counts such features. That number depends on the units
+        of continuous covariates: centring and scaling them avoids it.
+
+    F-tests:
+        ``f_tests`` names sets of contrasts to test at once, such as every
+        difference among three time points: each is tested by dream's moderated
+        F-statistic, which ``topTable`` gives for several coefficients (see
+        :mod:`cytepool.stats.dream`), in every group that can estimate all its
+        contrasts. Its table has, for every tested feature, ``feature_id`` (and
+        ``symbol``), ``log2_fold_change_<contrast>`` for each contrast,
+        ``average_log2_cpm``, ``f_statistic``, ``df`` (the denominator degrees of
+        freedom), ``p_value``, ``adjusted_p_value`` (and
+        ``adjusted_p_value_across_groups``), and ``standardized_f_statistic``, the
+        F-statistic on infinite denominator degrees of freedom with the same
+        p-value (``F.std``). The numerator degrees of freedom are the number of
+        linearly independent contrasts, which the group's record gives.
 
     Args:
         cube: A cube with a ``counts`` layer.
@@ -935,6 +1000,9 @@ def dream_voom(
         groups: A group id or a list of them; all groups by default.
         contrasts: The contrasts to test, matched to the design's columns by name;
             by default the design's named contrasts.
+        f_tests: A mapping of an F-test's name to the names of the contrasts it
+            tests at once, among those tested, such as ``{"time": ["t1_vs_t0",
+            "t2_vs_t0"]}``; None for none. A name must differ from every contrast's.
         min_cells: The fewest cells a sample needs in a group to enter its fit;
             ignored for cubes without cell numbers.
         min_counts: The fewest counts a sample needs in a group, over every
@@ -949,6 +1017,11 @@ def dream_voom(
         prior_weights: ``"n_cells"`` to give each sample its number of cells in
             the group as a prior weight, as dreamlet weights samples, or None for
             none. Needs a cube that records cell numbers.
+        df_method: ``"adaptive"`` (dream's default, above), ``"satterthwaite"`` or
+            ``"kenward_roger"`` (with dream's fallback, above) for every group.
+        kenward_roger_weights: ``"average"``, as dream computes Kenward and Roger's
+            adjustment, or ``"precision"``, with each observation's own weight;
+            see above.
         robust: Whether to estimate the prior of the moderation robustly, as
             ``eBayes(robust = TRUE)`` does.
         trend: Whether the prior variance of the moderation follows the mean log2
@@ -963,20 +1036,24 @@ def dream_voom(
             keeps numba's setting. The results do not depend on it.
 
     Returns:
-        The tables of every group and estimable contrast, a summary of every group,
-        the samples used and left out, the settings and a provenance record, as for
-        :func:`limma_voom`; the tables also give each test's degrees of freedom
-        (``df``) and z-statistic (``z_statistic``).
+        The tables of every group and estimable contrast, and of every F-test, a
+        summary of every group, the samples used and left out, the settings and a
+        provenance record, as for :func:`limma_voom`; the tables of contrasts also
+        give each test's degrees of freedom (``df``) and z-statistic
+        (``z_statistic``), and the summary the degrees of freedom of each group's
+        tests (``df_method``).
 
     Raises:
         TypeError: If ``cube`` is not a Cube, ``design`` not a Design, an option has
-            the wrong type, or ``contrasts``, ``groups``, ``min_cells``,
-            ``expression_filter`` or ``n_threads`` is or holds a numpy masked array.
+            the wrong type, or ``contrasts``, ``f_tests``, ``groups``,
+            ``min_cells``, ``expression_filter`` or ``n_threads`` is or holds a
+            numpy masked array.
         ValueError: If the design has no random effects or one that is not a
             random intercept, has no ``sample_id`` column, names samples the cube
             does not have or names a sample twice, if there are no contrasts to
-            test, an option is invalid, or ``prior_weights`` is ``"n_cells"`` and
-            the cube does not record cell numbers.
+            test, an option is invalid, an F-test names a contrast that is not
+            tested or shares a contrast's name, or ``prior_weights`` is
+            ``"n_cells"`` and the cube does not record cell numbers.
         KeyError: If a group is not in the cube.
     """
     return _analyse(
@@ -992,6 +1069,11 @@ def dream_voom(
             "normalization": normalization_setting(normalization),
             "span": span_setting(span),
             "prior_weights": prior_weight_setting(prior_weights),
+            "df_method": checked_choice(df_method, "df_method", _DF_METHODS),
+            "kenward_roger_weights": checked_choice(
+                kenward_roger_weights, "kenward_roger_weights", ("average", "precision")
+            ),
+            "f_tests": _f_test_setting(f_tests),
             "robust": checked_flag(robust, "robust"),
             "trend": checked_flag(trend, "trend"),
             "adjust_across_groups": checked_flag(
@@ -1012,6 +1094,9 @@ class _GroupFit(GroupRecord):
     prior_df: float = float("nan")
     quality_weights: np.ndarray | None = None
     tables: dict[str, Table] = field(default_factory=dict)
+    df_method: str = ""  # dream: the degrees of freedom of the group's tests
+    features_satterthwaite_fallback: int = 0  # dream: Kenward-Roger tests not used
+    f_test_df1: dict[str, int] = field(default_factory=dict)  # dream: per F-test
 
 
 def _analyse(
@@ -1067,6 +1152,8 @@ def _analyse(
         data_ids="the cube's sample ids",
     )
     tested = _contrasts_to_test(design, contrasts, method)
+    if settings.get("f_tests"):
+        _check_f_tests(settings["f_tests"], tested)
     positions = group_positions(cube, groups)
     inputs = GroupInputs(method, cube, order, cube_rows, tested, settings)
     fit_group = _fit_dream_group if method == "dream_voom" else _fit_group
@@ -1081,12 +1168,13 @@ def _analyse(
             )
         fits.append(fit)
     if settings["adjust_across_groups"]:
-        _adjust_across_groups(fits, tested.names)
+        _adjust_across_groups(fits, [*tested.names, *(settings.get("f_tests") or {})])
     sample_ids = cube.samples["sample_id"][cube_rows]
+    dream = method == "dream_voom"
     return DifferentialExpressionResult(
         method,
         tested,
-        _summary_table(fits),
+        _summary_table(fits, dream),
         sample_table(cube, cube_rows, sample_ids, positions, fits, settings),
         {
             (fit.group_id, contrast): table
@@ -1098,7 +1186,7 @@ def _analyse(
             "versions": software_versions(),
             "cube": cube_record(cube),
             "layer": COUNTS_LAYER,
-            "design": design_record(design, tested),
+            "design": (mixed_design_record if dream else design_record)(design, tested),
             "settings": {
                 **settings,
                 **_FIXED_SETTINGS,
@@ -1247,25 +1335,28 @@ def _fit_dream_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
             return fit.stop("failed", f"voom with dream weights: {error}")
         model = _fit_mixed_model(weighted.log_cpm, weighted.weights, False, data.mixed)
     fit.voom_span = weighted.span
+    fitted = np.isfinite(model.residual_variance)
     # Differential expression always has contrasts to test.
     contrasts = cast(Contrasts, inputs.contrasts)
     names = tuple(contrasts.names[p] for p in data.estimable)
-    # An estimable contrast is its kept part applied to the fit on the kept columns.
-    tests = fixed_effect_tests(
-        model,
-        Contrasts(
-            contrasts.matrix[np.ix_(data.kept, data.estimable)], names, data.columns
-        ),
+    # An estimable contrast is its kept part applied to the fit on the kept columns,
+    # which are the model's coefficients.
+    matrix = contrasts.matrix[np.ix_(data.kept, data.estimable)]
+    use_kenward_roger = settings["df_method"] == "kenward_roger" or (
+        settings["df_method"] == "adaptive" and n_used < _KENWARD_ROGER_SAMPLES
     )
+    average = settings["kenward_roger_weights"] == "average"
+    with thread_limit(settings["n_threads"]):
+        parts = _dream_parts(model, use_kenward_roger, average, fitted, fit)
+    tests = _contrast_tests(model, matrix, names, parts, average)
     try:
-        moderated = moderated_fixed_effect_tests(
-            tests, robust=settings["robust"], trend=settings["trend"]
+        moderated = _moderated_tests(
+            tests, parts, robust=settings["robust"], trend=settings["trend"]
         )
     except ValueError as error:  # for example, no feature has a fit
         return fit.stop("failed", f"empirical Bayes moderation: {error}")
     adjusted = adjust_p_values(moderated.p_value, "bh", axis=0)
 
-    fitted = np.isfinite(model.residual_variance)
     fit.features_not_fitted = int(np.count_nonzero(~fitted))
     fit.features_not_converged = int(np.count_nonzero(fitted & ~model.converged))
     fit.df_residual = float(np.median(model.residual_df[fitted]))
@@ -1291,7 +1382,101 @@ def _fit_dream_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
                 "z_statistic": moderated.z[:, column],
             }
         )
+    for f_name, members in (settings["f_tests"] or {}).items():
+        missing = [member for member in members if member not in names]
+        if missing:
+            fit.not_estimable[f_name] = (
+                "not tested: the samples of this group cannot estimate its "
+                f"contrast{'' if len(missing) == 1 else 's'} {quoted(missing)}"
+            )
+            continue
+        columns = [names.index(member) for member in members]
+        subset = _contrast_tests(
+            model, matrix[:, columns], tuple(members), parts, average
+        )
+        f_moderated = _moderated_tests(
+            subset, parts, robust=settings["robust"], trend=settings["trend"]
+        )
+        fit.f_test_df1[f_name] = f_moderated.f_df1
+        fit.tables[f_name] = Table(
+            {
+                **identity,
+                **{
+                    f"log2_fold_change_{member}": tests.estimate[:, column]
+                    for member, column in zip(members, columns, strict=True)
+                },
+                "average_log2_cpm": model.mean_expression,
+                "f_statistic": f_moderated.f_statistic,
+                "df": f_moderated.f_df2,
+                "p_value": f_moderated.f_p_value,
+                "adjusted_p_value": adjust_p_values(f_moderated.f_p_value, "bh"),
+                "standardized_f_statistic": f_moderated.standardized_f_statistic,
+            }
+        )
     return fit
+
+
+def _dream_parts(
+    model: MixedModelFit,
+    kenward_roger: bool,
+    average_weight: bool,
+    fitted: np.ndarray,
+    fit: _GroupFit,
+) -> InferenceParts:
+    """The parts of the group's tests, with dream's choice of degrees of freedom.
+
+    With Kenward and Roger's method, a feature whose adjusted covariance matrix is
+    not positive definite or has a condition number above 1e6 takes Satterthwaite's
+    parts, as dream does; ``fit`` records the method and how many features did.
+    Call it within ``thread_limit``.
+    """
+    satterthwaite = satterthwaite_parts(model)
+    if not kenward_roger:
+        fit.df_method = "satterthwaite"
+        return satterthwaite
+    adjusted = kenward_roger_parts(model, average_weight)
+    usable = np.all(np.isfinite(adjusted.covariance), axis=(1, 2))
+    condition = np.full(usable.size, np.inf)
+    if usable.any():
+        values = np.linalg.eigvalsh(adjusted.covariance[usable])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            condition[usable] = np.where(
+                values[:, 0] > 0.0, values[:, -1] / values[:, 0], np.inf
+            )
+    fallback = fitted & ~(condition <= _CONDITION_LIMIT)
+    fit.df_method = "kenward_roger"
+    fit.features_satterthwaite_fallback = int(np.count_nonzero(fallback))
+    return chosen_parts(adjusted, satterthwaite, fallback)
+
+
+def _contrast_tests(
+    model: MixedModelFit,
+    matrix: np.ndarray,
+    names: tuple[str, ...],
+    parts: InferenceParts,
+    average_weight: bool,
+) -> FixedEffectTests:
+    """The t-tests of the contrasts in the columns of ``matrix``, from ``parts``."""
+    estimate, standard_error, t, df, p_value = contrast_tests(
+        model.coefficients, parts, matrix
+    )
+    covariance = np.einsum("jc,gjk,kd->gcd", matrix, parts.covariance, matrix)
+    kenward_roger = parts.method == "kenward_roger"
+    return FixedEffectTests(
+        fit=model,
+        contrasts=matrix,
+        contrast_names=names,
+        df_method=parts.method,
+        kenward_roger_weights=(
+            ("average" if average_weight else "precision") if kenward_roger else None
+        ),
+        estimate=estimate,
+        standard_error=standard_error,
+        t=t,
+        df=df,
+        p_value=p_value,
+        covariance=(covariance + np.swapaxes(covariance, 1, 2)) / 2.0,
+    )
 
 
 def _voom_weights(
@@ -1389,6 +1574,60 @@ def _contrasts_to_test(design: Design, contrasts: Any, function: str) -> Contras
     return chosen
 
 
+def _f_test_setting(value: Any) -> dict[str, list[str]] | None:
+    """The F-tests: a mapping of name to the names of its contrasts, or None."""
+    reject_masked(value, "f_tests")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError(
+            "f_tests must be a mapping of an F-test's name to the names of the "
+            "contrasts it tests at once, such as {'time': ['t1_vs_t0', 't2_vs_t0']}, "
+            f"or None, got {type(value).__name__}"
+        )
+    tests: dict[str, list[str]] = {}
+    for name, members in value.items():
+        if not isinstance(name, str):
+            raise TypeError(f"f_tests must be keyed by names (str), got {name!r}")
+        reject_masked(members, f"f_tests[{name!r}]")
+        if isinstance(members, str) or not isinstance(members, Sequence | np.ndarray):
+            raise TypeError(
+                f"f_tests[{name!r}] must be a list of contrast names, got "
+                f"{type(members).__name__}"
+            )
+        listed = list(members)
+        if not listed or not all(isinstance(member, str) for member in listed):
+            raise ValueError(
+                f"f_tests[{name!r}] must name at least one contrast, as text, got "
+                f"{listed!r}"
+            )
+        repeated = sorted({member for member in listed if listed.count(member) > 1})
+        if repeated:
+            raise ValueError(
+                f"f_tests[{name!r}] names the contrast(s) {quoted(repeated)} more than "
+                "once"
+            )
+        tests[name] = listed
+    return tests or None
+
+
+def _check_f_tests(f_tests: Mapping[str, Sequence[str]], tested: Contrasts) -> None:
+    """Refuse F-tests of contrasts that are not tested, or named as a contrast."""
+    for name, members in f_tests.items():
+        if name in tested.names:
+            raise ValueError(
+                f"the F-test {name!r} has the name of a contrast; tables are found by "
+                "name, so give it another"
+            )
+        unknown = [member for member in members if member not in tested.names]
+        if unknown:
+            raise ValueError(
+                f"the F-test {name!r} names {quoted(unknown)}, which "
+                f"{'is' if len(unknown) == 1 else 'are'} not among the contrasts "
+                f"tested: {quoted(list(tested.names))}"
+            )
+
+
 def _sample_weight_settings(
     prior_weights: Any, quality_weights: Any, method: str
 ) -> dict[str, Any]:
@@ -1446,29 +1685,33 @@ def _quality_settings(value: Any, method: str) -> dict[str, Any] | None:
 # Results.
 
 
-def _summary_table(fits: list[_GroupFit]) -> Table:
-    return Table(
-        {
-            "group_id": text_column([fit.group_id for fit in fits]),
-            "status": text_column([fit.status for fit in fits]),
-            "reason": text_column([fit.reason for fit in fits]),
-            "n_samples_used": np.array(
-                [np.count_nonzero(fit.used) for fit in fits], dtype=np.int64
-            ),
-            "n_samples_left_out": np.array(
-                [np.count_nonzero(~fit.used) for fit in fits], dtype=np.int64
-            ),
-            "n_features_tested": np.array(
-                [fit.tested.size if fit.status == FITTED else 0 for fit in fits],
-                dtype=np.int64,
-            ),
-            "df_residual": np.array([fit.df_residual for fit in fits], dtype=float),
-            "prior_df": np.array([fit.prior_df for fit in fits], dtype=float),
-            "not_estimable": text_column(
-                [", ".join(fit.not_estimable) for fit in fits]
-            ),
-        }
+def _summary_table(fits: list[_GroupFit], dream: bool) -> Table:
+    columns: dict[str, Any] = {
+        "group_id": text_column([fit.group_id for fit in fits]),
+        "status": text_column([fit.status for fit in fits]),
+        "reason": text_column([fit.reason for fit in fits]),
+        "n_samples_used": np.array(
+            [np.count_nonzero(fit.used) for fit in fits], dtype=np.int64
+        ),
+        "n_samples_left_out": np.array(
+            [np.count_nonzero(~fit.used) for fit in fits], dtype=np.int64
+        ),
+        "n_features_tested": np.array(
+            [fit.tested.size if fit.status == FITTED else 0 for fit in fits],
+            dtype=np.int64,
+        ),
+        "df_residual": np.array([fit.df_residual for fit in fits], dtype=float),
+        "prior_df": np.array([fit.prior_df for fit in fits], dtype=float),
+    }
+    if dream:
+        # The degrees of freedom of the group's tests; empty where none were made.
+        columns["df_method"] = text_column(
+            [fit.df_method if fit.status == FITTED else "" for fit in fits]
+        )
+    columns["not_estimable"] = text_column(
+        [", ".join(fit.not_estimable) for fit in fits]
     )
+    return Table(columns)
 
 
 # The provenance record.
@@ -1502,6 +1745,14 @@ def _group_record(
         record["features_not_converged"] = (
             fit.features_not_converged if fitted else None
         )
+        # The degrees of freedom of the tests, the features whose Kenward-Roger
+        # tests fell back to Satterthwaite's, and the numerator degrees of freedom
+        # of each F-test; null when the group was not fitted.
+        record["df_method"] = fit.df_method if fitted else None
+        record["features_satterthwaite_fallback"] = (
+            fit.features_satterthwaite_fallback if fitted else None
+        )
+        record["f_test_df1"] = dict(fit.f_test_df1) if fitted else None
     # The sample weights of the fit, in the order of "samples"; null when not fitted.
     for key in ("prior_weights", "quality_weights"):
         if settings.get(key) is not None:
