@@ -610,6 +610,8 @@ NO_PUBLISHED_WORK = {
     "written as JSON by the standard library",
     "cytepool.design": "the package's namespace; its modules cite their sources",
     "cytepool.io": "the package's namespace; its modules cite their sources",
+    "cytepool.io._files": "names local files and notices their changes with the "
+    "standard library",
     "cytepool.stats": "the package's namespace; its modules cite their sources",
     "cytepool.table": "CytePool's own table of named, equal-length columns",
 }

@@ -94,6 +94,8 @@ from typing import Any, Literal, NamedTuple
 import numpy as np
 
 from .._masked_arrays import reject_masked, unmasked_array
+from ._files import file_stamp, local_path
+from ._files import same_file as _same_file  # the name the tests read
 
 METADATA_FILE = "zarr.json"
 """The name of the metadata document of every Zarr v3 group and array."""
@@ -374,7 +376,7 @@ class ZarrArray:
 
     def _check_unchanged(self) -> None:
         try:
-            stamp = _file_stamp(self._path / METADATA_FILE)
+            stamp = file_stamp(self._path / METADATA_FILE)
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"the array at {self._path} no longer exists"
@@ -482,7 +484,7 @@ def open_array(path: str | os.PathLike[str]) -> ZarrArray:
         ValueError: If the metadata is invalid or uses a feature this module does not
             support (the message names it).
     """
-    directory = _local_path(path)
+    directory = local_path(path)
     document, stamp, where = _read_document(directory)
     return ZarrArray(directory, _parse_array(document, where), stamp)
 
@@ -501,7 +503,7 @@ def read_group_attributes(path: str | os.PathLike[str]) -> dict[str, Any]:
         ValueError: If the metadata is invalid, describes an array, or belongs to a
             Zarr v2 store.
     """
-    directory = _local_path(path)
+    directory = local_path(path)
     document, _, where = _read_document(directory)
     _check_node(document, "group", _GROUP_FIELDS, (), where)
     consolidated = document.get("consolidated_metadata")
@@ -523,7 +525,7 @@ def write_group(
         FileExistsError: If the directory already has a ``zarr.json``.
         ValueError, TypeError: If an attribute cannot be written as JSON.
     """
-    directory = _local_path(path)
+    directory = local_path(path)
     document = {
         "zarr_format": 3,
         "node_type": "group",
@@ -569,7 +571,7 @@ def write_array(
             ``MAX_CHUNK_BYTES``, or ``data`` gives rows of the wrong shape or dtype.
         FileExistsError: If ``path`` exists.
     """
-    directory = _local_path(path)
+    directory = local_path(path)
     for argument, value in (
         ("data", data),
         ("chunks", chunks),
@@ -690,35 +692,6 @@ def check_compression(compression: str | None, level: int | None) -> int | None:
 
 
 # Paths and metadata documents.
-
-
-def _local_path(path: Any) -> Path:
-    if not isinstance(path, str | os.PathLike):
-        raise TypeError(f"path must be a str or os.PathLike, got {type(path).__name__}")
-    text = os.fspath(path)
-    if not isinstance(text, str):
-        raise TypeError("path must be text, not bytes")
-    if "://" in text:
-        raise ValueError(
-            f"{text!r} is a URL; only local directories are supported (zarr-python "
-            "reads remote stores)"
-        )
-    return Path(os.path.abspath(text))
-
-
-def _file_stamp(path: str | os.PathLike[str]) -> tuple[int, int, int, int]:
-    """Return the device, inode, size and modification time of a file."""
-    status = os.stat(path)
-    return status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns
-
-
-def _same_file(old: tuple[int, ...], new: tuple[int, ...]) -> bool:
-    """Return whether two stamps describe one unchanged file.
-
-    The inode is compared only on the same device: another mount of the same files,
-    in another process or on another machine, may number inodes differently.
-    """
-    return old == new if old[0] == new[0] else old[2:] == new[2:]
 
 
 def _read_document(
