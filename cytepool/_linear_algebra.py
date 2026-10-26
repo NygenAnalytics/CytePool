@@ -211,3 +211,114 @@ def orthogonalise(
                 dot += gene_basis[a, t] * vector[t]
             for t in range(m):
                 vector[t] -= dot * gene_basis[a, t]
+
+
+@jit
+def householder_qr(
+    work: FloatArray,
+    n_rows: int,
+    n_columns: int,
+    tolerance: float,
+    current_norm: bool,
+    zero_pivot: float,
+    summed_scale: bool,
+    norms: FloatArray,
+    aliased: npt.NDArray[np.bool_],
+    kept: npt.NDArray[np.int64],
+    products: FloatArray,
+) -> int:
+    """Householder QR decomposition of the first ``n_rows`` rows of the first
+    ``n_columns`` columns of ``work``, in place (Golub and Van Loan 2013).
+
+    The columns of ``work`` after the first ``n_columns``, such as a response, are
+    reflected with the others but never pivoted. Columns are taken in order. One whose
+    part orthogonal to the columns kept before it has a norm of zero, or of at most
+    ``tolerance`` times a reference, is aliased and skipped: the reference is the
+    column's norm before any reflection, as in R's ``qr()``, or with ``current_norm``
+    its norm after the earlier reflections, which is the same in exact arithmetic.
+    The diagonal element of R is -norm for a head (the element in the pivot row) of
+    at least -``zero_pivot`` times the norm and +norm below, the sign of R's ``qr()``
+    when ``zero_pivot`` is 0: a positive ``zero_pivot`` counts a head that small as
+    zero, which it is in exact arithmetic in some designs, so that the sign does not
+    follow rounding noise. Each reflection, I - 2 v v' / (v'v) for the column's part
+    v from the pivot row down, is applied to every other column, those kept before it
+    being zero where it acts; v'v is 2 norm (norm + |head|), or with
+    ``summed_scale`` the sum of squares of v. Sums over rows run in increasing order.
+
+    Args:
+        work: The columns, a 2-D array with one row per observation.
+        n_rows: The rows to use, from the first.
+        n_columns: The columns to decompose, from the first.
+        tolerance: The relative norm at or below which a column is aliased.
+        current_norm: Whether the reference norm is that after the earlier
+            reflections.
+        zero_pivot: The relative size below which a head counts as zero.
+        summed_scale: Whether v'v is summed rather than formed from the norm.
+        norms: Workspace of ``n_columns`` values: the norms of the columns.
+        aliased: Workspace of ``n_columns`` values: whether each column is aliased.
+        kept: Workspace of ``n_columns`` values: the kept columns, in order.
+        products: Workspace of one value per column of ``work``.
+
+    Returns:
+        The rank: the number of kept columns. On return, rows ``0:rank`` of the kept
+        column ``kept[t]`` hold column t of the triangular factor R, those of an
+        aliased column hold its coordinates in the orthonormal basis of the kept
+        columns, and rows ``rank:n_rows`` of a column after the first ``n_columns``
+        hold its residual effects.
+    """
+    n_total = work.shape[1]
+    if not current_norm:
+        norms[:] = 0.0
+        for i in range(n_rows):
+            for j in range(n_columns):
+                norms[j] += work[i, j] * work[i, j]
+        for j in range(n_columns):
+            norms[j] = math.sqrt(norms[j])
+    rank = 0
+    for j in range(n_columns):
+        aliased[j] = True
+        if rank == n_rows:
+            continue
+        if current_norm:
+            total = 0.0
+            for i in range(n_rows):
+                total += work[i, j] * work[i, j]
+            reference = math.sqrt(total)
+        else:
+            reference = norms[j]
+        total = 0.0
+        for i in range(rank, n_rows):
+            total += work[i, j] * work[i, j]
+        norm = math.sqrt(total)
+        if norm == 0.0 or norm <= tolerance * reference:
+            continue
+        aliased[j] = False
+        head = work[rank, j]
+        alpha = -norm if head >= -zero_pivot * norm else norm
+        work[rank, j] = head - alpha
+        if summed_scale:
+            total = 0.0
+            for i in range(rank, n_rows):
+                total += work[i, j] * work[i, j]
+            scale = 2.0 / total
+        else:
+            # v'v = 2 norm (norm + |head|).
+            scale = 1.0 / (norm * (norm + abs(head)))
+        products[:] = 0.0
+        for i in range(rank, n_rows):
+            v = work[i, j]
+            for k in range(n_total):
+                products[k] += v * work[i, k]
+        for k in range(n_total):
+            products[k] *= scale
+        products[j] = 0.0
+        for i in range(rank, n_rows):
+            v = work[i, j]
+            for k in range(n_total):
+                work[i, k] -= products[k] * v
+        work[rank, j] = alpha
+        for i in range(rank + 1, n_rows):
+            work[i, j] = 0.0
+        kept[rank] = j
+        rank += 1
+    return rank

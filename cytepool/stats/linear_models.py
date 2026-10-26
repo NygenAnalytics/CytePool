@@ -41,6 +41,7 @@ from cytepool._linear_algebra import (
     RANK_TOLERANCE,
     column_space,
     correlation_matrix,
+    householder_qr,
     symmetric,
 )
 from cytepool._masked_arrays import reject_masked, unmasked_array
@@ -771,7 +772,9 @@ def _fit_features(
                 block_sums,
                 block_counts,
             )
-        rank = _householder_qr(work, m, tolerance, norms, aliased, kept, products)
+        rank = householder_qr(
+            work, m, last, tolerance, False, 0.0, False, norms, aliased, kept, products
+        )
 
         df = m - rank
         df_residual[g] = df
@@ -862,76 +865,6 @@ def _whiten_blocks(
             work[t, j] = within * work[t, j] + shift * block_sums[k, j]
 
 
-@jit
-def _householder_qr(
-    work: FloatArray,
-    m: int,
-    tolerance: float,
-    norms: FloatArray,
-    aliased: npt.NDArray[np.bool_],
-    kept: IntArray,
-    products: FloatArray,
-) -> int:
-    """Householder QR of the first m rows of the design columns of work.
-
-    The last column of work is the response. Columns are taken in order; one
-    whose part orthogonal to the kept columns before it has a norm at most
-    ``tolerance`` times its own norm is aliased and skipped, as by R's qr().
-    Each reflection is applied in place to every column, the response
-    included. On return, rows ``0:rank`` of the kept column ``kept[t]`` hold
-    column t of the triangular factor, those of an aliased column hold its
-    coordinates in the orthonormal basis of the kept columns, and rows
-    ``rank:m`` of the response hold its residual effects.
-
-    Returns:
-        The rank: the number of kept columns.
-    """
-    n_columns = work.shape[1] - 1
-    norms[:] = 0.0
-    for i in range(m):
-        for j in range(n_columns):
-            norms[j] += work[i, j] * work[i, j]
-    for j in range(n_columns):
-        norms[j] = math.sqrt(norms[j])
-    rank = 0
-    for j in range(n_columns):
-        aliased[j] = True
-        if rank == m:
-            continue
-        total = 0.0
-        for i in range(rank, m):
-            total += work[i, j] * work[i, j]
-        norm = math.sqrt(total)
-        if norm <= tolerance * norms[j]:
-            continue
-        aliased[j] = False
-        head = work[rank, j]
-        alpha = -norm if head >= 0.0 else norm
-        work[rank, j] = head - alpha
-        # The reflection is I - 2 v v' / (v'v) with v = work[rank:m, j], and
-        # v'v = 2 norm (norm + |head|). Kept columns before j are zero from
-        # row rank on, so the reflection leaves them unchanged.
-        products[:] = 0.0
-        for i in range(rank, m):
-            v = work[i, j]
-            for k in range(n_columns + 1):
-                products[k] += v * work[i, k]
-        scale = 1.0 / (norm * (norm + abs(head)))
-        for k in range(n_columns + 1):
-            products[k] *= scale
-        products[j] = 0.0
-        for i in range(rank, m):
-            v = work[i, j]
-            for k in range(n_columns + 1):
-                work[i, k] -= products[k] * v
-        work[rank, j] = alpha
-        for i in range(rank + 1, m):
-            work[i, j] = 0.0
-        kept[rank] = j
-        rank += 1
-    return rank
-
-
 def _writable_c_array(values: npt.NDArray[Any], dtype: type) -> npt.NDArray[Any]:
     return np.require(values, dtype=dtype, requirements=["C", "W", "A"])
 
@@ -965,7 +898,8 @@ def _aliased_columns(x: FloatArray) -> list[int]:
     """Indices of the columns of x that are linear combinations of earlier ones.
 
     The rule is R's ``qr()`` rule, as in :func:`column_space`; the compiled
-    :func:`_householder_qr` applies the same tolerance to each feature.
+    :func:`~cytepool._linear_algebra.householder_qr` applies the same tolerance to each
+    feature.
     """
     return list(column_space(x).aliased)
 
