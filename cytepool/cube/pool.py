@@ -32,7 +32,12 @@ from numba import prange
 from .. import __version__
 from .._columns import is_data_frame
 from .._jit import jit, thread_limit
-from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
+from .._masked_arrays import (
+    read_only,
+    reject_masked,
+    reject_masked_table,
+    unmasked_array,
+)
 from ..table import Table
 from ._axes import COUNT_LIMIT, UINT32_MAX, axis_codes, count_dtype
 from ._provenance_records import source_record
@@ -244,11 +249,11 @@ def from_cells(
         worker_segments, worker_starts = _assign_workers(filled, work[filled], threads)
         pooled = _pool(
             matrix,
-            _read_only(cell_order),
-            _read_only(segment_starts),
+            read_only(cell_order),
+            read_only(segment_starts),
             worker_segments,
             worker_starts,
-            _read_only(np.empty(0) if sizes is None else sizes),
+            read_only(np.empty(0) if sizes is None else sizes),
             target,
             sum(_LAYER_BITS[name] for name in names if name != "counts"),
             (n_segments, n_features),
@@ -902,23 +907,16 @@ def _assign_workers(
     by_worker = np.argsort(owner, kind="stable")
     worker_segments = segments[order[by_worker]].astype(np.int64)
     worker_starts = np.searchsorted(owner[by_worker], np.arange(n_workers + 1))
-    return _read_only(worker_segments), _read_only(worker_starts.astype(np.int64))
+    return read_only(worker_segments), read_only(worker_starts.astype(np.int64))
 
 
 # Reading the arguments.
 
 
-def _read_only(array: np.ndarray) -> np.ndarray:
-    """Return a read-only view: one compiled version then serves any input."""
-    view = array.view()
-    view.flags.writeable = False
-    return view
-
-
-_EMPTY_VALUES = tuple(_read_only(np.empty(0, dtype=dtype)) for dtype in _VALUE_DTYPES)
+_EMPTY_VALUES = tuple(read_only(np.empty(0, dtype=dtype)) for dtype in _VALUE_DTYPES)
 _EMPTY_INDICES = (
-    _read_only(np.empty(0, dtype=np.int32)),
-    _read_only(np.empty(0, dtype=np.int64)),
+    read_only(np.empty(0, dtype=np.int32)),
+    read_only(np.empty(0, dtype=np.int64)),
 )
 
 
@@ -949,7 +947,7 @@ def _cell_matrix(counts: Any) -> _Counts:
         value_kind,
         _EMPTY_INDICES,
         _DENSE,
-        _read_only(row_starts),
+        read_only(row_starts),
         (n_rows, n_columns),
         n_columns,
     )
@@ -1022,18 +1020,18 @@ def _csr_counts(counts: Any) -> _Counts:
         )
     values, value_kind = _value_slots(data)
     if indices.dtype == np.int32:
-        columns = (_read_only(np.ascontiguousarray(indices)), _EMPTY_INDICES[1])
+        columns = (read_only(np.ascontiguousarray(indices)), _EMPTY_INDICES[1])
         column_kind = _INDICES_INT32
     else:
         wide = np.ascontiguousarray(indices, dtype=np.int64)
-        columns = (_EMPTY_INDICES[0], _read_only(wide))
+        columns = (_EMPTY_INDICES[0], read_only(wide))
         column_kind = _INDICES_INT64
     return _Counts(
         values,
         value_kind,
         columns,
         column_kind,
-        _read_only(row_starts),
+        read_only(row_starts),
         (n_rows, n_columns),
         int(row_lengths.max(initial=0)),
     )
@@ -1052,7 +1050,7 @@ def _value_slots(
         data = data.astype(np.int64)
     kind = next(k for k, slot in enumerate(_VALUE_DTYPES) if data.dtype == slot)
     slots = list(_EMPTY_VALUES)
-    slots[kind] = _read_only(np.ascontiguousarray(data))
+    slots[kind] = read_only(np.ascontiguousarray(data))
     return (slots[0], slots[1], slots[2], slots[3]), kind
 
 

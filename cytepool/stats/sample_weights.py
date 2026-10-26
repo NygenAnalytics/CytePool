@@ -119,7 +119,12 @@ from cytepool._linear_algebra import (
     column_space,
     orthogonalise,
 )
-from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
+from cytepool._masked_arrays import (
+    expression_matrix,
+    real_array,
+    reject_masked,
+    unmasked_array,
+)
 from cytepool._options import (
     number_at_least,
     positive_finite_number,
@@ -131,7 +136,6 @@ from cytepool.design._design_matrices import (
     require_full_rank,
 )
 from cytepool.design.design import Design
-from cytepool.stats.linear_models import _expression_matrix
 
 __all__ = ["sample_quality_weights"]
 
@@ -234,7 +238,7 @@ def sample_quality_weights(
     """
     x, names = design_matrix(design, None)
     refuse_random_effects(design, "sample_quality_weights")
-    values = _expression_matrix(y, x.shape[0])
+    values = expression_matrix(y, x.shape[0])
     require_full_rank(x, names)
     prior = _prior_weights(weights, values.shape, ~np.isnan(values))
     model = _variance_model(

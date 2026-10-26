@@ -177,7 +177,7 @@ from cytepool._counts import (
 )
 from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
-from cytepool._masked_arrays import reject_masked
+from cytepool._masked_arrays import read_only, reject_masked
 from cytepool._options import non_negative_number, positive_integer
 from cytepool.design._design_matrices import (
     design_matrix,
@@ -421,17 +421,17 @@ def fit_negative_binomial_model(
 
     shape = (n_samples, n_features)
     return NegativeBinomialFit(
-        coefficients=_read_only(coefficients),
-        shrunk_coefficients=_read_only(shrunk),
-        fitted_values=_read_only(fitted.T),
-        deviance=_read_only(deviance),
-        df_residual=_read_only(np.full(n_features, float(n_samples - x.shape[1]))),
-        converged=_read_only(converged),
-        iterations=_read_only(iterations),
+        coefficients=read_only(coefficients),
+        shrunk_coefficients=read_only(shrunk),
+        fitted_values=read_only(fitted.T),
+        deviance=read_only(deviance),
+        df_residual=read_only(np.full(n_features, float(n_samples - x.shape[1]))),
+        converged=read_only(converged),
+        iterations=read_only(iterations),
         offsets=np.broadcast_to(log_sizes.T, shape),
         dispersion=np.broadcast_to(phi.T, shape),
         weights=np.broadcast_to(w.T, shape),
-        design=_read_only(x),
+        design=read_only(x),
         coefficient_names=names,
         prior_count=prior,
     )
@@ -565,12 +565,6 @@ def _non_negative_array(values: Any, name: str) -> FloatArray:
             f"{int(np.count_nonzero(bad))} values are not"
         )
     return array
-
-
-def _read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
-    view = values.view()
-    view.flags.writeable = False
-    return view
 
 
 # The design.

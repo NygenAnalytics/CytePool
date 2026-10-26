@@ -13,19 +13,23 @@ are converted with ``unmasked_array``, which also refuses an array-like that con
 to a masked array, such as a netCDF4 variable; the small arrays that make up
 contrasts and result objects are searched only. pandas objects are not inspected:
 pandas marks missing values without numpy masks. ``real_array`` then reads arrays
-of real numbers as float64.
+of real numbers as float64, and ``expression_matrix`` the samples x features
+values of a fit. ``read_only`` gives the read-only views that results hold.
 """
 
 import numbers
 from collections.abc import Iterable, Mapping
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
+import numpy.typing as npt
 
 Missing = Literal["NaN", "None", "None or NaN"] | None
 """How an argument marks missing values: with NaN (numbers), with None (JSON
 metadata), with None in text and NaN in numbers (table columns), or not at all
 (None)."""
+
+FloatArray = npt.NDArray[np.float64]
 
 _REASON = (
     "CytePool does not accept numpy masked arrays, because numpy drops the mask when "
@@ -234,3 +238,31 @@ def _may_hold_masked(items: Iterable[object]) -> bool:
     return any(
         issubclass(kind, np.ndarray | list | tuple | Mapping | slice) for kind in kinds
     )
+
+
+def expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
+    """The values ``y`` of a fit as float64, samples x features: real numbers, one row
+    per row of the design, NaN for a missing value and no infinity."""
+    values = real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
+    if values.ndim != 2:
+        raise ValueError(
+            "y must be a 2-D array of shape (n_samples, n_features), "
+            f"got shape {values.shape}"
+        )
+    if values.shape[0] != n_samples:
+        raise ValueError(
+            f"y has {values.shape[0]} rows but design has {n_samples}; "
+            "rows of both are samples"
+        )
+    if values.shape[1] == 0:
+        raise ValueError("y must have at least one feature (column)")
+    if np.isinf(values).any():
+        raise ValueError("y contains infinite values; mark missing values with NaN")
+    return values
+
+
+def read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Return a view of an array that cannot be written."""
+    view = values.view()
+    view.flags.writeable = False
+    return view

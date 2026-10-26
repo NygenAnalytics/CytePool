@@ -160,7 +160,7 @@ import numpy.typing as npt
 from ._analysis_records import software_versions
 from ._columns import text_column
 from ._jit import jit
-from ._masked_arrays import reject_masked, unmasked_array
+from ._masked_arrays import read_only, reject_masked, unmasked_array
 from ._messages import PACKAGE_DIRECTORY, listing, quoted
 from ._options import checked_choice, index_integer, real_number
 from .differential_expression import DifferentialExpressionResult
@@ -364,13 +364,13 @@ def meta_analysis(
     )
     shape = y.shape[1:]
     arrays = {
-        name: _read_only(results[row].reshape(shape))
+        name: read_only(results[row].reshape(shape))
         for row, name in enumerate(_OUTPUTS)
     }
     return MetaAnalysisFit(
         **arrays,
-        n_studies=_read_only(counts.reshape(shape)),
-        converged=_read_only(converged.reshape(shape)),
+        n_studies=read_only(counts.reshape(shape)),
+        converged=read_only(converged.reshape(shape)),
         method=chosen_method,
         test=chosen_test,
         level=confidence,
@@ -417,12 +417,6 @@ def _level(value: Any) -> float:
             f"{number}"
         )
     return number
-
-
-def _read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
-    view = values.view()
-    view.flags.writeable = False
-    return view
 
 
 # The meta-analyses, compiled. Each routine works on the k studies that measured a

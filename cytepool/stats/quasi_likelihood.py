@@ -197,7 +197,7 @@ import numpy.typing as npt
 from cytepool._counts import as_counts, dispersion_matrix, offset_matrix, weight_matrix
 from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import orthogonalise
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import read_only, reject_masked, unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import (
     checked_flag,
@@ -220,7 +220,6 @@ from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.negative_binomial_models import (
     NegativeBinomialFit,
-    _read_only,
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
@@ -1613,24 +1612,24 @@ def fit_quasi_likelihood(
         dispersion=reported,
         top_proportion=None if dispersion is not None else share,
         average_quasi_dispersion=float(average),
-        unit_deviance_adjusted=_read_only(adjusted.unit_deviance),
-        unit_df_adjusted=_read_only(adjusted.unit_df),
-        leverage=_read_only(adjusted.leverage),
-        deviance_adjusted=_read_only(adjusted.deviance),
-        df_residual_adjusted=_read_only(df),
-        quasi_dispersion=_read_only(quasi),
+        unit_deviance_adjusted=read_only(adjusted.unit_deviance),
+        unit_df_adjusted=read_only(adjusted.unit_df),
+        leverage=read_only(adjusted.leverage),
+        deviance_adjusted=read_only(adjusted.deviance),
+        df_residual_adjusted=read_only(df),
+        quasi_dispersion=read_only(quasi),
         prior_df=_frozen(squeezed.prior_df),
         prior_quasi_dispersion=_frozen(squeezed.prior_variance),
-        posterior_quasi_dispersion=_read_only(
+        posterior_quasi_dispersion=read_only(
             np.asarray(squeezed.posterior_variance, dtype=np.float64)
         ),
         covariate=None
         if trend_values is False
-        else _read_only(np.asarray(trend_values, dtype=np.float64)),
-        average_log_cpm=_read_only(log_cpm),
+        else read_only(np.asarray(trend_values, dtype=np.float64)),
+        average_log_cpm=read_only(log_cpm),
         robust=bool(robust),
         # A copy: the tests refit the null model from these counts.
-        counts=_read_only(np.array(y)),
+        counts=read_only(np.array(y)),
         max_iterations=limit,
     )
 
@@ -1790,17 +1789,17 @@ def quasi_likelihood_f_test(
     return QuasiLikelihoodTest(
         fit=fit,
         names=tuple(tested),
-        contrasts=_read_only(np.array(matrix, dtype=np.float64)),
-        log_fold_change=_read_only(np.ascontiguousarray(log_fold_change)),
+        contrasts=read_only(np.array(matrix, dtype=np.float64)),
+        log_fold_change=read_only(np.ascontiguousarray(log_fold_change)),
         average_log_cpm=fit.average_log_cpm,
-        likelihood_ratio=_read_only(likelihood_ratio),
-        f_statistic=_read_only(np.asarray(f_statistic, dtype=np.float64)),
-        p_value=_read_only(p_value),
-        adjusted_p_value=_read_only(
+        likelihood_ratio=read_only(likelihood_ratio),
+        f_statistic=read_only(np.asarray(f_statistic, dtype=np.float64)),
+        p_value=read_only(p_value),
+        adjusted_p_value=read_only(
             np.asarray(adjust_p_values(p_value, "bh"), dtype=np.float64)
         ),
         df_test=int(rank),
-        df_total=_read_only(df_total),
+        df_total=read_only(df_total),
     )
 
 
@@ -1864,7 +1863,7 @@ def _rows(matrix: FloatArray, genes: npt.NDArray[np.int64]) -> FloatArray:
 def _as_given(value: Any) -> float | FloatArray:
     if isinstance(value, float):
         return value
-    return _read_only(np.asarray(value, dtype=np.float64))
+    return read_only(np.asarray(value, dtype=np.float64))
 
 
 def _proportion(value: Any) -> float:
@@ -1962,4 +1961,4 @@ def _frozen(values: Any) -> Any:
     array = np.asarray(values, dtype=np.float64)
     if array.ndim == 0:
         return float(array)
-    return _read_only(np.array(array))
+    return read_only(np.array(array))

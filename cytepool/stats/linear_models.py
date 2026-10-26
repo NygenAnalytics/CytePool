@@ -42,7 +42,12 @@ from cytepool._linear_algebra import (
     householder_qr,
     symmetric,
 )
-from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
+from cytepool._masked_arrays import (
+    expression_matrix,
+    real_array,
+    reject_masked,
+    unmasked_array,
+)
 from cytepool._summation import observed_means
 from cytepool.design._contrast_weights import contrast_matrix
 from cytepool.design._design_matrices import (
@@ -311,7 +316,7 @@ def fit_linear_model(
         x, names = design_matrix(design, coefficient_names)
         codes, counts, rho = _block_structure(block, correlation, x.shape[0])
         refuse_dropped_random_effects(design, "fit_linear_model", codes, rho)
-        values = _expression_matrix(y, x.shape[0])
+        values = expression_matrix(y, x.shape[0])
         observed = ~np.isnan(values)
         precision = _precision_weights(weights, values.shape, observed)
 
@@ -889,25 +894,6 @@ def _inverse_cross_product(r: FloatArray) -> FloatArray:
     """(R'R)^-1 from the triangular factor R of a QR factorisation."""
     r_inverse = np.linalg.solve(r, np.eye(r.shape[0]))
     return symmetric(r_inverse @ r_inverse.T)
-
-
-def _expression_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
-    values = real_array(unmasked_array(y, "y", missing="NaN"), "y", boolean=False)
-    if values.ndim != 2:
-        raise ValueError(
-            "y must be a 2-D array of shape (n_samples, n_features), "
-            f"got shape {values.shape}"
-        )
-    if values.shape[0] != n_samples:
-        raise ValueError(
-            f"y has {values.shape[0]} rows but design has {n_samples}; "
-            "rows of both are samples"
-        )
-    if values.shape[1] == 0:
-        raise ValueError("y must have at least one feature (column)")
-    if np.isinf(values).any():
-        raise ValueError("y contains infinite values; mark missing values with NaN")
-    return values
 
 
 def _precision_weights(

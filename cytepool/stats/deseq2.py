@@ -210,7 +210,7 @@ from cytepool._linear_algebra import (
     cholesky_solve,
     column_space,
 )
-from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._masked_arrays import read_only, reject_masked, unmasked_array
 from cytepool._options import real_number
 from cytepool._summation import accurate_sums
 from cytepool.design._contrast_weights import contrast_matrix
@@ -934,7 +934,7 @@ def _dispersions(
     def spread(values: npt.NDArray[Any], fill: Any) -> npt.NDArray[Any]:
         full = np.full(n_features, fill, dtype=values.dtype)
         full[counted] = values
-        return _read_only(full)
+        return read_only(full)
 
     full_means = np.full((n_samples, n_features), np.nan)
     full_means[:, counted] = means
@@ -944,11 +944,11 @@ def _dispersions(
         trended=spread(np.asarray(trended, dtype=np.float64), np.nan),
         map_estimate=spread(posterior, np.nan),
         outlier=spread(outlier, False),
-        all_zero=_read_only(~counted),
-        base_mean=_read_only(base_mean),
-        base_variance=_read_only(base_variance),
-        means=_read_only(full_means),
-        size_factors=_read_only(s.copy()),
+        all_zero=read_only(~counted),
+        base_mean=read_only(base_mean),
+        base_variance=read_only(base_variance),
+        means=read_only(full_means),
+        size_factors=read_only(s.copy()),
         trend=used,
         asymptotic_dispersion=float(a0),
         extra_poisson=float(a1),
@@ -1255,27 +1255,27 @@ def _fit(
     log2_covariance = covariance * scale * scale
     standard_errors = np.sqrt(np.diagonal(log2_covariance, axis1=1, axis2=2))
     return DESeq2Fit(
-        coefficients=_read_only(natural * scale),
-        standard_errors=_read_only(np.ascontiguousarray(standard_errors)),
-        covariance=_read_only(log2_covariance),
-        fitted_values=_read_only(fitted),
-        minus_twice_log_likelihood=_read_only(
+        coefficients=read_only(natural * scale),
+        standard_errors=read_only(np.ascontiguousarray(standard_errors)),
+        covariance=read_only(log2_covariance),
+        fitted_values=read_only(fitted),
+        minus_twice_log_likelihood=read_only(
             _minus_twice_log_likelihood(y, fitted, alpha, counted)
         ),
-        hat_values=_read_only(hat),
-        cooks_distances=_read_only(cooks),
-        max_cooks=_read_only(max_cooks),
-        converged=_read_only(converged),
-        iterations=_read_only(iterations),
-        dispersion=_read_only(np.where(counted, alpha, np.nan)),
+        hat_values=read_only(hat),
+        cooks_distances=read_only(cooks),
+        max_cooks=read_only(max_cooks),
+        converged=read_only(converged),
+        iterations=read_only(iterations),
+        dispersion=read_only(np.where(counted, alpha, np.nan)),
         dispersion_estimates=estimates,
-        size_factors=_read_only(s.copy()),
-        base_mean=_read_only(base_mean),
-        counts=_read_only(y),
-        design=_read_only(x),
+        size_factors=read_only(s.copy()),
+        base_mean=read_only(base_mean),
+        counts=read_only(y),
+        design=read_only(x),
         coefficient_names=names,
         min_mean=floor,
-        replicated=_read_only(replicated),
+        replicated=read_only(replicated),
         two_groups=_two_groups(x, design),
     )
 
@@ -1547,28 +1547,28 @@ def _results(
         threshold = quantile = math.nan
         quantiles = rejections = fitted = np.empty(0)
     return DESeq2Results(
-        base_mean=_read_only(base_mean.copy()),
-        log2_fold_change=_read_only(lfc),
-        standard_error=_read_only(se),
-        statistic=_read_only(statistic),
-        p_value=_read_only(p_value),
-        adjusted_p_value=_read_only(adjusted),
+        base_mean=read_only(base_mean.copy()),
+        log2_fold_change=read_only(lfc),
+        standard_error=read_only(se),
+        statistic=read_only(statistic),
+        p_value=read_only(p_value),
+        adjusted_p_value=read_only(adjusted),
         test=test,
         name=name,
-        contrast=_read_only(weights),
+        contrast=read_only(weights),
         df=df,
-        cooks_outlier=_read_only(outlier),
+        cooks_outlier=read_only(outlier),
         converged=fit.converged,
         reduced_converged=(
-            None if reduced_converged is None else _read_only(reduced_converged)
+            None if reduced_converged is None else read_only(reduced_converged)
         ),
         cooks_cutoff=settings.cutoff,
         alpha=settings.alpha,
         filter_threshold=threshold,
         filter_quantile=quantile,
-        filter_quantiles=_read_only(quantiles),
-        rejections=_read_only(rejections),
-        rejections_fit=_read_only(fitted),
+        filter_quantiles=read_only(quantiles),
+        rejections=read_only(rejections),
+        rejections_fit=read_only(fitted),
     )
 
 
@@ -1790,12 +1790,6 @@ def _check_fit(fit: Any) -> None:
         raise TypeError(
             f"fit must be a DESeq2Fit from fit_deseq2, got {type(fit).__name__}"
         )
-
-
-def _read_only(values: npt.NDArray[Any]) -> npt.NDArray[Any]:
-    view = np.asarray(values).view()
-    view.flags.writeable = False
-    return view
 
 
 # Compiled routines: the dispersions.
