@@ -1,13 +1,15 @@
-"""Checks on the documentation sources in docs/: pages, notebooks, links, API, validation.
+"""Checks on the documentation sources in docs/: pages, notebooks, links, API,
+validation, the bibliography, the datasets and the coverage of the public names.
 
 The checks read the sources and do not build the site. Reading the table of contents
-needs PyYAML, a documentation dependency (``uv sync --group docs``); that test is
-skipped without it. The last checks read the References sections of the package's
-module docstrings, from the source files.
+needs PyYAML, a documentation dependency (``uv sync --group docs``); the tests that need
+it are skipped without it. The checks of the bibliography read the References sections
+of the package's module docstrings, from the source files.
 """
 
 import ast
 import copy
+import gzip
 import importlib
 import importlib.util
 import inspect
@@ -15,8 +17,10 @@ import io
 import json
 import pkgutil
 import re
+import sys
 import textwrap
 import tokenize
+import urllib.parse
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 from functools import cache
@@ -24,6 +28,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import numpy as np
 import pytest
 
 import cytepool
@@ -36,6 +41,11 @@ MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 DIRECTIVE = re.compile(r"^\.\. (automodule|autofunction|autoclass|py:data)::\s+(\S+)")
 OPTION = re.compile(r"^\s+:([\w-]+):\s*(.*)$")
 LABEL = re.compile(r"^\((\S+)\)=$", re.M)
+
+# The scripts of docs/ import page_index by name; appended, so that it never takes
+# the place of an installed package.
+sys.path.append(str(ROOT / "docs"))
+import page_index  # noqa: E402
 
 
 def _load_build_docs() -> ModuleType:
@@ -295,6 +305,18 @@ def _description_not_a_list(notebook: dict[str, Any]) -> None:
     _code_cell(notebook, 0)["metadata"]["figure_descriptions"] = "A"
 
 
+def _stale_dataset(notebook: dict[str, Any]) -> None:
+    # Executed with a cube whose fingerprint the registry no longer records.
+    notebook["metadata"]["datasets"] = ["simulated_bulk"]
+    files = dict(_datasets().DATASETS["simulated_bulk"].files)
+    files["simulated_bulk.cube.zarr"] = "sha256:" + "0" * 64
+    notebook["metadata"]["executed_datasets"] = {"simulated_bulk": files}
+
+
+def _unregistered_dataset(notebook: dict[str, Any]) -> None:
+    notebook["metadata"]["datasets"] = ["no_such_dataset"]
+
+
 EXECUTION = "check_execution"
 FIGURES = "check_figures"
 
@@ -307,6 +329,8 @@ FIGURES = "check_figures"
         (_unexecute_cell, EXECUTION, "has not been executed"),
         (_drop_timestamp, EXECUTION, "has never been executed"),
         (_drop_fingerprint, EXECUTION, "records no fingerprint"),
+        (_stale_dataset, EXECUTION, "other data than the datasets it names"),
+        (_unregistered_dataset, EXECUTION, "not registered"),
         (_drop_description, FIGURES, "figure_descriptions"),
         (_blank_description, FIGURES, "figure_descriptions"),
         (_description_not_a_list, FIGURES, "figure_descriptions"),
@@ -841,3 +865,702 @@ def test_reference_checks_find_what_is_wrong() -> None:
     assert _variants(same_doi) == [sorted(same_doi)]
     assert _variants(same_work) == [sorted(same_work)]
     assert _variants(same_doi[:1] + same_work[:1]) == []
+
+
+# The navigation.
+
+
+def _toc() -> list[dict[str, Any]]:
+    yaml = pytest.importorskip("yaml")
+    toc: list[dict[str, Any]] = yaml.safe_load((SOURCE / "myst.yml").read_text())[
+        "project"
+    ]["toc"]
+    return toc
+
+
+def test_the_navigation_has_the_agreed_sections() -> None:
+    overview, *sections = _toc()
+
+    # MyST needs a file first: the Overview.
+    assert overview == {"file": "index.md", "title": "Overview"}
+    assert [entry.get("title") for entry in sections] == list(page_index.SECTIONS)
+    # Every section is a group of pages, and holds at least one.
+    assert all(entry.get("children") for entry in sections)
+    assert all(
+        any("file" in child for child in entry["children"]) for entry in sections
+    )
+
+
+def test_every_page_has_a_kind_and_the_lists_of_kinds_name_pages() -> None:
+    files = {file for file, _, _ in page_index.toc_pages({"project": {"toc": _toc()}})}
+
+    assert sorted(page_index.INDEX_PAGES - files) == []
+    assert sorted(page_index.EXPLANATION_PAGES - files) == []
+    kinds = {page.file: page.kind for page in page_index.pages()}
+    assert kinds["statistics/choosing_a_method.md"] == page_index.EXPLANATION
+    assert kinds["reference/cube_files.md"] == page_index.EXPLANATION
+    assert kinds["reference/capabilities.md"] == page_index.INDEX
+    assert kinds["differential_expression.ipynb"] == page_index.GUIDE
+
+
+@pytest.mark.parametrize(
+    ("file", "url"),
+    [
+        ("index.md", "/"),
+        ("installation.md", "/installation"),
+        ("differential_expression.ipynb", "/differential-expression"),
+        ("statistics/empirical_bayes.md", "/statistics/empirical-bayes"),
+        ("guides/Bulk_RNA.seq.ipynb", "/guides/bulk-rna-seq"),
+    ],
+)
+def test_page_urls_follow_the_rule_of_myst(file: str, url: str) -> None:
+    # MyST 1.8.1 serves differential_expression.ipynb at /differential-expression and,
+    # with folders, stats/a_page.md at /stats/a-page; build_docs.py checks every page
+    # against the built site's myst.xref.json.
+    assert page_index.page_url(file) == url
+
+
+def test_the_build_finds_pages_that_the_site_does_not_have(tmp_path: Path) -> None:
+    pytest.importorskip("yaml")
+    pages = page_index.pages()
+    references = [{"kind": "page", "url": page.url} for page in pages]
+    xref = tmp_path / "myst.xref.json"
+    xref.write_text(json.dumps({"references": references}))
+    build_docs.check_page_urls(xref)
+    # Under a base URL the site's URLs carry it.
+    prefixed = [{"kind": "page", "url": "/CytePool" + page.url} for page in pages]
+    xref.write_text(json.dumps({"references": prefixed}))
+    build_docs.check_page_urls(xref, "/CytePool")
+
+    xref.write_text(json.dumps({"references": references[1:]}))
+    with pytest.raises(ValueError, match=re.escape(pages[0].file)):
+        build_docs.check_page_urls(xref)
+
+
+# Links from the pages to the API reference, and back.
+
+
+def test_the_api_entries_are_the_documented_objects() -> None:
+    entries = page_index.api_entries()
+    pages = _documented_objects()
+
+    assert set(entries) == set().union(*pages.values())
+    for name, entry in entries.items():
+        assert name in pages[entry.page.replace(".html", ".md")]
+
+
+def test_every_api_role_resolves_to_one_entry() -> None:
+    entries = page_index.api_entries()
+    problems = []
+    for path in _site_pages():
+        prose, _ = page_index.read_page(path)
+        for role in page_index.roles_in(prose):
+            try:
+                page_index.resolve(role, entries)
+            except ValueError as error:
+                problems.append(f"{path.relative_to(SOURCE)}: {error}")
+
+    assert problems == []
+
+
+def _entries() -> dict[str, Any]:
+    entry = page_index.ApiEntry
+    return {
+        "pkg.tools": entry("pkg.tools", "tools.html", "module"),
+        "pkg.tools.fit": entry("pkg.tools.fit", "tools.html", "function"),
+        "pkg.tools.Table": entry("pkg.tools.Table", "tools.html", "class"),
+        "pkg.tools.Table.select": entry(
+            "pkg.tools.Table.select", "tools.html", "method"
+        ),
+        "pkg.tools.Table.fit": entry("pkg.tools.Table.fit", "tools.html", "method"),
+        "pkg.cubes.Cube.select": entry("pkg.cubes.Cube.select", "cubes.html", "method"),
+        "pkg.cubes.Cube.shape": entry("pkg.cubes.Cube.shape", "cubes.html", "property"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "resolved"),
+    [
+        ("pkg.tools.fit", "pkg.tools.fit"),
+        # A unique last part.
+        ("Cube.select", "pkg.cubes.Cube.select"),
+        ("shape", "pkg.cubes.Cube.shape"),
+        ("~pkg.tools.Table", "pkg.tools.Table"),
+        # Without a dot, the function rather than the method of the same name.
+        ("fit", "pkg.tools.fit"),
+        ("Table.fit", "pkg.tools.Table.fit"),
+        # A module by its full name only.
+        ("pkg.tools", "pkg.tools"),
+    ],
+)
+def test_a_role_resolves_its_name(name: str, resolved: str) -> None:
+    assert page_index.resolve(name, _entries()).name == resolved
+
+
+@pytest.mark.parametrize(
+    ("name", "message"),
+    [
+        (
+            "select",
+            "ambiguous: it could be pkg.cubes.Cube.select, pkg.tools.Table.select",
+        ),
+        ("tools", "not documented"),
+        ("missing", "not documented"),
+    ],
+)
+def test_a_role_that_names_nothing_or_several_entries_is_refused(
+    name: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        page_index.resolve(name, _entries())
+
+
+def test_roles_become_links_outside_code() -> None:
+    text = textwrap.dedent(
+        """\
+        Fit with {api}`fit`, select with {api}`the method <Cube.select>` or
+        {api}`~pkg.tools.Table`; ``{api}`fit` `` shows the role itself.
+
+        ```python
+        x = "{api}`fit`"
+        ```
+
+        ```{note}
+        A note may link {api}`Table.select`.
+        ```
+        """
+    )
+
+    rewritten = page_index.rewrite_roles(text, _entries())
+
+    assert rewritten == textwrap.dedent(
+        """\
+        Fit with [`fit`](/api/tools.html#pkg.tools.fit), select with [the method](/api/cubes.html#pkg.cubes.Cube.select) or
+        [`Table`](/api/tools.html#pkg.tools.Table); ``{api}`fit` `` shows the role itself.
+
+        ```python
+        x = "{api}`fit`"
+        ```
+
+        ```{note}
+        A note may link [`Table.select`](/api/tools.html#pkg.tools.Table.select).
+        ```
+        """
+    )
+    prose, code = page_index.split_markdown(text)
+    assert page_index.roles_in(prose) == [
+        "fit",
+        "Cube.select",
+        "~pkg.tools.Table",
+        "Table.select",
+    ]
+    assert code == 'x = "{api}`fit`"\n'
+
+
+def test_the_staged_site_links_roles_to_the_api_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    yaml = pytest.importorskip("yaml")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "index.md").write_text("# Example\n\nSee {api}`limma_voom`.\n")
+    toc = [{"file": "index.md"}]
+    (source / "myst.yml").write_text(
+        yaml.safe_dump({"version": 1, "project": {"toc": toc}})
+    )
+    monkeypatch.setattr(build_docs, "SOURCE", source)
+    monkeypatch.setattr(build_docs, "BUILD", tmp_path / "build")
+    monkeypatch.setattr(build_docs, "SITE", tmp_path / "build" / "site")
+    monkeypatch.delenv("BASE_URL", raising=False)
+
+    site = build_docs.stage_site()
+
+    assert (site / "index.md").read_text() == (
+        "# Example\n\nSee [`limma_voom`]("
+        "/api/differential_expression.html#cytepool.differential_expression.limma_voom).\n"
+    )
+    (source / "index.md").write_text("# Example\n\nSee {api}`select`.\n")
+    with pytest.raises(ValueError, match="'select' is ambiguous"):
+        build_docs.stage_site()
+
+
+def test_the_code_of_a_page_uses_what_it_imports_from_cytepool() -> None:
+    code = textwrap.dedent(
+        """\
+        %time import numpy as np
+        from cytepool.cube.pool import from_cells
+        import cytepool.stats.voom as weights
+        from cytepool._jit import jit
+        from cytepool.design import Design as D
+        result = weights.voom(counts, D(samples, "~ group"))
+        """
+    )
+
+    uses = page_index.code_uses(code, page_index.api_entries())
+
+    # A name imported from the module that implements it finds its documented name;
+    # private names and modules are not uses.
+    assert uses == {
+        "cytepool.cube.from_cells",
+        "cytepool.stats.voom.voom",
+        "cytepool.design.Design",
+    }
+
+
+def test_api_entries_link_back_to_the_pages_that_use_and_explain_them() -> None:
+    pytest.importorskip("yaml")
+    links = page_index.links()
+    used = {
+        page.file
+        for page in links.used_in["cytepool.differential_expression.limma_voom"]
+    }
+    explained = {
+        page.file
+        for page in links.explained_in["cytepool.differential_expression.limma_voom"]
+    }
+
+    assert "differential_expression.ipynb" in used  # its code imports it
+    assert "guides/bulk_rna_seq.ipynb" in used
+    assert "statistics/choosing_a_method.md" in explained
+    # Index pages link to many names and give no links back.
+    index = {page.file for page in page_index.pages() if page.kind == page_index.INDEX}
+    for pages in (*links.used_in.values(), *links.explained_in.values()):
+        assert not index & {page.file for page in pages}
+    lines = page_index.backlink_lines("cytepool.stats.voom.voom", links)
+    assert lines[0] == ""
+    assert lines[1].startswith("**Used in:** `Quick start <../quickstart/>`__")
+    assert "`Precision weights <../statistics/precision-weights/>`__" in lines[3]
+    assert page_index.backlink_lines("cytepool.stats.special.lgamma", links) == []
+
+
+# The bibliography.
+
+BIBLIOGRAPHY = SOURCE / "references.bib"
+BIB_ENTRY = re.compile(
+    r"^@(?P<kind>\w+)\{(?P<key>[^,\s]+),\n(?P<body>.*?)\n\}$", re.M | re.S
+)
+BIB_FIELD = re.compile(r"^  (?P<name>\w+) = \{(?P<value>.*)\},$", re.M)
+
+
+@cache
+def _bibliography() -> dict[str, dict[str, str]]:
+    """The entries of references.bib by key, each a mapping of field to value."""
+    text = BIBLIOGRAPHY.read_text()
+    entries: dict[str, dict[str, str]] = {}
+    for match in BIB_ENTRY.finditer(text):
+        assert match["key"] not in entries, f"{match['key']} is in references.bib twice"
+        fields = dict(BIB_FIELD.findall(match["body"]))
+        fields["@kind"] = match["kind"]
+        entries[match["key"]] = fields
+    # Every entry was read: as many as the file starts.
+    assert len(entries) == text.count("\n@") + text.startswith("@")
+    return entries
+
+
+def test_the_site_build_reads_the_bibliography_and_stops_on_unknown_keys() -> None:
+    yaml = pytest.importorskip("yaml")
+    project = yaml.safe_load((SOURCE / "myst.yml").read_text())["project"]
+
+    assert project["bibliography"] == ["references.bib"]
+    assert {"rule": "reference-target-resolves", "severity": "error"} in project[
+        "error_rules"
+    ]
+
+
+def test_every_bibliography_entry_is_complete() -> None:
+    entries = _bibliography()
+    problems = []
+    dois: dict[str, str] = {}
+    for key, fields in entries.items():
+        year = fields.get("year", "")
+        if (
+            not re.fullmatch(r"[a-z]+(\d{4})[a-z]?", key)
+            or key[-5:-1] != year
+            and key[-4:] != year
+        ):
+            problems.append(f"{key}: the key is not a name and the year {year}")
+        if not ({"author", "editor"} & set(fields) and "title" in fields):
+            problems.append(f"{key}: no author, editor or title")
+        if fields["@kind"] == "article" and "journal" not in fields:
+            problems.append(f"{key}: an article without a journal")
+        if "doi" in fields:
+            doi = urllib.parse.unquote(fields["doi"]).lower()
+            if not re.fullmatch(r"10\.\d{4,9}/\S+", doi):
+                problems.append(f"{key}: {fields['doi']} is not a DOI")
+            if doi in dois:
+                problems.append(f"{key} and {dois[doi]} have the same DOI")
+            dois[doi] = key
+
+    assert problems == []
+    assert len(entries) > 150
+
+
+def test_every_citation_of_the_pages_is_in_the_bibliography() -> None:
+    keys = set(_bibliography())
+    unknown = [
+        f"{path.relative_to(SOURCE)}: {key}"
+        for path in _site_pages()
+        for key in page_index.citations(page_index.read_page(path)[0])
+        if key not in keys
+    ]
+
+    assert unknown == []
+
+
+def test_the_bibliography_page_cites_every_entry() -> None:
+    prose, _ = page_index.read_page(SOURCE / "reference" / "bibliography.md")
+
+    assert sorted(set(_bibliography()) - set(page_index.citations(prose))) == []
+
+
+def test_every_doi_the_modules_cite_is_in_the_bibliography_with_its_year() -> None:
+    by_doi = {
+        urllib.parse.unquote(fields["doi"]).lower(): (key, fields["year"])
+        for key, fields in _bibliography().items()
+        if "doi" in fields
+    }
+    problems = []
+    for name, (entries, _) in _module_references().items():
+        for entry in entries or []:
+            match = REFERENCE.match(entry)
+            for doi in DOI.findall(entry):
+                found = by_doi.get(doi.lower())
+                if found is None:
+                    problems.append(f"{name}: doi:{doi} is not in references.bib")
+                elif match and found[1] != match["year"]:
+                    problems.append(f"{name}: doi:{doi} is {found[0]} of {found[1]}")
+
+    assert problems == []
+    # The modules cite about a hundred works with DOIs.
+    assert len(by_doi) > 100
+
+
+def test_citations_are_read_outside_code_links_and_mail_addresses() -> None:
+    prose = (
+        "As shown [@squair2021; @murphy2022, figure 1] and by @zimmerman2021. Write to "
+        "help@example.org, or [the list](mailto:list@example.org); `@notakey` and "
+        "{api}`limma_voom` are code, and {cite:p}`law2014` a role."
+    )
+
+    assert page_index.citations(prose) == [
+        "law2014",
+        "squair2021",
+        "murphy2022",
+        "zimmerman2021",
+    ]
+
+
+# The datasets.
+
+
+def _datasets() -> ModuleType:
+    return page_index.docs_module("datasets")
+
+
+def _validation_constants() -> dict[str, Any]:
+    """The constants of the validation script of GSE96583, read without running it."""
+    tree = ast.parse(
+        (ROOT / "validation" / "interferon_stimulated_pbmcs.py").read_text()
+    )
+    found = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            try:
+                found[node.targets[0].id] = ast.literal_eval(node.value)
+            except ValueError:
+                if isinstance(node.value, ast.Call):  # "... ".split()
+                    call = node.value
+                    if (
+                        isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "split"
+                    ):
+                        found[node.targets[0].id] = ast.literal_eval(
+                            call.func.value
+                        ).split()
+    return found
+
+
+def test_every_dataset_records_its_source_licence_citation_and_contents() -> None:
+    datasets = _datasets()
+    keys = set(_bibliography())
+
+    assert set(datasets.DATASETS) == {
+        "simulated_pbmc",
+        "simulated_bulk",
+        "kang2018",
+        "hallmark_interferon_alpha",
+    }
+    for dataset_id, dataset in datasets.DATASETS.items():
+        assert dataset.id == dataset_id
+        assert (
+            dataset.title and dataset.description and dataset.source and dataset.licence
+        )
+        assert dataset.citation is None or dataset.citation in keys
+        # What it does not simulate, it downloads or copies from a publication.
+        assert dataset.citation is not None or "simulated" in dataset.source
+        assert dataset.files
+        assert all(
+            re.fullmatch(r"sha256:[0-9a-f]{64}", f) for f in dataset.files.values()
+        )
+        for name, download in dataset.downloads.items():
+            assert download.url.startswith("https://") and download.url.endswith(name)
+            assert download.size > 0 and re.fullmatch(r"[0-9a-f]{64}", download.sha256)
+
+
+def test_the_downloads_of_kang2018_are_those_of_the_validation_script() -> None:
+    datasets = _datasets()
+    validation = _validation_constants()
+
+    kang = datasets.DATASETS["kang2018"]
+    assert {
+        name: (download.size, download.sha256)
+        for name, download in kang.downloads.items()
+    } == validation["FILES"]
+    assert all(
+        d.url == validation["SOURCE"] + name for name, d in kang.downloads.items()
+    )
+    assert datasets.GEO_MATRICES == validation["MATRICES"]
+    assert datasets.GEO_GENES == validation["N_GENES"]
+    assert datasets.GEO_CELL_TYPES == validation["CELL_TYPES"]
+    assert datasets.INTERFERON_ALPHA_RESPONSE == validation["INTERFERON_ALPHA_RESPONSE"]
+    assert datasets.EARLIER_SYMBOLS == validation["EARLIER_SYMBOLS"]
+    assert len(set(datasets.INTERFERON_ALPHA_RESPONSE)) == 97
+
+
+def test_the_notices_and_the_datasets_page_name_every_dataset() -> None:
+    datasets = _datasets()
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text()
+    page = (SOURCE / "reference" / "datasets.md").read_text()
+
+    for dataset_id, dataset in datasets.DATASETS.items():
+        row = next(
+            line for line in page.splitlines() if line.startswith(f"| `{dataset_id}`")
+        )
+        if dataset.citation:
+            assert f"@{dataset.citation}" in row
+            # Data the documentation does not make itself are in the notices.
+            assert f"`{dataset_id}`" in notices
+    assert "docs/datasets.py" in notices
+    assert "use no dataset" not in notices
+
+
+def test_the_cache_must_be_outside_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    datasets = _datasets()
+    monkeypatch.setenv("CYTEPOOL_DOCS_DATA", str(tmp_path / "cache"))
+    assert datasets.data_directory() == tmp_path / "cache"
+
+    monkeypatch.setenv("CYTEPOOL_DOCS_DATA", str(ROOT / "docs" / "data"))
+    with pytest.raises(SystemExit, match="inside the repository"):
+        datasets.data_directory()
+
+
+def test_the_digest_of_arrays_ignores_how_the_archive_was_written(
+    tmp_path: Path,
+) -> None:
+    datasets = _datasets()
+    arrays = {"counts": np.arange(12).reshape(3, 4), "ids": np.array(["a", "b", "c"])}
+    np.savez(tmp_path / "plain.npz", **arrays)
+    np.savez_compressed(tmp_path / "compressed.npz", **dict(reversed(arrays.items())))
+    np.savez(
+        tmp_path / "changed.npz",
+        counts=arrays["counts"] + (arrays["counts"] == 5),
+        ids=arrays["ids"],
+    )
+    np.savez(
+        tmp_path / "reshaped.npz",
+        counts=arrays["counts"].reshape(4, 3),
+        ids=arrays["ids"],
+    )
+
+    digest = datasets.digest(tmp_path / "plain.npz")
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+    assert datasets.digest(tmp_path / "compressed.npz") == digest
+    assert datasets.digest(tmp_path / "changed.npz") != digest
+    assert datasets.digest(tmp_path / "reshaped.npz") != digest
+
+
+def test_a_dataset_is_made_once_and_checked_against_the_registry(
+    tmp_path: Path,
+) -> None:
+    datasets = _datasets()
+    builds = []
+
+    def build(downloads: Path, output: Path) -> None:
+        builds.append(output)
+        (output / "values.json").write_text('{"x": 1}\n')
+
+    expected = "sha256:" + __import__("hashlib").sha256(b'{"x": 1}\n').hexdigest()
+    dataset = datasets.Dataset(
+        id="example",
+        title="Example",
+        description="one value",
+        source="simulated",
+        licence="BSD",
+        citation=None,
+        files={"values.json": expected},
+        build=build,
+    )
+    directory = tmp_path / "cache"
+
+    assert datasets.check(dataset, directory) == [
+        "values.json is missing; run: python docs/datasets.py prepare example"
+    ]
+    assert datasets.prepare(dataset, directory) == []
+    assert datasets.prepare(dataset, directory) == []
+    assert builds == [directory]  # the second call finds it prepared
+    (directory / "values.json").write_text('{"x": 2}\n')
+    assert datasets.check(dataset, directory)[0].startswith("values.json has sha256:")
+
+
+def test_counts_are_read_from_matrix_market_files_without_scipy(tmp_path: Path) -> None:
+    datasets = _datasets()
+    # 4 genes x 3 cells, genes x cells and counted from 1, as GEO stores them.
+    entries = [(1, 1, 5), (3, 1, 2), (2, 2, 7), (4, 3, 1), (1, 3, 3)]
+    text = "%%MatrixMarket matrix coordinate real general\n%\n4 3 5\n" + "".join(
+        f"{g} {c} {v}\n" for g, c, v in entries
+    )
+    path = tmp_path / "counts.mtx.gz"
+    path.write_bytes(gzip.compress(text.encode()))
+    expected = np.zeros((3, 4), dtype=np.int64)  # cells x genes
+    for g, c, v in entries:
+        expected[c - 1, g - 1] = v
+
+    with path.open("rb") as raw:
+        shape, read = datasets._matrix_market(raw)
+    cells = datasets._cells_from_entries(read, 3, 4)
+    dense = np.zeros((3, 4), dtype=np.int64)
+    for row in range(3):
+        start, end = cells["indptr"][row], cells["indptr"][row + 1]
+        dense[row, cells["indices"][start:end]] = cells["data"][start:end]
+
+    assert shape == (4, 3)
+    np.testing.assert_array_equal(dense, expected)
+    kept = datasets._take_rows(cells, np.array([2, 0]))
+    stacked = datasets._stack([kept, datasets._take_rows(cells, np.array([1]))], 4)
+    rebuilt = np.zeros((3, 4), dtype=np.int64)
+    for row in range(3):
+        start, end = stacked["indptr"][row], stacked["indptr"][row + 1]
+        rebuilt[row, stacked["indices"][start:end]] = stacked["data"][start:end]
+    np.testing.assert_array_equal(rebuilt, expected[[2, 0, 1]])
+    assert stacked["shape"] == (3, 4)
+
+
+# The coverage of the public names.
+
+
+def _coverage_report() -> ModuleType:
+    return page_index.docs_module("coverage_report")
+
+
+def test_every_public_name_is_covered_or_listed_with_a_reason() -> None:
+    pytest.importorskip("yaml")
+    report = _coverage_report().report()
+
+    assert report.uncovered == []
+    assert report.stale == []
+    assert report.empty == []
+    # Most names earn a place in a page.
+    assert len(report.pages) > len(report.exempt) + len(report.planned)
+
+
+def test_the_public_names_are_those_of_the_api_rule_and_their_methods() -> None:
+    names = _coverage_report().public_names()
+    required = _required_objects()
+
+    assert required <= names
+    for name in names - required:
+        parent, _, attribute = name.rpartition(".")
+        assert parent in required and inspect.isclass(
+            getattr(
+                importlib.import_module(parent.rpartition(".")[0]),
+                parent.rpartition(".")[2],
+            )
+        ), name
+    assert {"cytepool.cube.Cube.select", "cytepool.design.Design.check"} <= names
+    # Properties are not methods.
+    assert "cytepool.cube.Cube.n_cells" not in names
+
+
+def test_the_coverage_report_finds_names_listed_wrongly(tmp_path: Path) -> None:
+    pytest.importorskip("yaml")
+    coverage = _coverage_report()
+    exempt, planned = coverage.read_exemptions()
+    path = tmp_path / "exemptions.toml"
+
+    def write(entries: dict[str, str], more: str = "") -> None:
+        lines = ["[exempt]"] + [
+            f'"{name}" = "{reason}"' for name, reason in entries.items()
+        ]
+        path.write_text("\n".join(lines + ["", "[planned]", more]) + "\n")
+
+    write(
+        exempt
+        | {
+            "cytepool.differential_expression.limma_voom": "covered",
+            "cytepool.nothing": "x",
+        }
+    )
+    report = coverage.report(path)
+    assert report.stale == [
+        "cytepool.differential_expression.limma_voom",
+        "cytepool.nothing",
+    ]
+    first = next(iter(exempt))
+    write({**exempt, first: " "})
+    assert coverage.report(path).empty == [first]
+    write({name: reason for name, reason in exempt.items() if name != first})
+    assert coverage.report(path).uncovered == sorted([first, *planned])
+    path.write_text("[ignored]\n")
+    with pytest.raises(ValueError, match="expected exempt and planned"):
+        coverage.read_exemptions(path)
+
+
+# The capability matrix.
+
+
+def _table_rows(text: str, header: str) -> list[list[str]]:
+    """The rows of the Markdown table that starts with ``header``, as cells."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(header))
+    rows = []
+    for line in lines[start + 2 :]:
+        if not line.startswith("|"):
+            break
+        rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
+    return rows
+
+
+def _script(cell: str) -> str:
+    """The validation script a table cell links to."""
+    match = re.search(r"`(\w+\.py)`", cell)
+    assert match is not None, cell
+    return match[1]
+
+
+def test_the_capability_matrix_agrees_with_the_validation_summary() -> None:
+    summary = {
+        _script(row[0]): row[2]
+        for row in _table_rows((SOURCE / "validation.md").read_text(), "| Script |")
+        if "`" in row[0]
+    }
+    matrix = _table_rows(
+        (SOURCE / "reference" / "capabilities.md").read_text(), "| Method |"
+    )
+    problems = []
+    for method, _, checked, tier, script_cell in matrix:
+        script = _script(script_cell)
+        if script not in summary:
+            problems.append(f"{method}: {script} is not on the Validation page")
+            continue
+        # Every reference and version named is one the script was run against.
+        for tool in re.findall(r"[\w-]+ \d[\w.-]*\d", checked):
+            if tool not in summary[script]:
+                problems.append(f"{method}: {tool} is not among {summary[script]}")
+        if not re.match(r"(exact|close|calibrated)\b", tier):
+            problems.append(f"{method}: the tier {tier!r} is not a tier")
+
+    assert problems == []
+    # Every script of the Validation page has a row.
+    assert sorted(set(summary) - {_script(row[4]) for row in matrix}) == []

@@ -3,36 +3,95 @@ project:
   title: CytePool
   description: Statistics on pseudobulk and bulk omics data, built on numpy and numba.
   github: https://github.com/NygenAnalytics/CytePool
+  # The works the pages cite as [@key]; the Bibliography page cites every entry.
+  bibliography:
+  - references.bib
   # Sphinx builds the API reference from these sources; build_docs.py copies it
   # into the site under api/.
   exclude:
   - reference/api/**
+  error_rules:
   # A strict build checks every link over the network, and cannot resolve links to
   # the API reference, which is copied in afterwards. tests/test_documentation.py
   # checks links to pages, labels, the API reference and files of the repository
   # instead, so that a build depends on no website.
-  error_rules:
   - rule: link-resolves
     severity: ignore
+  # A citation or cross-reference that resolves nowhere stops the strict build.
+  - rule: reference-target-resolves
+    severity: error
   # To add a page, add its file here. A notebook page also needs a saved
-  # execution: make -C docs execute PAGES="<page>".
+  # execution: make -C docs execute PAGES="<page>". MyST needs a file first, the
+  # Overview; the six groups after it are the ones docs/page_index.py lists, in that
+  # order.
   toc:
   - file: index.md
-  - title: Getting started
+    title: Overview
+  - title: Start here
     children:
     - file: installation.md
       title: Installation
     - file: quickstart.ipynb
       title: Quick start
+  - title: Build and share cubes
+    children:
+    - file: guides/export_cubes.ipynb
+      title: Export a cube from another tool
+  - title: Compare conditions
+    children:
     - file: differential_expression.ipynb
       title: Differential expression per cell type
+  - title: Other designs and data
+    children:
+    - file: guides/bulk_rna_seq.ipynb
+      title: Bulk RNA-seq
+  - title: How the statistics work
+    children:
+    - file: statistics/choosing_a_method.md
+      title: Choosing a method
+    - file: statistics/cubes.md
+      title: The cube and its additive layers
+    - file: statistics/linear_models.md
+      title: Designs, linear models and contrasts
+    - file: statistics/empirical_bayes.md
+      title: Empirical Bayes moderation and TREAT
+    - file: statistics/precision_weights.md
+      title: Precision weights
+    - file: statistics/count_models.md
+      title: Count models
+    - file: statistics/mixed_models.md
+      title: Mixed models, REML and dream
+    - file: statistics/gene_set_tests.md
+      title: Gene-set tests
+    - file: statistics/composition.md
+      title: Composition tests
+    - file: statistics/meta_analysis.md
+      title: Meta-analysis
+    - file: statistics/multiple_testing.md
+      title: Multiple testing
   - title: Reference
     children:
     - title: API reference
       url: /api/index.html
       open_in_same_tab: true
+    - file: reference/cube_files.md
+      title: Cube files and provenance records
+    - file: reference/capabilities.md
+      title: Capability matrix
     - file: validation.md
       title: Validation
+    - file: reference/datasets.md
+      title: Datasets
+    - file: reference/related_software.md
+      title: Related software
+    - file: reference/literature.md
+      title: Literature
+    - file: reference/bibliography.md
+      title: Bibliography
+    - file: reference/glossary.md
+      title: Glossary
+    - file: reference/citing.md
+      title: How to cite
     - url: https://github.com/NygenAnalytics/CytePool/issues
       title: Report a bug
 site:

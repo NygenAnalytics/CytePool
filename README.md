@@ -300,10 +300,12 @@ These are not implemented yet:
 
 ## Documentation
 
-The documentation in [`docs/`](docs/) has a quick start, an API reference and a
+The documentation is published at <https://docs.nygen.io/CytePool/>. It has a quick
+start and guides, pages on how the statistics work, an API reference, a
+[capability matrix](docs/source/reference/capabilities.md) and a
 [Validation](docs/source/validation.md) page that reports, for every validation
-script, the reference, the measured differences, the tolerances and the outcome.
-The site is not published yet; build it with
+script, the reference, the measured differences, the tolerances and the outcome. Its
+sources are in [`docs/`](docs/); build it with
 `uv sync --extra test --group dev --group docs` and `make -C docs html` (Node.js 18,
 20, or 22 and newer), as
 [the installation page](docs/source/installation.md#build-this-documentation)

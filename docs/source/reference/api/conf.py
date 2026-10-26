@@ -7,6 +7,10 @@ from typing import Any
 
 # Document the working tree, also when another copy of cytepool is installed.
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+# The index of the site's pages, which says where each entry is used and explained.
+sys.path.append(str(Path(__file__).resolve().parents[3]))
+
+import page_index  # noqa: E402
 
 project = "CytePool API"
 copyright = "2026, Nygen Analytics AB"
@@ -87,7 +91,21 @@ def _escape_vertical_bars(
             literal_indent = indent
 
 
+def _link_pages(
+    app: Any, what: str, name: str, obj: Any, options: Any, lines: list[str]
+) -> None:
+    """Add links to the pages of the site that use and explain an entry.
+
+    A page uses or explains the names that its code imports and that its prose links
+    to (``docs/page_index.py``); the links are relative, as the site serves this
+    reference under ``api/``.
+    """
+    lines += page_index.backlink_lines(name, page_index.links())
+
+
 def setup(app: Any) -> None:
     app.connect("autodoc-skip-member", _skip_tuple_fields)
     # Before napoleon (priority 500) turns the docstrings into reStructuredText.
     app.connect("autodoc-process-docstring", _escape_vertical_bars, priority=400)
+    # After napoleon, so that the links follow the docstring's last section.
+    app.connect("autodoc-process-docstring", _link_pages, priority=600)

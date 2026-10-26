@@ -125,3 +125,14 @@ To add a page, put a Markdown file or a notebook under `docs/source/` and add it
 `toc` in `docs/source/myst.yml`; execute it if it is a notebook. To document a new
 public module, add a page for it under `docs/source/reference/api/` with an
 `automodule` directive, and list the page in that directory's `index.md`.
+
+Pages link to the API reference with the `{api}` role, as in ``{api}`limma_voom` `` or
+``{api}`Cube.select` ``: the build replaces it with a link to the entry, and stops on a
+name that the API reference does not document or that could be several entries. Each
+API entry lists the pages that use and explain it. Pages cite works as `[@law2014]`,
+with keys of `docs/source/references.bib`; an unknown key stops the build, and the
+[Bibliography](reference/bibliography.md) cites every entry. A notebook that reads shared
+data names its datasets in its metadata `datasets`
+([Datasets](reference/datasets.md)); `make -C docs execute` prepares them.
+`uv run --group docs python docs/coverage_report.py` lists the public names that no page
+uses or explains yet.

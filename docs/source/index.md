@@ -1,64 +1,66 @@
 ---
-description: CytePool brings the sample-level statistics of limma, edgeR and DESeq2 to Python for pseudobulk profiles and bulk RNA-seq, with numpy and numba as its only required dependencies.
+description: CytePool brings the sample-level statistics of limma, edgeR, DESeq2, dream, propeller and metafor to Python for pseudobulk and bulk omics data, with numpy and numba as its only required dependencies.
 ---
 
 # CytePool
 
 **Sample-level statistics for pseudobulk and bulk omics data, in Python.**
 
-CytePool brings the methods that are standard in R for aggregated omics data into one
-Python package with one data model: pseudobulk profiles, built by pooling the cells of
-each sample and cell type, and ordinary bulk RNA-seq. Its only required dependencies
-are numpy and numba. Every method is compared with an independent reference, usually
-the package that defined it, and the [Validation](validation.md) page reports how
-closely they agree.
+Studies that compare conditions, donors or treatments ask questions about samples:
+cells of one donor are not independent replicates, and a test that treats them as
+such finds differences that other donors do not share [@squair2021; @zimmerman2021].
+CytePool pools the cells of each sample and cell type into a *cube* of pseudobulk
+profiles, which can be saved, shared and traced back to the cells, and tests them with
+the methods that are standard in R: limma, edgeR, DESeq2, dream, propeller and
+metafor. Its only required dependencies are numpy and numba, and every method is
+compared with the package that defined it ([Validation](validation.md)).
 
-[Quick start](quickstart.ipynb) · [Differential expression per cell type](differential_expression.ipynb) ·
-[Installation](installation.md) · [Validation](validation.md) ·
-[API reference](/api/index.html)
+[Installation](installation.md) · [Quick start](quickstart.ipynb) ·
+[Differential expression per cell type](differential_expression.ipynb) ·
+[Choosing a method](statistics/choosing_a_method.md) ·
+[Capability matrix](reference/capabilities.md) · [API reference](/api/index.html)
 
 :::{note} Early development
 Nothing is released yet, and the interface may still change.
 :::
 
-## What is implemented
+## The questions CytePool answers
 
-| Area | API | Checked against |
+Studies of many samples, across immune and brain cohorts, population genetics,
+pathways, interactions, pharmacology and atlases, come back to ten questions. This is
+what CytePool offers for each today.
+
+| Question | What CytePool offers | Where to read |
 | --- | --- | --- |
-| Pseudobulk cubes | [`Cube`, `from_cells`, `from_bulk`](/api/cubes.html) | scanpy, decoupler |
-| Cube files | [`write_cube`, `read_cube`](/api/cube_files.html) | zarr-python |
-| AnnData and MuData | [`to_anndata`, `from_anndata`, `to_mudata`, `from_mudata`](/api/anndata.html) | scanpy, decoupler, LIANA |
-| Normalization and filtering | [TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression`](/api/normalization.html) | edgeR, DESeq2 |
-| Designs | [Model matrices from R formulas, named contrasts, design checks](/api/designs.html) | R, limma, lme4 |
-| Linear models | [Ordinary, weighted and generalised least squares for every gene, contrasts](/api/linear_models.html) | limma |
-| Mixed models | [`fit_mixed_model` (random intercepts, by REML or maximum likelihood), `fixed_effect_tests` (Satterthwaite's degrees of freedom)](/api/mixed_models.html) | lme4, lmerTest |
-| Precision weights for counts | [`voom`](/api/voom.html) | limma |
-| dream | [`voom_with_dream_weights`, `moderated_fixed_effect_tests`](/api/dream.html) | variancePartition |
-| Negative binomial models | [`fit_negative_binomial_model` (edgeR's `glmFit`), deviances](/api/negative_binomial_models.html) | edgeR, mpmath |
-| DESeq2 | [`fit_deseq2`, `deseq2_wald_test`, `deseq2_likelihood_ratio_test`, `deseq2_dispersions`](/api/deseq2.html) | DESeq2, PyDESeq2 |
-| Empirical Bayes moderation | [Moderated t and F statistics, B-statistics, TREAT](/api/empirical_bayes.html) | limma |
-| Multiple testing | [Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli](/api/multiple_testing.html) | R |
-| Differential expression | [`limma_voom`, `limma_trend`, `dream_voom` on every cell type of a cube](/api/differential_expression.html) | limma, edgeR, variancePartition |
-| Distributions and smoothers | [Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, quantiles of the first four](/api/distributions.html); [LOWESS, natural spline bases](/api/smoothing.html) | mpmath, R |
+| Which genes change in each cell type? | limma-voom, limma-trend and dream on every cell type of a cube; edgeR's quasi-likelihood tests and DESeq2 on one matrix at a time | [Differential expression per cell type](differential_expression.ipynb), [Bulk RNA-seq](guides/bulk_rna_seq.ipynb), [Choosing a method](statistics/choosing_a_method.md) |
+| Which cell types expand or contract? | propeller. Not yet: precision-weighted mixed models or count models of composition | [Composition tests](statistics/composition.md) |
+| Which pathways and regulators respond? | camera, fry, roast, mroast and romer on any contrast. Not yet: activity scores of pathways and transcription factors | [Gene-set tests](statistics/gene_set_tests.md) |
+| What drives the variation between donors, and what must be adjusted for? | Design checks for confounded factors, sample quality weights, and mixed models that estimate a variance per random effect for every gene. Not yet: variance partitioning | [Designs, linear models and contrasts](statistics/linear_models.md), [Mixed models, REML and dream](statistics/mixed_models.md) |
+| Does it replicate, and how should studies be combined? | Meta-analysis of every gene across studies, with the between-study variance, Q and I². Not yet: replication measures and shrinkage across studies | [Meta-analysis](statistics/meta_analysis.md) |
+| Can patients be stratified from their profiles? | Not yet; cubes convert to AnnData and MuData for other tools | [Capability matrix](reference/capabilities.md) |
+| Which cell-cell interactions change? | Not yet | [Related software](reference/related_software.md) |
+| Do effects depend on genotype, time, sex or context? | Interactions and F-tests in designs, likelihood ratio tests, random intercepts for repeated measures. Not yet: random slopes. QTL mapping is left to dedicated tools | [Designs, linear models and contrasts](statistics/linear_models.md), [Count models](statistics/count_models.md) |
+| How do cells respond to drugs and doses? | A dose as a factor or a covariate of a design. Not yet: dose-response fits, benchmark doses, synergy | [Capability matrix](reference/capabilities.md) |
+| Can public studies be pooled into one cube? | Not yet; cubes import the pseudobulk layouts of scanpy, decoupler and LIANA, and meta-analysis combines results across cubes | [Export a cube from another tool](guides/export_cubes.ipynb), [Meta-analysis](statistics/meta_analysis.md) |
 
-The [README](https://github.com/NygenAnalytics/CytePool#planned) lists what is planned
-(dispersion estimation and tests for negative binomial models, mixed models beyond random intercepts, gene-set
-and composition tests, and more) and the known limits of what exists.
+The [Literature](reference/literature.md) page collects studies behind these questions,
+and the [Capability matrix](reference/capabilities.md) lists every method with the
+reference it is checked against, and what is not implemented yet.
 
 ## Principles
 
 - **Samples are the unit of replication.** Cells are pooled into samples before any
-  test, and a cube records how many cells each pooled profile holds.
-- **Two required dependencies:** numpy and numba. Numerical routines are compiled by
-  numba the first time they run and cached on disk, so the first call of a function
-  in a new environment is slower than the next.
+  test, and a cube records how many cells each profile holds.
+- **Traceable results.** A cube's fingerprint names its values, its provenance record
+  says how it was made, and every result keeps both.
 - **Checked against the reference implementations.** Each area has a script in
   [`validation/`](https://github.com/NygenAnalytics/CytePool/tree/master/validation)
-  that runs the reference package as a separate program on the same inputs; the
-  [Validation](validation.md) page reports the results.
-- **Implemented from the literature.** Methods whose reference packages carry
-  copyleft licenses are written from their papers and documentation, never from their
-  source code, so CytePool can stay BSD-licensed.
+  that runs the reference package as a separate program on the same inputs.
+- **Implemented from the literature.** Methods whose reference packages carry copyleft
+  licences are written from their papers and documentation, never from their source
+  code, so that CytePool can stay BSD-licensed.
+- **Two required dependencies,** numpy and numba. Numerical routines are compiled the
+  first time they run and cached on disk.
 
 ## Help and contributing
 
