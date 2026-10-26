@@ -1,5 +1,5 @@
 ---
-description: The datasets the documentation's pages read, where each comes from, its licence and citation, and how to prepare them on another machine.
+description: The datasets the documentation's pages read and the networks CytePool downloads, where each comes from, its licence and citation, and how to prepare them on another machine.
 ---
 
 # Datasets
@@ -34,3 +34,27 @@ the same directory, so a machine fetches them once; its cube is the one that scr
 tests. A notebook page names its datasets in its metadata; `make -C docs execute`
 prepares them, links them into the directory the page runs in, and records the
 fingerprint of each file it was given, which the build checks against the registry.
+
+## Networks
+
+The activity functions of {mod}`cytepool.activity` read networks that {api}`collectri`
+and {api}`progeny` download on first use into `cytepool/networks` under
+`XDG_CACHE_HOME` or `~/.cache` (or the directory given as `cache_dir`), each checked
+against its size and SHA-256 digest; no file of them is in the repository.
+
+| Network | What it holds | Source | Licence | Cite |
+| --- | --- | --- | --- | --- |
+| CollecTRI | 43,175 signed interactions of 1,186 human transcription factors with 6,693 target genes, gathered from twelve resources; the file `CollecTRI_regulons.csv`, 4,345,649 bytes, SHA-256 `4473c9189dd53dacc80297709ad1452dda1086a1cc2185f9a56146c261668701` | [Zenodo record 8192729](https://zenodo.org/records/8192729), version 2.0 | Creative Commons Attribution 4.0 for the record; each resource keeps its own terms, below | @muellerdott2023 |
+| PROGENy | The weights (z-scores) and p-values of 22,479 human and 17,426 mouse genes in 14 signalling pathways; the R package `progeny_1.28.0.tar.gz`, 10,642,873 bytes, SHA-256 `2c41531ef6d088047e2830ccc5741aa0f28f48fb51d4c164cc8331e19b925d7b` | [progeny 1.28.0](https://bioconductor.org/packages/3.20/bioc/html/progeny.html), Bioconductor 3.20 | Apache License 2.0 | @schubert2018; mouse @holland2020b |
+
+CollecTRI's resources and their terms, as OmniPath's records of resources list them
+[@tuerei2021]: Creative Commons Attribution 4.0 for ExTRI, NTNU Curated, TFactS,
+SIGNOR, IntAct, CytReg, GOA and Pavlidis2021; Creative Commons Attribution-ShareAlike
+4.0 for TRRUST; the GNU Lesser General Public License 3.0 for HTRIdb; an informal
+licence for DoRothEA's level A; and the Academic Free License 3.0 for GEREDB, which
+OmniPath lists for academic use. `collectri(licence="commercial")`, the default, keeps
+the 39,896 interactions that at least one resource listed for commercial use supports;
+`collectri(licence="academic")` keeps all 43,175, including the 3,279 that GEREDB alone
+supports. Each level is subject to the terms of the resources it keeps, such as
+attribution; the providers' own statements of their terms prevail over these
+records.

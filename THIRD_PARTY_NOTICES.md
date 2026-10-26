@@ -108,6 +108,65 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### decoupler
+
+`cytepool/activity.py` follows decoupler 2.2.0 (https://github.com/scverse/decoupler) in
+how it scores the sources of a network, so that given the same inputs it gives
+decoupler's activities: from `mt/_ulm.py`, the regression of each profile over all of
+its genes on a source's weights, zero for the genes that are not its targets, and the
+t-statistic of the slope from their correlation; from `mt/_mlm.py`, the one model of
+all the sources with an intercept and its t-statistics on n - m - 1 degrees of
+freedom; from `mt/_waggr.py`, the weighted mean (`_wmean`) and sum (`_wsum`) and the
+normalized score of `_perm`, the score less the mean of the permuted scores over their
+standard deviation with n - 1; from `mt/_gsea.py`, the permutations of `_ridx`, a
+tiled range of the genes shuffled row by row by numpy's generator from the seed; from
+`pp/net.py`, the sources left out by `prune` with fewer than `tmin` targets among the
+genes; from `pp/data.py`, the features left out by `_validate_mat` that are zero in
+every observation; and from `mt/_run.py`, the Benjamini-Hochberg adjustment over the
+sources of each observation. `cytepool/networks.py` follows `op/_collectri.py` in the
+address of CollecTRI's file and in how it writes the resources and references of each
+interaction, and `op/_progeny.py` in keeping PROGENy's genes with a p-value below 0.05.
+`plot_top_activities` in `cytepool/plotting.py` chooses and orders its bars as
+`pl/_barplot.py` does. Nothing is taken from `mt/_viper.py`. decoupler is described in
+Badia-i-Mompel P, Velez Santiago J, Braunger J, Geiss C, Dimitrov D, Mueller-Dott S,
+Taus P, Dugourd A, Holland CH, Ramirez Flores RO, Saez-Rodriguez J (2022). decoupleR:
+ensemble of computational methods to infer biological activities from omics data.
+Bioinformatics Advances 2, vbac016. doi:10.1093/bioadv/vbac016. It is distributed
+under the BSD 3-Clause License:
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2025, scverse®
+Copyright (c) 2025, Pau Badia i Mompel, Saez lab
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### numba
 
 `cytepool/_jit.py` places the cache of its compiled routines with subclasses of numba's
@@ -195,3 +254,43 @@ Inc., Massachusetts Institute of Technology, and Regents of the University of
 California, as its page states. MSigDB versions v6.0 to v7.5.1, and v2022.1 and above,
 are distributed under the Creative Commons Attribution 4.0 International License
 (https://www.gsea-msigdb.org/gsea/msigdb_license_terms.jsp).
+
+### CollecTRI (Mueller-Dott et al. 2023)
+
+`collectri()` in `cytepool/networks.py` and `validation/activity.py` download
+`CollecTRI_regulons.csv`, version 2.0 of Zenodo record 8192729
+(https://zenodo.org/records/8192729, doi:10.5281/zenodo.8192729), into a cache outside
+the repository. No row of it is in the repository: `tests/data/activity` holds rows in
+its format whose data are simulated. The record is distributed under the Creative
+Commons Attribution 4.0 International License; the resources that CollecTRI gathers
+keep their own terms, which OmniPath lists (https://omnipathdb.org/resources, read on
+26 October 2026): Creative Commons Attribution 4.0 for ExTRI, NTNU Curated, TFactS,
+SIGNOR, IntAct, CytReg, GOA and Pavlidis2021, Creative Commons
+Attribution-ShareAlike 4.0 for TRRUST, the GNU Lesser General Public License 3.0 for
+HTRIdb, an informal licence for DoRothEA's level A, and the Academic Free License 3.0
+for GEREDB, which OmniPath lists for academic use. `collectri(licence="commercial")`,
+the default, leaves out the interactions that GEREDB alone supports.
+
+Mueller-Dott S, Tsirvouli E, Vazquez M, Ramirez Flores RO, Badia-i-Mompel P, Fallegger
+R, Tuerei D, Laegreid A, Saez-Rodriguez J (2023). Expanding the coverage of regulons
+from high-confidence prior knowledge for accurate estimation of transcription factor
+activities. Nucleic Acids Research 51, 10934-10949. doi:10.1093/nar/gkad841
+
+### PROGENy (Schubert et al. 2018; Holland, Szalai and Saez-Rodriguez 2020)
+
+`progeny()` in `cytepool/networks.py` and `validation/activity.py` download the R
+package progeny 1.28.0 from Bioconductor 3.20
+(https://bioconductor.org/packages/3.20/bioc/src/contrib/progeny_1.28.0.tar.gz) into a
+cache outside the repository and read its data frames `model_human_full` and
+`model_mouse_full`. No value of them is in the repository: `tests/data/activity` holds
+a package in its layout whose data are simulated. progeny, its data included, is
+distributed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+
+Schubert M, Klinger B, Kluenemann M, Sieber A, Uhlitz F, Sauer S, Garnett MJ,
+Bluethgen N, Saez-Rodriguez J (2018). Perturbation-response genes reveal signaling
+footprints in cancer gene expression. Nature Communications 9, 20.
+doi:10.1038/s41467-017-02391-6
+
+Holland CH, Szalai B, Saez-Rodriguez J (2020). Transfer of regulatory knowledge from
+human to mouse for functional genomics analysis. Biochimica et Biophysica Acta (BBA) -
+Gene Regulatory Mechanisms 1863, 194431. doi:10.1016/j.bbagrm.2019.194431

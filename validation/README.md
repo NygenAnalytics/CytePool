@@ -31,6 +31,10 @@ tier, and a few use a bound derived for their case.
   downloads 77 MB from GEO (series GSE96583) into a cache directory outside the
   repository, and it checks the SHA-256 of every file before reading it. Its docstring
   says where the files go and how to choose another directory.
+- `activity.py` needs a connection too: CytePool's loaders download CollecTRI (4.3 MB)
+  and progeny (10.6 MB) once into `~/.cache/cytepool/networks`, checking their
+  SHA-256, and decoupler's loaders and the checks of the published digests read
+  Zenodo, Bioconductor and OmniPath.
 
 Run a script from the repository root, against the working tree:
 
@@ -42,5 +46,6 @@ PYTHONPATH=. python validation/<script>.py --write-fixtures
 ## How reference packages are used
 
 Reference packages run as separate programs that produce outputs to compare against.
-Their source code is not read or copied: methods are implemented from their papers
-and documentation.
+Methods are implemented from their papers and documentation; the source code of a
+package under a copyleft licence is not read, and what is adapted from permissively
+licensed packages, such as fgsea and decoupler, `THIRD_PARTY_NOTICES.md` records.

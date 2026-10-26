@@ -35,6 +35,7 @@ the credit for the methods belongs to their authors.
 | {api}`romer` | [@majewski2010] |
 | {api}`over_representation` | limma's `kegga` and `goana` [@young2010]; the hypergeometric test [@tavazoie1999] |
 | {api}`gsea` | fgsea [@korotkevich2021]; GSEA [@subramanian2005] |
+| {api}`ulm`, {api}`mlm`, {api}`weighted_aggregate` | decoupler [@badiaimompel2022], and the network you used: CollecTRI [@muellerdott2023] or PROGENy [@schubert2018], for mouse [@holland2020b] |
 | {api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores`, {api}`plage` | the GSVA package [@haenzelmann2013], and the paper of the method you chose: GSVA [@haenzelmann2013], ssGSEA [@barbie2009], combined z-scores [@lee2008] or PLAGE [@tomfohr2005] |
 | {api}`read_gmt` | the collection you read, as its provider asks; for MSigDB, [@subramanian2005; @liberzon2011] |
 | {api}`propeller` | [@phipson2022] |

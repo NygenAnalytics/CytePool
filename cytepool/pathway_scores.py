@@ -176,35 +176,26 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
-from typing import Any, NamedTuple
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
 from ._columns import text_column
-from ._gene_ids import is_missing
+from ._expression_values import MIN_CELLS, ExpressionValues, expression_values
 from ._jit import by_chunks, jit, thread_limit
-from ._masked_arrays import (
-    Missing,
-    read_only,
-    real_array,
-    reject_masked,
-    unmasked_array,
-)
+from ._masked_arrays import read_only, reject_masked
 from ._messages import quoted
 from ._options import (
     checked_choice,
     checked_flag,
-    integral_number,
     number_at_least,
     positive_integer,
 )
 from ._ranked_genes import gene_set_collection
 from ._summation import observed_means
-from .cube import Cube
 from .gene_sets import GeneSets
-from .normalization import filter_by_expression, log_cpm, tmm_factors
 from .stats.distributions import norm_cdf
 from .stats.special import gammaincc_scalar
 from .table import Table
@@ -216,16 +207,12 @@ IntArray = npt.NDArray[np.int64]
 
 _KERNELS = ("auto", "gaussian", "poisson", "none")
 _SCORE_TYPES = ("difference", "kuiper", "max_deviation")
-_VALUES = ("log_cpm", "counts")
 _KERNEL_CODES = {"gaussian": 0, "poisson": 1, "none": 2}
 # GSVA's table of the normal distribution function: its values at multiples of
 # 0.001 (found by probing GSVA 2.0.0).
 _TABLE_STEP = 0.001
 _BANDWIDTH_DIVISOR = 4.0  # the bandwidth is a quarter of the standard deviation
 _POISSON_OFFSET = 0.5  # the Poisson kernel's mean, x + 1/2 (Haenzelmann et al. 2013)
-# As limma_voom leaves samples out, and edgeR's cpm(log = TRUE) shifts counts.
-_MIN_CELLS = 10
-_PRIOR_COUNT = 2.0
 # PLAGE's sign: a sum of loadings below this share of their sizes is zero.
 _ZERO_SUM = 1e-10
 
@@ -292,16 +279,6 @@ class PathwayScores:
         )
 
 
-class _Data(NamedTuple):
-    """The values scored, with their samples and genes."""
-
-    values: FloatArray  # samples x genes, NaN where missing
-    integer: bool  # whether the values were stored as integers
-    samples: Table
-    gene_ids: list[str | None]  # one per column; None for a gene without an id
-    settings: dict[str, Any]  # how a cube's values were taken
-
-
 def gsva(
     data: Any,
     gene_sets: Mapping[str, Any],
@@ -310,7 +287,7 @@ def gsva(
     sample_ids: Any = None,
     group: str | None = None,
     values: str = "log_cpm",
-    min_cells: int = _MIN_CELLS,
+    min_cells: int = MIN_CELLS,
     expression_filter: bool = True,
     kernel: str = "auto",
     min_samples_without_kernel: int = 200,
@@ -400,7 +377,7 @@ def gsva(
     power = number_at_least(exponent, "exponent", 0.0)
     score = _SCORE_TYPES.index(checked_choice(score_type, "score_type", _SCORE_TYPES))
     collection = _collection(gene_sets)
-    expression = _expression(
+    expression = expression_values(
         data, gene_ids, sample_ids, group, values, min_cells, expression_filter
     )
     n_samples = expression.values.shape[0]
@@ -445,7 +422,7 @@ def ssgsea(
     sample_ids: Any = None,
     group: str | None = None,
     values: str = "log_cpm",
-    min_cells: int = _MIN_CELLS,
+    min_cells: int = MIN_CELLS,
     expression_filter: bool = True,
     exponent: float = 0.25,
     normalize: bool = True,
@@ -502,7 +479,7 @@ def ssgsea(
     power = number_at_least(exponent, "exponent", 0.0)
     scaled = checked_flag(normalize, "normalize")
     collection = _collection(gene_sets)
-    expression = _expression(
+    expression = expression_values(
         data, gene_ids, sample_ids, group, values, min_cells, expression_filter
     )
     kept = np.arange(expression.values.shape[1])
@@ -539,7 +516,7 @@ def combined_z_scores(
     sample_ids: Any = None,
     group: str | None = None,
     values: str = "log_cpm",
-    min_cells: int = _MIN_CELLS,
+    min_cells: int = MIN_CELLS,
     expression_filter: bool = True,
     min_size: int = 1,
     max_size: int | None = None,
@@ -583,7 +560,7 @@ def combined_z_scores(
     """
     checked = _checked_size(min_size, max_size)
     collection = _collection(gene_sets)
-    expression = _expression(
+    expression = expression_values(
         data, gene_ids, sample_ids, group, values, min_cells, expression_filter
     )
     kept = _varying_genes(expression.values)
@@ -614,7 +591,7 @@ def plage(
     sample_ids: Any = None,
     group: str | None = None,
     values: str = "log_cpm",
-    min_cells: int = _MIN_CELLS,
+    min_cells: int = MIN_CELLS,
     expression_filter: bool = True,
     min_size: int = 1,
     max_size: int | None = None,
@@ -660,7 +637,7 @@ def plage(
     """
     checked = _checked_size(min_size, max_size)
     collection = _collection(gene_sets)
-    expression = _expression(
+    expression = expression_values(
         data,
         gene_ids,
         sample_ids,
@@ -693,228 +670,6 @@ def plage(
 
 
 # The data.
-
-
-def _expression(
-    data: Any,
-    gene_ids: Any,
-    sample_ids: Any,
-    group: Any,
-    values: Any,
-    min_cells: Any,
-    expression_filter: Any,
-    *,
-    missing: Missing = "NaN",
-) -> _Data:
-    """The values to score, samples x genes, with their samples and gene ids;
-    ``missing`` says how the values mark missing ones, for messages."""
-    reject_masked(gene_ids, "gene_ids", missing="None")
-    reject_masked(sample_ids, "sample_ids")
-    if isinstance(data, Cube):
-        if sample_ids is not None:
-            raise ValueError(
-                "sample_ids applies to an array; a cube's samples have their ids"
-            )
-        return _cube_values(data, gene_ids, group, values, min_cells, expression_filter)
-    defaults = (
-        ("group", group is None),
-        ("values", isinstance(values, str) and values == "log_cpm"),
-        (
-            "min_cells",
-            isinstance(min_cells, int)
-            and not isinstance(min_cells, bool)
-            and min_cells == _MIN_CELLS,
-        ),
-        ("expression_filter", expression_filter is True),
-    )
-    for name, default in defaults:
-        if not default:
-            raise ValueError(
-                f"{name} applies to a cube, and data is a {type(data).__name__}"
-            )
-    array = unmasked_array(data, "data", missing=missing)
-    integer = array.dtype.kind in "iu"
-    try:
-        matrix = real_array(array, "data", boolean=False, objects=False)
-    except TypeError:
-        raise TypeError(
-            "data must hold real numbers, samples x genes, or be a Cube; got dtype "
-            f"{array.dtype}"
-        ) from None
-    if matrix.ndim != 2:
-        raise ValueError(
-            "data must be a 2-D array of shape (n_samples, n_genes), or a Cube; got "
-            f"shape {matrix.shape}"
-        )
-    n_samples, n_genes = matrix.shape
-    if n_samples == 0 or n_genes == 0:
-        raise ValueError(
-            f"data must have at least one sample and one gene, got shape {matrix.shape}"
-        )
-    if np.isinf(matrix).any():
-        raise ValueError("data holds infinite values; mark missing values with NaN")
-    if gene_ids is None:
-        raise ValueError(
-            "gene_ids is needed with an array: one id per column, which the gene "
-            "sets name"
-        )
-    if isinstance(gene_ids, str):
-        raise TypeError(
-            "gene_ids names a column of a cube's features table; with an array, give "
-            "one id per column"
-        )
-    ids = _gene_id_list(gene_ids, n_genes, "gene_ids")
-    _check_unique(ids, "gene_ids")
-    if sample_ids is None:
-        names = [str(i + 1) for i in range(n_samples)]
-    else:
-        names = _sample_id_list(sample_ids, n_samples)
-    return _Data(
-        np.ascontiguousarray(matrix, dtype=np.float64),
-        integer,
-        Table({"sample_id": text_column(names)}),
-        ids,
-        {},
-    )
-
-
-def _cube_values(
-    cube: Cube,
-    gene_ids: Any,
-    group: Any,
-    values: Any,
-    min_cells: Any,
-    expression_filter: Any,
-) -> _Data:
-    """A cube group's log-CPM or counts, of its samples with enough cells and counts,
-    over the genes kept by filterByExpr."""
-    kind = checked_choice(values, "values", _VALUES)
-    fewest = integral_number(min_cells, "min_cells")
-    if fewest < 0:
-        raise ValueError(f"min_cells must be at least 0, got {fewest}")
-    filtered = checked_flag(expression_filter, "expression_filter")
-    if group is None:
-        if cube.n_groups != 1:
-            raise ValueError(
-                f"the cube has {cube.n_groups} groups; name the one to score with "
-                f"group, one of {quoted(cube.groups['group_id'].tolist())}"
-            )
-        group = cube.groups["group_id"][0]
-    if not isinstance(group, str):
-        reject_masked(group, "group")
-        raise TypeError(f"group must be a group id (str), got {type(group).__name__}")
-    counts = cube.layer("counts", group)
-    used = np.asarray(counts.sum(axis=1, dtype=np.float64) > 0.0)
-    if cube.n_cells is not None:
-        position = cube.groups["group_id"].tolist().index(group)
-        used &= np.asarray(cube.n_cells)[:, position] >= fewest
-    rows = np.flatnonzero(used)
-    if rows.size == 0:
-        raise ValueError(
-            f"no sample of group {group!r} has counts and at least {fewest} cells"
-        )
-    kept = counts[rows]
-    genes = np.ones(kept.shape[1], dtype=bool)
-    if filtered:
-        genes = filter_by_expression(kept, group=np.zeros(rows.size))
-        if not genes.any():
-            raise ValueError(
-                f"no gene of group {group!r} passes filter_by_expression; pass "
-                "expression_filter=False to score every gene"
-            )
-    kept = kept[:, genes]
-    if kind == "log_cpm":
-        matrix = log_cpm(kept, norm_factors=tmm_factors(kept), prior_count=_PRIOR_COUNT)
-        integer = False
-    else:
-        matrix = np.asarray(kept, dtype=np.float64)
-        integer = kept.dtype.kind in "iu"
-    if gene_ids is None:
-        gene_ids = "feature_id"
-    if isinstance(gene_ids, str):
-        features = cube.features
-        if gene_ids not in features:
-            raise KeyError(
-                f"the cube's features table has no column {gene_ids!r}; its columns "
-                f"are {quoted(list(features.columns))}"
-            )
-        label = f"the features column {gene_ids!r}"
-        ids = _gene_id_list(features[gene_ids], cube.n_features, label)
-    else:
-        label = "gene_ids"
-        ids = _gene_id_list(gene_ids, cube.n_features, label)
-    ids = [ids[j] for j in np.flatnonzero(genes).tolist()]
-    _check_unique(ids, label)
-    settings = {
-        "group": group,
-        "values": kind,
-        "min_cells": fewest,
-        "expression_filter": filtered,
-    }
-    return _Data(
-        np.ascontiguousarray(matrix, dtype=np.float64),
-        integer,
-        cube.samples.take(rows),
-        ids,
-        settings,
-    )
-
-
-def _gene_id_list(values: Any, n: int, name: str) -> list[str | None]:
-    """One gene id per gene, None where missing."""
-    if isinstance(values, np.ndarray):
-        found = values.tolist()
-    else:
-        try:
-            found = list(values)
-        except TypeError:
-            raise TypeError(
-                f"{name} must be a sequence of gene ids, got {type(values).__name__}"
-            ) from None
-    if len(found) != n:
-        raise ValueError(f"{name} must hold one id per gene ({n}), got {len(found)}")
-    ids: list[str | None] = []
-    for value in found:
-        if isinstance(value, str) and value:
-            ids.append(str(value))
-        elif is_missing(value):
-            ids.append(None)
-        else:
-            raise TypeError(
-                f"{name} must hold gene ids as strings, got {type(value).__name__} "
-                f"{value!r}; convert numeric ids, such as Entrez ids, to text first"
-            )
-    return ids
-
-
-def _check_unique(ids: list[str | None], name: str) -> None:
-    """Refuse an id that names two of the genes scored."""
-    seen: set[str] = set()
-    for gene in ids:
-        if gene is not None:
-            if gene in seen:
-                raise ValueError(
-                    f"{name} names two of the genes scored {gene!r}; each gene needs "
-                    "an id of its own to be matched to the sets: keep one gene per id, "
-                    "or match the sets by other ids"
-                )
-            seen.add(gene)
-
-
-def _sample_id_list(values: Any, n: int) -> list[str]:
-    array = unmasked_array(values, "sample_ids")
-    if array.ndim != 1 or array.size != n:
-        raise ValueError(
-            f"sample_ids must hold one id per sample ({n}), got shape {array.shape}"
-        )
-    names = []
-    for value in array.tolist():
-        if is_missing(value):
-            raise ValueError("sample_ids has a missing id; give every sample one")
-        names.append(str(value))
-    if len(set(names)) != n:
-        raise ValueError("sample_ids must be unique")
-    return names
 
 
 def _check_counts(values: FloatArray) -> None:
@@ -1011,7 +766,7 @@ def _matched_sets(
 
 def _result(
     scores: FloatArray,
-    expression: _Data,
+    expression: ExpressionValues,
     collection: GeneSets,
     names: list[str],
     members: list[IntArray],

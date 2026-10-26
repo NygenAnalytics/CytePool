@@ -4,6 +4,11 @@ description: The terms the CytePool documentation uses, each in one or two sente
 
 # Glossary
 
+**Activity.** How strongly a transcription factor or a pathway acts in a sample or a
+contrast, read from its target genes: high where the genes it raises are high and
+those it lowers are low, as a network such as CollecTRI or PROGENy weights them.
+[Gene-set tests](../statistics/gene_set_tests.md#activities-of-regulators-and-pathways)
+
 **Adjusted p-value.** A p-value corrected for the number of tests, here usually by the
 method of Benjamini and Hochberg, which controls the false discovery rate. [Multiple
 testing](../statistics/multiple_testing.md)

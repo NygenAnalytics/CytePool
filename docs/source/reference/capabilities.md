@@ -42,6 +42,7 @@ size; its sections give every check.
 | Over-representation analysis (limma's `kegga` and `goana`) of the genes up, down or either way, and its dot plot | {api}`over_representation`, {api}`plot_over_representation` | limma 3.62.1, R 4.4.3 | exact | [`gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py) |
 | Gene set enrichment analysis of ranked genes (fgsea's `fgsea`: `fgseaMultilevel` and `fgseaSimple`), with its enrichment plot and table (`plotEnrichment`, `plotGseaTable`) | {api}`gsea`, {api}`plot_enrichment`, {api}`plot_gsea_table` | fgsea 1.32.2 | calibrated; exact given fgsea's seeds, and for enrichment scores, leading edges and figures | [`gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py) |
 | Scores of gene sets in every sample (GSVA's `gsva` with `gsvaParam`, `ssgseaParam`, `zscoreParam` and `plageParam`), and their heatmap | {api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores`, {api}`plage`, {api}`plot_pathway_scores` | GSVA 2.0.0 | exact; PLAGE up to sign | [`pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py) |
+| Activities of regulators and pathways (decoupler's `mt.ulm`, `mt.mlm` and `mt.waggr`) from samples, a cube's cell type or contrasts, the networks CollecTRI and PROGENy downloaded with their checksums and licences, and the bar plot of the top sources (`pl.barplot`) | {api}`ulm`, {api}`mlm`, {api}`weighted_aggregate`, {api}`collectri`, {api}`progeny`, {api}`plot_top_activities` | decoupler 2.2.0, progeny 1.28.0 | exact; exact given decoupler's permutations for normalized scores | [`activity.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/activity.py) |
 | Adjustment for multiple testing (R's `p.adjust`) | {api}`adjust_p_values` | R 4.4.3 | exact | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) |
 | limma-voom and limma-trend on every cell type of a cube | {api}`limma_voom`, {api}`limma_trend` | limma 3.62.1, edgeR 4.4.0 | exact; close with robust moderation | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) |
 | Options for pseudobulk data: quality weights, weights from cell numbers, a minimum count, adjustment across cell types | {api}`limma_voom`, {api}`limma_trend` | limma 3.62.1, edgeR 4.4.0 | exact; close with quality weights | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) |
@@ -65,7 +66,6 @@ have no CytePool function yet:
 - random slopes in mixed models;
 - composition tests with precision weights or random effects (crumblr), and Bayesian
   count models of composition;
-- activities of pathways and transcription factors from regulatory networks;
 - ligand-receptor scoring and differential cell-cell interactions;
 - dose-response fits, benchmark doses and drug synergy;
 - factorization of samples across cell types;

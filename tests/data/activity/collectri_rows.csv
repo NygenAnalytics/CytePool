@@ -1,0 +1,81 @@
+source,target,weight,resources,references,sign_decision
+AP1,GENE0,1.0,CollecTRI;TRRUST_CollecTRI;DoRothEA-A_CollecTRI;ExTRI_CollecTRI,,PMID
+NFKB,GENE1,1.0,CollecTRI;ExTRI_CollecTRI;HTRI_CollecTRI;NTNU.Curated_CollecTRI,CollecTRI:25227886,default activation
+TF0,GENE2,1.0,CollecTRI;TRRUST_CollecTRI;ExTRI_CollecTRI,CollecTRI:29648508;CollecTRI:2274839,regulon
+TF1,GENE3,-1.0,CollecTRI;NTNU.Curated_CollecTRI,,PMID
+TF2,GENE4,1.0,CollecTRI;SIGNOR_CollecTRI;DoRothEA-A_CollecTRI,CollecTRI:17794492,default activation
+TF3,GENE5,1.0,CollecTRI;NTNU.Curated_CollecTRI;TRRUST_CollecTRI,CollecTRI:30512912;CollecTRI:38294422,regulon
+TF4,GENE6,1.0,CollecTRI;TRRUST_CollecTRI;SIGNOR_CollecTRI;DoRothEA-A_CollecTRI,,PMID
+TF5,GENE7,1.0,CollecTRI;ExTRI_CollecTRI;DoRothEA-A_CollecTRI;TRRUST_CollecTRI,CollecTRI:37811468,default activation
+TF6,GENE8,1.0,CollecTRI;ExTRI_CollecTRI,CollecTRI:13245454;CollecTRI:2680991,regulon
+TF7,GENE9,1.0,CollecTRI;GEREDB_CollecTRI,,PMID
+AP1,GENE10,-1.0,CollecTRI;TRRUST_CollecTRI;ExTRI_CollecTRI;HTRI_CollecTRI,CollecTRI:15595509,default activation
+NFKB,GENE11,1.0,CollecTRI;ExTRI_CollecTRI,CollecTRI:24735529;CollecTRI:26759502,regulon
+TF0,GENE12,1.0,CollecTRI;HTRI_CollecTRI;DoRothEA-A_CollecTRI,,PMID
+TF1,GENE13,1.0,CollecTRI;TRRUST_CollecTRI;SIGNOR_CollecTRI,CollecTRI:20005059,default activation
+TF2,GENE14,1.0,CollecTRI;SIGNOR_CollecTRI;HTRI_CollecTRI;TRRUST_CollecTRI,CollecTRI:33365588;CollecTRI:33864342,regulon
+TF3,GENE15,1.0,CollecTRI;DoRothEA-A_CollecTRI;ExTRI_CollecTRI,,PMID
+TF4,GENE16,1.0,CollecTRI;NTNU.Curated_CollecTRI;SIGNOR_CollecTRI;HTRI_CollecTRI,CollecTRI:35260727,default activation
+TF5,GENE17,-1.0,CollecTRI;ExTRI_CollecTRI;SIGNOR_CollecTRI,CollecTRI:26599339;CollecTRI:16363165,regulon
+TF6,GENE18,1.0,CollecTRI;ExTRI_CollecTRI;DoRothEA-A_CollecTRI;TRRUST_CollecTRI,,PMID
+TF7,GENE19,1.0,CollecTRI;GEREDB_CollecTRI,CollecTRI:21441119,default activation
+AP1,GENE20,1.0,CollecTRI;NTNU.Curated_CollecTRI;TRRUST_CollecTRI,CollecTRI:24903470;CollecTRI:37331386,regulon
+NFKB,GENE21,1.0,CollecTRI;DoRothEA-A_CollecTRI,,PMID
+TF0,GENE22,1.0,CollecTRI;ExTRI_CollecTRI,CollecTRI:30127555,default activation
+TF1,GENE23,1.0,CollecTRI;DoRothEA-A_CollecTRI,CollecTRI:13903247;CollecTRI:23112137,regulon
+TF2,GENE24,-1.0,CollecTRI;TRRUST_CollecTRI;NTNU.Curated_CollecTRI;SIGNOR_CollecTRI,,PMID
+TF3,GENE25,1.0,CollecTRI;ExTRI_CollecTRI;HTRI_CollecTRI,CollecTRI:38788725,default activation
+TF4,GENE26,1.0,CollecTRI;DoRothEA-A_CollecTRI;SIGNOR_CollecTRI,CollecTRI:38851791;CollecTRI:24591103,regulon
+TF5,GENE27,1.0,CollecTRI;HTRI_CollecTRI;SIGNOR_CollecTRI;TRRUST_CollecTRI,,PMID
+TF6,GENE28,1.0,CollecTRI;HTRI_CollecTRI;ExTRI_CollecTRI,CollecTRI:8547575,default activation
+TF7,GENE29,1.0,CollecTRI;GEREDB_CollecTRI,CollecTRI:3598493;CollecTRI:12573552,regulon
+AP1,GENE30,1.0,CollecTRI;NTNU.Curated_CollecTRI;TRRUST_CollecTRI,,PMID
+NFKB,GENE31,-1.0,CollecTRI;DoRothEA-A_CollecTRI;HTRI_CollecTRI,CollecTRI:2067820,default activation
+TF0,GENE32,1.0,CollecTRI;DoRothEA-A_CollecTRI,CollecTRI:22254324;CollecTRI:37821372,regulon
+TF1,GENE33,1.0,CollecTRI;SIGNOR_CollecTRI;ExTRI_CollecTRI;TRRUST_CollecTRI,,PMID
+TF2,GENE34,1.0,CollecTRI;SIGNOR_CollecTRI;ExTRI_CollecTRI,CollecTRI:27111797,default activation
+TF3,GENE35,1.0,CollecTRI;SIGNOR_CollecTRI;ExTRI_CollecTRI;NTNU.Curated_CollecTRI,CollecTRI:27593714;CollecTRI:8727838,regulon
+TF4,GENE36,1.0,CollecTRI;NTNU.Curated_CollecTRI,,PMID
+TF5,GENE37,1.0,CollecTRI;HTRI_CollecTRI;ExTRI_CollecTRI,CollecTRI:38763501,default activation
+TF6,GENE38,-1.0,CollecTRI;DoRothEA-A_CollecTRI;SIGNOR_CollecTRI,CollecTRI:16352926;CollecTRI:27015928,regulon
+TF7,GENE39,1.0,CollecTRI;GEREDB_CollecTRI,,PMID
+AP1,GENE40,1.0,CollecTRI;TRRUST_CollecTRI;ExTRI_CollecTRI,CollecTRI:29909043,default activation
+NFKB,GENE41,1.0,CollecTRI;NTNU.Curated_CollecTRI;DoRothEA-A_CollecTRI;TRRUST_CollecTRI,CollecTRI:4206728;CollecTRI:16325847,regulon
+TF0,GENE42,1.0,CollecTRI;NTNU.Curated_CollecTRI,,PMID
+TF1,GENE43,1.0,CollecTRI;NTNU.Curated_CollecTRI;HTRI_CollecTRI;TRRUST_CollecTRI,CollecTRI:12684997,default activation
+TF2,GENE44,1.0,CollecTRI;ExTRI_CollecTRI;HTRI_CollecTRI,CollecTRI:22953960;CollecTRI:29515989,regulon
+TF3,GENE45,-1.0,CollecTRI;ExTRI_CollecTRI;DoRothEA-A_CollecTRI;HTRI_CollecTRI,,PMID
+TF4,GENE46,1.0,CollecTRI;ExTRI_CollecTRI;DoRothEA-A_CollecTRI;HTRI_CollecTRI,CollecTRI:10896452,default activation
+TF5,GENE47,1.0,CollecTRI;HTRI_CollecTRI;NTNU.Curated_CollecTRI,CollecTRI:16967975;CollecTRI:11207598,regulon
+TF6,GENE48,1.0,CollecTRI;HTRI_CollecTRI;NTNU.Curated_CollecTRI,,PMID
+TF7,GENE49,1.0,CollecTRI;GEREDB_CollecTRI,CollecTRI:28553852,default activation
+AP1,GENE50,1.0,CollecTRI;SIGNOR_CollecTRI,CollecTRI:18254288;CollecTRI:37318562,regulon
+NFKB,GENE51,1.0,CollecTRI;TRRUST_CollecTRI;DoRothEA-A_CollecTRI,,PMID
+TF0,GENE52,-1.0,CollecTRI;ExTRI_CollecTRI,CollecTRI:7589368,default activation
+TF1,GENE53,1.0,CollecTRI;SIGNOR_CollecTRI;NTNU.Curated_CollecTRI,CollecTRI:35423598;CollecTRI:26948520,regulon
+TF2,GENE54,1.0,CollecTRI;TRRUST_CollecTRI,,PMID
+TF3,GENE55,1.0,CollecTRI;TRRUST_CollecTRI,CollecTRI:34032851,default activation
+TF4,GENE56,1.0,CollecTRI;DoRothEA-A_CollecTRI;HTRI_CollecTRI;TRRUST_CollecTRI,CollecTRI:11915872;CollecTRI:15270323,regulon
+TF5,GENE57,1.0,CollecTRI;TRRUST_CollecTRI;HTRI_CollecTRI,,PMID
+TF6,GENE58,1.0,CollecTRI;SIGNOR_CollecTRI;HTRI_CollecTRI,CollecTRI:5914735,default activation
+TF7,GENE59,-1.0,CollecTRI;GEREDB_CollecTRI,CollecTRI:37140880;CollecTRI:39992318,regulon
+AP1,GENE60,1.0,CollecTRI;ExTRI_CollecTRI,,PMID
+NFKB,GENE61,1.0,CollecTRI;NTNU.Curated_CollecTRI;ExTRI_CollecTRI,CollecTRI:10142986,default activation
+TF0,GENE62,1.0,CollecTRI;HTRI_CollecTRI,CollecTRI:23943433;CollecTRI:2012094,regulon
+TF1,GENE63,1.0,CollecTRI;HTRI_CollecTRI,,PMID
+TF2,GENE64,1.0,CollecTRI;TRRUST_CollecTRI;SIGNOR_CollecTRI;DoRothEA-A_CollecTRI,CollecTRI:1349692,default activation
+TF3,GENE65,1.0,CollecTRI;ExTRI_CollecTRI,CollecTRI:5576274;CollecTRI:17212375,regulon
+TF4,GENE66,-1.0,CollecTRI;TRRUST_CollecTRI;DoRothEA-A_CollecTRI;SIGNOR_CollecTRI,,PMID
+TF5,GENE67,1.0,CollecTRI;TRRUST_CollecTRI;ExTRI_CollecTRI;HTRI_CollecTRI,CollecTRI:23085573,default activation
+TF6,GENE68,1.0,CollecTRI;HTRI_CollecTRI,CollecTRI:15503357;CollecTRI:18507992,regulon
+TF7,GENE69,1.0,CollecTRI;GEREDB_CollecTRI,,PMID
+AP1,GENE70,1.0,CollecTRI;ExTRI_CollecTRI;NTNU.Curated_CollecTRI,CollecTRI:18304215,default activation
+NFKB,GENE71,1.0,CollecTRI;HTRI_CollecTRI,CollecTRI:14477295;CollecTRI:23031795,regulon
+TF0,GENE72,1.0,CollecTRI;HTRI_CollecTRI,,PMID
+TF1,GENE73,-1.0,CollecTRI;NTNU.Curated_CollecTRI;ExTRI_CollecTRI,CollecTRI:10207568,default activation
+TF2,GENE74,1.0,CollecTRI;TRRUST_CollecTRI;SIGNOR_CollecTRI;DoRothEA-A_CollecTRI,CollecTRI:26885978;CollecTRI:33629567,regulon
+TF3,GENE75,1.0,CollecTRI;NTNU.Curated_CollecTRI;SIGNOR_CollecTRI;DoRothEA-A_CollecTRI,,PMID
+TF4,GENE76,1.0,CollecTRI;SIGNOR_CollecTRI;NTNU.Curated_CollecTRI,CollecTRI:13632575,default activation
+TF5,GENE77,1.0,CollecTRI;SIGNOR_CollecTRI;TRRUST_CollecTRI,CollecTRI:14663809;CollecTRI:31650520,regulon
+TF6,GENE78,1.0,CollecTRI;ExTRI_CollecTRI;NTNU.Curated_CollecTRI,,PMID
+TF7,GENE79,1.0,CollecTRI;GEREDB_CollecTRI,CollecTRI:19563781,default activation
