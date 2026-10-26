@@ -1,5 +1,5 @@
 ---
-description: What a CytePool cube holds, why every layer is a sum over cells, and how merging cell types and pooling samples stay exact.
+description: What a CytePool cube holds, why every layer is a sum over cells, how merging cell types and pooling samples stay exact, and how the cubes of several studies are aligned.
 ---
 
 # The cube and its additive layers
@@ -84,3 +84,34 @@ lazy layer at once.
 
 {api}`to_anndata` and {api}`to_mudata` convert a cube to the pseudobulk layouts of
 scverse, and {api}`from_anndata` and {api}`from_mudata` read them back.
+
+## Several studies
+
+Results of one study often do not replicate in the next [@nakatsuka2025], and studies
+are compared or combined only once their samples, genes and cell types are aligned.
+Aligned by hand, they go wrong in two ways: donor ids repeat across studies, and genes
+that a study did not measure are read as zeros. {api}`CubeCollection` aligns the cubes
+of several studies and keeps each as it was given:
+
+- **Samples** are named `study::sample_id`, and so are the values of the columns of ids
+  that `within_study` names, such as donors: donor `D1` of one study is not donor `D1`
+  of another.
+- **Genes** are aligned by `feature_id`, such as Ensembl ids, and
+  {api}`CubeCollection.measured` says which study measured which: a gene that a study's
+  cube lacks, or marks as not measured in its feature column `measured`, is missing in
+  that study, not zero.
+- **Cell types** are aligned by their Cell Ontology ids [@diehl2016] when every cube
+  has them, by group id otherwise, or by a mapping for each study. Groups of one study
+  that share an id are merged, exactly, since every layer is a sum.
+
+Each study is then analysed on its own: {api}`CubeCollection.aligned_cube` gives its
+cube with the aligned cell types and the genes it measured, and with its own samples and
+library sizes, and an analysis such as {api}`limma_voom` with the study's own design
+gives results keyed by the aligned cell types. {api}`align_study_results` lines them up
+gene by gene, and {api}`differential_expression_meta_analysis` combines them
+([Meta-analysis](meta_analysis.md)). For a joint model with the study as a covariate,
+{api}`CubeCollection.stack` puts the studies into one cube with the genes that every
+study measured and the cell types that every study has: a cube holds no missing values,
+so it refuses the others rather than fill them with zeros. The collection's provenance
+names each study's cube by its fingerprint, with the alignment, and so does the
+provenance of a stacked cube.

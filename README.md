@@ -16,6 +16,7 @@ what is planned.
 | Provenance and fingerprints | A record of each cube's source (the caller's record, kept unchanged), of the settings that built it and of what each operation kept, merged or pooled, with the fingerprint of the cube it was applied to; `Cube.history()` reads it back. A content fingerprint (SHA-256, documented encoding) of the tables, cell numbers, normalization and layers | a reimplementation of the documented encoding, zarr-python |
 | Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer; stored digests, checked when a file is opened and when a read covers a whole group) | zarr-python |
 | AnnData and MuData | `to_anndata`, `from_anndata`, `to_mudata`, `from_mudata` (optional extras `anndata` and `mudata`): cubes to and from the long AnnData of `scanpy.get.aggregate` and `decoupler.pp.pseudobulk` and the MuData of LIANA's `adata_to_views`, whose layouts are recognised; an import takes sums and counts of cells, refuses means, and gives a cube exported and read back with the same fingerprint | scanpy, decoupler, LIANA, anndata, mudata |
+| Several studies | `CubeCollection`: the cubes of several studies aligned, each kept as it is: samples named `study::sample_id`, with donor ids alike; genes aligned by id, with which study measured which, so that a gene a study did not measure is missing there, not zero; cell types aligned by Cell Ontology id, group id or a mapping for each study, merging those that a study splits; each study's cube on the collection's axes, for analyses study by study; and one cube of the genes and cell types every study has, for a joint model. `align_study_results` lines up the studies' results gene by gene, with the reason a study has none for a gene | anndata, pandas, limma |
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
@@ -55,6 +56,8 @@ These are not implemented yet:
 - Dose-response fits, benchmark doses and synergy
 - Meta-regression (meta-analysis with study-level covariates) and multivariate
   meta-analysis of correlated effects
+- Combined p-values and replication measures across studies, and cell types aligned
+  up the Cell Ontology
 
 ## Known limits
 

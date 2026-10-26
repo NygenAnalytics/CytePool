@@ -6,7 +6,11 @@ with the between-study variance and the heterogeneity statistics, as metafor's
 ``rma.uni`` does for one feature without moderators (Viechtbauer 2010).
 :func:`differential_expression_meta_analysis` does it for the differential-expression
 results of several cubes, such as the same cell types in several cohorts, tissues or
-platforms, matched by group, contrast and feature id.
+platforms, matched by group, contrast and feature id. :func:`align_study_results`
+lines up the results of the studies of a :class:`~cytepool.cube.CubeCollection` for
+one group and contrast, feature by feature, with the reason a study has no result for
+a feature: it did not measure it, did not test it, or did not analyse the group or
+contrast.
 
 The model:
     Study i estimates the effect of a feature by y_i, with standard error s_i, and its
@@ -163,6 +167,7 @@ from ._jit import jit
 from ._masked_arrays import read_only, reject_masked, unmasked_array
 from ._messages import PACKAGE_DIRECTORY, listing, quoted
 from ._options import checked_choice, index_integer, real_number
+from .cube import CubeCollection
 from .differential_expression import DifferentialExpressionResult
 from .stats.distributions import (
     chi2_sf_scalar,
@@ -177,6 +182,7 @@ from .table import Table
 __all__ = [
     "MetaAnalysisFit",
     "MetaAnalysisResult",
+    "align_study_results",
     "differential_expression_meta_analysis",
     "meta_analysis",
 ]
@@ -211,6 +217,11 @@ _MAX_ITERATIONS = 1000
 # of tau^2, to bracket every maximum of the restricted likelihood.
 _GRID_PER_DECADE = 8
 _ANALYSED = "analysed"  # the status of a group and contrast that was meta-analysed
+# Why a study has no result for a feature, as align_study_results gives it.
+_NOT_TESTED = (
+    "the study measured the feature and tested the group and contrast, but not the "
+    "feature, as when its expression filter left the feature out"
+)
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -1193,6 +1204,205 @@ def differential_expression_meta_analysis(
             "analyses": rows,
         },
     )
+
+
+def align_study_results(
+    collection: CubeCollection,
+    results: Mapping[str, DifferentialExpressionResult],
+    group: str,
+    contrast: str,
+) -> Table:
+    """Line up the differential expression of every study, feature by feature.
+
+    Each study's result is the analysis of its aligned cube
+    (:meth:`~cytepool.cube.CubeCollection.aligned_cube`), such as
+    :func:`~cytepool.differential_expression.limma_voom` with the study's own design,
+    so that its groups are the collection's aligned groups and its features those
+    the study measured. For one group and contrast, the table has a row for every
+    study and every feature of the collection: the studies in order, and the
+    features in the collection's order within each study, so that
+    ``table[column].reshape(collection.n_studies, collection.n_features)`` gives a
+    column with a row per study. ``status`` says whether the study tested the
+    feature, and why not:
+
+    - ``"tested"``: the study's table of the group and contrast has the feature;
+    - ``"not_tested"``: the study measured the feature and has a table of the group
+      and contrast, without the feature, as when its expression filter left it out;
+    - ``"not_measured"``: the study did not measure the feature
+      (:attr:`~cytepool.cube.CubeCollection.measured`), so no analysis of it could
+      test it;
+    - ``"not_analysed"``: the study measured the feature but has no table of the
+      group and contrast: it does not have the group, its result leaves the group
+      out, the group was not fitted, or the contrast cannot be estimated from its
+      samples; ``reason`` says which, in the words of the study's result.
+
+    The columns are ``study``, ``feature_id``, ``symbol`` (when the collection's
+    features have it), ``status``, ``reason`` (empty where tested), and then the
+    numeric columns of the studies' tables, such as ``log2_fold_change``,
+    ``standard_error``, ``t``, ``p_value`` and ``adjusted_p_value``, in the order in
+    which the studies first have them, NaN where a study did not test the feature.
+    A missing feature is thus never a zero, and a feature that a study did not
+    measure is told apart from one that it measured and left out.
+
+    Args:
+        collection: The collection whose aligned cubes the studies' results
+            analysed.
+        results: The differential-expression result of every study of the
+            collection, by study name, from
+            :func:`~cytepool.differential_expression.limma_voom`,
+            :func:`~cytepool.differential_expression.limma_trend` or
+            :func:`~cytepool.differential_expression.dream_voom`.
+        group: An aligned group id of the collection.
+        contrast: A contrast name, or the name of an F-test of
+            :func:`~cytepool.differential_expression.dream_voom`, that a study
+            tested.
+
+    Returns:
+        A table of ``collection.n_studies * collection.n_features`` rows.
+
+    Raises:
+        TypeError: If ``collection`` is not a ``CubeCollection``, ``results`` not a
+            mapping of study names to ``DifferentialExpressionResult``, ``group`` or
+            ``contrast`` not a string, or ``group`` or ``contrast`` is a numpy masked
+            array.
+        ValueError: If ``results`` does not give the result of every study of the
+            collection and no other, or a study's result analyses a group that the
+            study does not have in the collection or tests a feature that it did not
+            measure there: it did not analyse the study's aligned cube.
+        KeyError: If ``group`` is not a group of the collection, or no study tested
+            ``contrast``.
+    """
+    if not isinstance(collection, CubeCollection):
+        raise TypeError(
+            f"collection must be a CubeCollection, got {type(collection).__name__}"
+        )
+    studies = collection.studies
+    if not isinstance(results, Mapping):
+        raise TypeError(
+            "results must be a mapping of study names to DifferentialExpressionResult, "
+            f"one for every study of the collection, got {type(results).__name__}"
+        )
+    missing = [study for study in studies if study not in results]
+    extra = [name for name in results if name not in studies]
+    if missing or extra:
+        raise ValueError(
+            "results must give the result of every study of the collection, and no "
+            "other: "
+            + "; ".join(
+                part
+                for part in (
+                    f"missing {quoted(missing)}" if missing else "",
+                    f"not in the collection: {quoted(extra)}" if extra else "",
+                )
+                if part
+            )
+        )
+    for study in studies:
+        if not isinstance(results[study], DifferentialExpressionResult):
+            raise TypeError(
+                f"results[{study!r}] must be a DifferentialExpressionResult, from "
+                f"limma_voom, limma_trend or dream_voom, got "
+                f"{type(results[study]).__name__}"
+            )
+    for name, value in (("group", group), ("contrast", contrast)):
+        reject_masked(value, name)
+        if not isinstance(value, str):
+            raise TypeError(f"{name} must be a string, got {type(value).__name__}")
+    group_ids = collection.groups["group_id"].tolist()
+    if group not in group_ids:
+        raise KeyError(
+            f"no group {group!r} in the collection; its groups are: "
+            f"{listing(group_ids) or '(none)'}"
+        )
+    tested_names = list(
+        dict.fromkeys(
+            name
+            for study in studies
+            for name in (*results[study].contrasts.names, *results[study].f_tests)
+        )
+    )
+    if contrast not in tested_names:
+        raise KeyError(
+            f"no study tested the contrast {contrast!r}; the studies tested: "
+            f"{listing(tested_names) or '(none)'}"
+        )
+    members = collection.group_members
+    held: dict[str, set[str]] = {study: set() for study in studies}
+    for study, aligned in zip(
+        members["study"].tolist(), members["group_id"].tolist(), strict=True
+    ):
+        held[study].add(aligned)
+    feature_ids = collection.features["feature_id"].tolist()
+    index = {feature: position for position, feature in enumerate(feature_ids)}
+    n_features = len(feature_ids)
+    measured = collection.measured
+    statuses: list[np.ndarray] = []
+    reasons: list[list[str]] = []
+    values: dict[str, list[tuple[int, np.ndarray, np.ndarray]]] = {}
+    for row, study in enumerate(studies):
+        result = results[study]
+        foreign = [name for name in result.groups if name not in held[study]]
+        if foreign:
+            raise ValueError(
+                f"the result of study {study!r} analyses the group"
+                f"{'' if len(foreign) == 1 else 's'} {quoted(foreign)}, which the "
+                "study does not have in this collection; analyse the study's aligned "
+                f"cube, collection.aligned_cube({study!r})"
+            )
+        table = None
+        if group not in held[study]:
+            absence = f"study {study!r} has no group {group!r}"
+        else:
+            table = result.tables.get((group, contrast))
+            absence = "" if table is not None else _absence(result, group, contrast)
+        status = np.where(measured[row], "not_analysed", "not_measured").astype(object)
+        reason = [
+            absence if flag else f"study {study!r} did not measure the feature"
+            for flag in measured[row].tolist()
+        ]
+        if table is not None:
+            positions = np.array(
+                [index.get(feature, -1) for feature in table["feature_id"].tolist()],
+                dtype=np.intp,
+            )
+            outside = (positions < 0) | ~measured[row, np.maximum(positions, 0)]
+            if outside.any():
+                feature = table["feature_id"][int(np.flatnonzero(outside)[0])]
+                raise ValueError(
+                    f"the result of study {study!r} tests the feature {feature!r}, "
+                    "which the study did not measure in this collection; analyse the "
+                    f"study's aligned cube, collection.aligned_cube({study!r})"
+                )
+            status[measured[row]] = "not_tested"
+            status[positions] = "tested"
+            for position in np.flatnonzero(measured[row]).tolist():
+                reason[position] = _NOT_TESTED
+            for position in positions.tolist():
+                reason[position] = ""
+            for name in table.columns:
+                column = table[name]
+                if name not in ("feature_id", "symbol") and column.dtype.kind in "biuf":
+                    values.setdefault(name, []).append((row, positions, column))
+        statuses.append(status)
+        reasons.append(reason)
+    columns: dict[str, Any] = {
+        "study": text_column([study for study in studies for _ in range(n_features)]),
+        "feature_id": text_column(feature_ids * len(studies)),
+    }
+    if "symbol" in collection.features:
+        columns["symbol"] = text_column(
+            collection.features["symbol"].tolist() * len(studies)
+        )
+    columns["status"] = text_column(
+        [status for array in statuses for status in array.tolist()]
+    )
+    columns["reason"] = text_column([text for part in reasons for text in part])
+    for name, parts in values.items():
+        column = np.full((len(studies), n_features), np.nan)
+        for row, positions, found in parts:
+            column[row, positions] = found
+        columns[name] = column.reshape(-1)
+    return Table(columns)
 
 
 def _meta_analysed_table(

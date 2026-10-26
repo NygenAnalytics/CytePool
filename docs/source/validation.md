@@ -16,8 +16,8 @@ exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
-`variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`
-and `gsea.py`, and for `dream.py`, which printed the same table again after changes to
+`variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
+`gsea.py` and `cube_collection.py`, and for `dream.py`, which printed the same table again after changes to
 the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
@@ -43,6 +43,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 46 s | 500 MiB |
 | [`cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py) | Cube fingerprints | the documented encoding, with zarr-python 3.4.1 | 7 | 7 pass | 4.4 s | 122 MiB |
 | [`anndata_conversion.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/anndata_conversion.py) | AnnData and MuData | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | 18 | 18 pass | 1 min 5 s | 1,483 MiB |
+| [`cube_collection.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_collection.py) | Several studies | anndata 0.13.4, pandas 3.1.0, limma 3.62.1, edgeR 4.4.0 | 15 | 14 pass, 1 control | 26.7 s | 495 MiB |
 | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
 | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
 | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
@@ -69,7 +70,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,174** | **1,874 pass, none failed; 172 information, 127 deliberate differences, 1 control** | | |
+| **All** | | | **2,189** | **1,888 pass, none failed; 172 information, 127 deliberate differences, 2 controls** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -279,6 +280,45 @@ decoupler 1, so its views carry none, and an entry without cells cannot be told 
 a missing profile: the import refuses them until cell numbers are given. decoupler
 gives its row without cells the metadata of another row (found by probing); CytePool
 reads a column as sample or cell-type metadata from the rows with cells.
+
+## Several studies
+
+[`validation/cube_collection.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_collection.py)
+simulates the cells of three studies of one stimulation (seed 20261026) and pools each
+with `from_cells`: `lupus`, 8 samples of 4 donors, each control and stimulated, 4 cell
+types with Cell Ontology ids and 700 genes; `covid`, 10 samples of 5 donors whose
+sample and donor ids repeat those of `lupus`, 5 cell types of which two share an
+ontology id and merge, and 750 genes, 40 of them filled with zeros and marked as not
+measured; and `atlas`, 6 unpaired samples with integer donor ids, 5 cell types without
+ontology ids, aligned by a mapping that leaves one out, and 950 genes. The collection
+aligns the cell types by ontology id and writes donor ids `study::donor`. anndata and
+pandas run as a separate program: each study's cube is exported with `to_anndata`, the
+genes marked as not measured are dropped, the rows of each sample and aligned cell type
+are summed, and the studies are joined with `anndata.concat` (outer and inner joins,
+labelled by study); pandas joins the sample tables. R runs limma-voom on each study's
+own counts, summing the cell types that share an aligned id, and on the stacked counts
+of `lupus` and `covid` with `~ donor + condition`, by the steps of
+`differential_expression.py`. Reference: anndata 0.13.4, pandas 3.1.0, numpy 2.5.4,
+Python 3.13.12; R 4.4.3, limma 3.62.1, edgeR 4.4.0. CytePool ran with numpy 2.5.4 and
+numba 0.68.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| The sample table: ids `study::sample_id`, donors `study::donor`, the union of the columns, ages that are integers in two studies and floats in one as float64, and missing values where a study lacks a column | `pandas.concat` | 0 mismatches | 0 | 1 pass |
+| The genes, as a set and in the order in which the studies first list them, and which study measured which | `anndata.concat`, outer join (NaN where a study lacks a gene), `pandas.unique` | identical; 0 mismatches | 0 | 2 pass |
+| Every layer of each study's aligned cube: merged cell types, measured genes | the outer join's values | 0 | 1e-10 | 1 pass |
+| `stack()`: genes in order, cell types and samples; every layer; the cells of each entry, and an entry without cells | `anndata.concat`, inner join, kept to the cell types of every study | 0 | 0 and 1e-10 | 3 pass |
+| `limma_voom` on each study's aligned cube, lined up by `align_study_results`: logFC, AveExpr, t, P.Value, adj.P.Val, B and the standard error, in 12 cell types of 3 studies | limma, study by study | 3.8e-13 | 1e-10 | 3 pass |
+| The status of every gene of every study: tested, measured and left out, or not measured | limma's tables and each study's measured genes | 0 mismatches | 0 | 3 pass |
+| `limma_voom` on the stack of `lupus` and `covid`, `~ donor + condition` with donors `study::donor` | limma on the stacked counts | 1.4e-13 | 1e-10 | 1 pass |
+| The same with the donor ids as the studies give them | limma on the stacked counts, donors `study::donor` | 1.9 (log2 fold changes) | must exceed 1e-10 | 1 control |
+
+limma ran on each study's own counts, with the genes filled with zeros, and its tables
+equal those of the aligned cubes, which leave those genes out: genes without counts
+change no library size, expression filter or normalization factor, so a gene that a
+study did not measure can be marked missing without changing any other gene's result.
+The control shows why donor ids are written with their study: taken for one person,
+donor D1 of two studies changes the fit of every gene.
 
 ## Normalization and filtering
 
@@ -2168,6 +2208,7 @@ python validation/cube_fingerprints.py
 SCANPY_PYTHON=$REF/python-scanpy/bin/python DECOUPLER_PYTHON=$REF/python/bin/python \
     LIANA_PYTHON=$REF/python-liana/bin/python \
     $REF/python-anndata/bin/python validation/anndata_conversion.py
+REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube_collection.py
 ```
 
 Here `python` is `$REF/python/bin/python`, the environment below. With

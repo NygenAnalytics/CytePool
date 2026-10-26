@@ -64,6 +64,14 @@ tested by at least `min_studies` studies (two by default, since one study says n
 about $\tau^2$). It takes limma's moderated standard errors as the known sampling
 errors.
 
+A gene missing from a study's results was not measured there, or was measured and left
+out, as by the expression filter, which are different findings. For the studies of a
+{api}`CubeCollection`, each analysed on its aligned cube,
+{api}`align_study_results` lines up the results of one cell type and contrast with a
+row for every study and gene, which says whether the study tested the gene and, where
+it did not, why: it did not measure the gene, measured it and left it out, or did not
+analyse the cell type or the contrast.
+
 ## Limits
 
 The studies are taken as independent, with known sampling variances. Meta-regression on

@@ -69,6 +69,7 @@
 "cytepool.plotting.plot_composition" = "guides/composition: cell-type proportions per sample"
 "cytepool.plotting.plot_dispersions" = "guides/bulk_rna_seq: DESeq2's dispersion estimates"
 "cytepool.plotting.plot_forest" = "guides/combine_studies: one gene across studies"
+"cytepool.cube.CubeCollection.select" = "guides/combine_studies: the studies, cell types and genes of an analysis"
 "cytepool.plotting.plot_gene_sets" = "guides/gene_sets: the results of camera, fry and mroast"
 "cytepool.plotting.plot_md" = "guides/genes_per_cell_type: MD plot of a contrast"
 "cytepool.plotting.plot_mds" = "quickstart and guides/genes_per_cell_type: samples on an MDS plot"

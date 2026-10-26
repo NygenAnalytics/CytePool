@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: Build pseudobulk cubes from cell-level or bulk counts with CytePool, keep sample, group and feature metadata in tables, and record what each cube pooled with a provenance record and a content fingerprint.
+    description: Build pseudobulk cubes from cell-level or bulk counts with CytePool, keep sample, group and feature metadata in tables, record what each cube pooled with a provenance record and a content fingerprint, and align the cubes of several studies by sample, gene and cell type.
 ---
 
 # Pseudobulk cubes and tables
@@ -13,6 +13,9 @@ samples pooled without going back to the cells. {func}`~cytepool.cube.from_cells
 pools a cell-level count matrix in one pass, and {func}`~cytepool.cube.from_bulk`
 wraps a samples x features count matrix as a cube with one group. Sample, group and
 feature metadata are {class}`~cytepool.table.Table` objects.
+{class}`~cytepool.cube.CubeCollection` aligns the cubes of several studies by sample,
+gene and cell type, with what each study measured, for analyses of each study and for
+one cube of them all.
 
 ```{eval-rst}
 .. automodule:: cytepool.cube

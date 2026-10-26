@@ -46,7 +46,7 @@ from numpy.testing import assert_array_equal
 import cytepool
 from cytepool._masked_arrays import reject_masked
 from cytepool.composition import propeller
-from cytepool.cube import Cube, from_bulk, from_cells
+from cytepool.cube import Cube, CubeCollection, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
 from cytepool.differential_expression import limma_voom
 from cytepool.gene_sets import GeneSets
@@ -224,6 +224,30 @@ def _cube_arguments(context: Context) -> dict[str, Any]:
         "normalization": {"method": "library_size", "target_sum": 1e4},
         "provenance": {"source": "test", "values": [1, 2]},
     }
+
+
+def _collection_arguments(context: Context) -> dict[str, Any]:
+    """Two studies' cubes, with a donor column, and a value for every option."""
+    cube = Cube(
+        **_cube_arguments(context)
+        | {"samples": {"sample_id": ["S1", "S2"], "donor": ["D1", "D2"]}}
+    )
+    return {
+        "cubes": {"A": cube, "B": cube},
+        "align_groups_by": "group_id",
+        "group_mapping": {"B": {"T": "T"}},
+        "within_study": ["donor"],
+    }
+
+
+@functools.cache
+def _collection() -> CubeCollection:
+    cube = Cube(
+        {"counts": np.arange(12, dtype=np.uint32).reshape(2, 2, 3)},
+        **CUBE_AXES,
+        n_cells=np.ones((2, 2), dtype=np.int64),
+    )
+    return CubeCollection({"A": cube, "B": cube})
 
 
 def _from_cells_arguments(context: Context) -> dict[str, Any]:
@@ -550,6 +574,25 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"mapping": None},
         instance=lambda c: c.cube,
         keys={"mapping": "all"},
+    ),
+    # The cubes were checked when they were built; the mapping of each study's
+    # groups and the column names are read value by value.
+    "cytepool.cube.collection.CubeCollection": Entry(
+        _collection_arguments,
+        {"group_mapping": None, "within_study": None},
+        options=("align_groups_by",),
+        objects=("cubes",),
+        keys={"group_mapping": "B"},
+    ),
+    "cytepool.cube.collection.CubeCollection.select": Entry(
+        lambda c: {"studies": ["B"], "groups": [True, False], "features": [2, 0]},
+        {"studies": None, "groups": None, "features": None},
+        instance=lambda c: _collection(),
+    ),
+    "cytepool.cube.collection.CubeCollection.stack": Entry(
+        lambda c: {"groups": ["T"], "features": [1, 0], "layers": ["counts"]},
+        {"groups": None, "features": None, "layers": None},
+        instance=lambda c: _collection(),
     ),
     "cytepool.cube.pool.from_cells": Entry(
         _from_cells_arguments,
@@ -2032,6 +2075,10 @@ NO_ARRAY_INPUT = {
     "cytepool.table.Table.equals": (("other",), "a table, compared as it is"),
     "cytepool.table.Table.rename": (("mapping",), "column names, which are str"),
     "cytepool.cube.cube.Cube.collapse_samples": (("by",), "a column name, a str"),
+    "cytepool.cube.collection.CubeCollection.aligned_cube": (
+        ("study",),
+        "a study name, looked up",
+    ),
     "cytepool.design.contrasts.Contrasts.__getitem__": (("name",), "a contrast name"),
     "cytepool.design.contrasts.Contrasts.__contains__": (("name",), "a contrast name"),
     "cytepool.design.contrasts.Contrasts.get": (
@@ -2112,6 +2159,11 @@ NO_ARRAY_INPUT = {
     "cytepool.meta_analysis.MetaAnalysisResult.table": (
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
+    ),
+    "cytepool.meta_analysis.align_study_results": (
+        ("collection", "results", "group", "contrast"),
+        "a CubeCollection and results, which were checked when they were built, and a "
+        "group id and a contrast name, looked up",
     ),
     "cytepool.gene_sets.GeneSets.__getitem__": (("name",), "a set name, looked up"),
     "cytepool.gene_sets.GeneSets.__contains__": (("name",), "a set name, looked up"),

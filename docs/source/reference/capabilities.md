@@ -23,6 +23,7 @@ size; its sections give every check.
 | Reads of selected features from cube files | {api}`read_cube`, {api}`Cube.select` | zarr-python 3.4.1 | exact | [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) |
 | Fingerprints of cubes | {api}`Cube.fingerprint`, {api}`Cube.digests` | the documented encoding, with zarr-python 3.4.1 | exact | [`cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py) |
 | AnnData and MuData layouts of scanpy, decoupler and LIANA | {api}`to_anndata`, {api}`from_anndata`, {api}`to_mudata`, {api}`from_mudata` | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | exact | [`anndata_conversion.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/anndata_conversion.py) |
+| Several studies' cubes aligned by sample, gene and cell type, with what each study measured; stacked for a joint model; each study's results lined up gene by gene | {api}`CubeCollection`, {api}`align_study_results` | anndata 0.13.4, pandas 3.1.0, limma 3.62.1, edgeR 4.4.0 | exact | [`cube_collection.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_collection.py) |
 | TMM, upper-quartile and RLE factors; CPM and log-CPM; `filterByExpr` | {api}`tmm_factors`, {api}`upper_quartile_factors`, {api}`rle_factors`, {api}`cpm`, {api}`log_cpm`, {api}`filter_by_expression` | edgeR 4.4.0 | exact | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) |
 | DESeq2's median-of-ratios size factors | {api}`median_ratio_size_factors` | DESeq2 1.46.0 | exact | [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) |
 | Model matrices from R formulas, named contrasts, design checks | {api}`Design`, {api}`model_matrix`, {api}`make_contrasts`, {api}`Design.check` | R 4.4.3, limma 3.62.1, lme4 2.0.6 | exact | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) |
@@ -65,5 +66,7 @@ have no CytePool function yet:
 - dose-response fits, benchmark doses and drug synergy;
 - factorization of samples across cell types;
 - shrinkage of effects across conditions (mashr) and meta-regression;
+- combined p-values and replication measures across studies, and cell types aligned
+  up the Cell Ontology;
 - edgeR's quasi-likelihood F-tests and DESeq2's tests on every cell type of a cube, and
   DESeq2's shrunken fold changes.

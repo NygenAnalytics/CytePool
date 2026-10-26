@@ -10,7 +10,13 @@ import numpy as np
 from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table
-from ._axes import INT64_MAX, checked_axis_table, checked_n_cells, first_index
+from ._axes import (
+    INT64_MAX,
+    checked_axis_table,
+    checked_n_cells,
+    first_index,
+    selected_positions,
+)
 from ._provenance_records import (
     add_record,
     plain_json,
@@ -720,13 +726,13 @@ class Cube:
             ValueError: If a mask has the wrong length or a selection repeats an
                 entry.
         """
-        sample_positions = _positions(
+        sample_positions = selected_positions(
             samples, self._samples["sample_id"], self._sample_index, "samples"
         )
-        group_positions = _positions(
+        group_positions = selected_positions(
             groups, self._groups["group_id"], self._group_index, "groups"
         )
-        feature_positions = _positions(
+        feature_positions = selected_positions(
             features, self._features["feature_id"], self._feature_index, "features"
         )
         selections = (sample_positions, group_positions, feature_positions)
@@ -2264,66 +2270,6 @@ def _check_moment_layers(
         cells = n_cells[:, group]
         numerator = _central_sum_of_squares(total[group], squares[group], cells)
         _check_moments(numerator, squares[group], group, ids)
-
-
-def _positions(
-    selector: Any, ids: np.ndarray, index: dict[str, int], axis: str
-) -> np.ndarray | None:
-    """Convert ids, a boolean mask or positions along one axis to positions."""
-    if selector is None:
-        return None
-    n = len(index)
-    single = axis[:-1]
-    if isinstance(selector, str) or (
-        isinstance(selector, int | np.integer)
-        and not isinstance(selector, bool | np.bool_)
-    ):
-        selector = [selector]
-    values = unmasked_array(selector, axis)
-    if values.ndim != 1:
-        raise ValueError(f"{axis} must be a 1-D selection, got shape {values.shape}")
-    kind = values.dtype.kind
-    if kind == "b":
-        if values.size != n:
-            raise ValueError(
-                f"a boolean mask of {axis} needs {n} values, got {values.size}"
-            )
-        return np.flatnonzero(values)
-    if values.size == 0:
-        return np.empty(0, dtype=np.intp)
-    if kind in "iu":
-        outside = (values < -n) | (values >= n)
-        if outside.any():
-            raise IndexError(
-                f"{single} position {values[outside][0]} is out of range for {n} {axis}"
-            )
-        positions = values.astype(np.intp) % n
-    elif kind in "UTO":
-        positions = np.empty(values.size, dtype=np.intp)
-        for i, value in enumerate(values.tolist()):
-            if not isinstance(value, str):
-                raise TypeError(
-                    f"{axis} must be ids, a boolean mask or integer positions; got "
-                    f"{type(value).__name__} {value!r} among ids"
-                )
-            position = index.get(value)
-            if position is None:
-                raise KeyError(f"no {single} with id {value!r}")
-            positions[i] = position
-    else:
-        raise TypeError(
-            f"{axis} must be ids, a boolean mask or integer positions, got dtype "
-            f"{values.dtype}"
-        )
-    seen: set[int] = set()
-    for position in positions.tolist():
-        if position in seen:
-            raise ValueError(
-                f"the selection of {axis} repeats {ids[position]!r}; each {single} can "
-                "be selected once"
-            )
-        seen.add(position)
-    return positions
 
 
 def _take_rows(table: Table, positions: np.ndarray | None) -> Table:
