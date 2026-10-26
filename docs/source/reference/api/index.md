@@ -40,6 +40,7 @@ multiple_testing
 differential_expression
 composition
 meta_analysis
+plotting
 distributions
 smoothing
 ```

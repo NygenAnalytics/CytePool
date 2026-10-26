@@ -1,5 +1,5 @@
 ---
-description: How closely each method in CytePool agrees with the tool that defined it, from the tables the validation scripts printed on 2026-10-24 and 2026-10-25.
+description: How closely each method in CytePool agrees with the tool that defined it, from the tables the validation scripts printed on 2026-10-24, 2026-10-25 and 2026-10-26.
 ---
 
 (validation)=
@@ -15,7 +15,8 @@ they compare bit for bit), runs CytePool, prints a table with one row per check,
 exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
-package in this revision of the repository: on **2026-10-25** for the six scripts on
+package in this revision of the repository: on **2026-10-26** for `plotting.py`; on
+**2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
@@ -58,9 +59,10 @@ covers and the largest difference among them. Run a script to see every check.
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
+| [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **1,916** | **1,662 pass, none failed; 148 information, 105 deliberate differences, 1 control** | | |
+| **All** | | | **1,942** | **1,685 pass, none failed; 150 information, 106 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1599,6 +1601,52 @@ CytePool's REML estimate is zero; metafor's step halving approaches zero and sto
 its threshold, at about 1e-6 by default. With standard errors 1e-8 of the spread of the
 effects, the two programs agree to 1.5e-14.
 
+## Figures
+
+[`validation/plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py)
+draws each figure of `cytepool.plotting` that follows an R function with CytePool and
+with R on the same data, and compares what the two drew: R's base graphics as the
+recorded display list of the plot holds them (`recordPlot()`, every primitive drawn
+with its coordinates), speckle's ggplot as its built layer data, and CytePool's as the
+data of the matplotlib artists. The data (seed 20261101) are counts of 300 genes in 4
+control and 4 stimulated samples, 2 genes of which have no counts and 4 an outlying
+count; three studies of 4, 5 and 6 donors, tested by `limma_voom` and meta-analysed,
+for the forest plots; and the cell numbers of 5 cell types in 12 samples for the
+composition. limma-voom runs in R as the limma User's Guide runs it, and voom with
+`adaptive.span = TRUE`, as CytePool chooses the span. Reference: R 4.4.3, limma
+3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| MDS plots: leading log2 fold changes over the top 50 and the top 500 genes, the 100 genes of largest variance (dimensions 2 and 3), and the samples of a cube after `filterByExpr` and TMM, two of which have fewer than 10 cells; coordinates up to sign, and the percentages of the axis labels | `plotMDS` | 5.4e-15 | 1e-10 | 4 pass |
+| voom's mean-variance trend: the points and the LOWESS line | `voom(save.plot = TRUE)` | 6.9e-15 | 1e-10 | 1 pass |
+| Sample quality weights | `voomWithQualityWeights(plot = TRUE)` | 3.9e-15 | 1e-6 | 1 pass |
+| Residual variances, with a trend and robust moderation (14 outliers marked) and with a constant prior: points, outliers, prior | `plotSA` | 2.6e-9 | 1e-6 | 2 pass |
+| MD plot (genes up, down and not significant at 5% FDR), volcano plot and the 10 genes it labels, and p-value histogram, of limma-voom | `plotMD`, `volcanoplot`, `hist` | 2.1e-14; counts identical | 1e-10; 0 | 3 pass |
+| Barcode plots: the bars and the enrichment worm, with spans 0.45 and 1 | `barcodeplot` | 4.1e-15 | 1e-10 | 2 pass |
+| Dispersions (4 outliers) and quasi-dispersions drawn from DESeq2's and edgeR's own estimates | `plotDispEsts`, `plotQLDisp` | 4.7e-15 | 1e-10 | 2 pass |
+| The same, from CytePool's fits of the counts | `plotDispEsts`, `plotQLDisp` | 2.8e-2; 3.3e-4 | n/a | 2 information |
+| Quasi-dispersions of the 2 genes without residual degrees of freedom | `plotQLDisp` | edgeR draws them at 0; CytePool leaves them out | n/a | 1 deliberate difference |
+| Forest plots of 3 genes, one of them tested by two studies, by REML with z-tests and by DerSimonian-Laird with the Knapp-Hartung adjustment: the studies' intervals, and the pooled estimate and interval | `forest`, `rma.uni` | 4.5e-15 | 1e-6 (REML), 1e-10 | 6 pass |
+| Composition: the bar segment of every sample and cell type; proportions by condition, their means and adjusted p-values | `plotCellTypeProps`, `propeller` | 5.0e-16 | 1e-10; 1e-6 | 2 pass |
+
+Differences are scaled by max(\|reference\|, 1). R writes numbers with 15 significant
+digits, which the exact rows reach. The residual variances agree to 2.6e-9 because
+limma solves the prior's degrees of freedom to a tolerance (see Empirical Bayes
+moderation above). After robust moderation, `plotSA` marks the variances whose
+two-sided p-value as a variance of the prior, adjusted by Benjamini and Hochberg, is
+below 0.5 (found by probing), and both mark the same 14. CytePool's dispersions differ
+from DESeq2's where DESeq2's line search stops short of the maximum, and its
+quasi-dispersions from edgeR's by the exact moments of the unit deviance (see the
+sections on DESeq2 and on quasi-likelihood F-tests above), so these figures are
+compared drawn from R's own estimates, and from CytePool's fits for information.
+metafor clips its diamond at the axis limits, which a pooled interval of two studies
+with the Knapp-Hartung adjustment exceeds here, so the pooled estimate and interval
+are compared with those it writes beside the diamond, from the fit. The deliberate
+difference: a gene without residual degrees of freedom, such as one without counts,
+has no quasi-dispersion (its deviance and its degrees of freedom are 0); edgeR draws it
+at 0, and CytePool leaves it out.
+
 ## Distributions and special functions
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
@@ -1789,6 +1837,8 @@ python validation/differential_expression_options.py
 python validation/interferon_stimulated_pbmcs.py
 RSCRIPT=$REF/r-speckle/bin/Rscript python validation/composition_tests.py
 RSCRIPT=$REF/r-metafor/bin/Rscript python validation/meta_analysis.py
+RSCRIPT=$REF/r/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
+    SPECKLE_RSCRIPT=$REF/r-speckle/bin/Rscript python validation/plotting.py
 # variancePartition, in an R environment of its own with lme4 1.1-38 (below).
 RSCRIPT=$REF/r-dream/bin/Rscript python validation/dream.py
 python validation/distributions.py
@@ -1865,7 +1915,7 @@ The Python environments use Python 3.13.12. scanpy has its own environment, and
 uv venv $REF/python --python 3.13.12
 uv pip install --python $REF/python/bin/python numpy==2.5.4 numba==0.68.0 \
     scipy==1.18.1 mpmath==1.3.0 zarr==3.4.1 numcodecs==0.17.1 pandas==3.1.0 \
-    anndata==0.13.4 decoupler==2.2.0
+    anndata==0.13.4 decoupler==2.2.0 matplotlib==3.11.2
 uv venv $REF/python-scanpy --python 3.13.12
 uv pip install --python $REF/python-scanpy/bin/python scanpy==1.12.4 \
     numpy==2.5.4 numba==0.68.0 scipy==1.18.1 pandas==3.1.0 anndata==0.13.4

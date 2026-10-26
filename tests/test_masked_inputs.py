@@ -45,22 +45,25 @@ from numpy.testing import assert_array_equal
 
 import cytepool
 from cytepool._masked_arrays import reject_masked
+from cytepool.composition import propeller
 from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
 from cytepool.differential_expression import limma_voom
 from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
+from cytepool.meta_analysis import differential_expression_meta_analysis
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
 from cytepool.stats import distributions, special
-from cytepool.stats.deseq2 import fit_deseq2
+from cytepool.stats.deseq2 import deseq2_dispersions, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
-from cytepool.stats.empirical_bayes import squeeze_variances
+from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
+from cytepool.stats.gene_set_tests import camera
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import lowess
-from cytepool.stats.voom import voom_with_quality_weights
+from cytepool.stats.voom import voom, voom_with_quality_weights
 from cytepool.table import Table
 
 # anndata and mudata, which the conversions of cubes call, warn about their own use
@@ -379,6 +382,46 @@ def _meta_analysis_arguments(context: Context) -> dict[str, Any]:
         "contrasts": ["stim"],
         "min_studies": 2,
     }
+
+
+def _axes() -> Any:
+    """An Axes of a figure that pyplot does not keep; skipped without matplotlib."""
+    return pytest.importorskip("matplotlib.figure").Figure().subplots()
+
+
+@functools.cache
+def _bulk_cube() -> Cube:
+    """COUNTS as a bulk cube with the sample table, for the MDS of a cube."""
+    return from_bulk(COUNTS, samples=SAMPLE_TABLE)
+
+
+@functools.cache
+def _composition_result() -> Any:
+    """propeller of the cell numbers of four samples, with one contrast."""
+    cells = {"sample_id": SAMPLE_TABLE["sample_id"], "B": [10, 22, 15, 31]}
+    cells["T"] = [40, 35, 52, 20]
+    design = Design(SAMPLE_TABLE, "~ condition", levels=LEVELS)
+    return propeller(cells, design, contrasts={"stim": [0.0, 1.0]})
+
+
+def _tested(context: Context, **options: Any) -> Any:
+    """limma_voom of the bulk cube of _differential_expression, every gene tested."""
+    arguments = _differential_expression(context)
+    return limma_voom(
+        arguments["cube"],
+        arguments["design"],
+        contrasts=arguments["contrasts"],
+        expression_filter=False,
+        **options,
+    )
+
+
+def _forest_arguments(context: Context) -> dict[str, Any]:
+    """The meta-analysis of _meta_analysis_arguments, its studies and a gene."""
+    results = _meta_analysis_arguments(context)["results"]
+    meta = differential_expression_meta_analysis(results)
+    feature = meta.table("bulk", "stim")["feature_id"][0]
+    return {"meta": meta, "studies": results, "feature": feature}
 
 
 TABLE = Table({"x": [1.0, 2.0], "s": ["a", "b"]})
@@ -1437,6 +1480,218 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"groups": None, "contrasts": None, "min_studies": None},
         options=("method", "test", "level"),
         objects=("results",),
+    ),
+    # Figures, each drawn into an Axes that pyplot does not keep. A variable of the
+    # samples is an array of labels, or a name; the other inputs are objects.
+    "cytepool.plotting.plot_mds": Entry(
+        lambda c: {
+            "data": log_cpm(COUNTS),
+            "color_by": ["a", "b", "a", "b"],
+            "marker_by": ["x", "x", "y", "y"],
+            "labels": ["S1", "S2", "S3", "S4"],
+            "top": 4,
+            "gene_selection": "common",
+            "dimensions": (1, 2),
+            "ax": _axes(),
+        },
+        {
+            "data": None,
+            "color_by": None,
+            "marker_by": None,
+            "labels": None,
+            "dimensions": None,
+        },
+        options=("top", "gene_selection"),
+        objects=("ax",),
+    ),
+    "cytepool.plotting.plot_mds[cube]": Entry(
+        lambda c: {
+            "data": _bulk_cube(),
+            "group": "bulk",
+            "color_by": "condition",
+            "min_cells": 1,
+            "ax": _axes(),
+        },
+        {},
+        options=("group", "color_by", "min_cells"),
+        objects=("data", "ax"),
+    ),
+    "cytepool.plotting.plot_cell_numbers": Entry(
+        lambda c: {"cube": c.cube, "min_cells": 1, "numbers": True, "ax": _axes()},
+        {},
+        options=("min_cells", "numbers"),
+        objects=("cube", "ax"),
+    ),
+    "cytepool.plotting.plot_composition": Entry(
+        lambda c: {"data": c.cube, "by": ["x", "y"], "ax": _axes()},
+        {"by": None},
+        objects=("data", "ax"),
+    ),
+    "cytepool.plotting.plot_composition[variable]": Entry(
+        lambda c: {"data": c.cube, "by": "sample_id", "ax": _axes()},
+        {},
+        options=("by",),
+    ),
+    "cytepool.plotting.plot_proportions": Entry(
+        lambda c: {
+            "result": _composition_result(),
+            "by": ["a", "b", "a", "b"],
+            "contrast": "stim",
+            "ax": _axes(),
+        },
+        {"by": None},
+        options=("contrast",),
+        objects=("result", "ax"),
+    ),
+    "cytepool.plotting.plot_proportions[variable]": Entry(
+        lambda c: {"result": _composition_result(), "by": "condition", "ax": _axes()},
+        {},
+        options=("by",),
+    ),
+    "cytepool.plotting.plot_mean_variance": Entry(
+        lambda c: {"result": voom(COUNTS, DESIGN), "ax": _axes()},
+        {},
+        objects=("result", "ax"),
+    ),
+    "cytepool.plotting.plot_residual_variances": Entry(
+        lambda c: {"fit": moderated_statistics(c.fit), "ax": _axes()},
+        {},
+        objects=("fit", "ax"),
+    ),
+    "cytepool.plotting.plot_sample_weights": Entry(
+        lambda c: {
+            "weights": [1.0, 0.5, 2.0, 1.0],
+            "labels": ["a", "b", "c", "d"],
+            "ax": _axes(),
+        },
+        {"weights": None, "labels": None},
+        objects=("ax",),
+    ),
+    "cytepool.plotting.plot_sample_weights[result]": Entry(
+        lambda c: {
+            "weights": _tested(c, quality_weights=True),
+            "group": "bulk",
+            "ax": _axes(),
+        },
+        {},
+        options=("group",),
+        objects=("weights",),
+    ),
+    "cytepool.plotting.plot_md": Entry(
+        lambda c: {
+            "result": moderated_statistics(c.contrast_fit),
+            "coefficient": "first",
+            "alpha": 0.1,
+            "ax": _axes(),
+        },
+        {},
+        options=("coefficient", "alpha"),
+        objects=("result", "ax"),
+    ),
+    "cytepool.plotting.plot_volcano": Entry(
+        lambda c: {
+            "result": _tested(c).table("bulk", "stim"),
+            "alpha": 0.1,
+            "top": 3,
+            "labels": [f"g{j}" for j in range(COUNTS.shape[1])],
+            "ax": _axes(),
+        },
+        {"labels": None},
+        options=("alpha", "top"),
+        objects=("result", "ax"),
+    ),
+    "cytepool.plotting.plot_volcano[fit]": Entry(
+        lambda c: {
+            "result": moderated_statistics(c.contrast_fit),
+            "coefficient": 1,
+            "ax": _axes(),
+        },
+        {},
+        options=("coefficient",),
+    ),
+    "cytepool.plotting.plot_significant_genes": Entry(
+        lambda c: {
+            "result": _tested(c, adjust_across_groups=True),
+            "contrast": "stim",
+            "alpha": 0.1,
+            "across_groups": True,
+            "ax": _axes(),
+        },
+        {},
+        options=("contrast", "alpha", "across_groups"),
+        objects=("result", "ax"),
+    ),
+    # NaN marks a missing p-value.
+    "cytepool.plotting.plot_p_values": Entry(
+        lambda c: {"result": [0.1, 0.5, np.nan], "bins": 5, "ax": _axes()},
+        {"result": "NaN"},
+        options=("bins",),
+        objects=("ax",),
+    ),
+    "cytepool.plotting.plot_p_values[fit]": Entry(
+        lambda c: {
+            "result": moderated_statistics(c.contrast_fit),
+            "coefficient": "second",
+            "ax": _axes(),
+        },
+        {},
+        options=("coefficient",),
+        objects=("result",),
+    ),
+    "cytepool.plotting.plot_barcode": Entry(
+        lambda c: {
+            "statistics": [0.5, -1.0, 2.0, 0.1, 3.0, -0.2, 1.1, 0.0],
+            "gene_set": ["g1", "g2"],
+            "gene_ids": [f"g{j}" for j in range(8)],
+            "span": 0.5,
+            "ax": _axes(),
+        },
+        {"statistics": None, "gene_set": None, "gene_ids": None},
+        options=("span",),
+        objects=("ax",),
+    ),
+    "cytepool.plotting.plot_gene_sets": Entry(
+        lambda c: {
+            "table": camera(**_gene_set_arguments()),
+            "top": 5,
+            "alpha": 0.1,
+            "ax": _axes(),
+        },
+        {},
+        options=("top", "alpha"),
+        objects=("table", "ax"),
+    ),
+    "cytepool.plotting.plot_dispersions": Entry(
+        lambda c: {
+            "dispersions": deseq2_dispersions(
+                COUNTS,
+                DESIGN,
+                size_factors=np.ones(4),
+                trend="mean",
+                genewise_dispersions=np.full(8, 0.1),
+                trended_dispersions=np.full(8, 0.1),
+                prior_variance=1.0,
+            ),
+            "ax": _axes(),
+        },
+        {},
+        objects=("dispersions", "ax"),
+    ),
+    "cytepool.plotting.plot_quasi_dispersions": Entry(
+        lambda c: {
+            "fit": fit_quasi_likelihood(COUNTS, DESIGN, dispersion=0.1),
+            "ax": _axes(),
+        },
+        {},
+        objects=("fit", "ax"),
+    ),
+    "cytepool.plotting.plot_forest": Entry(
+        lambda c: (
+            _forest_arguments(c) | {"group": "bulk", "contrast": "stim", "ax": _axes()}
+        ),
+        {},
+        options=("feature", "group", "contrast"),
+        objects=("meta", "studies", "ax"),
     ),
 }
 # Every argument of the distribution and special functions is an array, with NaN
