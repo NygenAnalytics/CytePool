@@ -8,6 +8,8 @@ import share:
 - ``checked_axis_table``: an axis table checked, with the position of each id.
 - ``checked_n_cells``: the number of cells of every sample in every group, from an
   integer array or a DataFrame labelled by the ids, as a read-only int64 array.
+- ``selected_positions``: the positions that ids, a boolean mask or positions select
+  along an axis, as ``Cube.select`` and ``CubeCollection.select`` read them.
 - ``axis_codes``: the position on an axis of every cell's label, with the axis table.
 - ``count_dtype``: the dtype of a counts layer that holds pooled counts exactly.
 - ``first_index``: the index of the first entry, in C order, where a mask is true.
@@ -188,6 +190,86 @@ def _aligned_by_labels(
 def first_index(mask: np.ndarray) -> tuple[int, ...]:
     """Return the index of the first entry, in C order, where a mask is true."""
     return tuple(int(position) for position in np.argwhere(mask)[0])
+
+
+def selected_positions(
+    selector: Any,
+    ids: np.ndarray,
+    index: dict[str, int],
+    axis: str,
+    single: str | None = None,
+    named: bool = False,
+) -> np.ndarray | None:
+    """Convert ids, a boolean mask or positions along one axis to positions.
+
+    A single id or position selects one entry; ``None`` selects every entry and
+    gives None. ``axis`` names the axis in messages, such as ``"samples"``, and
+    ``single`` one of its entries (by default ``axis`` without its last letter);
+    ``named`` says that its ids are names, as those of studies are.
+
+    Raises:
+        KeyError: If an id is unknown.
+        IndexError: If a position is out of range.
+        TypeError: If the selection is not ids, a boolean mask or integers, or is a
+            numpy masked array.
+        ValueError: If a mask has the wrong length or the selection repeats an entry.
+    """
+    if selector is None:
+        return None
+    n = len(index)
+    single = axis[:-1] if single is None else single
+    if isinstance(selector, str) or (
+        isinstance(selector, int | np.integer)
+        and not isinstance(selector, bool | np.bool_)
+    ):
+        selector = [selector]
+    values = unmasked_array(selector, axis)
+    if values.ndim != 1:
+        raise ValueError(f"{axis} must be a 1-D selection, got shape {values.shape}")
+    kind = values.dtype.kind
+    if kind == "b":
+        if values.size != n:
+            raise ValueError(
+                f"a boolean mask of {axis} needs {n} values, got {values.size}"
+            )
+        return np.flatnonzero(values)
+    if values.size == 0:
+        return np.empty(0, dtype=np.intp)
+    if kind in "iu":
+        outside = (values < -n) | (values >= n)
+        if outside.any():
+            raise IndexError(
+                f"{single} position {values[outside][0]} is out of range for {n} {axis}"
+            )
+        positions = values.astype(np.intp) % n
+    elif kind in "UTO":
+        positions = np.empty(values.size, dtype=np.intp)
+        for i, value in enumerate(values.tolist()):
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"{axis} must be ids, a boolean mask or integer positions; got "
+                    f"{type(value).__name__} {value!r} among ids"
+                )
+            position = index.get(value)
+            if position is None:
+                raise KeyError(
+                    f"no {single} {'named' if named else 'with id'} {value!r}"
+                )
+            positions[i] = position
+    else:
+        raise TypeError(
+            f"{axis} must be ids, a boolean mask or integer positions, got dtype "
+            f"{values.dtype}"
+        )
+    seen: set[int] = set()
+    for position in positions.tolist():
+        if position in seen:
+            raise ValueError(
+                f"the selection of {axis} repeats {ids[position]!r}; each {single} can "
+                "be selected once"
+            )
+        seen.add(position)
+    return positions
 
 
 def axis_codes(

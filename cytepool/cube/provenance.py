@@ -18,8 +18,8 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
 
 ``construction``:
     How the cube was built: ``function`` (``"from_cells"``, ``"from_bulk"``,
-    ``"from_anndata"`` or ``"from_mudata"``), ``cytepool_version``, and the
-    function's settings. ``from_cells`` records
+    ``"from_anndata"``, ``"from_mudata"`` or ``"CubeCollection.stack"``),
+    ``cytepool_version``, and the function's settings. ``from_cells`` records
 
     - ``n_cells``: the number of cells pooled (the cells of each sample and group
       are the cube's ``n_cells``);
@@ -60,6 +60,18 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
       "groups": [...], "left_out": [...]}``, and records the label columns as
       ``sample_column`` and ``group_column``; ``from_mudata`` lists the columns of
       the MuData's ``obs`` placed in the sample table.
+
+    ``CubeCollection.stack`` (``cytepool.cube.collection``), which stacks the cubes
+    of several studies, records
+
+    - ``studies``: for each study, in the order stacked, the cube that the
+      collection was given, by its ``fingerprint``, with that cube's own
+      ``provenance``, and ``groups``: each group stacked, by its aligned id, with
+      the ids of the study's groups that it sums;
+    - ``align_groups_by``: the group column whose values aligned the groups;
+    - ``within_study``: the sample columns whose values were written
+      ``study::value``, as the sample ids are;
+    - ``layers``: the layers stacked.
 
 ``operations``:
     The operations that derived the cube, oldest first. Each is an object with
@@ -174,6 +186,7 @@ def describe_provenance(provenance: Mapping[str, Any]) -> str:
         references = isinstance(record["source"], dict)
     if "construction" in record:
         lines += _construction_lines(record["construction"])
+        references |= _stacked_studies(record["construction"]) is not None
     for number, operation in enumerate(record.get("operations", []), start=1):
         lines += _operation_lines(number, operation)
         references |= isinstance(operation, dict) and operation.get("input") is not None
@@ -220,7 +233,24 @@ def _construction_lines(construction: Any) -> list[str]:
                 if layout == "given"
                 else f", in the layout of {layout}"
             )
+    studies = _stacked_studies(construction)
+    if studies is not None:
+        header += f" from {len(studies):,} stud{'y' if len(studies) == 1 else 'ies'}"
     lines = [header + ":"]
+    if studies is not None:
+        del settings["studies"]
+        lines += _study_lines(studies)
+        by = settings.get("align_groups_by")
+        if isinstance(by, str):
+            del settings["align_groups_by"]
+            lines.append(f"  groups aligned by the values of {by!r}")
+        within = settings.get("within_study")
+        if _is_text_list(within):
+            del settings["within_study"]
+            if within:
+                lines.append(
+                    f"  sample columns written study::value: {', '.join(within)}"
+                )
     for axis in ("samples", "groups"):
         value = settings.get(axis)
         if (
@@ -261,6 +291,40 @@ def _construction_lines(construction: Any) -> list[str]:
             f"with library sizes {_LIBRARY_SIZES[sizes]}"
         )
     lines += [f"  {key}: {_json(value)}" for key, value in settings.items()]
+    return lines
+
+
+def _stacked_studies(construction: Any) -> dict[str, Any] | None:
+    """The studies of a cube that ``CubeCollection.stack`` built, else None."""
+    if not isinstance(construction, dict):
+        return None
+    studies = construction.get("studies")
+    stacked = construction.get("function") == "CubeCollection.stack"
+    return studies if stacked and isinstance(studies, dict) else None
+
+
+def _study_lines(studies: dict[str, Any]) -> list[str]:
+    """The studies of a stacked cube: each cube by its fingerprint, and the groups
+    that were merged or renamed."""
+    lines = []
+    for name, study in studies.items():
+        if not isinstance(study, dict):
+            lines.append(f"  study {name!r}: {_json(study)}")
+            continue
+        found = study.get("fingerprint")
+        named = found if isinstance(found, str) else _json(found)
+        lines.append(f"  study {name!r}: the cube {named}, with its own record")
+        groups = study.get("groups")
+        if isinstance(groups, dict) and _is_membership(groups):
+            changed = {
+                aligned: members
+                for aligned, members in groups.items()
+                if members != [aligned]
+            }
+            for aligned, members in list(changed.items())[:_SHOWN_MEMBERS]:
+                lines.append(f"    {aligned}: {_listing(members, ' + ')}")
+            if len(changed) > _SHOWN_MEMBERS:
+                lines.append(f"    ... ({len(changed):,} in all)")
     return lines
 
 

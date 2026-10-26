@@ -99,7 +99,7 @@ independent implementation ([Validation](../validation.md#cube-fingerprints)).
 | Key | What it records |
 | --- | --- |
 | `source` | Where the data came from, as the caller gives it to {api}`from_cells`, {api}`from_bulk`, {api}`from_anndata`, {api}`from_mudata` or `Cube(provenance={"source": ...})`. Stored as given and never interpreted; its references are reported as unresolved, since following them needs the tool that wrote them. |
-| `construction` | How the cube was built: the function, the CytePool version and its settings, such as the layers computed, the target sum of the normalization and where the sample, group and feature ids came from. |
+| `construction` | How the cube was built: the function, the CytePool version and its settings, such as the layers computed, the target sum of the normalization and where the sample, group and feature ids came from. A cube that {api}`CubeCollection.stack` built records each study's cube by its fingerprint, with that cube's provenance and its groups under their aligned ids. |
 | `operations` | Every operation that derived the cube, oldest first: `select`, `regroup` or `collapse_samples`, with what it kept, merged or pooled, and `input`, the fingerprint of the cube it was applied to. |
 
 Because each operation names its input by fingerprint, a chain can be checked link by

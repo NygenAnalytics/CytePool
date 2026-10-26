@@ -79,4 +79,5 @@ densities, and the check of the colour palette for colour-vision deficiency [@go
 
 [@virshup2024; @bredikhin2022; @wolf2018; @heumos2026; @miles2025; @zarr2023;
 @maitinshepard2025; @deutsch1996a; @deutsch1996b; @collet2021; @nist2015; @yergeau2003;
-@bray2017; @ieee2019; @iso2019]
+@bray2017; @ieee2019; @iso2019]; the Cell Ontology, whose ids align the cell types of
+several studies [@diehl2016]

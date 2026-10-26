@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: Meta-analysis of the effects of many genes across studies in CytePool, by fixed and random effects with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I-squared, H-squared and the Knapp-Hartung adjustment, as metafor computes them, and of the differential expression of several cubes.
+    description: Meta-analysis of the effects of many genes across studies in CytePool, by fixed and random effects with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I-squared, H-squared and the Knapp-Hartung adjustment, as metafor computes them, and of the differential expression of several cubes, with each study's results lined up gene by gene.
 ---
 
 # Meta-analysis
@@ -20,6 +20,9 @@ same cell types in several cohorts: it matches groups, contrasts and genes by th
 reads each table's log2 fold changes and moderated standard errors, and returns a table
 per cell type and contrast with p-values adjusted over its genes, the studies used and
 left out with the reason, and the provenance of every study.
+{func}`~cytepool.meta_analysis.align_study_results` lines up the results of the studies
+of a {class}`~cytepool.cube.CubeCollection` gene by gene, with the reason a study has no
+result for a gene.
 
 ```{eval-rst}
 .. automodule:: cytepool.meta_analysis
