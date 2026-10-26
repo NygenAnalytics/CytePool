@@ -64,8 +64,6 @@
 "cytepool.table.Table.filter" = "guides/pool_cells: sample and group tables"
 "cytepool.table.Table.with_columns" = "guides/pool_cells: sample and group tables"
 "cytepool.plotting.plot_dispersions" = "guides/bulk_rna_seq: DESeq2's dispersion estimates"
-"cytepool.plotting.plot_forest" = "guides/combine_studies: one gene across studies"
-"cytepool.cube.CubeCollection.select" = "guides/combine_studies: the studies, cell types and genes of an analysis"
 "cytepool.plotting.plot_pca" = "guides/normalization_and_quality and guides/bulk_rna_seq: samples on their principal components"
 "cytepool.plotting.plot_dotplot" = "guides/pool_cells: the markers of each cell type as a dot plot, from the cube"
 "cytepool.plotting.plot_quasi_dispersions" = "guides/bulk_rna_seq: edgeR's quasi-dispersions"

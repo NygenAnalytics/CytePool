@@ -18,7 +18,10 @@ for every cell type and contrast ({api}`MetaAnalysisResult.table`). Where the st
 give p-values rather than comparable effects, or to ask in how many studies a gene
 changes, their p-values are combined, and
 {api}`differential_expression_replication` says how well the studies replicate each
-other (see [](#combined-p-values) and below).
+other (see [](#combined-p-values) and below). The guides
+[Combine studies](../guides/combine_studies.ipynb) and
+[Replication across studies](../guides/replication_across_studies.ipynb) run them on
+six simulated cohorts whose true changes are known.
 
 ## The model
 

@@ -1288,6 +1288,7 @@ def test_every_dataset_records_its_source_licence_citation_and_contents() -> Non
     assert set(datasets.DATASETS) == {
         "simulated_pbmc",
         "simulated_bulk",
+        "simulated_cohorts",
         "kang2018",
         "hallmark_interferon_alpha",
     }
