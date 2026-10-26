@@ -87,8 +87,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The files under `tests/data/` are written by the scripts in `validation/`. Except for
 the dataset below, their inputs are generated with fixed random seeds. Reference values
-in those files come from the packages each script names. The pages of the
-documentation (`docs/source/`) simulate their data with fixed seeds and use no dataset.
+in those files come from the packages each script names.
+
+The pages of the documentation (`docs/source/`) read the datasets that `docs/datasets.py`
+prepares in a cache outside the repository: two simulated with fixed random seeds by
+that script, and the two below, GEO series GSE96583 and the MSigDB Hallmark
+interferon-alpha response set. No file of these datasets is in the repository; the
+script records the source, licence, citation and checksum of each.
 
 ### GEO series GSE96583 (Kang et al. 2018)
 
@@ -96,7 +101,10 @@ documentation (`docs/source/`) simulate their data with fixed seeds and use no d
 `GSE96583_batch2.genes.tsv.gz` and `GSE96583_batch2.total.tsne.df.tsv.gz` from the Gene
 Expression Omnibus (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) into a
 cache outside the repository, and `tests/data/interferon_stimulated_pbmcs/limma.npz`
-holds pseudobulk counts derived from them.
+holds pseudobulk counts derived from them. `docs/datasets.py` reads the same files, with
+the same checksums and from the same cache, and pools them into the cube that the
+documentation's pages read (`kang2018`), which it writes to its own cache outside the
+repository.
 
 Kang HM, Subramaniam M, Targ S, Nguyen M, Maliskova L, McCarthy E, Wan E, Wong S,
 Byrnes L, Lanata CM, Gate RE, Mostafavi S, Marson A, Zaitlen N, Criswell LA, Ye CJ
@@ -114,7 +122,8 @@ concerning the use, copying, or distribution of the information contained in GEO
 
 The 97 gene symbols of this set (M5911, MSigDB release v2026.2.Hs, from
 https://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_INTERFERON_ALPHA_RESPONSE)
-appear in `validation/interferon_stimulated_pbmcs.py`.
+appear in `validation/interferon_stimulated_pbmcs.py` and in `docs/datasets.py`, which
+writes them for the documentation's pages (`hallmark_interferon_alpha`).
 
 Liberzon A, Birger C, Thorvaldsdottir H, Ghandi M, Mesirov JP, Tamayo P (2015). The
 Molecular Signatures Database hallmark gene set collection. Cell Systems 1, 417-425.

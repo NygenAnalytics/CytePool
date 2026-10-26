@@ -1,11 +1,17 @@
 """Execute documentation notebooks and save their outputs in place.
 
-Each notebook runs from a fresh kernel in a temporary working directory. On success it
-is saved with its outputs and four metadata entries: ``executed_at`` (UTC, when the
-run finished), ``execution_seconds`` (its wall time), ``executed_code_sha256`` (the
+Each notebook runs from a fresh kernel in a temporary working directory. A notebook
+that reads shared data names the datasets in its metadata ``datasets`` (ids of
+``docs/datasets.py``); they are prepared in the cache first, if they are not there
+yet, and their files are linked into the working directory, where the notebook opens
+them by name, as ``read_cube("kang2018.cube.zarr")``. On success the notebook is
+saved with its outputs and five metadata entries: ``executed_at`` (UTC, when the run
+finished), ``execution_seconds`` (its wall time), ``executed_code_sha256`` (the
 fingerprint of the code cells it ran, which the site build and the tests compare with
-the code) and ``executed_with`` (the version of CytePool that ran it). A failing cell
-raises and leaves the saved notebook as it was.
+the code), ``executed_with`` (the version of CytePool that ran it) and
+``executed_datasets`` (the fingerprint of every dataset file it was given, which the
+tests compare with the registry). A failing cell raises and leaves the saved notebook
+as it was.
 
 With ``--check``, notebooks run the same way but are not saved: the command fails when
 the text they print differs from the saved outputs, as it does when a change to the
@@ -34,7 +40,10 @@ import nbformat
 from nbclient import NotebookClient
 
 import cytepool
+import page_index
 from build_docs import SOURCE, check_execution, check_figures, code_fingerprint
+
+datasets = page_index.docs_module("datasets")
 
 TIMEOUT_SECONDS = 600
 
@@ -47,6 +56,33 @@ def notebook_path(page: str) -> Path:
     return path
 
 
+def provide_datasets(
+    notebook: nbformat.NotebookNode, directory: Path
+) -> dict[str, dict[str, str]]:
+    """Prepare the datasets a notebook names and link their files into the directory
+    it runs in; return the fingerprint of each file, by dataset."""
+    declared = notebook.metadata.get("datasets", [])
+    unknown = sorted(set(declared) - set(datasets.DATASETS))
+    if unknown:
+        raise SystemExit(
+            f"the notebook names datasets {unknown}, which docs/datasets.py does not "
+            f"register; choose from {sorted(datasets.DATASETS)}"
+        )
+    cache = datasets.data_directory()
+    provided = {}
+    for dataset_id in declared:
+        dataset = datasets.DATASETS[dataset_id]
+        problems = datasets.prepare(dataset, cache)
+        if problems:
+            raise SystemExit(f"{dataset_id}: " + "; ".join(problems))
+        for name in dataset.files:
+            (directory / name).symlink_to(
+                cache / name, target_is_directory=(cache / name).is_dir()
+            )
+        provided[dataset_id] = dict(dataset.files)
+    return provided
+
+
 def run(notebook: nbformat.NotebookNode) -> float:
     """Clear a notebook's outputs and execute it in place; return its wall time."""
     for key in (
@@ -54,6 +90,7 @@ def run(notebook: nbformat.NotebookNode) -> float:
         "execution_seconds",
         "executed_code_sha256",
         "executed_with",
+        "executed_datasets",
     ):
         notebook.metadata.pop(key, None)
     for cell in notebook.cells:
@@ -62,6 +99,7 @@ def run(notebook: nbformat.NotebookNode) -> float:
             cell.execution_count = None
             cell.metadata.pop("execution", None)
     with tempfile.TemporaryDirectory(prefix="cytepool-docs-") as directory:
+        provided = provide_datasets(notebook, Path(directory))
         client = NotebookClient(
             notebook,
             timeout=TIMEOUT_SECONDS,
@@ -71,7 +109,10 @@ def run(notebook: nbformat.NotebookNode) -> float:
         )
         start = time.perf_counter()
         client.execute()
-        return time.perf_counter() - start
+        seconds = time.perf_counter() - start
+    if provided:
+        notebook.metadata["executed_datasets"] = provided
+    return seconds
 
 
 def execute(path: Path) -> float:

@@ -1,0 +1,36 @@
+---
+description: The datasets the documentation's pages read, where each comes from, its licence and citation, and how to prepare them on another machine.
+---
+
+# Datasets
+
+The pages that run code read shared datasets by file name, such as
+`read_cube("simulated_bulk.cube.zarr")`. A script in the repository,
+[`docs/datasets.py`](https://github.com/NygenAnalytics/CytePool/blob/master/docs/datasets.py),
+makes them deterministically into a cache outside the repository, downloads what they
+need with checksums, and checks each against the fingerprint of every cube and the
+digest of every other file it records. From the repository root:
+
+```bash
+uv run --group docs python docs/datasets.py list
+uv run --group docs python docs/datasets.py prepare simulated_pbmc
+uv run --group docs python docs/datasets.py verify
+```
+
+The cache is `CYTEPOOL_DOCS_DATA`, else `cytepool-docs` under `XDG_CACHE_HOME` or
+`~/.cache`. Copy or link the files a page names into your working directory to run its
+code.
+
+| Dataset | What it holds | Source | Licence | Cite |
+| --- | --- | --- | --- | --- |
+| `simulated_pbmc` | 12 donors, each sampled before and after a stimulation; about 20,000 cells of six cell types over 2,000 genes, with planted changes in every cell type, a response program shared by all, a rise in the share of monocytes, and dendritic cells too rare in some samples; the cube of all five layers and the cells with the true effects | simulated by the script, seed 20261026 | part of CytePool, BSD 3-Clause | |
+| `simulated_bulk` | 3 treatments x 4 replicates in two batches, 10,000 genes; drug A changes 500 genes, drug B 300; one noisier sample; the cube and the true effects | simulated by the script, seed 20261027 | part of CytePool, BSD 3-Clause | |
+| `kang2018` | Peripheral blood cells of 8 lupus patients, each split into an interferon-beta stimulated and an untreated culture: 24,673 cells pooled into 16 samples x 8 cell types x 35,635 genes (counts and detecting cells); a 77 MB download | [GEO GSE96583](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583), batch 2 | GEO's terms: NCBI places no restrictions on the use of GEO data, though submitters may claim rights in theirs ([disclaimer](https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html)) | @kang2018 |
+| `hallmark_interferon_alpha` | The 97 genes of the Hallmark interferon-alpha response set (M5911, MSigDB v2026.2.Hs) | [MSigDB](https://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_INTERFERON_ALPHA_RESPONSE) | Creative Commons Attribution 4.0 ([terms](https://www.gsea-msigdb.org/gsea/msigdb_license_terms.jsp)) | @liberzon2015 |
+
+The downloads of `kang2018` are the files that the validation script
+`validation/interferon_stimulated_pbmcs.py` downloads, with the same checksums and in
+the same directory, so a machine fetches them once; its cube is the one that script
+tests. A notebook page names its datasets in its metadata; `make -C docs execute`
+prepares them, links them into the directory the page runs in, and records the
+fingerprint of each file it was given, which the build checks against the registry.
