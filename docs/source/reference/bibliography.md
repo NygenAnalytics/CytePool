@@ -47,6 +47,9 @@ Gene-set files and over-representation analysis [@gsea2026; @liberzon2011;
 @young2010; @fisher1922; @rivals2007; @tavazoie1999; @timmons2015; @wijesooriya2022;
 @yu2012].
 
+Gene set enrichment analysis [@subramanian2005; @mootha2003; @korotkevich2021] and the
+random numbers of its tests [@matsumoto1998; @durstenfeld1964].
+
 ## Composition
 
 [@phipson2022; @buttner2021; @mangiola2023; @hoffman2026b; @dann2022; @yi2024]

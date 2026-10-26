@@ -178,7 +178,6 @@ References:
 
 import math
 import numbers
-import operator
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
@@ -188,7 +187,7 @@ from numba import prange
 
 from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
-from cytepool._options import checked_flag, positive_integer
+from cytepool._options import checked_flag, positive_integer, random_generator
 from cytepool._ranks import average_ranks_in_order
 from cytepool._summation import observed_means
 from cytepool.stats._gene_sets import (
@@ -515,7 +514,7 @@ def romer(
     shrink = checked_flag(
         shrink_contrast_effects, "shrink_contrast_effects", expected="a bool"
     )
-    generator = _generator(rng)
+    generator = random_generator(rng)
     with thread_limit(n_threads):
         return _romer_sets(
             y,
@@ -625,7 +624,7 @@ def _roast_tests(
     n_rotations = _rotation_count(n_rotations)
     with_trend = checked_flag(trend, "trend", expected="a bool")
     with_robust = checked_flag(robust, "robust", expected="a bool")
-    generator = _generator(rng)
+    generator = random_generator(rng)
     with thread_limit(n_threads):
         return _roast_sets(
             y,
@@ -1604,20 +1603,3 @@ def _statistic(value: Any, options: tuple[str, ...]) -> int:
 def _rotation_count(value: Any) -> int:
     reject_masked(value, "n_rotations")
     return positive_integer(value, "n_rotations", expected="a positive integer")
-
-
-def _generator(rng: Any) -> np.random.Generator:
-    reject_masked(rng, "rng")
-    if rng is None:
-        return np.random.default_rng()
-    if isinstance(rng, np.random.Generator):
-        return rng
-    if isinstance(rng, (bool, np.bool_)) or not isinstance(rng, numbers.Integral):
-        raise TypeError(
-            "rng must be a numpy.random.Generator, an integer seed or None, got "
-            f"{type(rng).__name__}"
-        )
-    seed = operator.index(rng)
-    if seed < 0:
-        raise ValueError(f"rng must be a non-negative seed, got {seed}")
-    return np.random.default_rng(seed)

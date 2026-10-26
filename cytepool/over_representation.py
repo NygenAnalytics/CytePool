@@ -114,6 +114,7 @@ from ._gene_ids import gene_ids, is_missing
 from ._masked_arrays import real_array, reject_masked
 from ._messages import listing, quoted
 from ._options import real_number
+from ._ranked_genes import gene_set_collection, group_and_contrast
 from .differential_expression import DifferentialExpressionResult
 from .gene_sets import GeneSets
 from .stats.distributions import hypergeom_sf
@@ -197,7 +198,7 @@ def over_representation(
             says why.
     """
     reject_masked(gene_sets, "gene_sets")
-    collection = _gene_sets(gene_sets)
+    collection = gene_set_collection(gene_sets)
     level = _alpha(alpha)
     columns = (
         _column_name(id_column, "id_column"),
@@ -207,7 +208,7 @@ def over_representation(
         else _column_name(fold_change_column, "fold_change_column"),
     )
     if isinstance(genes, DifferentialExpressionResult):
-        chosen = _group_and_contrast(genes, group, contrast)
+        chosen = group_and_contrast(genes, group, contrast)
         selections, tested = _selections(genes.table(*chosen), level, *columns)
     else:
         if group is not None or contrast is not None:
@@ -410,43 +411,6 @@ def _real_column(table: Table, column: str) -> np.ndarray:
 
 
 # Arguments.
-
-
-def _gene_sets(gene_sets: Any) -> GeneSets:
-    if isinstance(gene_sets, GeneSets):
-        collection = gene_sets
-    elif isinstance(gene_sets, Mapping):
-        collection = GeneSets(gene_sets)
-    else:
-        raise TypeError(
-            "gene_sets must be a GeneSets or a mapping of set name to gene ids, such "
-            f"as {{'interferon': ['ISG15', 'IFIT1']}}; got {type(gene_sets).__name__}"
-        )
-    if not len(collection):
-        raise ValueError("gene_sets is empty; give at least one gene set")
-    return collection
-
-
-def _group_and_contrast(
-    result: DifferentialExpressionResult, group: Any, contrast: Any
-) -> tuple[str, str]:
-    chosen = []
-    for value, name, options in (
-        (group, "group", list(result.groups)),
-        (contrast, "contrast", list(result.contrasts.names)),
-    ):
-        if value is None:
-            if len(options) != 1:
-                raise ValueError(
-                    f"the result has {len(options)} {name}s; name one with {name}, "
-                    f"one of {quoted(options)}"
-                )
-            value = options[0]
-        elif not isinstance(value, str):
-            reject_masked(value, name)
-            raise TypeError(f"{name} must be a string, got {type(value).__name__}")
-        chosen.append(value)
-    return chosen[0], chosen[1]
 
 
 def _alpha(value: Any) -> float:

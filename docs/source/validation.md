@@ -15,10 +15,10 @@ they compare bit for bit), runs CytePool, prints a table with one row per check,
 exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
-package in this revision of the repository: on **2026-10-26** for `plotting.py` and
-`variance_partitioning.py` and `gene_set_files_and_ora.py` and
-`kenward_roger_and_f_tests.py`, and for `dream.py`, which printed the same table again
-after changes to the code it checks; on
+package in this revision of the repository: on **2026-10-26** for `plotting.py`,
+`variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`
+and `gsea.py`, and for `dream.py`, which printed the same table again after changes to
+the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -56,6 +56,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
 | [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
 | [`gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py) | Gene-set files and over-representation | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | 34 | 29 pass, 5 deliberate differences | 4.7 s | 297 MiB |
+| [`gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py) | Gene set enrichment analysis | R 4.4.3, fgsea 1.32.2 | 24 | 23 pass, 1 deliberate difference | 7 min 3 s | 323 MiB |
 | [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
@@ -68,7 +69,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,150** | **1,851 pass, none failed; 172 information, 126 deliberate differences, 1 control** | | |
+| **All** | | | **2,174** | **1,874 pass, none failed; 172 information, 127 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1182,6 +1183,64 @@ Deliberate differences:
   genes the analysis called significant. With the p-values adjusted over the features
   with a symbol, CytePool gives kegga's values; the tests check this.
 
+## Gene set enrichment analysis
+
+[`validation/gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py)
+checks gene set enrichment analysis and its figures against fgsea. Statistics of 4,000
+genes are simulated from fixed seeds like moderated t-statistics, 6% of the genes up and
+5% down, with 60 genes tied at 1.25 and 30 at zero, with 90 gene sets of 1 to 1,000
+genes, a fifth of each outside the ranking: sets enriched for genes up, down or both, or
+for none, a set of every gene, which neither program tests, a set of one gene, half of
+the tied genes, a set that lists genes twice and two identical sets. `gsea` and fgsea's
+`fgsea` run with the same options: fgsea's defaults (its multilevel method, 1,000
+permutations, 101 sets per level, eps 1e-50); gseaParam 0 and 0.5; scoreType "neg";
+scoreType "pos" on -log10 p-values, which are all positive; sets of 15 to 500 genes,
+with eps 0, 51 sets per level and 2,000 permutations; permutations alone (fgsea's
+`nperm`, 2,500 in three chunks); statistics mostly positive, with 6 sets spread evenly
+along the ranking, a set of a few genes near its top and others spread along it, whose
+p-value is about 0.05, and 3 sets of 25 genes from its bottom, whose negative scores
+fewer than 10 random sets of their size reach, so that no set goes to the multilevel
+method; and one set alone.
+
+The R script records the seeds that fgsea draws where it hands them to its compiled code
+(`trace` of `fgseaSimpleImpl` and `multilevelImpl`), and `gsea` draws the same through
+`rng`; the two programs then draw the same random sets, and must agree exactly. fgsea
+draws the random sets of a set tested alone with R's `sample.int`, which cannot be
+replayed: that case is exact for the enrichment score and leading edge, and calibrated
+for the rest, with seeds of their own (R's 1 to 20 and numpy's 1 to 20): the mean
+log10 p-value and the mean normalized score of each set over 20 runs must agree within
+4 standard errors of their difference, for 36 sets and for the set alone. The figures:
+what `plot_enrichment` draws against `plotEnrichmentData`, for three sets with gseaParam
+1 and 0.5, and the bars and numbers of `plot_gsea_table` against the ticks of
+`plotEnrichmentData`, scaled as `plotGseaTable` scales them, and its numbers as it
+writes them. Reference: R 4.4.3, fgsea 1.32.2.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| The sets tested, their sizes, leading edges and enrichment scores, in all 9 cases | `fgsea` | 0 | 1e-10 | 9 pass |
+| Normalized scores, p-values, log2 errors and adjusted p-values, given fgsea's seeds, in 7 cases | `fgsea` | 2.2e-13 | 1e-10 | 7 pass |
+| The same of the mostly positive statistics, without the adjusted p-values | `fgsea` | 4.2e-16 | 1e-10 | 1 pass |
+| Mean log10 p-values and mean normalized scores over 20 runs, seeds of their own, for 36 sets and one set alone | `fgsea` | 2.4 standard errors | 4 | 4 pass |
+| `plot_enrichment`: the walk, the ticks and the extremes of 6 plots | `plotEnrichmentData` | 1.7e-14 | 1e-10 | 1 pass |
+| `plot_gsea_table`: the bars and numbers of 10 sets | `plotEnrichmentData`, `plotGseaTable` | 1.1e-13 | 1e-10 | 1 pass |
+| Adjusted p-values of the mostly positive statistics | `fgsea` | 0.16 (relative) | n/a | 1 deliberate difference |
+
+Numbers are compared relative to their absolute value, or 1e-300, and NaN must stand
+where fgsea gives NA; sets, sizes and leading edges must be identical. Given fgsea's
+seeds, the random scores and the counts of the permutations are the same to the last
+bit; the multilevel p-values differ in the last bits, through the digamma function of
+each program.
+
+Deliberate difference:
+
+- The adjusted p-values of the mostly positive statistics, where some sets have too few
+  random scores of their sign and no set goes to the multilevel method: fgsea adjusts
+  the p-values over the sets before it removes those that have some, but fewer than 10,
+  random scores of their sign, as though they had been tested, so that its adjusted
+  p-values of the sets it reports come out smaller or larger; CytePool adjusts over the
+  sets with a p-value. The tests check that CytePool's are Benjamini and Hochberg's of
+  the p-values it reports.
+
 ## Multiple testing
 
 [`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
@@ -2024,6 +2083,11 @@ the run was 424 MiB.
 | Two crossed: 40 donors, 6 batches | 1.50 | 0.06 | 0.052 | 17.5 |
 | Two nested: 20 donors x 3 samples x 2 replicates | 4.12 | 0.06 | 0.051 | 17.0 |
 
+On fgsea's example data, 12,000 genes and 586 sets of 15 to 500 genes, with its
+defaults, fgsea's `fgsea` took 2.9 s and `gsea` 4.1 s, both on one thread, after a
+first call of `gsea` that compiled it; with plain permutations (10,000), fgsea took
+1.9 s and `gsea` 1.5 s, on 2 threads.
+
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
 `multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the
 references and CytePool 3.6 s to evaluate them, including compilation.
@@ -2074,6 +2138,7 @@ python validation/empirical_bayes.py
 python validation/gene_set_tests.py
 python validation/rotation_gene_set_tests.py
 python validation/gene_set_files_and_ora.py
+RSCRIPT=$REF/r-gsea/bin/Rscript python validation/gsea.py
 python validation/voom.py
 python validation/sample_quality_weights.py
 python validation/negative_binomial_fits.py
@@ -2157,6 +2222,16 @@ conda create -p $REF/r-dream -c conda-forge -c bioconda r-base=4.4.3 \
     bioconductor-variancepartition=1.36.2 bioconductor-limma=3.62.1 r-lme4=1.1_38 \
     r-lmertest=3.1_3 r-pbkrtest=0.5.3 r-matrix=1.7_4 r-rcppeigen=0.3.4.0.2 \
     r-minqa=1.2.8 r-nloptr=2.2.1 r-jsonlite=2.0.0
+```
+
+fgsea 1.32.2 (Bioconductor 3.20), which `gsea.py` runs, has an R environment of its own,
+with R 4.4.3, limma 3.62.1, GSVA 2.0.0, BiocParallel 1.40.0, data.table 1.18.6.1 and
+jsonlite 2.0.0, from conda-forge and bioconda:
+
+```bash
+conda create -p $REF/r-gsea -c conda-forge -c bioconda r-base=4.4.3 \
+    bioconductor-fgsea=1.32.2 bioconductor-gsva=2.0.0 bioconductor-limma=3.62.1 \
+    r-data.table=1.18.6.1 r-jsonlite=2.0.0
 ```
 
 The Python environments use Python 3.13.12. scanpy has its own environment, and

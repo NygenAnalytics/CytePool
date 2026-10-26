@@ -1,5 +1,5 @@
 ---
-description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; over-representation analysis of the genes called significant, as limma's kegga computes it; gene sets read from GMT files; and how to choose between the tests.
+description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; gene set enrichment analysis of ranked genes, as fgsea computes it; over-representation analysis of the genes called significant, as limma's kegga computes it; gene sets read from GMT files; and how to choose between the tests.
 ---
 
 # Gene-set tests
@@ -10,16 +10,17 @@ of the linear model fitted to every gene. Two questions differ [@goeman2007]:
 - **Self-contained**: are the genes of the set differentially expressed at all?
   {api}`fry`, {api}`roast` and {api}`mroast`.
 - **Competitive**: are they more differentially expressed than the other genes?
-  {api}`camera` and {api}`romer`, and {api}`over_representation`, which asks it of the
-  genes called significant.
+  {api}`camera` and {api}`romer`; {api}`gsea`, which asks it of a ranking of all genes;
+  and {api}`over_representation`, which asks it of the genes called significant.
 
 A self-contained test finds a set significant when its genes respond, however many other
 genes respond too: in a response that touches thousands of genes, many sets are. A
 competitive test asks whether a set stands out from the other genes, and so suits
 ranking many sets, such as a pathway collection. The five tests of limma work on the
 linear model, so they allow any design and contrast and do not permute samples; all but
-romer take voom's precision weights. Over-representation analysis needs only the genes
-that an analysis called significant.
+romer take voom's precision weights. Gene set enrichment analysis needs only a statistic
+of every gene, and over-representation analysis only the genes that an analysis called
+significant.
 
 ## The effects of each gene
 
@@ -144,6 +145,49 @@ and highly expressed genes are called significant more often, which favours sets
 such genes [@young2010]; the adjustment that `kegga` and `goana` offer for this is not
 implemented.
 
+## Gene set enrichment analysis
+
+Gene set enrichment analysis (GSEA) ranks all genes by a statistic, such as the moderated
+t-statistic of a contrast, and asks whether the genes of a set gather at the top or at
+the bottom of the ranking [@subramanian2005]. A walk down the ranking of $N$ genes rises
+at each of the $m$ genes of the set by its share of the set's weight and falls at each
+other gene by $1/(N - m)$; after the $i$-th gene of the set, at rank $p_i$, it stands at
+
+$$
+\mathrm{RS}_i = \frac{\sum_{j \le i} |r_j|^q}{\sum_{j = 1}^{m} |r_j|^q}
+- \frac{p_i - i}{N - m},
+$$
+
+with $r_j$ the statistics of the set's genes and $q$ the exponent: 1 for the weighted
+score of GSEA, 0 for the unweighted one of @mootha2003. The enrichment score is the
+walk's largest deviation from zero, positive when the set's genes gather at the top and
+negative when they gather at the bottom, and the leading edge is the set's genes that
+the walk passes before its extreme, which drive the score. {api}`gsea` computes them as
+fgsea does [@korotkevich2021], from a group and contrast of a differential-expression
+result, a table of results or a mapping of gene id to statistic. Genes with equal
+statistics keep the order in which they are given, as in fgsea, so that the score of a
+set whose genes tie with others depends on that order; a warning says how many tie.
+
+The scores of random sets of the same size give the null distribution, so that the test
+is competitive, like camera's, and it permutes genes, not samples. Like
+over-representation analysis it treats genes as independent: the genes of a set that
+respond together make its p-values too small [@goeman2007; @wu2012]. Each score is
+divided by the mean of the random scores of its sign, so that sets of different sizes
+compare, and the p-value is the share of the random scores of its sign that reach it.
+With $n$ random sets it is at least $1/(n + 1)$; fgsea's multilevel method, the default,
+reaches far smaller ones [@korotkevich2021]. It draws random sets of the size of the set,
+keeps at each level the half with the higher scores and moves them by a Markov chain that
+keeps their scores above the level's median, so that each level about halves the
+probability, until the median reaches the observed score; `log2_error` gives the expected
+standard deviation of $\log_2 p$.
+
+The random sets come from seeds that `rng` draws, through the Mersenne Twister
+[@matsumoto1998] seeded as C++ seeds it, as fgsea draws them: given fgsea's seeds,
+{api}`gsea` gives fgsea's results exactly, and a seed gives the same results every time.
+{api}`plot_enrichment` draws the walk of one set, as fgsea's `plotEnrichment` does, and
+{api}`plot_gsea_table` the top sets with their genes on the ranking, as its
+`plotGseaTable` does.
+
 ## Choices
 
 - **Competitive or self-contained.** Rank a collection with camera; ask about one set
@@ -159,3 +203,7 @@ implemented.
   genes called significant, so it takes the results of any method and lists from
   elsewhere. camera uses every gene's statistic and allows for the correlation between
   genes, so with a linear model at hand it is the sounder competitive test.
+- **GSEA or camera.** GSEA needs only a statistic of every gene, from any method, and
+  uses the whole ranking rather than a cutoff; like over-representation analysis it
+  takes genes as independent, which camera does not. Set `min_size` and `max_size`, as
+  GSEA's 15 and 500, to leave out sets too small to rely on and too large to mean much.

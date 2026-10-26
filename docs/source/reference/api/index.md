@@ -38,6 +38,7 @@ gene_sets
 gene_set_tests
 rotation_gene_set_tests
 over_representation
+gsea
 multiple_testing
 differential_expression
 variance_partitioning

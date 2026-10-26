@@ -50,6 +50,7 @@ from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
 from cytepool.differential_expression import limma_voom
 from cytepool.gene_sets import GeneSets
+from cytepool.gsea import gsea
 from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.meta_analysis import differential_expression_meta_analysis
@@ -135,6 +136,10 @@ SAMPLE_TABLE = {
 }
 LEVELS = {"condition": ["ctrl", "stim"]}
 COLUMNS = ("(Intercept)", "conditionstim")
+# Statistics of 8 genes by gene id, for gene set enrichment analysis.
+RANKED = dict(
+    zip([f"g{j}" for j in range(8)], [0.5, -1.0, 2.0, 0.1, 3.0, -0.2, 1.1, 0.4])
+)
 # Cells for from_cells: 4 cells x 3 features, two samples and two groups.
 CELL_COUNTS = np.array([[1, 0, 2], [3, 1, 0], [0, 2, 5], [4, 0, 1]])
 CELL_SAMPLES = ["S1", "S1", "S2", "S2"]
@@ -1433,6 +1438,55 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("group", "contrast"),
         objects=("genes", "gene_sets"),
     ),
+    # Statistics by gene id, ranked; the options that read a table are checked too.
+    "cytepool.gsea.gsea": Entry(
+        lambda c: {
+            "statistics": RANKED,
+            "gene_sets": {"set": ["g1", "g2", "g5"]},
+            "id_column": "feature_id",
+            "statistic_column": "t",
+            "min_size": 1,
+            "max_size": 5,
+            "exponent": 1.0,
+            "score_type": "std",
+            "method": "permutation",
+            "n_permutations": 20,
+            "sample_size": 11,
+            "eps": 1e-10,
+            "rng": 1,
+            "n_threads": 1,
+        },
+        {"statistics": "NaN", "gene_sets": None},
+        options=(
+            "id_column",
+            "statistic_column",
+            "min_size",
+            "max_size",
+            "exponent",
+            "score_type",
+            "method",
+            "n_permutations",
+            "sample_size",
+            "eps",
+            "rng",
+            "n_threads",
+        ),
+        keys={"statistics": "g0", "gene_sets": "set"},
+    ),
+    # A differential-expression result, of which a group and a contrast are ranked.
+    "cytepool.gsea.gsea[result]": Entry(
+        lambda c: {
+            "statistics": _tested(c),
+            "gene_sets": {"set": ["feature_1", "feature_2"]},
+            "group": "bulk",
+            "contrast": "stim",
+            "method": "permutation",
+            "n_permutations": 200,
+        },
+        {},
+        options=("group", "contrast"),
+        objects=("statistics", "gene_sets"),
+    ),
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
         lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
@@ -1801,6 +1855,71 @@ ENTRY_POINTS: dict[str, Entry] = {
         {},
         options=("top", "alpha"),
         objects=("table", "ax"),
+    ),
+    "cytepool.plotting.plot_enrichment": Entry(
+        lambda c: {
+            "statistics": RANKED,
+            "gene_set": ["g1", "g2"],
+            "id_column": "feature_id",
+            "statistic_column": "t",
+            "exponent": 1.0,
+            "ax": _axes(),
+        },
+        {"statistics": "NaN", "gene_set": None},
+        options=("id_column", "statistic_column", "exponent"),
+        objects=("ax",),
+        keys={"statistics": "g0"},
+    ),
+    "cytepool.plotting.plot_enrichment[result]": Entry(
+        lambda c: {
+            "statistics": _tested(c),
+            "gene_set": ["feature_1", "feature_2"],
+            "group": "bulk",
+            "contrast": "stim",
+        },
+        {},
+        options=("group", "contrast"),
+        objects=("statistics", "gene_set"),
+    ),
+    "cytepool.plotting.plot_gsea_table": Entry(
+        lambda c: {
+            "statistics": RANKED,
+            "gene_sets": {"set": ["g1", "g2", "g5"], "other": ["g4"]},
+            "table": gsea(
+                RANKED,
+                {"set": ["g1", "g2", "g5"], "other": ["g4"]},
+                method="permutation",
+                n_permutations=20,
+                rng=1,
+            ),
+            "id_column": "feature_id",
+            "statistic_column": "t",
+            "top": 2,
+            "exponent": 0.5,
+            "ax": _axes(),
+        },
+        {"statistics": "NaN", "gene_sets": None},
+        options=("id_column", "statistic_column", "top", "exponent"),
+        objects=("table", "ax"),
+        keys={"statistics": "g0", "gene_sets": "set"},
+    ),
+    "cytepool.plotting.plot_gsea_table[result]": Entry(
+        lambda c: {
+            "statistics": _tested(c),
+            "gene_sets": {"set": ["feature_1", "feature_2"]},
+            "table": gsea(
+                _tested(c),
+                {"set": ["feature_1", "feature_2"]},
+                method="permutation",
+                n_permutations=20,
+                rng=1,
+            ),
+            "group": "bulk",
+            "contrast": "stim",
+        },
+        {},
+        options=("group", "contrast"),
+        objects=("statistics", "gene_sets"),
     ),
     "cytepool.plotting.plot_dispersions": Entry(
         lambda c: {

@@ -47,6 +47,59 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### fgsea
+
+`cytepool/gsea.py` ports the algorithms of fgsea 1.32.2
+(https://bioconductor.org/packages/fgsea, https://github.com/ctlab/fgsea), keeping their
+structure, constants and order of operations, so that given fgsea's seeds it gives
+fgsea's results: from `src/fastGSEA.cpp`, the block prefix sums (`SegmentTree`), the
+scores of all the first genes of a random sample from the upper convex hulls of their
+walk (`gseaStats1`, `calcGseaStatCumulative`, with the hull tolerance 1e-13 and the floor
+of the statistics, the smaller of 1e-5 and the smallest nonzero one, divided by 1024) and
+the counts of `calcGseaStatCumulativeBatch`; from `src/fgseaMultilevelSupplement.cpp`,
+`src/fgseaMultilevel.cpp`, `src/esCalculation.cpp` and `src/util.cpp`, the multilevel
+method (`EsRuler`: `extend`, `duplicateSamples`, `perturbate` with its chunks, its
+remembered gene and its swaps of a tenth of a sample, `getPvalue`,
+`calcLogCorrection`), `calcES`, `calcPositiveES`, the sampler of distinct genes
+(`combination`, with its 100 draws per gene), the random integers of `uid_wrapper`,
+`betaMeanLog` and `fgseaMultilevelCpp`; and from `R/fgsea.R`, `R/fgseaMultilevel.R` and
+`R/util.R`, the enrichment score and leading edge of `calcGseaStat`, the normalized
+scores and p-values of `fgseaSimpleImpl`, the chunks of permutations of `fgseaSimple`,
+and the rules of `fgseaMultilevel` (sets with fewer than 10 random scores of their sign,
+the choice of the multilevel method by its expected error, `multilevelError`, the
+denominator of its p-values and `eps`). `cytepool/_ranked_genes.py` computes the walk of
+`calcGseaStat`, and `cytepool/plotting.py` draws `plotEnrichment` from the data of
+`plotEnrichmentData` and the rows of `plotGseaTable` with its numbers written as its
+`valueToExpExpression` writes them. `validation/gsea.py` states fgseaMultilevel's choice
+of the multilevel method in R, to compare CytePool's with it. fgsea is described in
+Korotkevich G, Sukhov V, Budin N, Shpak B, Artyomov MN, Sergushichev A (2021). Fast gene
+set enrichment analysis. bioRxiv 060012, version 3. doi:10.1101/060012. It is
+distributed under the MIT License (its `DESCRIPTION` says "MIT + file LICENCE"), as its
+`LICENCE` file states:
+
+```text
+YEAR: 2016-2019
+COPYRIGHT HOLDER: Alexey Sergushichev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### numba
 
 `cytepool/_jit.py` places the cache of its compiled routines with subclasses of numba's
