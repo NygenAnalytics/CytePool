@@ -168,10 +168,11 @@ import numpy.typing as npt
 from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._summation import observed_means
 from cytepool.design.checks import _aliasing, _random_checks
 from cytepool.design.design import Design, _is_random_intercept
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.linear_models import _contrast_matrix, _observed_means, _real_array
+from cytepool.stats.linear_models import _contrast_matrix, _real_array
 
 __all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
 
@@ -527,7 +528,7 @@ def _fit(
         fitted_values=_frozen(fitted),
         residual_df=_frozen(residual_df),
         mean_weights=_frozen(mean_weights),
-        mean_expression=_frozen(_observed_means(values)),
+        mean_expression=_frozen(observed_means(values)),
     )
 
 

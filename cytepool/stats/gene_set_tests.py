@@ -167,6 +167,7 @@ from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag
+from cytepool._summation import observed_means
 from cytepool.design.contrasts import _is_named_contrasts, _weights_on_columns
 from cytepool.design.design import Design, _refuse_random_effects
 from cytepool.stats.distributions import beta_sf, norm_sf, t_sf
@@ -174,7 +175,6 @@ from cytepool.stats.empirical_bayes import _average_ranks, squeeze_variances
 from cytepool.stats.linear_models import (
     _aliased_columns,
     _design_matrix,
-    _observed_means,
 )
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.voom import VoomResult
@@ -496,7 +496,7 @@ def _contrast_effects(
         of freedom d.
     """
     reparametrised, d = _contrast_design(values, design, contrast, function)
-    return _effects(values, reparametrised, weights), _observed_means(values), d
+    return _effects(values, reparametrised, weights), observed_means(values), d
 
 
 def _contrast_design(

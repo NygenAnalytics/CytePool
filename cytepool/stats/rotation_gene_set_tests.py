@@ -189,6 +189,7 @@ from numba import prange
 from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag, positive_integer
+from cytepool._summation import observed_means
 from cytepool.stats.distributions import t_sf
 from cytepool.stats.empirical_bayes import (
     _coefficient_prior_variance,
@@ -206,7 +207,6 @@ from cytepool.stats.gene_set_tests import (
     _set_label,
     _set_positions,
 )
-from cytepool.stats.linear_models import _observed_means
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.table import Table
 
@@ -669,7 +669,7 @@ def _roast_sets(
     squeezed = squeeze_variances(
         variances,
         d,
-        covariate=_observed_means(values) if with_trend else None,
+        covariate=observed_means(values) if with_trend else None,
         robust=with_robust,
     )
     prior_variance = np.broadcast_to(squeezed.prior_variance, (n_genes,))
