@@ -44,6 +44,9 @@ uv pip install "cytepool[mudata] @ git+https://github.com/NygenAnalytics/CytePoo
 The `mudata` extra installs anndata too. CytePool imports them only when a
 conversion runs, and says which extra to install when one is missing.
 
+The figures of `cytepool.plotting` need matplotlib, which the `plot` extra installs;
+it is imported only when a figure is drawn.
+
 ## First calls and threads
 
 Numerical routines are compiled by numba the first time they run, which takes up to

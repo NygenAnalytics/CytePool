@@ -496,8 +496,12 @@ mudata = [
     { name = "anndata" },
     { name = "mudata" },
 ]
+plot = [
+    { name = "matplotlib" },
+]
 test = [
     { name = "anndata", marker = "python_full_version < '3.15'" },
+    { name = "matplotlib" },
     { name = "mudata", marker = "python_full_version < '3.15'" },
     { name = "pandas" },
     { name = "pytest" },
@@ -526,6 +530,8 @@ requires-dist = [
     { name = "anndata", marker = "python_full_version < '3.15' and extra == 'test'", specifier = ">=0.13" },
     { name = "anndata", marker = "extra == 'anndata'", specifier = ">=0.13" },
     { name = "anndata", marker = "extra == 'mudata'", specifier = ">=0.13" },
+    { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.9" },
+    { name = "matplotlib", marker = "extra == 'test'", specifier = ">=3.9" },
     { name = "mudata", marker = "python_full_version < '3.15' and extra == 'test'", specifier = ">=0.3.1,!=0.4.0" },
     { name = "mudata", marker = "extra == 'mudata'", specifier = ">=0.3.1,!=0.4.0" },
     { name = "numba", specifier = ">=0.61" },
@@ -534,7 +540,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "scipy", marker = "extra == 'test'", specifier = ">=1.13" },
 ]
-provides-extras = ["anndata", "mudata", "test"]
+provides-extras = ["anndata", "mudata", "plot", "test"]
 
 [package.metadata.requires-dev]
 dev = [
