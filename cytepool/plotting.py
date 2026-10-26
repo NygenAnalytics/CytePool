@@ -1,5 +1,5 @@
 """Figures of pseudobulk and bulk analyses, drawn as limma, edgeR, DESeq2, speckle,
-metafor and variancePartition draw them.
+metafor, variancePartition and fgsea draw them.
 
 Each function draws one figure from the objects that CytePool's analyses return: a
 cube, a voom result, a fit, the table of a differential-expression or gene-set test,
@@ -33,7 +33,10 @@ The figures:
 - Gene sets: :func:`plot_barcode`, limma's ``barcodeplot``; :func:`plot_gene_sets`, the
   sets of a ``camera``, ``fry`` or ``mroast`` table; :func:`plot_over_representation`,
   the sets of an over-representation analysis, as clusterProfiler's dot plots show
-  them (Yu et al. 2012).
+  them (Yu et al. 2012); :func:`plot_enrichment`, GSEA's enrichment plot (Subramanian
+  et al. 2005), and :func:`plot_gsea_table`, the top sets of a GSEA with their genes
+  on the ranking, as fgsea's ``plotEnrichment`` and ``plotGseaTable`` draw them
+  (Korotkevich et al. 2021).
 - Count models: :func:`plot_dispersions`, DESeq2's ``plotDispEsts`` (Love et al.
   2014); :func:`plot_quasi_dispersions`, edgeR's ``plotQLDisp`` (Chen et al. 2016).
 - Meta-analysis: :func:`plot_forest`, the forest plot (Lewis and Clarke 2001) that
@@ -112,6 +115,16 @@ References:
     Yu G, Wang LG, Han Y, He QY (2012). clusterProfiler: an R package for comparing
     biological themes among gene clusters. OMICS 16, 284-287. doi:10.1089/omi.2011.0118
 
+    Subramanian A, Tamayo P, Mootha VK, Mukherjee S, Ebert BL, Gillette MA, Paulovich
+    A, Pomeroy SL, Golub TR, Lander ES, Mesirov JP (2005). Gene set enrichment
+    analysis: a knowledge-based approach for interpreting genome-wide expression
+    profiles. Proceedings of the National Academy of Sciences 102, 15545-15550.
+    doi:10.1073/pnas.0506580102
+
+    Korotkevich G, Sukhov V, Budin N, Shpak B, Artyomov MN, Sergushichev A (2021).
+    Fast gene set enrichment analysis. bioRxiv 060012, version 3.
+    doi:10.1101/060012
+
     Lewis S, Clarke M (2001). Forest plots: trying to see the wood and the trees. BMJ
     322, 1479-1480. doi:10.1136/bmj.322.7300.1479
 
@@ -149,12 +162,20 @@ from ._options import (
     checked_choice,
     checked_flag,
     integral_number,
+    number_at_least,
     positive_integer,
     real_number,
+)
+from ._ranked_genes import (
+    gene_set_collection,
+    matched_positions,
+    ranked_genes,
+    running_sum,
 )
 from .composition import CompositionResult
 from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
+from .gene_sets import GeneSets
 from .meta_analysis import MetaAnalysisResult
 from .normalization import filter_by_expression, log_cpm, tmm_factors
 from .stats.deseq2 import DESeq2Dispersions, DESeq2Fit, DESeq2Results
@@ -178,9 +199,11 @@ __all__ = [
     "plot_cell_numbers",
     "plot_composition",
     "plot_dispersions",
+    "plot_enrichment",
     "plot_forest",
     "plot_gene_sets",
     "plot_gene_variance_fractions",
+    "plot_gsea_table",
     "plot_md",
     "plot_mds",
     "plot_mean_variance",
@@ -251,6 +274,12 @@ _NUMBERED_ENTRIES = 800  # the most heatmap entries whose numbers are written
 _LARGEST_DOT = 300.0
 _LIST_LABELS = {"up": "Up", "down": "Down", "either": "Either", None: "Selected"}
 _TINY = np.finfo(np.float64).tiny  # the smallest p-value shown on a log scale
+# A GSEA table: the half-height of the bars of a row; where the headers of its columns
+# stand, the middle of the ranks and the starts of the numbers, and its width, in
+# numbers of genes ranked.
+_TABLE_BAR = 0.45
+_TABLE_COLUMNS = (0.5, 1.04, 1.17, 1.37)
+_TABLE_WIDTH = 1.55
 _METHODS = {
     "reml": "REML",
     "dl": "DerSimonian-Laird",
@@ -2385,6 +2414,274 @@ def plot_over_representation(
     )
     key.get_title().set_fontweight("bold")
     return ax
+
+
+def plot_enrichment(
+    statistics: Any,
+    gene_set: Any,
+    *,
+    group: str | None = None,
+    contrast: str | None = None,
+    id_column: str = "feature_id",
+    statistic_column: str = "t",
+    exponent: float = 1.0,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the running enrichment score of a gene set along the ranked genes.
+
+    GSEA's enrichment plot (Subramanian et al. 2005) as fgsea's ``plotEnrichment``
+    draws it (Korotkevich et al. 2021): the genes ranked by decreasing statistic, as
+    :func:`~cytepool.gsea.gsea` ranks them, along the x-axis, from rank 0 to N + 1;
+    the walk that rises at each gene of the set by its share of the set's weight
+    |r|^p and falls at each other gene, drawn through its values just before and at
+    each gene of the set; a tick at the rank of each gene of the set, spanning a
+    sixteenth of the walk's range above and below zero; and dashed lines at the
+    walk's largest and smallest values, of which the larger in absolute value is the
+    enrichment score.
+
+    Draws the walk (gid ``"running sum"``), the ticks (gid ``"set"``) and the dashed
+    lines (gid ``"extremes"``).
+
+    Args:
+        statistics: The statistics, in any form :func:`~cytepool.gsea.gsea` takes.
+        gene_set: The genes of the set, as gene ids, such as ``gene_sets[name]``;
+            ids that are not ranked are left out.
+        group: The group of a ``DifferentialExpressionResult``, as for ``gsea``.
+        contrast: Its contrast, as for ``gsea``.
+        id_column: The column of gene ids of a table.
+        statistic_column: The column of statistics of a table.
+        exponent: The power p of the weights, at least 0, as for ``gsea``.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
+        ValueError: If the statistics cannot be ranked, as for ``gsea``, the set holds
+            no ranked gene or every one, or ``exponent`` is negative or not finite.
+        KeyError: If a ``DifferentialExpressionResult`` has no table of the group and
+            contrast.
+    """
+    _check_axes(ax)
+    power = number_at_least(exponent, "exponent", 0.0)
+    reject_masked(gene_set, "gene_set")
+    if isinstance(gene_set, str) or isinstance(gene_set, Mapping):
+        raise TypeError(
+            "gene_set must be a list of gene ids, such as gene_sets[name], got "
+            f"{type(gene_set).__name__}"
+        )
+    genes = GeneSets({"gene_set": gene_set})["gene_set"]
+    ranking = ranked_genes(
+        statistics,
+        group=group,
+        contrast=contrast,
+        id_column=id_column,
+        statistic_column=statistic_column,
+    )
+    n = len(ranking.ids)
+    index = {gene: i for i, gene in enumerate(ranking.ids)}
+    positions = np.sort(matched_positions(genes, index))
+    if positions.size == 0:
+        raise ValueError("no gene of the set is among the ranked genes")
+    if positions.size == n:
+        raise ValueError(
+            "the set holds every ranked gene, so it has no enrichment score"
+        )
+    weights = np.ascontiguousarray(np.abs(ranking.values) ** power)
+    tops, bottoms = running_sum(weights, positions)
+    ranks = positions + 1.0
+    x = np.concatenate(
+        [[0.0], np.column_stack([ranks - 1.0, ranks]).ravel(), [n + 1.0]]
+    )
+    y = np.concatenate([[0.0], np.column_stack([bottoms, tops]).ravel(), [0.0]])
+    highest, lowest = float(tops.max()), float(bottoms.min())
+    spread = highest - lowest
+
+    ax = _axes(ax, (7.0, 3.6))
+    ax.plot(x, y, color=_AQUA, linewidth=1.5, gid="running sum")
+    ax.vlines(
+        ranks, -spread / 16.0, spread / 16.0, color=_INK, linewidth=0.6, gid="set"
+    )
+    for value in (highest, lowest):
+        ax.axhline(value, color=_UP, linewidth=1.0, linestyle="--", gid="extremes")
+    ax.axhline(0.0, color=_INK, linewidth=0.8)
+    ax.set_xlim(0.0, n + 1.0)
+    ax.set_xlabel("Rank")
+    ax.set_ylabel("Enrichment score")
+    return ax
+
+
+def plot_gsea_table(
+    statistics: Any,
+    gene_sets: Mapping[str, Any],
+    table: Table,
+    *,
+    group: str | None = None,
+    contrast: str | None = None,
+    id_column: str = "feature_id",
+    statistic_column: str = "t",
+    top: int = 10,
+    exponent: float = 1.0,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the most significant gene sets of a GSEA, each with its genes on the
+    ranking.
+
+    The table of fgsea's ``plotGseaTable`` (Korotkevich et al. 2021): a row for each
+    of the ``top`` sets with a positive enrichment score and the smallest p-values
+    of a table of :func:`~cytepool.gsea.gsea`, most significant first, followed by
+    the ``top`` with a negative score, most significant last, as fgsea's guide
+    chooses them; the ties of p-values in the order of the table. Each row shows the
+    set's name, its genes as bars at their ranks among the genes ranked by
+    decreasing statistic, of height sign(r) |r|^p scaled by its largest absolute
+    value over all genes, and the set's normalized enrichment score, p-value and
+    adjusted p-value, written as fgsea writes them.
+
+    Draws the bars (gid ``"gene ranks"``) and the numbers (gid ``"numbers"``).
+
+    Args:
+        statistics: The statistics that ``table`` was computed from, in any form
+            :func:`~cytepool.gsea.gsea` takes.
+        gene_sets: The gene sets of ``table``: a
+            :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to gene
+            ids.
+        table: The table of ``gsea``, with the columns ``gene_set``,
+            ``enrichment_score``, ``normalized_enrichment_score``, ``p_value`` and
+            ``adjusted_p_value``.
+        group: The group of a ``DifferentialExpressionResult``, as for ``gsea``.
+        contrast: Its contrast, as for ``gsea``.
+        id_column: The column of gene ids of a table.
+        statistic_column: The column of statistics of a table.
+        top: How many sets of each sign to show, at least 1.
+        exponent: The power p of the heights of the bars, at least 0; fgsea suggests
+            0.5 to flatten them.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
+        ValueError: If the statistics cannot be ranked, the table lacks a column, has
+            no set with a p-value, or names a set that ``gene_sets`` does not hold, or
+            an option is out of range.
+        KeyError: If a ``DifferentialExpressionResult`` has no table of the group and
+            contrast.
+    """
+    _check_axes(ax)
+    if not isinstance(table, Table):
+        raise TypeError(f"table must be a Table, got {type(table).__name__}")
+    count = positive_integer(top, "top")
+    power = number_at_least(exponent, "exponent", 0.0)
+    reject_masked(gene_sets, "gene_sets")
+    collection = gene_set_collection(gene_sets)
+    needed = (
+        "gene_set",
+        "enrichment_score",
+        "normalized_enrichment_score",
+        "p_value",
+        "adjusted_p_value",
+    )
+    missing = [column for column in needed if column not in table]
+    if missing:
+        raise ValueError(
+            f"the table lacks the column(s) {quoted(missing)}; plot_gsea_table reads "
+            "the tables of gsea"
+        )
+    p = np.asarray(table["p_value"], dtype=np.float64)
+    scores = np.asarray(table["enrichment_score"], dtype=np.float64)
+    tested = np.isfinite(p)
+    if not tested.any():
+        raise ValueError("no gene set of the table has a p-value")
+    up = np.flatnonzero(tested & (scores > 0.0))
+    down = np.flatnonzero(tested & (scores < 0.0))
+    up = up[np.argsort(p[up], kind="stable")[:count]]
+    down = down[np.argsort(p[down], kind="stable")[:count]][::-1]
+    rows = np.concatenate([up, down]).astype(np.intp)
+    names = table["gene_set"][rows].tolist()
+    absent = [name for name in names if name not in collection]
+    if absent:
+        raise ValueError(
+            f"gene_sets has no set {quoted(absent)}; give the gene sets that the "
+            "table was computed from"
+        )
+    ranking = ranked_genes(
+        statistics,
+        group=group,
+        contrast=contrast,
+        id_column=id_column,
+        statistic_column=statistic_column,
+    )
+    n = len(ranking.ids)
+    index = {gene: i for i, gene in enumerate(ranking.ids)}
+    heights = np.sign(ranking.values) * np.abs(ranking.values) ** power
+    largest = float(np.abs(heights).max())
+    if largest > 0.0:
+        heights = heights / largest
+
+    shown = len(rows)
+    ax = _axes(ax, (8.0, min(14.0, 1.4 + 0.4 * shown)))
+    xs: list[np.ndarray] = []
+    bases: list[np.ndarray] = []
+    ends: list[np.ndarray] = []
+    for row, name in enumerate(names):
+        positions = matched_positions(collection[name], index)
+        base = float(shown - 1 - row)
+        xs.append(positions + 1.0)
+        bases.append(np.full(positions.size, base))
+        ends.append(base + _TABLE_BAR * heights[positions])
+    ax.vlines(
+        np.concatenate(xs),
+        np.concatenate(bases),
+        np.concatenate(ends),
+        color=_INK,
+        linewidth=0.5,
+        gid="gene ranks",
+    )
+    levels = np.arange(shown - 1, -1, -1, dtype=np.float64)
+    ax.set_yticks(levels, names)
+    ax.tick_params(axis="y", length=0)
+    # The numbers stand in columns to the right of the ranks, inside the Axes.
+    ax.set_xlim(0.0, _TABLE_WIDTH * n)
+    ax.set_ylim(-0.6, shown + 0.4)
+    ticks = np.unique(np.round(np.linspace(0, n, 5)).astype(int))
+    ax.set_xticks(ticks)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines["bottom"].set_bounds(0.0, float(n))
+    ax.set_xlabel("Rank")
+    ax.xaxis.label.set_x(0.5 / _TABLE_WIDTH)
+    columns = (
+        ("Gene ranks", None),
+        ("NES", np.asarray(table["normalized_enrichment_score"], dtype=np.float64)),
+        ("p-value", p),
+        ("Adjusted\np-value", np.asarray(table["adjusted_p_value"], dtype=np.float64)),
+    )
+    for (header, values), start in zip(columns, _TABLE_COLUMNS, strict=True):
+        ax.text(
+            start * n,
+            shown - 0.3,
+            header,
+            ha="center" if values is None else "left",
+            va="bottom",
+            fontweight="bold",
+        )
+        if values is None:
+            continue
+        for level, value in zip(levels.tolist(), values[rows].tolist(), strict=True):
+            text = f"{value:.2f}" if header == "NES" else _power_of_ten(value)
+            ax.text(start * n, level, text, ha="left", va="center", gid="numbers")
+    return ax
+
+
+def _power_of_ten(value: float) -> str:
+    """A p-value as fgsea's tables write it, such as 1.2·10^-5, in mathtext."""
+    if not math.isfinite(value) or value <= 0.0:
+        return f"{value:g}"
+    exponent = math.floor(math.log10(value))
+    return rf"${value / 10.0**exponent:.1f} \cdot 10^{{{exponent}}}$"
 
 
 # Count models.

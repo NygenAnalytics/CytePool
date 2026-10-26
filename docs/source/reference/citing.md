@@ -34,6 +34,7 @@ the credit for the methods belongs to their authors.
 | {api}`roast`, {api}`mroast` | [@wu2010] |
 | {api}`romer` | [@majewski2010] |
 | {api}`over_representation` | limma's `kegga` and `goana` [@young2010]; the hypergeometric test [@tavazoie1999] |
+| {api}`gsea` | fgsea [@korotkevich2021]; GSEA [@subramanian2005] |
 | {api}`read_gmt` | the collection you read, as its provider asks; for MSigDB, [@subramanian2005; @liberzon2011] |
 | {api}`propeller` | [@phipson2022] |
 | {api}`meta_analysis`, {api}`differential_expression_meta_analysis` | metafor [@viechtbauer2010]; the estimator of the between-study variance you chose: REML [@viechtbauer2005], DerSimonian-Laird [@dersimonian1986] or Paule-Mandel [@paule1982]; Knapp-Hartung [@knapp2003] |

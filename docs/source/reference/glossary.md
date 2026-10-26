@@ -58,6 +58,11 @@ records](cube_files.md)
 such as MSigDB, often read from a GMT file. [Gene-set
 tests](../statistics/gene_set_tests.md#gene-set-files)
 
+**Gene set enrichment analysis (GSEA).** A test of whether the genes of a set gather at
+the top or the bottom of a ranking of all genes by a statistic, from the largest
+deviation of a walk down the ranking, its enrichment score. [Gene-set
+tests](../statistics/gene_set_tests.md#gene-set-enrichment-analysis)
+
 **Group.** The second axis of a cube, usually a cell type: the cells of one sample are
 pooled per group. A bulk cube has one group.
 

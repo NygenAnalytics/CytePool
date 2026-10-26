@@ -1,10 +1,11 @@
-"""Checks of the options of public functions: flags, choices among names, numbers.
+"""Checks of the options of public functions: flags, choices among names, numbers,
+random generators.
 
 Each check takes the option as the caller gave it and its name, and returns it as a
-bool, str, float or int, or raises TypeError for a value of the wrong type and
-ValueError for one out of range. The messages name the option, say what it must be
-and what it was; where the methods word a message differently, the check takes the
-phrase as an argument, so that every message stays as it was.
+bool, str, float, int or numpy random generator, or raises TypeError for a value of
+the wrong type and ValueError for one out of range. The messages name the option, say
+what it must be and what it was; where the methods word a message differently, the
+check takes the phrase as an argument, so that every message stays as it was.
 """
 
 import math
@@ -139,3 +140,31 @@ def index_integer(value: Any, name: str, *, expected: str) -> int:
         raise TypeError(
             f"{name} must be {expected}, got {type(value).__name__}"
         ) from None
+
+
+def random_generator(rng: Any, name: str = "rng") -> np.random.Generator:
+    """A numpy random generator: ``rng`` itself, one seeded by it, or a fresh one.
+
+    Args:
+        rng: A ``numpy.random.Generator``, which is used as it is; a non-negative
+            integer, which seeds a new one; or None for a fresh, unseeded generator.
+        name: The option's name, for the message.
+
+    Raises:
+        TypeError: If ``rng`` is none of these, or is a numpy masked array.
+        ValueError: If the seed is negative.
+    """
+    reject_masked(rng, name)
+    if rng is None:
+        return np.random.default_rng()
+    if isinstance(rng, np.random.Generator):
+        return rng
+    if isinstance(rng, bool | np.bool_) or not isinstance(rng, numbers.Integral):
+        raise TypeError(
+            f"{name} must be a numpy.random.Generator, an integer seed or None, got "
+            f"{type(rng).__name__}"
+        )
+    seed = operator.index(rng)
+    if seed < 0:
+        raise ValueError(f"{name} must be a non-negative seed, got {seed}")
+    return np.random.default_rng(seed)
