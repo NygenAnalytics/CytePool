@@ -35,8 +35,8 @@ from .._jit import jit, thread_limit
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table
 from ._axes import COUNT_LIMIT, UINT32_MAX, axis_codes, count_dtype
+from ._provenance_records import source_record
 from .cube import LAYER_NAMES, Cube
-from .provenance import _source_record
 
 BULK_GROUP = "bulk"
 """The id of the single group of a cube built by ``from_bulk``."""
@@ -203,7 +203,7 @@ def from_cells(
     """
     names = _requested_layers(layers)
     target = _positive_number(target_sum, "target_sum")
-    record = _source_record(source)
+    record = source_record(source)
     with thread_limit(n_threads) as threads:
         matrix = _cell_matrix(counts)
         n_rows, n_features = matrix.shape
@@ -345,7 +345,7 @@ def from_bulk(
         >>> cube.layer("counts", "bulk").dtype
         dtype('uint32')
     """
-    record = _source_record(source)
+    record = source_record(source)
     construction = {
         "function": "from_bulk",
         "cytepool_version": __version__,

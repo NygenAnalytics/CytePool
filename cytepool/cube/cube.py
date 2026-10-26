@@ -11,6 +11,12 @@ from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table
 from ._axes import INT64_MAX, checked_axis_table, checked_n_cells, first_index
+from ._provenance_records import (
+    add_record,
+    plain_json,
+    provenance_as_texts,
+    provenance_from_texts,
+)
 from .fingerprints import (
     _block_digest,
     _cells_digest,
@@ -20,13 +26,7 @@ from .fingerprints import (
     _normalization_digest,
     _table_digest,
 )
-from .provenance import (
-    _add_record,
-    _plain_json,
-    _provenance_of,
-    _provenance_texts,
-    describe_provenance,
-)
+from .provenance import describe_provenance
 
 LAYER_NAMES = ("counts", "detected", "log_sum", "log_sum_sq", "linear_sum")
 """The layers a cube can hold, in the order a cube stores and lists them."""
@@ -207,7 +207,7 @@ class Cube:
     _features: Table
     _n_cells: np.ndarray | None
     _normalization: str | None
-    _provenance: tuple[str, ...]  # JSON texts, see provenance._provenance_texts
+    _provenance: tuple[str, ...]  # JSON texts, see _provenance_records
     _sample_index: dict[str, int]
     _group_index: dict[str, int]
     _feature_index: dict[str, int]
@@ -249,7 +249,7 @@ class Cube:
         normalization_text = (
             None if normalization is None else _normalization_text(normalization)
         )
-        provenance_texts = _provenance_texts(provenance)
+        provenance_texts = provenance_as_texts(provenance)
         stored = _store_layers(layers, shape, cells, normalization_text, ids, copy)
         # Every check has passed: only now are adopted arrays made read-only.
         for array in stored.values():
@@ -352,7 +352,7 @@ class Cube:
     @property
     def provenance(self) -> dict[str, Any]:
         """A copy of the provenance mapping (see ``cytepool.cube.provenance``)."""
-        return _provenance_of(self._provenance)
+        return provenance_from_texts(self._provenance)
 
     def __repr__(self) -> str:
         lines = [
@@ -1088,7 +1088,7 @@ class Cube:
             features,
             n_cells,
             self._normalization,
-            _add_record(self._provenance, operation),
+            add_record(self._provenance, operation),
             digests,
         )
 
@@ -1937,7 +1937,7 @@ def _restore_cube(
 ) -> Cube:
     # A cube pickled before digests were kept has none, and one JSON text.
     if isinstance(provenance, str):
-        provenance = _provenance_texts(json.loads(provenance))
+        provenance = provenance_as_texts(json.loads(provenance))
     # Unpickled arrays are new and writable.
     for stored in layers.values():
         if isinstance(stored, np.ndarray):
@@ -2575,7 +2575,7 @@ def _normalization_text(normalization: Mapping[str, Any]) -> str:
             f"normalization must be a mapping, got {type(normalization).__name__}"
         )
     reject_masked(normalization, "normalization", missing="None")
-    plain = _plain_json(normalization, "normalization")
+    plain = plain_json(normalization, "normalization")
     method = plain.get("method")
     if not isinstance(method, str) or not method:
         raise ValueError(

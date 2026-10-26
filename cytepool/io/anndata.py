@@ -192,8 +192,8 @@ from .. import __version__
 from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..cube._axes import axis_codes, checked_n_cells, count_dtype, first_index
+from ..cube._provenance_records import source_record
 from ..cube.cube import LAYER_NAMES, Cube
-from ..cube.provenance import _source_record
 from ..table import Table
 
 __all__ = ["to_anndata", "from_anndata", "to_mudata", "from_mudata"]
@@ -369,7 +369,7 @@ def from_anndata(
             version reads.
     """
     _check_arguments(layers, n_cells, sample_table, group_table, normalization)
-    caller_source = _source_record(source)
+    caller_source = source_record(source)
     for argument, value in (("sample", sample), ("group", group)):
         if value is not None and not isinstance(value, str):
             raise TypeError(
@@ -600,7 +600,7 @@ def from_mudata(
             ``from_anndata`` gives.
     """
     _check_arguments(layers, n_cells, sample_table, group_table, normalization)
-    caller_source = _source_record(source)
+    caller_source = source_record(source)
     modalities = _modalities(mdata)
     record = _read_record(mdata.uns, "mudata")
     names = [name for name, _ in modalities]

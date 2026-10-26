@@ -602,6 +602,8 @@ NO_PUBLISHED_WORK = {
     "cytepool.cube": "the package's namespace; its modules cite their sources",
     "cytepool.cube._axes": "reads the axis tables, cell numbers and cell labels of "
     "CytePool's own cubes",
+    "cytepool.cube._provenance_records": "keeps CytePool's own provenance records "
+    "of cubes as JSON text, written by the standard library",
     "cytepool.cube.cube": "CytePool's own structure of sums per sample, group and "
     "feature; its digests are those of cytepool.cube.fingerprints",
     "cytepool.cube.provenance": "CytePool's own record of how a cube was made, "
