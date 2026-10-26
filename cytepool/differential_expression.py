@@ -276,6 +276,7 @@ from ._options import (
 )
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
+from .design._design_matrices import is_random_intercept, refuse_random_effects
 from .design.checks import _aliasing, _contrast_violations
 from .normalization import (
     filter_by_expression,
@@ -312,7 +313,6 @@ from .stats.voom import (
     voom,
 )
 from .table import Table
-from .design._design_matrices import is_random_intercept, refuse_random_effects
 
 __all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
 

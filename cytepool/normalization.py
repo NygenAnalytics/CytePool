@@ -58,18 +58,18 @@ from collections import Counter
 import numpy as np
 import numpy.typing as npt
 
-from ._jit import jit
-from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
-from ._linear_algebra import column_space
-from ._masked_arrays import unmasked_array
 from ._counts import (
     as_counts,
     effective_library_sizes,
     library_sizes_of,
     sums_in_range,
 )
+from ._jit import jit
+from ._linear_algebra import column_space
+from ._masked_arrays import unmasked_array
 from ._options import non_negative_number, real_number
 from ._ranks import average_ranks_in_order
+from ._summation import accurate_mean, accurate_sums, rounded_quotient, two_sum
 
 __all__ = [
     "cpm",

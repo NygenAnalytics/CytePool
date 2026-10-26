@@ -169,11 +169,11 @@ from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, column_space, symmetric
 from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._summation import observed_means
+from cytepool.design._contrast_weights import contrast_matrix
+from cytepool.design._design_matrices import is_random_intercept
 from cytepool.design.checks import _aliasing, _random_checks
 from cytepool.design.design import Design
 from cytepool.stats.distributions import t_sf
-from cytepool.design._contrast_weights import contrast_matrix
-from cytepool.design._design_matrices import is_random_intercept
 
 __all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
 

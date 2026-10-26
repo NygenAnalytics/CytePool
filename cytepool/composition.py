@@ -134,12 +134,12 @@ from ._options import checked_choice, checked_flag
 from ._summation import accurate_mean
 from .cube import Cube
 from .design import Contrasts, Design, ModelMatrix, make_contrasts
+from .design._design_matrices import refuse_random_effects
 from .design.checks import _aliasing, _relation
 from .stats.empirical_bayes import ModeratedFit, moderated_statistics
 from .stats.linear_models import LinearModelFit, contrasts_fit, fit_linear_model
 from .stats.multiple_testing import adjust_p_values
 from .table import Table
-from .design._design_matrices import refuse_random_effects
 
 __all__ = ["CompositionResult", "propeller"]
 

@@ -89,8 +89,8 @@ from numpy.typing import ArrayLike, NDArray
 
 from cytepool._jit import jit_numpy_errors
 from cytepool.stats._scalar_special_functions import (
-    elementwise,
     deviance_term,
+    elementwise,
     log1mexp,
     log_beta_positive,
     log_beta_prefactor,

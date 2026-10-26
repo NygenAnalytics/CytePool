@@ -125,13 +125,13 @@ from cytepool._options import (
     positive_finite_number,
     positive_integer,
 )
-from cytepool.design.design import Design
-from cytepool.stats.linear_models import _expression_matrix
 from cytepool.design._design_matrices import (
-    require_full_rank,
     design_matrix,
     refuse_random_effects,
+    require_full_rank,
 )
+from cytepool.design.design import Design
+from cytepool.stats.linear_models import _expression_matrix
 
 __all__ = ["sample_quality_weights"]
 

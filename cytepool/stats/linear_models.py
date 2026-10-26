@@ -46,10 +46,10 @@ from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._summation import observed_means
 from cytepool.design._contrast_weights import contrast_matrix
 from cytepool.design._design_matrices import (
-    require_full_rank,
     aliased_columns,
     design_matrix,
     refuse_dropped_random_effects,
+    require_full_rank,
 )
 
 __all__ = ["LinearModelFit", "contrasts_fit", "fit_linear_model"]

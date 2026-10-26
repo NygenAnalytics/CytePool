@@ -101,6 +101,7 @@ from cytepool._masked_arrays import real_array, unmasked_array
 from cytepool._messages import PACKAGE_DIRECTORY, value_range
 from cytepool._options import checked_flag, real_number
 from cytepool._ranks import average_ranks
+from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats._moderation import (
     LIKELIHOOD_MIN_DF,
     coefficient_prior_variance,
@@ -108,7 +109,6 @@ from cytepool.stats._moderation import (
     posterior_variances,
 )
 from cytepool.stats._optimize import brent_minimum
-from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
     _f_tail_quantile,

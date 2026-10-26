@@ -179,15 +179,15 @@ from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
 from cytepool._masked_arrays import reject_masked
 from cytepool._options import non_negative_number, positive_integer
+from cytepool.design._design_matrices import (
+    design_matrix,
+    refuse_random_effects,
+    require_full_rank,
+)
 from cytepool.stats._negative_binomial import (
     linear_predictors,
     unit_deviance,
     unit_deviances,
-)
-from cytepool.design._design_matrices import (
-    require_full_rank,
-    design_matrix,
-    refuse_random_effects,
 )
 
 __all__ = [

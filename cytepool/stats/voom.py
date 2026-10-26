@@ -104,9 +104,10 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
+from cytepool._counts import as_counts, effective_library_sizes
 from cytepool._masked_arrays import reject_masked
 from cytepool._summation import accurate_mean
-from cytepool._counts import as_counts, effective_library_sizes
+from cytepool.design._design_matrices import design_matrix, refuse_random_effects
 from cytepool.stats.linear_models import LinearModelFit, fit_linear_model
 from cytepool.stats.sample_weights import (
     _estimate,
@@ -117,7 +118,6 @@ from cytepool.stats.sample_weights import (
     _weights_of,
 )
 from cytepool.stats.smoothing import choose_lowess_span, lowess
-from cytepool.design._design_matrices import design_matrix, refuse_random_effects
 
 __all__ = ["VoomResult", "voom", "voom_with_quality_weights"]
 

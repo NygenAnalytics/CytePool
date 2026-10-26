@@ -116,10 +116,10 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
+from cytepool._counts import as_counts, effective_library_sizes
 from cytepool._jit import thread_limit
 from cytepool._masked_arrays import real_array, unmasked_array
 from cytepool.design.design import Design
-from cytepool._counts import as_counts, effective_library_sizes
 from cytepool.stats.distributions import norm_isf, norm_logsf, t_logsf, t_sf
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import LinearModelFit

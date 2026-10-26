@@ -51,7 +51,6 @@ from numpy.typing import ArrayLike, NDArray
 from cytepool._jit import jit_numpy_errors
 from cytepool._masked_arrays import unmasked_array
 
-
 INF = math.inf
 
 NAN = math.nan

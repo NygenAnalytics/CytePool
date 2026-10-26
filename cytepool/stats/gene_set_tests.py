@@ -165,11 +165,7 @@ import numpy.typing as npt
 
 from cytepool._options import checked_flag
 from cytepool._ranks import average_ranks
-from cytepool.stats._moderation import posterior_variances
 from cytepool._summation import observed_means
-from cytepool.stats.distributions import beta_sf, norm_sf, t_sf
-from cytepool.stats.empirical_bayes import squeeze_variances
-from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats._gene_sets import (
     check_matched,
     checked_gene_sets,
@@ -179,6 +175,10 @@ from cytepool.stats._gene_sets import (
     set_label,
     set_positions,
 )
+from cytepool.stats._moderation import posterior_variances
+from cytepool.stats.distributions import beta_sf, norm_sf, t_sf
+from cytepool.stats.empirical_bayes import squeeze_variances
+from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.table import Table
 
 __all__ = ["camera", "fry"]

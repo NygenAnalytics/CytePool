@@ -191,9 +191,6 @@ from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag, positive_integer
 from cytepool._ranks import average_ranks_in_order
 from cytepool._summation import observed_means
-from cytepool.stats.distributions import t_sf
-from cytepool.stats._moderation import coefficient_prior_variance, log_odds
-from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats._gene_sets import (
     check_matched,
     checked_gene_sets,
@@ -205,6 +202,9 @@ from cytepool.stats._gene_sets import (
     set_label,
     set_positions,
 )
+from cytepool.stats._moderation import coefficient_prior_variance, log_odds
+from cytepool.stats.distributions import t_sf
+from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.table import Table
 

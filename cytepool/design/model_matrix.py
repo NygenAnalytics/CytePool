@@ -49,10 +49,10 @@ References:
 import itertools
 import math
 import numbers
-from decimal import Decimal
 from collections import Counter
 from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
 

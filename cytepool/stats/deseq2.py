@@ -202,6 +202,7 @@ import numpy as np
 import numpy.typing as npt
 from numba import prange
 
+from cytepool._counts import as_counts
 from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import (
     RANK_TOLERANCE,
@@ -212,24 +213,23 @@ from cytepool._linear_algebra import (
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import real_number
 from cytepool._summation import accurate_sums
-from cytepool.design.contrasts import make_contrasts
-from cytepool.design.design import Design
-from cytepool._counts import as_counts
-from cytepool.normalization import median_ratio_size_factors
-from cytepool.stats.distributions import chi2_sf, f_ppf, norm_sf
-from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.stats._negative_binomial import linear_predictors, log1p_ratio
-from cytepool.stats.negative_binomial_models import negative_binomial_deviance
-from cytepool.stats.smoothing import lowess
-from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
-from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
 from cytepool.design._contrast_weights import contrast_matrix
 from cytepool.design._design_matrices import (
-    require_full_rank,
     aliased_columns,
     design_matrix,
     refuse_random_effects,
+    require_full_rank,
 )
+from cytepool.design.contrasts import make_contrasts
+from cytepool.design.design import Design
+from cytepool.normalization import median_ratio_size_factors
+from cytepool.stats._negative_binomial import linear_predictors, log1p_ratio
+from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
+from cytepool.stats.distributions import chi2_sf, f_ppf, norm_sf
+from cytepool.stats.multiple_testing import adjust_p_values
+from cytepool.stats.negative_binomial_models import negative_binomial_deviance
+from cytepool.stats.smoothing import lowess
+from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
 
 __all__ = [
     "DESeq2Dispersions",
