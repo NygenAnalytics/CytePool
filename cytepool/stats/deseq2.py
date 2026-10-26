@@ -223,10 +223,8 @@ from cytepool.stats.linear_models import (
     _design_matrix,
 )
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.stats.negative_binomial_models import (
-    _log1p_ratio,
-    negative_binomial_deviance,
-)
+from cytepool.stats._negative_binomial import linear_predictors, log1p_ratio
+from cytepool.stats.negative_binomial_models import negative_binomial_deviance
 from cytepool.stats.smoothing import lowess
 from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
 from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
@@ -2302,13 +2300,13 @@ def _observation_value(
     if eta >= log_floor:
         mu = math.exp(eta)
         above: float = (
-            y * eta - y * math.log1p(alpha * mu) - mu * _log1p_ratio(alpha * mu)
+            y * eta - y * math.log1p(alpha * mu) - mu * log1p_ratio(alpha * mu)
         )
         return above
     base = (
         y * log_floor
         - y * math.log1p(alpha * floor)
-        - floor * _log1p_ratio(alpha * floor)
+        - floor * log1p_ratio(alpha * floor)
     )
     slope = (y - floor) / (1.0 + alpha * floor)
     curvature = floor / (1.0 + alpha * floor)
@@ -2340,18 +2338,6 @@ def _penalized_value(
         total -= penalty
         size += penalty
     return total, size
-
-
-@jit
-def _linear_predictors(
-    x: FloatArray, beta: FloatArray, offsets: FloatArray, eta: FloatArray
-) -> None:
-    n, p = x.shape
-    for i in range(n):
-        total = offsets[i]
-        for k in range(p):
-            total += x[i, k] * beta[k]
-        eta[i] = total
 
 
 @jit
@@ -2393,7 +2379,7 @@ def _fit_one(
     log_floor = math.log(floor)
     floor_weight = floor / (1.0 + alpha * floor)
     floor_slope_offset = 1.0 + alpha * floor
-    _linear_predictors(x, beta, offsets, eta)
+    linear_predictors(x, beta, offsets, eta)
     value, size = _penalized_value(y, eta, alpha, floor, beta, ridge)
     for iteration in range(1, _FIT_ITERATIONS + 1):
         for a in range(p):
@@ -2433,7 +2419,7 @@ def _fit_one(
         while True:
             for k in range(p):
                 trial[k] = beta[k] + length * step[k]
-            _linear_predictors(x, trial, offsets, trial_eta)
+            linear_predictors(x, trial, offsets, trial_eta)
             trial_value, trial_size = _penalized_value(
                 y, trial_eta, alpha, floor, trial, ridge
             )

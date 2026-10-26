@@ -168,10 +168,6 @@ import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import by_chunks, jit, thread_limit
-from cytepool._masked_arrays import reject_masked
-from cytepool._options import non_negative_number, positive_integer
-from cytepool.design.design import _refuse_random_effects
 from cytepool._counts import (
     as_counts,
     dispersion_matrix,
@@ -179,7 +175,16 @@ from cytepool._counts import (
     real_values,
     weight_matrix,
 )
+from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
+from cytepool._masked_arrays import reject_masked
+from cytepool._options import non_negative_number, positive_integer
+from cytepool.design.design import _refuse_random_effects
+from cytepool.stats._negative_binomial import (
+    linear_predictors,
+    unit_deviance,
+    unit_deviances,
+)
 from cytepool.stats.linear_models import _aliased_columns, _design_matrix
 
 __all__ = [
@@ -234,8 +239,6 @@ _SMALLEST_DAMPING = 1e-8
 _LARGEST_DAMPING = 1e10
 # Newton steps of a group's log mean are at most this long.
 _LARGEST_GROUP_STEP = 5.0
-# The unit deviance is summed as a series when |y - mu| < this * mu.
-_SERIES_LIMIT = 0.125
 _EPSILON = 2.220446049250313e-16
 
 
@@ -486,7 +489,7 @@ def negative_binomial_unit_deviance(
     flat = [
         np.ascontiguousarray(np.broadcast_to(a, shape)).ravel() for a in (y, mu, phi)
     ]
-    result: FloatArray = _unit_deviances(*flat).reshape(shape)
+    result: FloatArray = unit_deviances(*flat).reshape(shape)
     if result.ndim == 0:
         return float(result)
     return result
@@ -728,96 +731,10 @@ def _fit(
 
 
 @jit
-def _log1p_ratio(x: float) -> float:
-    """log(1 + x) / x, which is 1 at x = 0."""
-    if x == 0.0:
-        return 1.0
-    return math.log1p(x) / x
-
-
-@jit
-def _unit_deviance(y: float, mu: float, phi: float) -> float:
-    """The negative binomial unit deviance, accurate in every regime.
-
-    With s = (y - mu) / mu and p = phi mu / (1 + phi mu), half the deviance is
-    mu s^2 / (1 + phi mu) sum_n T_n / ((n + 1)(n + 2)), with T_0 = 1 and
-    T_n = (-s)^n - p s T_{n-1}; for |s| < 1/8 the series is summed. Otherwise it is
-    y log(1 + r) - (y - mu) log(1 + x) / x with r = (y - mu) / (mu (1 + phi y)) and
-    x = phi (y - mu) / (1 + phi mu), each logarithm of a ratio taken directly where
-    its argument is far from 1, or, where phi y or phi mu would overflow,
-    -k log(y / mu) - (y + k) (log(1 + k / y) - log(1 + k / mu)) with k = 1 / phi.
-    """
-    if y == 0.0:
-        if phi * mu < 1e300:
-            zero: float = 2.0 * mu * _log1p_ratio(phi * mu)
-            return zero
-        return 2.0 * (math.log(phi) + math.log(mu)) / phi
-    if mu == 0.0:
-        return math.inf
-    difference = y - mu
-    s = difference / mu
-    if abs(s) < _SERIES_LIMIT:
-        product = phi * mu
-        share = (
-            product / (1.0 + product) if product <= 1.0 else 1.0 / (1.0 + 1.0 / product)
-        )
-        t = s * share
-        total = 0.5
-        term = 1.0
-        power = 1.0
-        n = 1.0
-        while n < 64.0:
-            power *= -s
-            term = power - t * term
-            updated = total + term / ((n + 1.0) * (n + 2.0))
-            if updated == total:
-                break
-            total = updated
-            n += 1.0
-        return 2.0 * (s * s / (1.0 / mu + phi)) * total
-    if phi * max(y, mu) > 1e300:
-        k = 1.0 / phi
-        gamma: float = -k * math.log(y / mu) - (y + k) * (
-            math.log1p(k / y) - math.log1p(k / mu)
-        )
-        return 2.0 * gamma
-    r = difference / (mu * (1.0 + phi * y))
-    if -0.5 <= r <= 1e10:
-        log_ratio = math.log1p(r)
-    else:
-        ratio = (y / mu) * ((1.0 + phi * mu) / (1.0 + phi * y))
-        if 1e-300 < ratio < 1e300:
-            log_ratio = math.log(ratio)
-        else:
-            log_ratio = (math.log(y) - math.log(mu)) - (
-                math.log1p(phi * y) - math.log1p(phi * mu)
-            )
-    x = phi * difference / (1.0 + phi * mu)
-    second: float
-    if x >= -0.5:
-        second = difference / (1.0 + phi * mu) * _log1p_ratio(x)
-    else:
-        ratio = (1.0 + phi * y) / (1.0 + phi * mu)
-        if ratio > 1e-300:
-            second = math.log(ratio) / phi
-        else:
-            second = (math.log1p(phi * y) - math.log1p(phi * mu)) / phi
-    return 2.0 * (y * log_ratio - second)
-
-
-@jit
-def _unit_deviances(y: FloatArray, mu: FloatArray, phi: FloatArray) -> FloatArray:
-    out = np.empty(y.size)
-    for k in range(y.size):
-        out[k] = _unit_deviance(y[k], mu[k], phi[k])
-    return out
-
-
-@jit
 def _deviance(y: FloatArray, mu: FloatArray, phi: FloatArray, w: FloatArray) -> float:
     total = 0.0
     for i in range(y.size):
-        total += w[i] * _unit_deviance(y[i], mu[i], phi[i])
+        total += w[i] * unit_deviance(y[i], mu[i], phi[i])
     return total
 
 
@@ -953,12 +870,9 @@ def _means(
     design: FloatArray, beta: FloatArray, offsets: FloatArray, mu: FloatArray
 ) -> None:
     """mu = exp(design @ beta + offsets)."""
-    n_samples, n_coefficients = design.shape
-    for i in range(n_samples):
-        eta = offsets[i]
-        for j in range(n_coefficients):
-            eta += design[i, j] * beta[j]
-        mu[i] = math.exp(eta)
+    linear_predictors(design, beta, offsets, mu)
+    for i in range(design.shape[0]):
+        mu[i] = math.exp(mu[i])
 
 
 @jit

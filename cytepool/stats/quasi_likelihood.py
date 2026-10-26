@@ -210,12 +210,14 @@ from cytepool.stats.distributions import f_sf
 from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import _contrast_matrix, _design_matrix
 from cytepool.stats.multiple_testing import adjust_p_values
+from cytepool.stats._negative_binomial import (
+    SERIES_LIMIT,
+    unit_deviance,
+    unit_deviances,
+)
 from cytepool.stats.negative_binomial_models import (
-    _SERIES_LIMIT,
     NegativeBinomialFit,
     _read_only,
-    _unit_deviance,
-    _unit_deviances,
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
@@ -410,7 +412,7 @@ def _log_probability(y: float, phi: float, deviance: float) -> float:
 @jit
 def _probability_and_deviance(y: float, mu: float, phi: float) -> tuple[float, float]:
     """P(Y = y) and the unit deviance d(y, mu, phi), for y >= 0 and mu > 0."""
-    deviance = _unit_deviance(y, mu, phi)
+    deviance = unit_deviance(y, mu, phi)
     if y == 0.0:
         return math.exp(-0.5 * deviance), deviance
     return math.exp(_log_probability(y, phi, deviance)), deviance
@@ -451,12 +453,12 @@ def _direct_sums(mu: float, phi: float) -> tuple[float, float, float]:
 def _deviance_from_offset(y: float, s: float, mu: float, phi: float) -> float:
     """d(y, mu, phi) at the count y = mu (1 + s), from the relative offset s.
 
-    Within 1/8 of the mean it is the series of ``_unit_deviance`` in s itself, so
+    Within 1/8 of the mean it is the series of ``unit_deviance`` in s itself, so
     that it is the deviance at mu (1 + s) whatever the rounding of y; farther out it
-    is ``_unit_deviance`` of the count.
+    is ``unit_deviance`` of the count.
     """
-    if abs(s) >= _SERIES_LIMIT:
-        far: float = _unit_deviance(y, mu, phi)
+    if abs(s) >= SERIES_LIMIT:
+        far: float = unit_deviance(y, mu, phi)
         return far
     product = phi * mu
     share = product / (1.0 + product) if product <= 1.0 else 1.0 / (1.0 + 1.0 / product)
@@ -927,7 +929,7 @@ def _unit_deviances_at(
         np.ascontiguousarray(np.broadcast_to(a, shape), dtype=np.float64).ravel()
         for a in (counts, means, dispersion)
     ]
-    values: FloatArray = _unit_deviances(*flat).reshape(shape)
+    values: FloatArray = unit_deviances(*flat).reshape(shape)
     return values
 
 
@@ -1237,7 +1239,7 @@ def _adjusted_profile_likelihood(
             root[i] = math.sqrt(w * mu / (1.0 + phi * mu)) if mu > floor else 0.0
             if mu <= 0.0:
                 continue
-            deviance = w * _unit_deviance(y, mu, phi)
+            deviance = w * unit_deviance(y, mu, phi)
             if y == 0.0:
                 log_likelihood -= 0.5 * deviance
                 continue
