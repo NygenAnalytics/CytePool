@@ -173,7 +173,7 @@ from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import non_negative_number, positive_integer
 from cytepool.design.design import _refuse_random_effects
 from cytepool.normalization import _as_counts, _effective_library_sizes
-from cytepool._linear_algebra import RANK_TOLERANCE
+from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
 from cytepool.stats.linear_models import _aliased_columns, _design_matrix
 
 __all__ = [
@@ -1114,7 +1114,7 @@ def _newton_system(
         # of the linear predictor through the information, root^2.
         terms = abs(derivative) + (n_coefficients + 1) * root * root * predictor
         for j in range(n_coefficients):
-            work[j, i] = root * design[i, j]
+            work[i, j] = root * design[i, j]
             score[j] += design[i, j] * derivative
             size[j] += abs(design[i, j]) * terms
         noise += abs(derivative) * predictor
@@ -1122,7 +1122,7 @@ def _newton_system(
     for j in range(n_coefficients):
         total = 0.0
         for i in range(n_samples):
-            total += work[j, i] * work[j, i]
+            total += work[i, j] * work[i, j]
         scale[j] = total
         largest = max(largest, total)
     least = largest * 1e-14 if largest > 0.0 else 1.0
@@ -1130,55 +1130,6 @@ def _newton_system(
         scale[j] = max(scale[j], least)
     rounding: float = 2.0 * (n_coefficients + 1) * _EPSILON * noise
     return rounding
-
-
-@jit
-def _householder(
-    work: FloatArray, n_rows: int, n_coefficients: int, kept: IntArray
-) -> int:
-    """Householder QR factorization of the first n_rows rows of the columns of ``work``.
-
-    ``work`` holds columns, so that ``work[j, i]`` is row i of column j. Columns are
-    taken in order, and one whose part orthogonal to the columns kept before it has a
-    norm of at most 1e-11 times its own norm is aliased and skipped: it arises where
-    weights fall towards zero, and a step along it would be rounding noise. On return, rows 0..t of column ``kept[t]`` hold column t of the
-    triangular factor R, and rows 0..t-1 of an aliased column after t kept ones hold its
-    projections on their directions.
-
-    Returns:
-        The rank: the number of kept columns.
-    """
-    rank = 0
-    for j in range(n_coefficients):
-        total = 0.0
-        remaining = 0.0
-        for i in range(n_rows):
-            square = work[j, i] * work[j, i]
-            total += square
-            if i >= rank:
-                remaining += square
-        norm = math.sqrt(remaining)
-        if norm == 0.0 or norm <= _ALIASING * math.sqrt(total):
-            continue
-        head = work[j, rank]
-        alpha = -norm if head >= 0.0 else norm
-        work[j, rank] = head - alpha
-        # The reflection is I - v v' / (norm (norm + |head|)) with
-        # v = work[j, rank:n_rows].
-        reflection = 1.0 / (norm * (norm + abs(head)))
-        for k in range(j + 1, n_coefficients):
-            product = 0.0
-            for i in range(rank, n_rows):
-                product += work[j, i] * work[k, i]
-            product *= reflection
-            for i in range(rank, n_rows):
-                work[k, i] -= product * work[j, i]
-        work[j, rank] = alpha
-        for i in range(rank + 1, n_rows):
-            work[j, i] = 0.0
-        kept[rank] = j
-        rank += 1
-    return rank
 
 
 @jit
@@ -1206,8 +1157,8 @@ def _solve(
     for t in range(rank):
         j = kept[t]
         value, noise = _reduced_score(work, j, t, score, size, z, rounding)
-        rounding[t] = noise / abs(work[j, t])
-        z[t] = value / work[j, t]
+        rounding[t] = noise / abs(work[t, j])
+        z[t] = value / work[t, j]
     decrease = 0.0
     for t in range(rank):
         decrease += z[t] * z[t]
@@ -1216,8 +1167,8 @@ def _solve(
     for t in range(rank - 1, -1, -1):
         total = z[t]
         for u in range(t + 1, rank):
-            total -= work[kept[u], t] * step[kept[u]]
-        step[kept[t]] = total / work[kept[t], t]
+            total -= work[t, kept[u]] * step[kept[u]]
+        step[kept[t]] = total / work[t, kept[t]]
     reduced = 0.0
     t = 0
     for j in range(n_coefficients):
@@ -1247,10 +1198,10 @@ def _reduced_score(
     products = 0.0
     propagated = 0.0
     for u in range(count):
-        product = work[j, u] * z[u]
+        product = work[u, j] * z[u]
         value -= product
         products += abs(product)
-        propagated += abs(work[j, u]) * rounding[u]
+        propagated += abs(work[u, j]) * rounding[u]
     noise = _SCORE_ROUNDING * _EPSILON * (size[j] + products) + propagated
     return value, noise
 
@@ -1388,6 +1339,9 @@ def _fit_levenberg(
     z: FloatArray,
     rounding: FloatArray,
     kept: IntArray,
+    qr_norms: FloatArray,
+    qr_aliased: BoolArray,
+    qr_products: FloatArray,
     step: FloatArray,
     trial_beta: FloatArray,
     trial_mu: FloatArray,
@@ -1432,7 +1386,19 @@ def _fit_levenberg(
         noise = _newton_system(
             y, mu, phi, w, design, beta, offsets, floor, work, scale, score, size
         )
-        rank = _householder(work, n_samples, n_coefficients, kept)
+        rank = householder_qr(
+            work,
+            n_samples,
+            n_coefficients,
+            _ALIASING,
+            True,
+            0.0,
+            False,
+            qr_norms,
+            qr_aliased,
+            kept,
+            qr_products,
+        )
         decrease, reduced = _solve(
             work, n_coefficients, rank, kept, score, size, z, rounding, step
         )
@@ -1486,10 +1452,22 @@ def _fit_levenberg(
                 )
                 for j in range(n_coefficients):
                     for k in range(n_coefficients):
-                        work[k, n_samples + j] = 0.0
-                    work[j, n_samples + j] = math.sqrt(damping * scale[j])
+                        work[n_samples + j, k] = 0.0
+                    work[n_samples + j, j] = math.sqrt(damping * scale[j])
                 rows = n_samples + n_coefficients
-                rank = _householder(work, rows, n_coefficients, kept)
+                rank = householder_qr(
+                    work,
+                    rows,
+                    n_coefficients,
+                    _ALIASING,
+                    True,
+                    0.0,
+                    False,
+                    qr_norms,
+                    qr_aliased,
+                    kept,
+                    qr_products,
+                )
                 _solve(work, n_coefficients, rank, kept, score, size, z, rounding, step)
             longest = _longest(design, step, y, mu, floor)
             length = min(1.0, longest)
@@ -1576,8 +1554,12 @@ def _fit_genes(
     w = np.empty(n_samples)
     beta = np.empty(n_coefficients)
     log_means = np.empty(n_coefficients)
-    # Columns of W^(1/2) X for a Newton step, with room for the rows of the damping.
-    work = np.empty((n_coefficients, n_samples + n_coefficients))
+    # W^(1/2) X for a Newton step, with room for the rows of the damping, and the
+    # workspace of its factorization.
+    work = np.empty((n_samples + n_coefficients, n_coefficients))
+    qr_norms = np.empty(n_coefficients)
+    qr_aliased = np.empty(n_coefficients, dtype=np.bool_)
+    qr_products = np.empty(n_coefficients)
     scale = np.empty(n_coefficients)
     score = np.empty(n_coefficients)
     size = np.empty(n_coefficients)
@@ -1638,6 +1620,9 @@ def _fit_genes(
                 z,
                 rounding,
                 kept,
+                qr_norms,
+                qr_aliased,
+                qr_products,
                 step,
                 trial_beta,
                 trial_mu,
