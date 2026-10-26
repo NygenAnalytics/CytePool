@@ -1,5 +1,5 @@
 ---
-description: Fixed-effect and random-effects meta-analysis of every gene across studies, as metafor computes it, with the between-study variance, Cochran's Q, I-squared and the Knapp-Hartung adjustment; combined p-values, partial conjunction tests of replication, Storey's pi0 and pi1, and how well studies replicate each other.
+description: Fixed-effect and random-effects meta-analysis of every gene across studies, as metafor computes it, with the between-study variance, Cochran's Q, I-squared and the Knapp-Hartung adjustment; combined p-values, partial conjunction tests of replication, Storey's pi0 and pi1, and how well studies replicate each other; SumRank, which asks that a gene rank high in most studies; and the prediction of cases in held-out studies.
 ---
 
 # Meta-analysis
@@ -167,6 +167,99 @@ tables say how far that holds. {api}`plot_study_agreement` draws $\pi_1$ or the 
 agreement of every pair of studies, and {api}`plot_replicated_genes` the genes that
 each number of studies finds.
 
+## SumRank: genes that rank high in most studies
+
+A meta-analysis weighs each study by its precision, so a gene with a very small
+p-value in one or two studies can pass without any sign of change in the others; such
+genes predicted case status poorly in studies left out [@nakatsuka2025]. SumRank asks
+instead that a gene rank high in most studies. {api}`sumrank` computes it from a signed
+statistic of every gene in every study and returns a {api}`SumRankFit`;
+{api}`differential_expression_sumrank` computes it from the results of one cell type
+and contrast of the studies of a {api}`CubeCollection` and returns a
+{api}`SumRankResult`, whose table ({api}`SumRankResult.table`) gives each gene's
+statistics and p-values, up and down, and whose table of studies
+({api}`SumRankResult.studies`) says which studies tested the cell type and contrast,
+and why the others did not.
+
+Each study ranks the genes that every study tested by its signed $-\log_{10}$
+p-value, from $r = 1$ for the gene most up to $r = G$; tied genes share their average
+rank. The normalized rank $u = (r - 1) / (G - 1)$ runs from 0 to 1, and a gene's
+statistic sums its $m$ smallest normalized ranks over the $k$ studies, those of the
+studies that rank it best, capped at their mean under the null:
+
+$$
+S_g = \min\Big(\sum_{j=1}^{m} u_{g(j)},\ \frac{m}{2}\Big), \qquad
+m = \lfloor p\,k \rfloor,
+$$
+
+with $u_{g(1)} \le \dots \le u_{g(k)}$ and the proportion $p$ of the studies
+(`proportion_of_studies`). The paper sums every study when there are few, and chose $p$
+by prediction in held-out studies when there are many (0.65 of 17 studies of Alzheimer's
+disease, 0.55 of 16 of COVID-19). Genes down have the statistic of the ranks $1 - u$.
+A gene that some study did not test, because it did not measure it or its expression
+filter left it out, is not ranked, as the paper ranks the genes every study measured:
+a rank says where a gene stands among the genes ranked with it.
+
+If each study ranked the genes at random, the normalized ranks would be independent
+uniform variables, and $S_g$ below the cap would follow the Irwin-Hall distribution of a
+sum of $m$ of them [@irwin1927; @hall1927], whose distribution function gives the
+Irwin-Hall p-value. With every study summed it is exact under that null; the sum of the
+best $m$ of $k$ ranks is smaller than a sum of $m$ ranks, so with $m < k$ these p-values
+are much too small: in six simulated studies without changes, summing three, 37% of
+them fell below 0.05, and {api}`differential_expression_sumrank` warns when it gives
+them. The paper takes its p-values from permutations instead: each study's labels are
+permuted and its analysis run again, and the statistics of every gene in every
+permutation make one null distribution, $N$ statistics in all, against which a gene of
+statistic $s$ has the p-value
+
+$$
+p = \frac{1 + \#\{\text{null statistics} \le s\}}{1 + N},
+$$
+
+never zero [@phipson2010]. Pooling over the genes gives small p-values from few
+permutations, 100 permutations of 10,000 genes reaching $10^{-6}$. With
+`n_permutations`, {api}`differential_expression_sumrank` permutes a variable of each
+study's design among the samples of its fit of the cell type, from a seeded
+`numpy.random.Generator`, and re-runs the study's {api}`limma_voom` or {api}`limma_trend`
+with the design and settings its result records: 0.21 s per study and permutation for
+40 samples and 10,000 genes with limma-voom, so that 100 permutations of 20 such studies
+take about 7 minutes on a laptop. {api}`plot_sumrank` draws every gene's p-value, the
+genes in alphabetical order, as the authors of SumRank draw it.
+
+Where CytePool departs from the paper and its authors' code, which the validation runs:
+
+- The Irwin-Hall p-value is the lower tail of the distribution. The paper calls its
+  Irwin-Hall p-values two-sided, which would double them, and its code takes the
+  Irwin-Hall density at the statistic, which is not a probability; both order the genes
+  as the statistic does, so the permutation p-values do not depend on it.
+- Permutation p-values count ties as at least as extreme and add one. The authors' code
+  takes the share of null statistics strictly below a gene's, which is 0 for a gene
+  beyond every one of them; its sums are formed in floating point, so that equal
+  statistics can compare as unequal, where CytePool forms them exactly.
+- The labels are permuted among the samples of each study's fit, which keeps its
+  numbers of cases and controls; the paper permutes them among all the individuals of a
+  dataset and draws again until every cell type has two cases and two controls.
+
+## Prediction in held-out studies
+
+How well genes found in some studies replicate can be measured in a study that had no
+part in finding them. {api}`held_out_prediction` leaves each study of a collection out
+in turn, chooses genes up and genes down in each cell type from the other studies'
+results, by SumRank and by the random-effects meta-analysis above with REML and the
+Knapp-Hartung adjustment (the paper's comparison), scores every case and control of
+the held-out study, and reports the area under the ROC curve of cases against controls
+[@hanley1982], by study and method, in a {api}`HeldOutPrediction`
+({api}`HeldOutPrediction.auc`). A sample's score is UCell's [@andreatta2021]: in each
+cell type, the ranks of the chosen genes among all the genes of the sample's profile,
+scaled to [0, 1] over the study's samples, the genes up counted for the sample and the
+genes down against it, summed over the cell types, as the authors' code sums them. The genes chosen and the scores are in
+{api}`HeldOutPrediction.genes` and {api}`HeldOutPrediction.scores`, and
+{api}`plot_held_out_auc` draws the AUC of every study by method. The paper fits a
+logistic regression on the score and lets pROC choose the direction of each study's
+AUC [@robin2011], so that a score that ranks controls above cases also scores above 0.5;
+here cases must score higher, and an AUC below 0.5 says the genes predict the wrong
+direction.
+
 ## Limits
 
 The studies are taken as independent, with known sampling variances. Meta-regression on
@@ -176,5 +269,5 @@ assume independent studies whose p-values are uniform without effects; for discr
 tests they are conservative. The r-values of a primary study and its follow-up
 [@heller2014] are not implemented. metap's methods of Edgington (sums of p-values),
 Lancaster (inverse chi-squared), the inverse t, the mean z and vote counting are left
-out. Held-out prediction of case status from the genes of several studies
-[@nakatsuka2025] is not implemented yet.
+out. SumRank weighs every study alike, as the paper notes, and its permutations re-run
+designs without random effects only.

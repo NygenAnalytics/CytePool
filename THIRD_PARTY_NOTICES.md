@@ -167,6 +167,26 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### SumRank
+
+`cytepool/sumrank.py` and `cytepool/held_out_prediction.py` implement SumRank and its
+held-out prediction from Nakatsuka et al. (2025), following conventions of the authors'
+code (https://github.com/nathan-nakatsuka/scRNA_Reproducibility, commit 46392f66;
+`SumRank.R`, `CalibratePValueswithPermutations.R`, `PermutingCaseControlStatus.R`,
+`UCell_AUC_code.R`): ties ranked by their average rank, floor(p k) of the studies summed
+and the cap at half their number, a dataset without the cell type left out, the null
+pooled over genes and permutations, and, for held-out scores, each cell type's scores
+scaled to [0, 1], a missing cell type at their mean and the scores of genes up minus
+those of genes down; `cytepool/plotting.py` draws `plot_sumrank` as their
+`MakeManhattanPlot` (`MakingManhattanPlots.R`) draws it. No code is copied.
+`validation/sumrank.py` downloads `SumRank.R`, `CalibratePValueswithPermutations.R` and
+`MakingManhattanPlots.R` of that commit and runs them. Nakatsuka et al. (2025) is:
+Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R. Improving
+reproducibility of differentially expressed genes in single-cell transcriptomic studies
+of neurodegenerative diseases through meta-analysis. Nature Communications 16, 7436.
+doi:10.1038/s41467-025-62579-z. The code is distributed under the Apache License,
+Version 2.0 (Copyright 2024 Nathan Nakatsuka; http://www.apache.org/licenses/LICENSE-2.0).
+
 ### numba
 
 `cytepool/_jit.py` places the cache of its compiled routines with subclasses of numba's

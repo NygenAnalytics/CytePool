@@ -50,6 +50,10 @@ The figures:
 - Replication across studies: :func:`plot_study_agreement`, pi1 or the sign agreement
   of every pair of studies (Storey and Tibshirani 2003); :func:`plot_replicated_genes`,
   the genes that each number of studies finds (Nakatsuka et al. 2025).
+- Several studies: :func:`plot_sumrank`, the SumRank p-value of every gene, the genes
+  in alphabetical order, as the authors of SumRank draw it, and
+  :func:`plot_held_out_auc`, the AUC of every held-out study by the method that
+  chose its genes (Nakatsuka et al. 2025).
 - Variance partitioning: :func:`plot_variance_fractions`, the violins (Hintze and
   Nelson 1998) of the fractions of variance of every variable over the genes, as
   variancePartition's ``plotVarPart`` draws them (Hoffman and Schadt 2016);
@@ -152,6 +156,11 @@ References:
     Viechtbauer W (2010). Conducting meta-analyses in R with the metafor package.
     Journal of Statistical Software 36(3), 1-48. doi:10.18637/jss.v036.i03
 
+    Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
+    Improving reproducibility of differentially expressed genes in single-cell
+    transcriptomic studies of neurodegenerative diseases through meta-analysis.
+    Nature Communications 16, 7436. doi:10.1038/s41467-025-62579-z
+
     Machado GM, Oliveira MM, Fernandes LAF (2009). A physiologically-based model for
     simulation of color vision deficiency. IEEE Transactions on Visualization and
     Computer Graphics 15, 1291-1298. doi:10.1109/TVCG.2009.113
@@ -207,6 +216,7 @@ from .composition import CompositionResult
 from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
 from .gene_sets import GeneSets
+from .held_out_prediction import HeldOutPrediction
 from .meta_analysis import MetaAnalysisResult
 from .normalization import filter_by_expression, log_cpm, tmm_factors
 from .pathway_scores import PathwayScores
@@ -217,6 +227,7 @@ from .stats.empirical_bayes import ModeratedFit, TreatFit
 from .stats.multiple_testing import adjust_p_values
 from .stats.quasi_likelihood import QuasiLikelihoodFit, QuasiLikelihoodTest
 from .stats.voom import VoomResult
+from .sumrank import SumRankResult
 from .table import Table
 from .variance_partitioning import (
     RESIDUALS,
@@ -238,6 +249,7 @@ __all__ = [
     "plot_gene_sets",
     "plot_gene_variance_fractions",
     "plot_gsea_table",
+    "plot_held_out_auc",
     "plot_md",
     "plot_mds",
     "plot_mean_variance",
@@ -251,6 +263,7 @@ __all__ = [
     "plot_sample_weights",
     "plot_significant_genes",
     "plot_study_agreement",
+    "plot_sumrank",
     "plot_top_activities",
     "plot_variance_fractions",
     "plot_volcano",
@@ -4161,3 +4174,198 @@ def _draw_box(ax: "Axes", x: float, values: FloatArray) -> None:
         zorder=4,
         gid="outliers",
     )
+
+
+# SumRank and held-out prediction.
+
+_METHOD_LABELS = {"sumrank": "SumRank", "meta_analysis": "Meta-analysis"}
+
+
+def plot_sumrank(
+    result: SumRankResult,
+    *,
+    direction: str = "up",
+    alpha: float = 0.05,
+    n_labels: int = 20,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot the SumRank p-value of every gene, the genes in alphabetical order.
+
+    The Manhattan plot that the authors of SumRank draw (Nakatsuka et al. 2025,
+    Figure 4, and their ``MakeManhattanPlot``): a point per gene ranked, at -log10 of
+    its p-value (``up_p_value`` or ``down_p_value``, from permutations when they were
+    run), the genes in alphabetical order of their symbol, or of their id without
+    one. The genes whose adjusted p-value is below ``alpha`` are coloured, red for
+    genes up and blue for genes down, the ``n_labels`` with the smallest p-values are
+    named, and a dotted line lies at the largest -log10 p-value of the other genes,
+    where the authors draw it, when some gene passes.
+
+    Draws the genes (gid ``"genes"``), those that pass (gid ``"significant"``), the
+    line (gid ``"threshold"``) and the names (gid ``"labels"``).
+
+    Args:
+        result: The result of
+            :func:`~cytepool.sumrank.differential_expression_sumrank`.
+        direction: ``"up"`` or ``"down"``.
+        alpha: The adjusted p-value below which genes pass, in (0, 1).
+        n_labels: The most genes named, at least 0.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``result`` is not a SumRankResult or an option has the wrong
+            type.
+        ValueError: If ``direction`` is unknown or ``alpha`` is not in (0, 1).
+    """
+    _check_axes(ax)
+    if not isinstance(result, SumRankResult):
+        raise TypeError(f"result must be a SumRankResult, got {type(result).__name__}")
+    side = checked_choice(direction, "direction", ("up", "down"))
+    level = _fraction(alpha, "alpha")
+    reject_masked(n_labels, "n_labels")
+    named = integral_number(n_labels, "n_labels")
+    if named < 0:
+        raise ValueError(f"n_labels must be at least 0, got {named}")
+    table = result.table
+    ids = [str(value) for value in table["feature_id"].tolist()]
+    names = ids
+    if "symbol" in table:
+        names = [
+            str(symbol) if symbol is not None else identifier
+            for symbol, identifier in zip(table["symbol"].tolist(), ids, strict=True)
+        ]
+    order = sorted(range(len(names)), key=lambda i: (names[i], ids[i]))
+    p = np.asarray(table[f"{side}_p_value"], dtype=np.float64)[order]
+    adjusted = np.asarray(table[f"{side}_adjusted_p_value"], dtype=np.float64)[order]
+    heights = -np.log10(np.maximum(p, _TINY))
+    passed = adjusted < level
+    x = np.arange(len(order), dtype=np.float64)
+    color = _UP if side == "up" else _DOWN
+    ax = _axes(ax, (8.0, 4.0))
+    ax.scatter(
+        x[~passed], heights[~passed], s=_DENSE, color=_INK, linewidths=0, gid="genes"
+    )
+    ax.scatter(
+        x[passed],
+        heights[passed],
+        s=_DENSE,
+        color=color,
+        linewidths=0,
+        gid="significant",
+    )
+    if passed.any() and (~passed).any():
+        ax.axhline(
+            float(heights[~passed].max()),
+            color=color,
+            linewidth=1.2,
+            linestyle=":",
+            gid="threshold",
+        )
+    shown = np.flatnonzero(passed)
+    shown = shown[np.lexsort((shown, p[shown]))][:named]
+    for i in sorted(shown.tolist()):
+        ax.annotate(
+            names[order[i]],
+            (x[i], heights[i]),
+            xytext=(0.0, 3.0),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+            color=color,
+            gid="labels",
+        )
+    ax.set_xticks([])
+    ax.set_xlim(-1.0, len(order))
+    ax.set_ylim(0.0, max(1.0, float(heights.max(initial=0.0))) * 1.12)
+    settings = result.settings
+    source = (
+        f"{settings['n_permutations']:,} permutations"
+        if settings["p_values"] == "permutation"
+        else "Irwin-Hall"
+    )
+    ax.set_xlabel(f"Genes, in alphabetical order ({len(order):,})")
+    ax.set_ylabel(f"-log10 p-value, genes {side} ({source})")
+    _legend(
+        ax,
+        [
+            _key(f"Adjusted p < {level:g} ({int(passed.sum()):,})", color=color),
+            _key("Other genes", color=_INK),
+        ],
+    )
+    return ax
+
+
+def plot_held_out_auc(
+    prediction: HeldOutPrediction, *, ax: "Axes | None" = None
+) -> "Axes":
+    """Plot the AUC of every held-out study, by the method that chose its genes.
+
+    A row per study of a :func:`~cytepool.held_out_prediction.held_out_prediction`,
+    in the collection's order from the top, with a point for each method at the AUC
+    of the study's cases against its controls, scored by the genes that the method
+    chose from the other studies; the legend gives each method's mean AUC, and a
+    dotted line marks 0.5, the AUC of a score that does not separate them, as the
+    paper compares its methods (Nakatsuka et al. 2025, Table 1). A study without an
+    AUC keeps its row, marked "no AUC".
+
+    Draws the points of each method (gid its name, ``"sumrank"`` or
+    ``"meta_analysis"``) and the line (gid ``"chance"``).
+
+    Args:
+        prediction: The result of
+            :func:`~cytepool.held_out_prediction.held_out_prediction`.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``prediction`` is not a HeldOutPrediction.
+    """
+    _check_axes(ax)
+    if not isinstance(prediction, HeldOutPrediction):
+        raise TypeError(
+            f"prediction must be a HeldOutPrediction, got {type(prediction).__name__}"
+        )
+    table = prediction.auc
+    studies = list(dict.fromkeys(table["study"].tolist()))
+    methods = prediction.settings["methods"]
+    rows = {study: len(studies) - 1 - i for i, study in enumerate(studies)}
+    ax = _axes(ax, (6.5, min(12.0, 1.6 + 0.4 * len(studies))))
+    ax.axvline(0.5, color=_GREY, linewidth=1, linestyle=":", zorder=0, gid="chance")
+    handles = []
+    offsets = np.linspace(-0.12, 0.12, len(methods)) if len(methods) > 1 else [0.0]
+    values = np.asarray(table["auc"], dtype=np.float64)
+    with_auc = set(table["study"][~np.isnan(values)].tolist())
+    for method, hue, marker, offset in zip(
+        methods, _CATEGORICAL, _MARKERS, offsets, strict=False
+    ):
+        chosen = table["method"] == method
+        auc = values[chosen]
+        names = table["study"][chosen].tolist()
+        known = ~np.isnan(auc)
+        y = np.array([rows[name] for name in names], dtype=np.float64) + offset
+        ax.scatter(
+            auc[known],
+            y[known],
+            s=_SPARSE,
+            color=hue,
+            marker=marker,
+            zorder=3,
+            clip_on=False,  # an AUC of 0 or 1 lies on the frame
+            gid=method,
+        )
+        mean = f"mean {auc[known].mean():.2f}" if known.any() else "no AUC"
+        label = _METHOD_LABELS.get(method, method)
+        handles.append(_key(f"{label} ({mean})", color=hue, marker=marker))
+    labels = [study if study in with_auc else f"{study} (no AUC)" for study in studies]
+    ax.set_yticks([rows[study] for study in studies], labels)
+    ax.tick_params(axis="y", length=0)
+    ax.set_ylim(-0.7, len(studies) - 0.3)
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel("AUC of the held-out study's cases against its controls")
+    _legend(ax, handles)
+    return ax
