@@ -1,8 +1,32 @@
 """Adjustment of p-values for multiple testing.
 
-The procedures follow R's ``p.adjust`` exactly, including its conventions for
-missing values and for families declared larger than the p-values observed in
-them, so adjusted p-values can be compared with R output directly.
+The procedures follow R's ``p.adjust`` exactly (R Core Team 2025), including its
+conventions for missing values and for families declared larger than the p-values
+observed in them, so adjusted p-values can be compared with R output directly.
+
+References:
+    Holm S (1979). A simple sequentially rejective multiple test procedure. Scandinavian
+    Journal of Statistics 6, 65-70.
+
+    Hochberg Y (1988). A sharper Bonferroni procedure for multiple tests of
+    significance. Biometrika 75, 800-802. doi:10.1093/biomet/75.4.800
+
+    Hommel G (1988). A stagewise rejective multiple test procedure based on a modified
+    Bonferroni test. Biometrika 75, 383-386. doi:10.1093/biomet/75.2.383
+
+    Simes RJ (1986). An improved Bonferroni procedure for multiple tests of
+    significance. Biometrika 73, 751-754. doi:10.1093/biomet/73.3.751
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Benjamini Y, Yekutieli D (2001). The control of the false discovery rate in multiple
+    testing under dependency. Annals of Statistics 29, 1165-1188.
+    doi:10.1214/aos/1013699998
+
+    R Core Team (2025). R: A Language and Environment for Statistical Computing. R
+    Foundation for Statistical Computing, Vienna. https://www.R-project.org/
 """
 
 import math
@@ -49,7 +73,7 @@ def adjust_p_values(
     - ``"bonferroni"``: ``n p_(i)``.
     - ``"holm"``: ``max over j <= i of (n - j + 1) p_(j)``.
     - ``"hochberg"``: ``min over j >= i of (n - j + 1) p_(j)``.
-    - ``"hommel"``: the largest Simes p-value, ``min over j of k p_(j:S) / j``,
+    - ``"hommel"``: the largest Simes (1986) p-value, ``min over j of k p_(j:S) / j``,
       over all sets ``S`` of ``k`` tests that contain test ``i``, where
       ``p_(j:S)`` is the j-th smallest p-value in ``S``.
     - ``"bh"``: ``min over j >= i of n p_(j) / j``.

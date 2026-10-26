@@ -4,9 +4,10 @@ dream (Hoffman and Roussos 2021) is limma-voom with a linear mixed model in plac
 the linear model, for designs with repeated measures: several samples of a donor,
 tissues of one patient, time courses. The donor (or another grouping factor) gets a
 random intercept, whose variance is estimated for every gene, and contrasts of the
-fixed effects are tested with Satterthwaite's degrees of freedom. The steps, as
-variancePartition runs them (``voomWithDreamWeights``, ``dream``, ``eBayes`` and
-``topTable``):
+fixed effects are tested with Satterthwaite's (1946) degrees of freedom. dreamlet
+(Hoffman et al. 2026) runs it on the pseudobulk profiles of every cell type. The
+steps, as variancePartition runs them (``voomWithDreamWeights``, ``dream``,
+``eBayes`` and ``topTable``):
 
 1. Precision weights, :func:`voom_with_dream_weights`. voom's (Law et al. 2014): the
    log2 counts per million are fitted, the square roots of the residual standard
@@ -50,12 +51,13 @@ variancePartition 1.36.2, with limma 3.62.1 and lme4 1.1-38, as a black box:
   moderated tests are limma's for the weights of each feature divided by their mean.
 - ``eBayes`` moderates those variances on the approximate residual degrees of
   freedom ``rdf``, with limma's ``squeezeVar`` and its default estimator: the
-  likelihood estimator when the degrees of freedom differ between features, as they
-  usually do, and the method of moments otherwise (``legacy = NULL``). The moderated
-  t-statistics and the B-statistics are those of limma's ``eBayes`` for these
-  variances on these degrees of freedom; the p-values use Satterthwaite's degrees of
-  freedom plus the prior's, which, unlike limma's total degrees of freedom, are not
-  capped at the sum of the residual degrees of freedom.
+  likelihood estimator (Chen et al. 2025) when the degrees of freedom differ between
+  features, as they usually do, and the method of moments otherwise
+  (``legacy = NULL``). The moderated t-statistics and the B-statistics are those of
+  limma's ``eBayes`` for these variances on these degrees of freedom; the p-values
+  use Satterthwaite's degrees of freedom plus the prior's, which, unlike limma's
+  total degrees of freedom, are not capped at the sum of the residual degrees of
+  freedom.
 - ``topTable`` adds ``z.std``, sign(t) times the standard normal quantile of half
   the two-sided p-value: the z-statistic with the p-value of the t-statistic, so
   that tests on different degrees of freedom can be compared. It computes it from
@@ -79,19 +81,31 @@ slopes, F-tests of several contrasts and variance partitioning are not implement
 yet.
 
 References:
-    Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis
-    for repeated measures designs. Bioinformatics 37, 192-201.
+    Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
+    repeated measures designs. Bioinformatics 37, 192-201.
+    doi:10.1093/bioinformatics/btaa687
 
-    Hoffman GE, Lee D, Bendl J, et al. (2023). Efficient differential expression
-    analysis of large-scale single cell transcriptomics data using dreamlet.
-    Research Square preprint, doi:10.21203/rs.3.rs-2705625/v1.
+    Hoffman GE, Lee D, Bendl J, Prashant NM, Hong A, Casey C, Alvia M, Shao Z,
+    Argyriou S, Therrien K, Venkatesh S, Voloudakis G, Haroutunian V, Fullard JF,
+    Roussos P (2026). Efficient differential expression analysis of large-scale
+    single-cell transcriptomics data using Dreamlet. Nature Communications 17, 9597.
+    doi:10.1038/s41467-026-75680-8
 
-    Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear
-    model analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+    Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
+    analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+    doi:10.1186/gb-2014-15-2-r29
 
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
     differential expression in microarray experiments. Statistical Applications in
-    Genetics and Molecular Biology 3, article 3.
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
+
+    Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2025). edgeR v4: powerful
+    differential analysis of sequencing data with expanded functionality and improved
+    support for small counts and larger datasets. Nucleic Acids Research 53, gkaf018.
+    doi:10.1093/nar/gkaf018
+
+    Satterthwaite FE (1946). An approximate distribution of estimates of variance
+    components. Biometrics Bulletin 2, 110-114. doi:10.2307/3002019
 """
 
 import math

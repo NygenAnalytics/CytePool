@@ -1,15 +1,17 @@
 """Named contrasts: linear combinations of design columns, written as expressions.
 
-``make_contrasts({"b_vs_a": "groupB - groupA", "mean_bc": "(groupB + groupC)/2 -
-groupA"}, columns)`` gives the weights of each contrast on the design columns, as
-limma's ``makeContrasts`` does. Expressions may use ``+``, ``-``, ``*`` and ``/`` with
-numbers, parentheses, and the design's column names written as they are, including
-names that are not syntactic in R such as ``(Intercept)`` or ``conditionstim:sexM``;
-a name can also be quoted with backticks. Where a name could be read more than one
-way, the longest column name that matches is used. A column name that starts or
-ends with a space (from a level label with stray spaces) must be quoted with
-backticks, so that ``conditionctrl - conditionstim`` never reads the column
-``conditionctrl `` by accident.
+A contrast weighs the coefficients of the design columns, as the contrasts of limma's
+linear models do (Smyth 2004). ``make_contrasts({"b_vs_a": "groupB - groupA",
+"mean_bc": "(groupB + groupC)/2 - groupA"}, columns)`` gives the weights of each
+contrast on the design columns, as limma's ``makeContrasts`` does (Ritchie et al.
+2015). Expressions may use ``+``, ``-``, ``*`` and ``/`` with numbers, parentheses,
+and the design's column names written as they are, including names that are not
+syntactic in R such as ``(Intercept)`` or ``conditionstim:sexM``; a name can also be
+quoted with backticks. Where a name could be read more than one way, the longest
+column name that matches is used. A column name that starts or ends with a space
+(from a level label with stray spaces) must be quoted with backticks, so that
+``conditionctrl - conditionstim`` never reads the column ``conditionctrl `` by
+accident.
 
 Unlike ``makeContrasts``, which evaluates the expression in R and so returns a
 matrix for any expression, only linear combinations are accepted: an expression
@@ -23,6 +25,15 @@ they are used, never by position: the rows of a ``Contrasts`` are named by its
 ``make_contrasts`` re-expresses contrasts made for another design with the same
 columns in another order, and how ``contrasts_fit`` matches contrasts to the
 coefficients of a fit.
+
+References:
+    Smyth GK (2004). Linear models and empirical Bayes methods for assessing
+    differential expression in microarray experiments. Statistical Applications in
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
+
+    Ritchie ME, Phipson B, Wu D, Hu Y, Law CW, Shi W, Smyth GK (2015). limma powers
+    differential expression analyses for RNA-sequencing and microarray studies. Nucleic
+    Acids Research 43, e47. doi:10.1093/nar/gkv007
 """
 
 import numbers

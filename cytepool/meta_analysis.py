@@ -113,33 +113,37 @@ Deliberate differences from metafor (``validation/meta_analysis.py`` reports the
       fits without Q, I^2 and H^2 (REML); for an infinite one it stops.
 
 References:
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
     Cochran WG (1954). The combination of estimates from different experiments.
-    Biometrics 10, 101-129.
+    Biometrics 10, 101-129. doi:10.2307/3001666
 
-    DerSimonian R, Laird N (1986). Meta-analysis in clinical trials. Controlled
-    Clinical Trials 7, 177-188.
+    DerSimonian R, Laird N (1986). Meta-analysis in clinical trials. Controlled Clinical
+    Trials 7, 177-188. doi:10.1016/0197-2456(86)90046-2
 
-    Hartung J (1999). An alternative method for meta-analysis. Biometrical Journal
-    41, 901-916.
+    Hartung J (1999). An alternative method for meta-analysis. Biometrical Journal 41,
+    901-916. doi:10.1002/(SICI)1521-4036(199912)41:8<901::AID-BIMJ901>3.0.CO;2-W
 
     Higgins JPT, Thompson SG (2002). Quantifying heterogeneity in a meta-analysis.
-    Statistics in Medicine 21, 1539-1558.
+    Statistics in Medicine 21, 1539-1558. doi:10.1002/sim.1186
 
-    Knapp G, Hartung J (2003). Improved tests for a random effects meta-regression
-    with a single covariate. Statistics in Medicine 22, 2693-2710.
+    Knapp G, Hartung J (2003). Improved tests for a random effects meta-regression with
+    a single covariate. Statistics in Medicine 22, 2693-2710. doi:10.1002/sim.1482
 
     Paule RC, Mandel J (1982). Consensus values and weighting factors. Journal of
-    Research of the National Bureau of Standards 87, 377-385.
+    Research of the National Bureau of Standards 87, 377-385. doi:10.6028/jres.087.022
 
     Sidik K, Jonkman JN (2002). A simple confidence interval for meta-analysis.
-    Statistics in Medicine 21, 3153-3159.
+    Statistics in Medicine 21, 3153-3159. doi:10.1002/sim.1262
 
     Viechtbauer W (2005). Bias and efficiency of meta-analytic variance estimators in
     the random-effects model. Journal of Educational and Behavioral Statistics 30,
-    261-293.
+    261-293. doi:10.3102/10769986030003261
 
     Viechtbauer W (2010). Conducting meta-analyses in R with the metafor package.
-    Journal of Statistical Software 36(3), 1-48.
+    Journal of Statistical Software 36(3), 1-48. doi:10.18637/jss.v036.i03
 """
 
 import json
@@ -823,7 +827,8 @@ class MetaAnalysisResult:
       A feature that one study tested, kept with ``min_studies=1``, has the z-test of
       that study's log2 fold change against its standard error, also with
       ``"knapp_hartung"``;
-    - ``adjusted_p_value``: Benjamini-Hochberg over the features of the table;
+    - ``adjusted_p_value``: Benjamini-Hochberg over the features of the table
+      (Benjamini and Hochberg 1995);
     - ``ci_lower`` and ``ci_upper``: the confidence interval of the log2 fold change;
     - ``tau_squared``: the between-study variance;
     - ``i_squared`` and ``h_squared``: I^2, as a proportion, and H^2;

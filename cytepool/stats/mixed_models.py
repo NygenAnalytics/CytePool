@@ -10,13 +10,14 @@ grouping factor (one random intercept per level, as ``(1 | donor)`` in lme4), an
 holds the feature's precision weights (the identity without weights). The grouping
 factors may be nested, such as ``(1 | donor/sample)``, or crossed, such as
 ``(1 | donor) + (1 | batch)``. The variance parameters are estimated by restricted
-maximum likelihood (REML), or by maximum likelihood (``method="ml"``), and the fixed
-effects by generalised least squares given them, as lme4's ``lmer`` with ``REML =
-TRUE`` (or ``FALSE``) does (Bates et al. 2015). Tests of contrasts of the fixed
-effects use Satterthwaite's degrees of freedom, as lmerTest computes them (Kuznetsova
-et al. 2017), which variancePartition's ``dream`` uses for repeated measures in gene
-expression (Hoffman and Roussos 2021); :mod:`cytepool.stats.dream` builds dream's
-precision weights and moderated tests on these fits.
+maximum likelihood (REML; Patterson and Thompson 1971), or by maximum likelihood
+(``method="ml"``), and the fixed effects by generalised least squares given them, as
+lme4's ``lmer`` with ``REML = TRUE`` (or ``FALSE``) does (Bates et al. 2015). Tests of
+contrasts of the fixed effects use Satterthwaite's degrees of freedom, as lmerTest
+computes them (Kuznetsova et al. 2017), which variancePartition's ``dream`` uses for
+repeated measures in gene expression (Hoffman and Roussos 2021);
+:mod:`cytepool.stats.dream` builds dream's precision weights and moderated tests on
+these fits.
 
 The REML criterion:
     With theta_k = sigma_k / sigma, the relative standard deviations that lme4
@@ -117,31 +118,40 @@ Limits of this version:
     (lme4 fits them).
 
 References:
-    Bates D, Maechler M, Bolker B, Walker S (2015). Fitting linear mixed-effects
-    models using lme4. Journal of Statistical Software 67(1), 1-48.
+    Bates D, Maechler M, Bolker B, Walker S (2015). Fitting linear mixed-effects models
+    using lme4. Journal of Statistical Software 67(1), 1-48. doi:10.18637/jss.v067.i01
 
-    Bertsekas DP (1982). Projected Newton methods for optimization problems with
-    simple constraints. SIAM Journal on Control and Optimization 20, 221-246.
+    Bertsekas DP (1982). Projected Newton methods for optimization problems with simple
+    constraints. SIAM Journal on Control and Optimization 20, 221-246.
+    doi:10.1137/0320018
 
-    Giesbrecht FG, Burns JC (1985). Two-stage analysis based on a mixed model: large-
-    sample asymptotic theory and small-sample simulation results. Biometrics 41,
-    477-486.
+    Giesbrecht FG, Burns JC (1985). Two-stage analysis based on a mixed model:
+    large-sample asymptotic theory and small-sample simulation results. Biometrics 41,
+    477-486. doi:10.2307/2530872
 
-    Harville DA (1977). Maximum likelihood approaches to variance component
-    estimation and to related problems. Journal of the American Statistical
-    Association 72, 320-338.
+    Golub GH, Van Loan CF (2013). Matrix Computations, 4th edition. Johns Hopkins
+    University Press, Baltimore.
+
+    Harville DA (1977). Maximum likelihood approaches to variance component estimation
+    and to related problems. Journal of the American Statistical Association 72,
+    320-338. doi:10.1080/01621459.1977.10480998
 
     Henderson CR (1975). Best linear unbiased estimation and prediction under a
-    selection model. Biometrics 31, 423-447.
+    selection model. Biometrics 31, 423-447. doi:10.2307/2529430
 
-    Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis
-    for repeated measures designs. Bioinformatics 37, 192-201.
+    Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
+    repeated measures designs. Bioinformatics 37, 192-201.
+    doi:10.1093/bioinformatics/btaa687
 
     Kuznetsova A, Brockhoff PB, Christensen RHB (2017). lmerTest package: tests in
     linear mixed effects models. Journal of Statistical Software 82(13), 1-26.
+    doi:10.18637/jss.v082.i13
+
+    Patterson HD, Thompson R (1971). Recovery of inter-block information when block
+    sizes are unequal. Biometrika 58, 545-554. doi:10.1093/biomet/58.3.545
 
     Satterthwaite FE (1946). An approximate distribution of estimates of variance
-    components. Biometrics Bulletin 2, 110-114.
+    components. Biometrics Bulletin 2, 110-114. doi:10.2307/3002019
 """
 
 import math

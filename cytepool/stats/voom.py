@@ -85,12 +85,14 @@ Deliberate deviations, where limma returns values without meaning or fails:
   zero. limma returns missing weights for every observation of such a feature.
 
 References:
-    Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear
-    model analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+    Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
+    analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+    doi:10.1186/gb-2014-15-2-r29
 
     Liu R, Holik AZ, Su S, Jansz N, Chen K, Leong HS, Blewitt ME, Asselin-Labat ML,
     Smyth GK, Ritchie ME (2015). Why weight? Modelling sample and observational level
     variability improves power in RNA-seq analyses. Nucleic Acids Research 43, e97.
+    doi:10.1093/nar/gkv412
 """
 
 import math

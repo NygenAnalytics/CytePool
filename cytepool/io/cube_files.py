@@ -1,9 +1,9 @@
 """Cube files: a cube saved as a Zarr v3 group and read as it is used.
 
 A cube file is a directory, by convention named ``<name>.cube.zarr``, holding a Zarr v3
-group (https://zarr-specs.readthedocs.io/en/latest/v3/core/) that any Zarr v3 reader
-can open. ``write_cube`` saves a cube. ``read_cube`` opens one: it reads the metadata
-and the sample, group and feature tables, and leaves the layers on disk as
+group, as the Zarr core specification (Miles et al. 2025) defines it, that any Zarr v3
+reader can open. ``write_cube`` saves a cube. ``read_cube`` opens one: it reads the
+metadata and the sample, group and feature tables, and leaves the layers on disk as
 ``ZarrArray`` objects that the cube reads one group at a time, and only the chunks
 that hold the features it needs, so a cube far larger than memory can be opened and
 analysed group by group, or for a few features of every group.
@@ -66,8 +66,10 @@ beyond 8,192 samples of float64 values.) ``n_cells`` is int32
 Every array has the default chunk key encoding with ``/``, a fill value of zero
 (``false`` for bool) and the ``bytes`` codec, little endian, followed by ``gzip`` (the
 default, level 4), ``zstd`` (level 3, with checksums; Python 3.14 or newer) or no
-compression. Chunks that hold only zeros are not stored, as Zarr allows, and read as
-zeros.
+compression: the codecs of the Zarr specifications (Zarr developers 2023;
+Maitin-Shepard 2025), which store gzip streams (RFC 1952; Deutsch 1996) and Zstandard
+frames (RFC 8878; Collet and Kucherawy 2021). Chunks that hold only zeros are not
+stored, as Zarr allows, and read as zeros.
 
 Reading is strict: the format name and version, every attribute above, every node's
 metadata (see ``cytepool.io.zarr``), dimension names, data types and text codes are
@@ -94,6 +96,22 @@ directory behind (between the two renames, the old store survives only under its
 hidden name); a partial directory has no root ``zarr.json``, so it does not open as a
 group. Files are not flushed to disk with fsync, so the guarantee covers failures of
 the writing process, not of the operating system.
+
+References:
+    Miles A, Striebel J, Rzepka N, Maitin-Shepard J, Moore J, eds (2025). Zarr core
+    specification, version 3.1. https://zarr-specs.readthedocs.io/en/latest/v3/core/
+
+    Zarr developers (2023). Bytes codec, version 1.0, and gzip codec, version 1.0. Zarr
+    specifications, https://zarr-specs.readthedocs.io/en/latest/v3/codecs/
+
+    Maitin-Shepard J (2025). Zstd codec. Zarr extensions,
+    https://github.com/zarr-developers/zarr-extensions/tree/main/codecs/zstd
+
+    Deutsch P (1996). GZIP file format specification version 4.3. RFC 1952, RFC Editor.
+    doi:10.17487/RFC1952
+
+    Collet Y, Kucherawy M (2021). Zstandard Compression and the 'application/zstd' Media
+    Type. RFC 8878, RFC Editor. doi:10.17487/RFC8878
 """
 
 import os

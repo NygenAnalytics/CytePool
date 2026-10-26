@@ -194,7 +194,11 @@ def _package_cache_class() -> type:
     from numba.core import caching
 
     class PackageLocator(caching._CacheLocator):
-        """Places the cache files of package routines under the keyed directory."""
+        """Places the cache files of package routines under the keyed directory.
+
+        It follows numba's ``UserProvidedCacheLocator``, as ``THIRD_PARTY_NOTICES.md``
+        records.
+        """
 
         def __init__(self, py_func: Any, py_file: str, directory: Path) -> None:
             self._py_file = py_file

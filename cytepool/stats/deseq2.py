@@ -6,7 +6,8 @@ DESeq2 (Love, Huber and Anders 2014) models the count y_gi of gene g in sample i
     log2(mu_gi) = log2(s_i) + x_i' beta_g,
 
 with s_i the size factor of sample i (by default the median-of-ratios factors of
-:func:`~cytepool.normalization.median_ratio_size_factors`), x_i its row of the design
+Anders and Huber (2010), :func:`~cytepool.normalization.median_ratio_size_factors`),
+x_i its row of the design
 and beta_g the coefficients of gene g on the log2 scale. :func:`fit_deseq2` estimates
 the dispersions and fits every gene, as ``DESeq()`` does; :func:`deseq2_wald_test`
 tests a coefficient or contrast and :func:`deseq2_likelihood_ratio_test` a reduced
@@ -26,7 +27,7 @@ Dispersions (:func:`deseq2_dispersions`, as ``estimateDispersions()``):
    probing, as PyDESeq2 computes them). Means below ``min_mean`` (0.5) are raised to
    it.
 2. Gene-wise estimates: the maximum of the Cox-Reid adjusted profile log-likelihood
-   (McCarthy, Chen and Smyth 2012), conditional on those means,
+   (Cox and Reid 1987; McCarthy, Chen and Smyth 2012), conditional on those means,
 
        l(alpha) - 1/2 log det(X' W X),    W = diag(mu / (1 + alpha mu)),
 
@@ -61,7 +62,8 @@ Dispersions (:func:`deseq2_dispersions`, as ``estimateDispersions()``):
    maximum a posteriori estimate.
 
 Each maximum is found from the sign changes of the derivative on a grid of 30 log
-dispersions, refined to 1e-12, the largest of several being kept. The derivative is
+dispersions, refined to 1e-12 by the Illinois variant of false position (Dowell and
+Jarratt 1971), the largest of several being kept. The derivative is
 computed without cancellation where the dispersion is small: as series in the
 dispersion and from logarithms of ratios.
 
@@ -109,14 +111,14 @@ Tests and ``results()``:
   the largest distance over all samples (found by probing). A numeric covariate of two
   values is not such a comparison; a design matrix that is not a ``Design`` is, when
   its rows take two distinct values of zeros and ones.
-- Adjusted p-values are Benjamini-Hochberg's, after independent filtering on the mean
-  normalized count (Bourgon, Gentleman and Huber 2010): at 50 quantiles of the mean
-  counts, from the fraction of genes without counts to 0.95, the adjusted p-values of
-  the genes at or above the quantile, and the number of them below ``alpha``. The
-  quantile kept is the lowest whose number exceeds the maximum of a LOWESS fit (span
-  1/5) less the root mean square of its residuals, or failing that 90% and then 80% of
-  that maximum (found by probing), or the lowest quantile; and the lowest quantile when
-  no number exceeds 10. Genes below it get NaN.
+- Adjusted p-values are Benjamini-Hochberg's (Benjamini and Hochberg 1995), after
+  independent filtering on the mean normalized count (Bourgon, Gentleman and Huber
+  2010): at 50 quantiles of the mean counts, from the fraction of genes without counts
+  to 0.95, the adjusted p-values of the genes at or above the quantile, and the number
+  of them below ``alpha``. The quantile kept is the lowest whose number exceeds the
+  maximum of a LOWESS fit (span 1/5) less the root mean square of its residuals, or
+  failing that 90% and then 80% of that maximum (found by probing), or the lowest
+  quantile; and the lowest quantile when no number exceeds 10. Genes below it get NaN.
 
 Deliberate differences from DESeq2, found by probing:
 
@@ -147,22 +149,47 @@ trend and glmGamPoi, observation weights, normalization factors that differ betw
 genes, thresholds on the fold change (``lfcThreshold``) and t-distributed Wald tests
 (``useT``).
 
+The constants and the structure taken from PyDESeq2 (Muzellec et al. 2023), in the
+robust dispersions of Cook's distances, the rough dispersions and the fallback to the
+mean trend, are recorded, with PyDESeq2's license, in ``THIRD_PARTY_NOTICES.md``.
+
 References:
     Love MI, Huber W, Anders S (2014). Moderated estimation of fold change and
     dispersion for RNA-seq data with DESeq2. Genome Biology 15, 550.
+    doi:10.1186/s13059-014-0550-8
 
     McCarthy DJ, Chen Y, Smyth GK (2012). Differential expression analysis of
-    multifactor RNA-Seq experiments with respect to biological variation. Nucleic
-    Acids Research 40, 4288-4297.
+    multifactor RNA-Seq experiments with respect to biological variation. Nucleic Acids
+    Research 40, 4288-4297. doi:10.1093/nar/gks042
 
     Bourgon R, Gentleman R, Huber W (2010). Independent filtering increases detection
-    power for high-throughput experiments. PNAS 107, 9546-9551.
+    power for high-throughput experiments. Proceedings of the National Academy of
+    Sciences 107, 9546-9551. doi:10.1073/pnas.0914005107
 
     Cook RD (1977). Detection of influential observation in linear regression.
-    Technometrics 19, 15-18.
+    Technometrics 19, 15-18. doi:10.1080/00401706.1977.10489493
 
     Muzellec B, Telenczuk M, Cabeli V, Andreux M (2023). PyDESeq2: a python package for
     bulk RNA-seq differential expression analysis. Bioinformatics 39, btad547.
+    doi:10.1093/bioinformatics/btad547
+
+    Anders S, Huber W (2010). Differential expression analysis for sequence count data.
+    Genome Biology 11, R106. doi:10.1186/gb-2010-11-10-r106
+
+    Cox DR, Reid N (1987). Parameter orthogonality and approximate conditional
+    inference. Journal of the Royal Statistical Society B 49, 1-18.
+    doi:10.1111/j.2517-6161.1987.tb01422.x
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Dowell M, Jarratt P (1971). A modified regula falsi method for computing the root of
+    an equation. BIT 11, 168-174. doi:10.1007/BF01934364
+
+    Olver FWJ, Olde Daalhuis AB, Lozier DW, Schneider BI, Boisvert RF, Clark CW,
+    Miller BR, Saunders BV, Cohl HS, McClain MA, eds (2026). NIST Digital Library of
+    Mathematical Functions, release 1.2.8 of 2026-09-15. https://dlmf.nist.gov/
 """
 
 import math

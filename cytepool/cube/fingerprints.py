@@ -22,9 +22,10 @@ Parts and digests:
     of the whole cube would need every layer read to check any of it.
 
 Encoding, version 1 (``FINGERPRINT_VERSION``):
-    A digest is the SHA-256 hash of a byte string, written as ``sha256:`` and 64
-    lowercase hexadecimal digits. Numbers in byte strings are little endian: ``u64``
-    and ``i64`` are unsigned and signed 8-byte integers. Text is UTF-8, written as
+    A digest is the SHA-256 hash (National Institute of Standards and Technology
+    2015) of a byte string, written as ``sha256:`` and 64 lowercase hexadecimal
+    digits. Numbers in byte strings are little endian: ``u64`` and ``i64`` are
+    unsigned and signed 8-byte integers. Text is UTF-8 (Yergeau 2003), written as
     its length in bytes (``u64``) followed by its bytes; a lone surrogate, which a
     Python string can hold but a cube file cannot, is written in its 3-byte form, as
     Python's ``surrogatepass`` error handler writes it. Strings are taken as they
@@ -38,9 +39,9 @@ Encoding, version 1 (``FINGERPRINT_VERSION``):
       missing value), then the bytes of the values present, one after another;
     - ``bool``: one byte per value, 0 or 1;
     - ``int8`` to ``int64`` and ``uint8`` to ``uint64``: the values in that type;
-    - ``float16``, ``float32`` and ``float64``: the values in that type, with -0.0
-      written as 0.0 and every NaN as the quiet NaN (``0x7E00``, ``0x7FC00000`` or
-      ``0x7FF8000000000000``);
+    - ``float16``, ``float32`` and ``float64``: the values in that type, the binary
+      formats of IEEE 754 (IEEE 2019), with -0.0 written as 0.0 and every NaN as the
+      quiet NaN (``0x7E00``, ``0x7FC00000`` or ``0x7FF8000000000000``);
     - ``complex64`` and ``complex128``: the real and imaginary parts of each value,
       as floats of half the size written as above; a value with a NaN part is
       missing, and both its parts are written as the quiet NaN;
@@ -56,15 +57,15 @@ Encoding, version 1 (``FINGERPRINT_VERSION``):
     Cell numbers: the number of samples and of groups (``u64`` each), then
     ``n_cells`` as ``i64``, sample by sample.
 
-    Normalization: the mapping as a JSON value, each value written as a tag byte and
-    a payload: ``n`` for null; ``f`` and ``t`` for false and true; ``i`` and the
-    decimal digits of the number as text (with a leading ``-`` when negative) for a
-    number with a whole value, such as 10000 or 10000.0; ``d`` and its 8 bytes as a
-    float64 for any other number; ``s`` and the text for a string; ``a``, the number
-    of items (``u64``) and the items for an array; ``o``, the number of members
-    (``u64``) and, in the order of the UTF-8 bytes of their keys, each key (text)
-    and value for an object. A number is thus taken by its value, however a JSON
-    writer spells it.
+    Normalization: the mapping as a JSON value (Bray 2017), each value written as a
+    tag byte and a payload: ``n`` for null; ``f`` and ``t`` for false and true;
+    ``i`` and the decimal digits of the number as text (with a leading ``-`` when
+    negative) for a number with a whole value, such as 10000 or 10000.0; ``d`` and
+    its 8 bytes as a float64 for any other number; ``s`` and the text for a string;
+    ``a``, the number of items (``u64``) and the items for an array; ``o``, the
+    number of members (``u64``) and, in the order of the UTF-8 bytes of their keys,
+    each key (text) and value for an object. A number is thus taken by its value,
+    however a JSON writer spells it.
 
     Layers: one digest for each group of each layer, of the group's samples x
     features block: the number of samples and of features (``u64`` each), then the
@@ -101,6 +102,20 @@ Digest records:
          "layers": {<name>: {"type": "int64" or "float64",
                              "groups": [<digest of each group>]}},
          "fingerprint": <digest of the manifest>}
+
+References:
+    National Institute of Standards and Technology (2015). Secure Hash Standard (SHS).
+    Federal Information Processing Standards Publication 180-4.
+    doi:10.6028/NIST.FIPS.180-4
+
+    Yergeau F (2003). UTF-8, a transformation format of ISO 10646. RFC 3629, RFC Editor.
+    doi:10.17487/RFC3629
+
+    Bray T (2017). The JavaScript Object Notation (JSON) Data Interchange Format.
+    RFC 8259, RFC Editor. doi:10.17487/RFC8259
+
+    IEEE (2019). IEEE Standard for Floating-Point Arithmetic. IEEE Std 754-2019.
+    doi:10.1109/IEEESTD.2019.8766229
 """
 
 import hashlib

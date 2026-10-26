@@ -20,23 +20,27 @@ code, such as per-gene loops.
 
 Methods:
     - Normal: Q(x) = erfc(x / sqrt 2) / 2 from the C library's ``erfc``, with the
-      rounding error of x / sqrt 2 corrected to first order (Dekker's exact product), so
-      the tails keep full relative accuracy; beyond x = 37, log Q(x) from Laplace's
-      continued fraction for Mills' ratio. Quantiles by Wichura's (1988) algorithm AS 241.
-    - Student t: P(|T| > |x|) = I_w(df/2, 1/2) with w = df / (df + x^2); df may be
-      non-integer and df = inf gives the normal distribution. Quantiles: closed forms for
-      df = 1, 2 and inf; otherwise Newton's method in log t on log P(T > t), or on
-      log P(|T| <= t) for p > 1/4 where the quantile is small, started from the better
-      of the Cornish-Fisher expansion (Abramowitz and Stegun 26.7.5) and the power-law
-      tail, and kept inside a bisection bracket.
-    - F: P(F > x) = I_w(dfd/2, dfn/2) with w = dfd / (dfd + dfn x); dfd = inf gives
-      dfn F ~ chi-squared(dfn), and dfn = inf gives dfd / F ~ chi-squared(dfd).
+      rounding error of x / sqrt 2 corrected to first order (Dekker's exact product,
+      Dekker 1971), so the tails keep full relative accuracy; beyond x = 37, log Q(x)
+      from Laplace's continued fraction for Mills' ratio (DLMF 7.9.2). Quantiles by
+      Wichura's (1988) algorithm AS 241.
+    - Student t (Abramowitz and Stegun 1964, 26.7): P(|T| > |x|) = I_w(df/2, 1/2) with
+      w = df / (df + x^2); df may be non-integer and df = inf gives the normal
+      distribution. Quantiles: closed forms for df = 1, 2 and inf; otherwise Newton's
+      method in log t on log P(T > t), or on log P(|T| <= t) for p > 1/4 where the
+      quantile is small, started from the better of the Cornish-Fisher expansion
+      (Abramowitz and Stegun 1964, 26.7.5) and the power-law tail, and kept inside a
+      bisection bracket.
+    - F (Abramowitz and Stegun 1964, 26.6; Johnson, Kotz and Balakrishnan 1995,
+      chapter 27): P(F > x) = I_w(dfd/2, dfn/2) with w = dfd / (dfd + dfn x); dfd = inf
+      gives dfn F ~ chi-squared(dfn), and dfn = inf gives dfd / F ~ chi-squared(dfd).
       Quantiles: Newton's method in log x on the logarithm of the tail that holds
-      min(p, 1 - p), started from the better of Paulson's normal approximation to
-      F^(1/3) and the power law of that tail, and kept inside a bisection bracket;
+      min(p, 1 - p), started from the better of Paulson's (1942) normal approximation
+      to F^(1/3) and the power law of that tail, and kept inside a bisection bracket;
       dfn = inf uses 1 / F ~ F(dfd, dfn).
-    - Chi-squared and gamma: the regularized incomplete gamma function; chi-squared
-      quantiles are those of X / df ~ F(df, inf).
+    - Chi-squared and gamma (Abramowitz and Stegun 1964, 26.4): the regularized
+      incomplete gamma function; chi-squared quantiles are those of X / df ~
+      F(df, inf).
     - Beta: the regularized incomplete beta function.
     - Hypergeometric: each probability from Loader's (2000) saddle-point form of the
       binomial probabilities, P(X = k) = b(k; n, p) b(N - k; M - n, p) / b(N; M, p) with
@@ -51,17 +55,31 @@ formed as df (x^2 - 1) / (2 (df + x^2)) for the t distribution), so no accuracy 
 to rounding a transformed argument; see ``cytepool.stats.special``.
 
 References:
-    - Abramowitz M, Stegun IA (1964). Handbook of Mathematical Functions. National Bureau
-      of Standards, sections 26.4, 26.6, 26.7.
-    - Dekker TJ (1971). A floating-point technique for extending the available
-      precision. Numerische Mathematik 18:224-242.
-    - Johnson NL, Kotz S, Balakrishnan N (1995). Continuous Univariate Distributions,
-      volume 2, 2nd edition. Wiley, chapter 27.
-    - Loader C (2000). Fast and accurate computation of binomial probabilities.
-    - Paulson E (1942). An approximate normalization of the analysis of variance
-      distribution. Annals of Mathematical Statistics 13:233-235.
-    - Wichura MJ (1988). Algorithm AS 241: the percentage points of the normal
-      distribution. Journal of the Royal Statistical Society C 37:477-484.
+    Abramowitz M, Stegun IA, eds (1964). Handbook of Mathematical Functions with
+    Formulas, Graphs, and Mathematical Tables. Applied Mathematics Series 55, National
+    Bureau of Standards, Washington.
+
+    Dekker TJ (1971). A floating-point technique for extending the available precision.
+    Numerische Mathematik 18, 224-242. doi:10.1007/BF01397083
+
+    Johnson NL, Kotz S, Balakrishnan N (1995). Continuous Univariate Distributions,
+    Volume 2, 2nd edition. Wiley, New York.
+
+    Loader C (2000). Fast and accurate computation of binomial probabilities. Technical
+    note, Lucent Technologies, Murray Hill; the version of 5 February 2002 is available
+    at https://www.r-project.org/doc/reports/CLoader-dbinom-2002.pdf
+
+    Paulson E (1942). An approximate normalization of the analysis of variance
+    distribution. Annals of Mathematical Statistics 13, 233-235.
+    doi:10.1214/aoms/1177731608
+
+    Wichura MJ (1988). Algorithm AS 241: the percentage points of the normal
+    distribution. Journal of the Royal Statistical Society C 37, 477-484.
+    doi:10.2307/2347330
+
+    Olver FWJ, Olde Daalhuis AB, Lozier DW, Schneider BI, Boisvert RF, Clark CW,
+    Miller BR, Saunders BV, Cohl HS, McClain MA, eds (2026). NIST Digital Library of
+    Mathematical Functions, release 1.2.8 of 2026-09-15. https://dlmf.nist.gov/
 """
 
 import math

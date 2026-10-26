@@ -95,21 +95,21 @@ Accuracy:
 
 References:
     Phipson B, Sim CB, Porrello ER, Hewitt AW, Powell J, Oshlack A (2022). propeller:
-    testing for differences in cell type proportions in single cell data.
-    Bioinformatics 38, 4720-4726.
+    testing for differences in cell type proportions in single cell data. Bioinformatics
+    38, 4720-4726. doi:10.1093/bioinformatics/btac582
 
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
     differential expression in microarray experiments. Statistical Applications in
-    Genetics and Molecular Biology 3, article 3.
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
 
-    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust
-    hyperparameter estimation protects against hypervariable genes and improves
-    power to detect differential expression. Annals of Applied Statistics 10,
-    946-963.
+    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust hyperparameter
+    estimation protects against hypervariable genes and improves power to detect
+    differential expression. Annals of Applied Statistics 10, 946-963.
+    doi:10.1214/16-AOAS920
 
     Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
     and powerful approach to multiple testing. Journal of the Royal Statistical
-    Society B 57, 289-300.
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
 """
 
 import json

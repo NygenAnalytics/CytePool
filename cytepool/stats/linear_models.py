@@ -9,16 +9,21 @@ coefficients can be re-expressed as contrasts. The results match limma's
 
 where W_g is the diagonal matrix of the feature's precision weights and R is
 the identity, or the correlation matrix of a known correlation between samples
-of the same block (Smyth 2004; Smyth, Michaud and Scott 2005).
+of the same block (Smyth 2004; Smyth, Michaud and Scott 2005). A feature with missing
+values or weights of its own is fitted to its observed samples by a Householder QR
+decomposition of its own (Golub and Van Loan 2013).
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
-    differential expression in microarray experiments. Statistical
-    Applications in Genetics and Molecular Biology 3, article 3.
+    differential expression in microarray experiments. Statistical Applications in
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
 
-    Smyth GK, Michaud J, Scott HS (2005). Use of within-array replicate spots
-    for assessing differential expression in microarray experiments.
-    Bioinformatics 21, 2067-2075.
+    Smyth GK, Michaud J, Scott HS (2005). Use of within-array replicate spots for
+    assessing differential expression in microarray experiments. Bioinformatics 21,
+    2067-2075. doi:10.1093/bioinformatics/bti270
+
+    Golub GH, Van Loan CF (2013). Matrix Computations, 4th edition. Johns Hopkins
+    University Press, Baltimore.
 """
 
 import math

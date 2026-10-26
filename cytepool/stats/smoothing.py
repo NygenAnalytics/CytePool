@@ -36,24 +36,25 @@ repeated four times (de Boor 1978), restricted to the subspace with zero
 second derivative at both boundary knots.
 
 References:
-    Cleveland WS (1979). Robust locally weighted regression and smoothing
-    scatterplots. Journal of the American Statistical Association 74,
-    829-836.
+    Cleveland WS (1979). Robust locally weighted regression and smoothing scatterplots.
+    Journal of the American Statistical Association 74, 829-836.
+    doi:10.1080/01621459.1979.10481038
 
-    Cleveland WS (1981). LOWESS: a program for smoothing scatterplots by
-    robust locally weighted regression. The American Statistician 35, 54.
+    Cleveland WS (1981). LOWESS: a program for smoothing scatterplots by robust locally
+    weighted regression. The American Statistician 35, 54. doi:10.2307/2683591
 
     de Boor C (1978). A Practical Guide to Splines. Springer, New York.
+    doi:10.1007/978-1-4612-6333-3
 
-    Freedman D, Diaconis P (1981). On the histogram as a density estimator: L2
-    theory. Zeitschrift fuer Wahrscheinlichkeitstheorie und verwandte Gebiete
-    57, 453-476.
+    Freedman D, Diaconis P (1981). On the histogram as a density estimator: L2 theory.
+    Zeitschrift fuer Wahrscheinlichkeitstheorie und verwandte Gebiete 57, 453-476.
+    doi:10.1007/BF01025868
 
-    Hastie TJ (1992). Generalized additive models. Chapter 7 of Statistical
-    Models in S, eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole.
+    Hastie TJ (1992). Generalized additive models. Chapter 7 of Statistical Models in S,
+    eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole, Pacific Grove.
 
-    Scott DW (1979). On optimal and data-based histograms. Biometrika 66,
-    605-610.
+    Scott DW (1979). On optimal and data-based histograms. Biometrika 66, 605-610.
+    doi:10.1093/biomet/66.3.605
 """
 
 import math

@@ -56,14 +56,15 @@ prior weights are given (see :func:`fit_f_distribution_likelihood`).
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
     differential expression in microarray experiments. Statistical Applications in
-    Genetics and Molecular Biology 3, article 3.
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
 
-    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust
-    hyperparameter estimation protects against hypervariable genes and improves power
-    to detect differential expression. Annals of Applied Statistics 10, 946-963.
+    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust hyperparameter
+    estimation protects against hypervariable genes and improves power to detect
+    differential expression. Annals of Applied Statistics 10, 946-963.
+    doi:10.1214/16-AOAS920
 
     McCarthy DJ, Smyth GK (2009). Testing significance relative to a fold-change
-    threshold is a TREAT. Bioinformatics 25, 765-771.
+    threshold is a TREAT. Bioinformatics 25, 765-771. doi:10.1093/bioinformatics/btp053
 
     Loennstedt I, Speed TP (2002). Replicated microarray data. Statistica Sinica 12,
     31-46.
@@ -71,9 +72,18 @@ References:
     Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK (2025). edgeR v4: powerful
     differential analysis of sequencing data with expanded functionality and improved
     support for small counts and larger datasets. Nucleic Acids Research 53, gkaf018.
+    doi:10.1093/nar/gkaf018
 
     Brent RP (1973). Algorithms for Minimization without Derivatives. Prentice-Hall,
-    Englewood Cliffs, chapter 5.
+    Englewood Cliffs.
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Olver FWJ, Olde Daalhuis AB, Lozier DW, Schneider BI, Boisvert RF, Clark CW,
+    Miller BR, Saunders BV, Cohl HS, McClain MA, eds (2026). NIST Digital Library of
+    Mathematical Functions, release 1.2.8 of 2026-09-15. https://dlmf.nist.gov/
 """
 
 import math
@@ -561,7 +571,7 @@ def fit_f_distribution_likelihood(
 
     1. Each usable variance gets the two-sided tail probability of s_g^2 / s0^2
        under F(d_g, d0) from the fit above, adjusted by Benjamini and Hochberg's
-       method; those below 0.3 are outliers (large or small variances).
+       (1995) method; those below 0.3 are outliers (large or small variances).
     2. The fit is repeated with each outlier's prior weight multiplied by its
        adjusted probability.
     3. pi_g = min(1, p_g / ((r_g - 0.5) / n)), with p_g the upper tail

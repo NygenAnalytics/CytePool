@@ -1,4 +1,14 @@
-"""Linear algebra shared by the design checks, normalization and the model fits."""
+"""Linear algebra shared by the design checks, normalization and the model fits.
+
+``column_space`` finds the columns of a matrix that span its column space by classical
+Gram-Schmidt applied twice, which keeps the basis orthonormal to rounding (Giraud,
+Langou and Rozloznik 2005), with the rank rule of R's ``qr()``.
+
+References:
+    Giraud L, Langou J, Rozloznik M (2005). The loss of orthogonality in the
+    Gram-Schmidt orthogonalization process. Computers & Mathematics with Applications
+    50, 1069-1075. doi:10.1016/j.camwa.2005.08.009
+"""
 
 from dataclasses import dataclass
 

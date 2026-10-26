@@ -87,14 +87,20 @@ Deliberate deviations, where limma returns values without meaning or fails:
 References:
     Ritchie ME, Diyagama D, Neilson J, van Laar R, Dobrovic A, Holloway A, Smyth GK
     (2006). Empirical array quality weights in the analysis of microarray data. BMC
-    Bioinformatics 7, 261.
+    Bioinformatics 7, 261. doi:10.1186/1471-2105-7-261
 
     Liu R, Holik AZ, Su S, Jansz N, Chen K, Leong HS, Blewitt ME, Asselin-Labat ML,
     Smyth GK, Ritchie ME (2015). Why weight? Modelling sample and observational level
     variability improves power in RNA-seq analyses. Nucleic Acids Research 43, e97.
+    doi:10.1093/nar/gkv412
 
     Smyth GK (2002). An efficient algorithm for REML in heteroscedastic regression.
     Journal of Computational and Graphical Statistics 11, 836-847.
+    doi:10.1198/106186002871
+
+    Giraud L, Langou J, Rozloznik M (2005). The loss of orthogonality in the
+    Gram-Schmidt orthogonalization process. Computers & Mathematics with Applications
+    50, 1069-1075. doi:10.1016/j.camwa.2005.08.009
 """
 
 import math
@@ -821,8 +827,9 @@ def _project_gene(
     The usable samples have an observed response and a positive weight. Their design
     rows and response, scaled by the square roots of the weights, are projected on
     the span of the design columns, taken in order and orthonormalised by
-    Gram-Schmidt applied twice; a column whose part orthogonal to the kept columns
-    has at most ``tolerance`` times its own norm is aliased, as by R's ``qr()``.
+    Gram-Schmidt applied twice (Giraud, Langou and Rozloznik 2005); a column whose part
+    orthogonal to the kept columns has at most ``tolerance`` times its own norm is
+    aliased, as by R's ``qr()``.
 
     Writes the usable samples to ``rows[:m]``, the orthonormal basis to
     ``gene_basis[:rank, :m]``, the residuals to ``residuals[:m]`` and the leverages

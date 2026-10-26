@@ -139,26 +139,41 @@ Deliberate differences from limma:
       infinite.
 
 References:
-    Wu D, Lim E, Vaillant F, Asselin-Labat M-L, Visvader JE, Smyth GK (2010). ROAST:
+    Wu D, Lim E, Vaillant F, Asselin-Labat ML, Visvader JE, Smyth GK (2010). ROAST:
     rotation gene set tests for complex microarray experiments. Bioinformatics 26,
-    2176-2182.
+    2176-2182. doi:10.1093/bioinformatics/btq401
 
     Majewski IJ, Ritchie ME, Phipson B, Corbin J, Pakusch M, Ebert A, Busslinger M,
-    Koseki H, Hu Y, Smyth GK, Alexander WS, Hilton DJ, Blewitt ME (2010). Opposing
-    roles of polycomb repressive complexes in hematopoietic stem and progenitor
-    cells. Blood 116, 731-739.
+    Koseki H, Hu Y, Smyth GK, Alexander WS, Hilton DJ, Blewitt ME (2010). Opposing roles
+    of polycomb repressive complexes in hematopoietic stem and progenitor cells. Blood
+    116, 731-739. doi:10.1182/blood-2009-12-260760
 
     Langsrud O (2005). Rotation tests. Statistics and Computing 15, 53-60.
+    doi:10.1007/s11222-005-4789-5
 
-    Phipson B, Smyth GK (2010). Permutation p-values should never be zero:
-    calculating exact p-values when permutations are randomly drawn. Statistical
-    Applications in Genetics and Molecular Biology 9, article 39.
+    Phipson B, Smyth GK (2010). Permutation p-values should never be zero: calculating
+    exact p-values when permutations are randomly drawn. Statistical Applications in
+    Genetics and Molecular Biology 9, article 39. doi:10.2202/1544-6115.1585
 
-    Bailey BJR (1980). Accurate normalizing transformations of a Student's t
-    variate. Journal of the Royal Statistical Society C 29, 304-306.
+    Bailey BJR (1980). Accurate normalizing transformations of a Student's t variate.
+    Journal of the Royal Statistical Society C 29, 304-306. doi:10.2307/2346906
 
-    Routledge RD (1994). Practicing safe statistics with the mid-p. Canadian Journal
-    of Statistics 22, 103-110.
+    Routledge RD (1994). Practicing safe statistics with the mid-p. Canadian Journal of
+    Statistics 22, 103-110. doi:10.2307/3315826
+
+    Smyth GK (2004). Linear models and empirical Bayes methods for assessing
+    differential expression in microarray experiments. Statistical Applications in
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Hoare CAR (1961). Algorithm 65: find. Communications of the ACM 4, 321-322.
+    doi:10.1145/366622.366647
+
+    Wirth N (1976). Algorithms + Data Structures = Programs. Prentice-Hall, Englewood
+    Cliffs.
 """
 
 import math
@@ -379,8 +394,9 @@ def mroast(
         ``gene_set``; ``n_genes``; ``proportion_down`` and ``proportion_up``, the
         proportions of the set's genes active down and up; ``direction``, ``"up"`` or
         ``"down"`` (None where the p-value is NaN); ``p_value``, the two-sided
-        directional p-value; ``adjusted_p_value``, Benjamini-Hochberg over the sets,
-        limma's default (its other ``adjust.method`` choices are not offered);
+        directional p-value; ``adjusted_p_value``, Benjamini-Hochberg over the sets
+        (Benjamini and Hochberg 1995), limma's default (its other ``adjust.method``
+        choices are not offered);
         ``mixed_p_value``, the p-value of the mixed alternative; and
         ``adjusted_mixed_p_value``. A set without genes has NaN proportions and
         p-values.
@@ -757,9 +773,9 @@ def _largest_set(starts: npt.NDArray[np.int64]) -> int:
 def _sum_of_largest(values: FloatArray, m: int, h: int) -> float:
     """The sum of the h largest of ``values[:m]``, which it reorders.
 
-    Wirth's selection (Hoare's partition, kept to the side that holds the target)
-    puts the (m - h)-th smallest value in its sorted place, with no larger value
-    before it, in time proportional to m on average.
+    Wirth's selection (Wirth 1976), Hoare's partition (Hoare 1961) kept to the side
+    that holds the target, puts the (m - h)-th smallest value in its sorted place, with
+    no larger value before it, in time proportional to m on average.
     """
     target = m - h
     low = 0

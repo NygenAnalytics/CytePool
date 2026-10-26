@@ -3,8 +3,21 @@
 ``from_cells`` pools the cells of every sample and group in one pass over the
 stored counts. Cells are sorted by sample and group, and each thread pools whole
 sample x group entries into rows of the result that no other thread writes, so no
-atomic updates are needed. ``from_bulk`` wraps a samples x features count matrix as
-a cube with a single group.
+atomic updates are needed. The entries are shared among the threads by the
+longest-processing-time rule (Graham 1969); repeated entries of a row of a sparse
+matrix are summed through a sparse-set index (Briggs and Torczon 1993), and log1p is
+computed as Goldberg (1991, Theorem 4) shows. ``from_bulk`` wraps a samples x features
+count matrix as a cube with a single group.
+
+References:
+    Graham RL (1969). Bounds on multiprocessing timing anomalies. SIAM Journal on
+    Applied Mathematics 17, 416-429. doi:10.1137/0117039
+
+    Briggs P, Torczon L (1993). An efficient representation for sparse sets. ACM Letters
+    on Programming Languages and Systems 2, 59-69. doi:10.1145/176454.176484
+
+    Goldberg D (1991). What every computer scientist should know about floating-point
+    arithmetic. ACM Computing Surveys 23, 5-48. doi:10.1145/103162.103163
 """
 
 import heapq

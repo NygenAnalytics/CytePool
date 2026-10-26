@@ -1,16 +1,16 @@
 """Differential expression between samples, one group (cell type) of a cube at a time.
 
-:func:`limma_voom` and :func:`limma_trend` run the limma workflows for RNA-seq counts on
-the pseudobulk counts of each group of a cube: limma-voom, which gives every
-observation a precision weight from the mean-variance trend of the log counts per
-million (Law et al. 2014), and limma-trend, which lets the prior variance of the
-empirical Bayes moderation follow that trend instead. :func:`dream_voom` runs
-variancePartition's dream (Hoffman and Roussos 2021), limma-voom with a linear mixed
-model in place of the linear model, for designs with random effects such as several
-samples of each donor. Each tests the named contrasts of a
-:class:`~cytepool.design.Design` and returns, for every group and contrast, a table of
-the tested features with ``topTable``'s statistics, together with a summary, the
-samples behind every fit and a provenance record.
+:func:`limma_voom` and :func:`limma_trend` run the limma workflows for RNA-seq counts
+(Ritchie et al. 2015) on the pseudobulk counts of each group of a cube: limma-voom,
+which gives every observation a precision weight from the mean-variance trend of the
+log counts per million (Law et al. 2014), and limma-trend, which lets the prior
+variance of the empirical Bayes moderation follow that trend instead.
+:func:`dream_voom` runs variancePartition's dream (Hoffman and Roussos 2021),
+limma-voom with a linear mixed model in place of the linear model, for designs with
+random effects such as several samples of each donor. Each tests the named contrasts
+of a :class:`~cytepool.design.Design` and returns, for every group and contrast, a
+table of the tested features with ``topTable``'s statistics, together with a summary,
+the samples behind every fit and a provenance record.
 
 Samples:
     The design's sample table must have a ``sample_id`` column. Its samples are matched
@@ -20,10 +20,10 @@ Samples:
     of the fit when it has fewer than ``min_cells`` cells (when the cube records cell
     numbers), no counts, or fewer than ``min_counts`` counts in all (its total over
     every feature of the cube), and the result records why. ``min_counts`` is 0 by
-    default; the scverse single-cell best practices keep samples with at least 10
-    cells and 1,000 counts (``min_cells=10, min_counts=1000``), as decoupler's
-    ``filter_samples`` does, which keeps a sample with exactly as many (found by
-    probing).
+    default; the scverse single-cell best practices (Heumos et al. 2023) keep samples
+    with at least 10 cells and 1,000 counts (``min_cells=10, min_counts=1000``), as
+    decoupler's ``filter_samples`` does, which keeps a sample with exactly as many
+    (found by probing).
 
 The design of a group:
     The design matrix of a group is the rows of the full design matrix for the
@@ -34,12 +34,12 @@ The design of a group:
     columns that R's ``qr()`` keeps, as limma's ``lmFit`` does; each other column
     (aliased) equals a combination of the kept columns before it. A contrast ``c`` is
     estimable from the group's samples when it is orthogonal to the null space of the
-    group's design matrix: when its weight on every aliased column is the sum of its
-    weights on the kept columns, weighted by that column's combination. This is the
-    rule of :meth:`Design.check <cytepool.design.Design.check>`. ``c`` applied to
-    the coefficients then equals its weights on the kept columns applied to the fit
-    on the kept columns, whatever the coefficients that the samples cannot separate,
-    so its estimate and its exact standard error are those of any full-rank
+    group's design matrix (Searle 1971): when its weight on every aliased column is the
+    sum of its weights on the kept columns, weighted by that column's combination.
+    This is the rule of :meth:`Design.check <cytepool.design.Design.check>`. ``c``
+    applied to the coefficients then equals its weights on the kept columns applied to
+    the fit on the kept columns, whatever the coefficients that the samples cannot
+    separate, so its estimate and its exact standard error are those of any full-rank
     parametrisation of the same model. A contrast that is not estimable is reported,
     with the relations it violates, and not computed.
 
@@ -57,20 +57,22 @@ Steps:
 
     1. Leave out samples, as above; the design matrix is the rows of the rest.
     2. Filter features by expression with the group's design, by edgeR's
-       ``filterByExpr(y, design)`` with its defaults (``expression_filter``), and
-       recompute the library sizes over the features kept
-       (``y[keep, , keep.lib.sizes = FALSE]``).
-    3. Normalization factors by TMM, edgeR's ``calcNormFactors`` (``normalization``).
+       ``filterByExpr(y, design)`` (Chen, Lun and Smyth 2016) with its defaults
+       (``expression_filter``), and recompute the library sizes over the features
+       kept (``y[keep, , keep.lib.sizes = FALSE]``).
+    3. Normalization factors by TMM (Robinson and Oshlack 2010), edgeR's
+       ``calcNormFactors`` (``normalization``).
     4. limma-voom: ``voom`` on the library sizes times the normalization factors,
        with its LOWESS span chosen from the number of features tested, as limma's
        ``voom`` chooses it by default since limma 3.66 (``span``), then ``lmFit``
        with its weights. limma-trend: log2 counts per million with a prior count of
        3, ``cpm(y, log = TRUE, prior.count = 3)`` as the limma User's Guide uses for
        limma-trend, then ``lmFit``. Sample weights, when asked, enter here (below).
-    5. ``contrasts.fit``, ``eBayes`` (with ``trend = TRUE`` for limma-trend, and
-       ``robust`` when asked) and ``topTable(sort.by = "none")``: the
-       Benjamini-Hochberg adjustment runs over the tested features of one group and
-       contrast, and with ``adjust_across_groups`` also over every group (below).
+    5. ``contrasts.fit``, ``eBayes`` (Smyth 2004), with ``trend = TRUE`` for
+       limma-trend and ``robust`` (Phipson et al. 2016) when asked, and
+       ``topTable(sort.by = "none")``: the Benjamini-Hochberg adjustment (Benjamini
+       and Hochberg 1995) runs over the tested features of one group and contrast,
+       and with ``adjust_across_groups`` also over every group (below).
 
 Sample weights:
     Both kinds are off by default, and they are alternatives: limma's
@@ -85,9 +87,9 @@ Sample weights:
 
     - ``quality_weights``: sample quality weights, estimated in each group from how
       closely each sample's values follow the linear model (Ritchie et al. 2006; Liu
-      et al. 2015), which a limma author recommends for pseudobulk data (Bioconductor
-      support site, "Guidance on limma for pseudobulk scRNA-seq with multi-factor
-      design"). limma-voom runs limma's ``voomWithQualityWeights``
+      et al. 2015), which a limma author recommends for pseudobulk data (Smyth 2025,
+      on the Bioconductor support site). limma-voom runs limma's
+      ``voomWithQualityWeights``
       (:func:`~cytepool.stats.voom.voom_with_quality_weights`), gene by gene by
       default, as limma does. limma-trend estimates them from the log2 counts per
       million as limma's ``arrayWeights`` does
@@ -104,9 +106,9 @@ Sample weights:
       prior weights. A pseudobulk profile sums the counts of its cells, so its log2
       counts per million estimate the mean expression of those cells, whose
       variance falls as one over their number: the precision of a profile is
-      proportional to its number of cells, and the dreamlet paper uses the number
-      of cells as precision weights for this reason (Hoffman et al. 2023,
-      Methods), as dreamlet's ``processAssays`` documentation describes.
+      proportional to its number of cells, as the dreamlet paper argues (Hoffman et
+      al. 2026, Methods), and dreamlet's ``processAssays`` weights its fits by the
+      number of cells of each sample, as its documentation describes.
       limma-voom passes them to ``voom`` as ``weights``: they weight the fits
       behind voom's trend, and the precision weights are the trend's times them,
       as limma's help page says voom's weights modify prior weights, and as edgeR's
@@ -121,8 +123,9 @@ dream:
     mean-variance trend of the design's mixed model, fitted to every feature by
     maximum likelihood (:func:`~cytepool.stats.dream.voom_with_dream_weights`); the
     mixed model of every feature fitted by REML with those weights
-    (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); Satterthwaite's t-tests of
-    the estimable contrasts (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`);
+    (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); Satterthwaite's (1946)
+    t-tests of the estimable contrasts
+    (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`);
     and their empirical Bayes moderation
     (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The random effects of
     a group are those of its samples: a grouping factor's levels without samples in
@@ -172,42 +175,72 @@ Memory:
     ("Provenance" in :func:`limma_voom`).
 
 References:
-    Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear
-    model analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+    Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
+    analysis tools for RNA-seq read counts. Genome Biology 15, R29.
+    doi:10.1186/gb-2014-15-2-r29
 
     Ritchie ME, Phipson B, Wu D, Hu Y, Law CW, Shi W, Smyth GK (2015). limma powers
-    differential expression analyses for RNA-sequencing and microarray studies.
-    Nucleic Acids Research 43, e47.
+    differential expression analyses for RNA-sequencing and microarray studies. Nucleic
+    Acids Research 43, e47. doi:10.1093/nar/gkv007
 
     Chen Y, Lun ATL, Smyth GK (2016). From reads to genes to pathways: differential
     expression analysis of RNA-Seq experiments using Rsubread and the edgeR
-    quasi-likelihood pipeline. F1000Research 5, 1438.
+    quasi-likelihood pipeline. F1000Research 5, 1438. doi:10.12688/f1000research.8987.2
 
-    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust
-    hyperparameter estimation protects against hypervariable genes and improves
-    power to detect differential expression. Annals of Applied Statistics 10,
-    946-963.
+    Phipson B, Lee S, Majewski IJ, Alexander WS, Smyth GK (2016). Robust hyperparameter
+    estimation protects against hypervariable genes and improves power to detect
+    differential expression. Annals of Applied Statistics 10, 946-963.
+    doi:10.1214/16-AOAS920
 
-    Searle SR (1971). Linear Models. Wiley, New York. On models not of full rank and
-    their estimable functions.
+    Searle SR (1971). Linear Models. Wiley, New York.
 
     Ritchie ME, Diyagama D, Neilson J, van Laar R, Dobrovic A, Holloway A, Smyth GK
     (2006). Empirical array quality weights in the analysis of microarray data. BMC
-    Bioinformatics 7, 261.
+    Bioinformatics 7, 261. doi:10.1186/1471-2105-7-261
 
     Liu R, Holik AZ, Su S, Jansz N, Chen K, Leong HS, Blewitt ME, Asselin-Labat ML,
     Smyth GK, Ritchie ME (2015). Why weight? Modelling sample and observational level
     variability improves power in RNA-seq analyses. Nucleic Acids Research 43, e97.
+    doi:10.1093/nar/gkv412
 
-    Hoffman GE, Lee D, Bendl J, et al. (2023). Efficient differential expression
-    analysis of large-scale single cell transcriptomics data using dreamlet.
-    Research Square preprint, doi:10.21203/rs.3.rs-2705625/v1; published in Nature
-    Communications (2026).
+    Hoffman GE, Lee D, Bendl J, Prashant NM, Hong A, Casey C, Alvia M, Shao Z,
+    Argyriou S, Therrien K, Venkatesh S, Voloudakis G, Haroutunian V, Fullard JF,
+    Roussos P (2026). Efficient differential expression analysis of large-scale
+    single-cell transcriptomics data using Dreamlet. Nature Communications 17, 9597.
+    doi:10.1038/s41467-026-75680-8
 
     Crowell HL, Soneson C, Germain PL, Calini D, Collin L, Raposo C, Malhotra D,
     Robinson MD (2020). muscat detects subpopulation-specific state transitions from
-    multi-sample multi-condition single-cell transcriptomics data. Nature
-    Communications 11, 6077.
+    multi-sample multi-condition single-cell transcriptomics data. Nature Communications
+    11, 6077. doi:10.1038/s41467-020-19894-4
+
+    Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
+    repeated measures designs. Bioinformatics 37, 192-201.
+    doi:10.1093/bioinformatics/btaa687
+
+    Smyth GK (2004). Linear models and empirical Bayes methods for assessing
+    differential expression in microarray experiments. Statistical Applications in
+    Genetics and Molecular Biology 3, article 3. doi:10.2202/1544-6115.1027
+
+    Robinson MD, Oshlack A (2010). A scaling normalization method for differential
+    expression analysis of RNA-seq data. Genome Biology 11, R25.
+    doi:10.1186/gb-2010-11-3-r25
+
+    Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
+    and powerful approach to multiple testing. Journal of the Royal Statistical
+    Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Satterthwaite FE (1946). An approximate distribution of estimates of variance
+    components. Biometrics Bulletin 2, 110-114. doi:10.2307/3002019
+
+    Heumos L, Schaar AC, Lance C, Litinetskaya A, Drost F, Zappia L, Luecken MD,
+    Strobl DC, Henao J, Curion F, Single-cell Best Practices Consortium, Schiller HB,
+    Theis FJ (2023). Best practices for single-cell analysis across modalities. Nature
+    Reviews Genetics 24, 550-572. doi:10.1038/s41576-023-00586-w
+
+    Smyth GK (2025). Answer to "Guidance on limma for pseudobulk scRNA-seq with
+    multi-factor design", 11 September 2025. Bioconductor support site,
+    https://support.bioconductor.org/p/9162569/
 """
 
 import json
