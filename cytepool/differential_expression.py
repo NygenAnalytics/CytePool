@@ -285,16 +285,16 @@ from .normalization import (
     tmm_factors,
 )
 from .stats._mean_variance_trend import scaled_prior_weights, trend_span, voom_inputs
+from .stats._mixed_model_designs import (
+    MixedDesign,
+    mixed_design_of_samples,
+    random_intercepts,
+)
 from .stats.dream import _dream_weights, moderated_fixed_effect_tests
 from .stats.empirical_bayes import moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
 from .stats.mixed_models import _fit as _fit_mixed_model
-from .stats.mixed_models import (
-    _mixed_design_of_samples,
-    _MixedDesign,
-    _random_intercepts,
-    fixed_effect_tests,
-)
+from .stats.mixed_models import fixed_effect_tests
 from .stats.multiple_testing import adjust_p_values
 from .stats.sample_weights import (
     _estimate,
@@ -1077,7 +1077,7 @@ def _analyse(
                 "random='(1 | donor)', or test a design without random effects with "
                 "limma_voom"
             )
-        _random_intercepts(design)
+        random_intercepts(design)
     else:
         try:
             refuse_random_effects(design, method)
@@ -1161,7 +1161,7 @@ class _GroupData:
     sizes: np.ndarray  # library sizes over the features tested
     factors: np.ndarray | None  # normalization factors, or None
     prior: np.ndarray | None  # prior weights of the samples used, or None
-    mixed: _MixedDesign | None  # the mixed model's design of the samples used
+    mixed: MixedDesign | None  # the mixed model's design of the samples used
 
 
 def _prepare_group(
@@ -1227,7 +1227,7 @@ def _prepare_group(
     parts = None
     if mixed:
         try:
-            parts = _mixed_design_of_samples(
+            parts = mixed_design_of_samples(
                 design, inputs.model_rows[used], x_kept, columns
             )
         except ValueError as error:

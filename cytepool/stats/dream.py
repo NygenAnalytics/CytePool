@@ -126,16 +126,15 @@ from cytepool.stats._mean_variance_trend import (
     voom_log_cpm,
     voom_mean_log_count,
 )
+from cytepool.stats._mixed_model_designs import (
+    MixedDesign,
+    maximum_likelihood,
+    mixed_design,
+)
 from cytepool.stats.distributions import norm_isf, norm_logsf, t_logsf, t_sf
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import LinearModelFit
-from cytepool.stats.mixed_models import (
-    FixedEffectTests,
-    _fit,
-    _maximum_likelihood,
-    _mixed_design,
-    _MixedDesign,
-)
+from cytepool.stats.mixed_models import FixedEffectTests, _fit
 from cytepool.stats.voom import VoomResult
 
 __all__ = [
@@ -281,8 +280,8 @@ def voom_with_dream_weights(
             "model to fit; use voom, which fits the linear model of such a design, or "
             "build the design with random effects such as random='(1 | donor)'"
         )
-    ml = _maximum_likelihood(method)
-    parts = _mixed_design(design)
+    ml = maximum_likelihood(method)
+    parts = mixed_design(design)
     if parts.x.shape[0] != y.shape[0]:
         raise ValueError(
             f"counts have {y.shape[0]} rows (samples) but the design has "
@@ -416,7 +415,7 @@ def _dream_weights(
     y: FloatArray,
     sizes: FloatArray,
     fraction: float,
-    parts: _MixedDesign,
+    parts: MixedDesign,
     prior: FloatArray | None,
     ml: bool,
 ) -> VoomResult:
