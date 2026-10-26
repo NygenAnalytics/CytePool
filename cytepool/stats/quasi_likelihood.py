@@ -208,7 +208,6 @@ from cytepool.normalization import _as_counts
 from cytepool.stats.distributions import f_sf
 from cytepool.stats.empirical_bayes import (
     _LIKELIHOOD_MIN_DF,
-    _brent_minimum,
     squeeze_variances,
 )
 from cytepool.stats.linear_models import _contrast_matrix, _design_matrix
@@ -225,6 +224,7 @@ from cytepool.stats.negative_binomial_models import (
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
+from cytepool.stats._optimize import brent_minimum
 from cytepool.stats._scalar_special_functions import stirling_error
 
 __all__ = [
@@ -1200,7 +1200,7 @@ def _common_dispersion(
         )
         return -value
 
-    phi = _brent_minimum(minus_likelihood, low, high, _DISPERSION_TOLERANCE)
+    phi = brent_minimum(minus_likelihood, low, high, _DISPERSION_TOLERANCE)
     reach = 2.0 * (math.sqrt(_EPSILON) * abs(phi) + _DISPERSION_TOLERANCE)
     if phi - low <= reach or high - phi <= reach:
         end = "lower" if phi - low <= reach else "upper"

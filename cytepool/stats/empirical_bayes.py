@@ -102,6 +102,7 @@ from cytepool._masked_arrays import unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import checked_flag, real_number
 from cytepool._ranks import average_ranks
+from cytepool.stats._optimize import brent_minimum
 from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
@@ -202,8 +203,6 @@ _PACKAGE_DIRECTORY = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ""
 )
 _SMALLEST_NORMAL = float(np.finfo(np.float64).tiny)
-# The golden section ratio of Brent's minimisation, (3 - sqrt(5)) / 2.
-_GOLDEN = 0.5 * (3.0 - math.sqrt(5.0))
 _LARGEST = float(np.finfo(np.float64).max)
 _LOG_HALF = math.log(0.5)
 
@@ -1502,7 +1501,7 @@ def _profile_likelihood_df2(
         shift = _log_minus_digamma_scalar(0.5 * df2)
         return float(_minus_twice_log_likelihood(x, d, location, weights, df2, shift))
 
-    v = _brent_minimum(deviance, _DF2_SEARCH[0], _DF2_SEARCH[1], _SEARCH_TOLERANCE)
+    v = brent_minimum(deviance, _DF2_SEARCH[0], _DF2_SEARCH[1], _SEARCH_TOLERANCE)
     return 2.0 * v / (1.0 - v)
 
 
@@ -1596,77 +1595,6 @@ def _f_tail_logs(
     for i in range(n):
         upper[i], lower[i] = _f_tails(ratio[i], df1[i], df2)
     return upper, lower
-
-
-def _brent_minimum(
-    function: Callable[[float], float], low: float, high: float, tolerance: float
-) -> float:
-    """The minimiser of a function on [low, high] by Brent's (1973) method.
-
-    Golden section search with parabolic interpolation, as in Brent's procedure
-    ``localmin`` (chapter 5) and R's ``optimize``, with its stopping rule: the search
-    ends when the best point lies within 2 (sqrt(eps) |x| + tolerance / 3) of both
-    ends of the bracket. The sequence of evaluations, and so the result, is that of
-    R's ``optimize`` (checked against it).
-    """
-    eps = math.sqrt(_EPS)
-    a, b = low, high
-    x = w = v = a + _GOLDEN * (b - a)
-    fx = fw = fv = function(x)
-    d = e = 0.0
-    while True:
-        middle = 0.5 * (a + b)
-        tol1 = eps * abs(x) + tolerance / 3.0
-        tol2 = 2.0 * tol1
-        if abs(x - middle) <= tol2 - 0.5 * (b - a):
-            return x
-        p = q = r = 0.0
-        if abs(e) > tol1:
-            # The parabola through (v, fv), (w, fw) and (x, fx).
-            r = (x - w) * (fx - fv)
-            q = (x - v) * (fx - fw)
-            p = (x - v) * q - (x - w) * r
-            q = 2.0 * (q - r)
-            if q > 0.0:
-                p = -p
-            else:
-                q = -q
-            r = e
-            e = d
-        if abs(p) >= abs(0.5 * q * r) or p <= q * (a - x) or p >= q * (b - x):
-            # A golden section step into the larger part of the bracket.
-            e = (a - x) if x >= middle else (b - x)
-            d = _GOLDEN * e
-        else:
-            d = p / q
-            u = x + d
-            # Not too close to the ends of the bracket.
-            if u - a < tol2 or b - u < tol2:
-                d = tol1 if middle - x >= 0.0 else -tol1
-        # Not too close to x.
-        if abs(d) >= tol1:
-            u = x + d
-        else:
-            u = x + (tol1 if d >= 0.0 else -tol1)
-        fu = function(u)
-        if fu <= fx:
-            if u < x:
-                b = x
-            else:
-                a = x
-            v, fv = w, fw
-            w, fw = x, fx
-            x, fx = u, fu
-        else:
-            if u < x:
-                a = u
-            else:
-                b = u
-            if fu <= fw or w == x:
-                v, fv = w, fw
-                w, fw = u, fu
-            elif fu <= fv or v == x or v == w:
-                v, fv = u, fu
 
 
 def _scale_value(scale: FloatArray, trended: bool) -> float | FloatArray:
