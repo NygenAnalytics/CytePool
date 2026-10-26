@@ -32,12 +32,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
+from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool.design.contrasts import (
@@ -574,17 +573,9 @@ def _fit_each_feature(
         correlation,
         RANK_TOLERANCE,
     )
-    threads = numba.get_num_threads()
-    if threads > 1:
-        # Several chunks of features per thread balance the work. Each feature is
-        # fitted by the same operations whatever its chunk, so the result does not
-        # depend on the number of threads.
-        n_chunks = max(1, min(values.shape[1], 4 * threads))
-        fitted = _least_squares_per_feature(*arguments, n_chunks)
-    else:
-        # Without a parallel region, which forked processes and several Python
-        # threads at once can run whatever numba's threading layer.
-        fitted = _least_squares_in_order(*arguments)
+    fitted = by_chunks(
+        _least_squares_per_feature, _least_squares_in_order, arguments, values.shape[1]
+    )
     coefficients, stdev_unscaled, sigma, df_residual, per_feature = fitted
     # limma reports the covariance matrix of the design without weights here
     # (found by probing).

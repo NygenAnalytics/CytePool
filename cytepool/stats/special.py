@@ -89,12 +89,12 @@ References:
 
 import math
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from cytepool._jit import jit
+from cytepool._jit import jit_numpy_errors
 from cytepool._masked_arrays import unmasked_array
 
 __all__ = [
@@ -112,14 +112,6 @@ __all__ = [
     "trigamma",
     "trigamma_inverse",
 ]
-
-
-def _compile[F: Callable[..., Any]](function: F) -> F:
-    """Compile a routine with numba; division by zero gives inf or NaN, as in numpy.
-
-    The compiled routine keeps the Python signature for type checking.
-    """
-    return cast(F, jit(error_model="numpy")(function))
 
 
 _INF = math.inf
@@ -380,7 +372,7 @@ _INV_SQRT_2PI = 0.3989422804014327  # 1 / sqrt(2 pi)
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _two_product(a: float, b: float) -> tuple[float, float]:
     """Return p = fl(a b) and e with a b = p + e exactly (Dekker 1971)."""
     p = a * b
@@ -396,7 +388,7 @@ def _two_product(a: float, b: float) -> tuple[float, float]:
     return p, ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo
 
 
-@_compile
+@jit_numpy_errors
 def _log1mexp(a: float) -> float:
     """Return log(1 - exp(-a)) for a >= 0 without cancellation (Maechler 2012)."""
     if a <= _LN2:
@@ -404,7 +396,7 @@ def _log1mexp(a: float) -> float:
     return math.log1p(-math.exp(-a))
 
 
-@_compile
+@jit_numpy_errors
 def _log_product(c: float, v: float, log_v: float) -> float:
     """Return log(c v) for c > 0, v >= 0, given log_v = log(v) formed accurately.
 
@@ -417,7 +409,7 @@ def _log_product(c: float, v: float, log_v: float) -> float:
     return math.log(c) + log_v
 
 
-@_compile
+@jit_numpy_errors
 def _erfcx(u: float) -> float:
     """Return exp(u^2) erfc(u) for u >= 0, with full relative accuracy."""
     if u < 26.0:
@@ -433,7 +425,7 @@ def _erfcx(u: float) -> float:
     return _SQRT_2_OVER_PI / t
 
 
-@_compile
+@jit_numpy_errors
 def _stirling_error(z: float) -> float:
     """Return delta(z) = log Gamma(z) - (z - 1/2) log z + z - log sqrt(2 pi), z > 0."""
     if z >= 10.0:
@@ -481,7 +473,7 @@ def _stirling_error(z: float) -> float:
     return math.lgamma(z) - (z - 0.5) * math.log(z) + z - _LN_SQRT_2PI
 
 
-@_compile
+@jit_numpy_errors
 def _deviance_term(x: float, m: float, d: float) -> float:
     """Return Loader's bd0(x, m) = x log(x / m) + m - x, given d = x - m.
 
@@ -507,7 +499,7 @@ def _deviance_term(x: float, m: float, d: float) -> float:
     return x * math.log(x / m) - d
 
 
-@_compile
+@jit_numpy_errors
 def _lgamma1p(a: float) -> float:
     """Return log Gamma(1 + a) for a > -1, with full relative accuracy near a = 0."""
     if abs(a) <= 0.25:
@@ -519,7 +511,7 @@ def _lgamma1p(a: float) -> float:
     return math.lgamma(1.0 + a)
 
 
-@_compile
+@jit_numpy_errors
 def _log_gamma_ratio(a: float, b: float) -> float:
     """Return log Gamma(a + b) - log Gamma(a) for a >= 10, b >= 0, without cancellation."""
     return (
@@ -531,7 +523,7 @@ def _log_gamma_ratio(a: float, b: float) -> float:
     )
 
 
-@_compile
+@jit_numpy_errors
 def _log_gamma_increment(b: float, a: float) -> float:
     """Return log Gamma(b + a) - log Gamma(b) for b > 0 and a >= 0, accurate for small a.
 
@@ -548,7 +540,7 @@ def _log_gamma_increment(b: float, a: float) -> float:
     return _log_gamma_ratio(b + shift, a) - total
 
 
-@_compile
+@jit_numpy_errors
 def _log_beta_positive(a: float, b: float) -> float:
     """Return log B(a, b) for finite a, b > 0."""
     if a < b:
@@ -576,7 +568,7 @@ def _log_beta_positive(a: float, b: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def lgamma_scalar(x: float) -> float:
     """Return log|Gamma(x)|; +inf at the poles x = 0, -1, -2, ...; NaN at -inf."""
     if x == -_INF:
@@ -584,7 +576,7 @@ def lgamma_scalar(x: float) -> float:
     return math.lgamma(x)
 
 
-@_compile
+@jit_numpy_errors
 def _digamma_on_unit_interval(x: float) -> float:
     """Return psi(x) for 1 <= x <= 2 from the Taylor series about the positive root."""
     h = (x - _DIGAMMA_ROOT_HI) - _DIGAMMA_ROOT_LO
@@ -595,7 +587,7 @@ def _digamma_on_unit_interval(x: float) -> float:
     return s * h
 
 
-@_compile
+@jit_numpy_errors
 def _digamma_positive(x: float) -> float:
     """Return psi(x) for x > 0."""
     if x < 1.0:
@@ -640,13 +632,13 @@ def _digamma_positive(x: float) -> float:
     return math.log(x) - 0.5 / x - tail
 
 
-@_compile
+@jit_numpy_errors
 def _sin_pi(x: float) -> float:
     """Return sin(pi r) with r = x - round(x), which has the same magnitude as sin(pi x)."""
     return math.sin(_PI * (x - np.floor(x + 0.5)))
 
 
-@_compile
+@jit_numpy_errors
 def digamma_scalar(x: float) -> float:
     """Return psi(x); NaN at the poles x = 0, -1, -2, ... and at -inf."""
     if math.isnan(x) or x == -_INF:
@@ -665,7 +657,7 @@ def digamma_scalar(x: float) -> float:
     return _digamma_positive(x)
 
 
-@_compile
+@jit_numpy_errors
 def _trigamma_positive(x: float) -> float:
     """Return psi'(x) for x > 0."""
     total = 0.0
@@ -713,7 +705,7 @@ def _trigamma_positive(x: float) -> float:
     return total + (r + 0.5 * r2 + tail)
 
 
-@_compile
+@jit_numpy_errors
 def trigamma_scalar(x: float) -> float:
     """Return psi'(x); +inf at the poles x = 0, -1, -2, ...; NaN at -inf."""
     if math.isnan(x) or x == -_INF:
@@ -729,7 +721,7 @@ def trigamma_scalar(x: float) -> float:
     return _trigamma_positive(x)
 
 
-@_compile
+@jit_numpy_errors
 def _tetragamma_positive(x: float) -> float:
     """Return psi''(x) for x > 0."""
     total = 0.0
@@ -761,7 +753,7 @@ def _tetragamma_positive(x: float) -> float:
     return total - (r2 + r2 * r + tail)
 
 
-@_compile
+@jit_numpy_errors
 def trigamma_inverse_scalar(y: float) -> float:
     """Return the x > 0 with trigamma(x) = y, for y > 0; +inf at y = 0, 0 at y = inf."""
     if math.isnan(y) or y < 0.0:
@@ -794,7 +786,7 @@ def trigamma_inverse_scalar(y: float) -> float:
     return x
 
 
-@_compile
+@jit_numpy_errors
 def log_beta_scalar(a: float, b: float) -> float:
     """Return log B(a, b) for a, b >= 0; +inf when a or b is 0."""
     if math.isnan(a) or math.isnan(b) or a < 0.0 or b < 0.0:
@@ -811,7 +803,7 @@ def log_beta_scalar(a: float, b: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _log_gamma_prefactor(a: float, x: float, log_x: float, d: float) -> float:
     """Return log(x^a exp(-x) / Gamma(a + 1)), given log_x = log(x) and d = a - x."""
     if a >= 10.0:
@@ -824,7 +816,7 @@ def _log_gamma_prefactor(a: float, x: float, log_x: float, d: float) -> float:
     return a * log_x - x - _lgamma1p(a)
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_series(a: float, x: float, d: float) -> float:
     """Return sum_{n>=0} x^n / ((a + 1) ... (a + n)), so P(a, x) = prefactor * sum."""
     total = 1.0
@@ -842,7 +834,7 @@ def _gamma_series(a: float, x: float, d: float) -> float:
     return _NAN
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_continued_fraction(a: float, d: float) -> float:
     """Return K with Gamma(a, x) = x^a exp(-x) / K, given d = a - x < -1.
 
@@ -872,7 +864,7 @@ def _gamma_continued_fraction(a: float, d: float) -> float:
     return _NAN
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_upper_small_shape(a: float, x: float, log_x: float) -> float:
     """Return Q(a, x) for 0 < a < 1 and 0 < x <= 1.5 without forming 1 - P.
 
@@ -897,7 +889,7 @@ def _gamma_upper_small_shape(a: float, x: float, log_x: float) -> float:
     return -math.expm1(t) + math.exp(t) * a * total
 
 
-@_compile
+@jit_numpy_errors
 def _log_gammainc_uniform(a: float, d: float, deviance: float) -> tuple[float, float]:
     """Return log P(a, x) and log Q(a, x) for a >= 1e3 with |eta| <= 1/2, given d = a - x.
 
@@ -929,7 +921,7 @@ def _log_gammainc_uniform(a: float, d: float, deviance: float) -> tuple[float, f
     return log_p, _log1mexp(-log_p)
 
 
-@_compile
+@jit_numpy_errors
 def _log_gammainc_pair(
     a: float, x: float, log_x: float, d: float
 ) -> tuple[float, float]:
@@ -971,7 +963,7 @@ def _log_gammainc_pair(
     return _log1mexp(-log_q), log_q
 
 
-@_compile
+@jit_numpy_errors
 def _log_gammainc_checked(a: float, x: float) -> tuple[float, float]:
     """Return log P(a, x) and log Q(a, x), or NaN for arguments outside the domain."""
     if math.isnan(a) or math.isnan(x) or not (0.0 < a < _INF) or x < 0.0:
@@ -979,25 +971,25 @@ def _log_gammainc_checked(a: float, x: float) -> tuple[float, float]:
     return _log_gammainc_pair(a, x, math.log(x), a - x)
 
 
-@_compile
+@jit_numpy_errors
 def gammainc_scalar(a: float, x: float) -> float:
     """Return the regularized lower incomplete gamma function P(a, x)."""
     return math.exp(_log_gammainc_checked(a, x)[0])
 
 
-@_compile
+@jit_numpy_errors
 def gammaincc_scalar(a: float, x: float) -> float:
     """Return the regularized upper incomplete gamma function Q(a, x)."""
     return math.exp(_log_gammainc_checked(a, x)[1])
 
 
-@_compile
+@jit_numpy_errors
 def log_gammainc_scalar(a: float, x: float) -> float:
     """Return log P(a, x)."""
     return _log_gammainc_checked(a, x)[0]
 
 
-@_compile
+@jit_numpy_errors
 def log_gammaincc_scalar(a: float, x: float) -> float:
     """Return log Q(a, x)."""
     return _log_gammainc_checked(a, x)[1]
@@ -1008,7 +1000,7 @@ def log_gammaincc_scalar(a: float, x: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _log_beta_prefactor(
     a: float, b: float, x: float, y: float, log_x: float, log_y: float, lam: float
 ) -> float:
@@ -1062,7 +1054,7 @@ def _log_beta_prefactor(
     return a * log_x + b * log_y - _log_beta_positive(a, b)
 
 
-@_compile
+@jit_numpy_errors
 def _beta_continued_fraction(
     a: float, b: float, x: float, y: float, lam: float
 ) -> float:
@@ -1112,7 +1104,7 @@ def _beta_continued_fraction(
     return _NAN
 
 
-@_compile
+@jit_numpy_errors
 def _beta_upper_small_shape(a: float, b: float, x: float, log_x: float) -> float:
     """Return 1 - I_x(a, b) for 0 < a < 1 and b x < 2, without forming 1 - I.
 
@@ -1147,7 +1139,7 @@ def _beta_upper_small_shape(a: float, b: float, x: float, log_x: float) -> float
     return -math.expm1(s) - math.exp(s) * a * total
 
 
-@_compile
+@jit_numpy_errors
 def _log_betainc_pair(
     a: float, b: float, x: float, y: float, log_x: float, log_y: float, lam: float
 ) -> tuple[float, float]:
@@ -1184,7 +1176,7 @@ def _log_betainc_pair(
     return _log1mexp(-log_c), log_c
 
 
-@_compile
+@jit_numpy_errors
 def _log_betainc_pair_at(a: float, b: float, x: float) -> tuple[float, float]:
     """Return log I_x(a, b) and log(1 - I_x(a, b)) for x in [0, 1], keeping 1 - x exact."""
     y = 1.0 - x
@@ -1202,7 +1194,7 @@ def _log_betainc_pair_at(a: float, b: float, x: float) -> tuple[float, float]:
     return _log_betainc_pair(a, b, x, y, log_x, log_y, lam)
 
 
-@_compile
+@jit_numpy_errors
 def _log_betainc_checked(a: float, b: float, x: float) -> tuple[float, float]:
     """Return log I_x(a, b) and its complement, or NaN for arguments outside the domain."""
     if (
@@ -1217,25 +1209,25 @@ def _log_betainc_checked(a: float, b: float, x: float) -> tuple[float, float]:
     return _log_betainc_pair_at(a, b, x)
 
 
-@_compile
+@jit_numpy_errors
 def betainc_scalar(a: float, b: float, x: float) -> float:
     """Return the regularized incomplete beta function I_x(a, b)."""
     return math.exp(_log_betainc_checked(a, b, x)[0])
 
 
-@_compile
+@jit_numpy_errors
 def betaincc_scalar(a: float, b: float, x: float) -> float:
     """Return 1 - I_x(a, b)."""
     return math.exp(_log_betainc_checked(a, b, x)[1])
 
 
-@_compile
+@jit_numpy_errors
 def log_betainc_scalar(a: float, b: float, x: float) -> float:
     """Return log I_x(a, b)."""
     return _log_betainc_checked(a, b, x)[0]
 
 
-@_compile
+@jit_numpy_errors
 def log_betaincc_scalar(a: float, b: float, x: float) -> float:
     """Return log(1 - I_x(a, b))."""
     return _log_betainc_checked(a, b, x)[1]
@@ -1249,7 +1241,7 @@ _LGAMMA, _DIGAMMA, _TRIGAMMA, _TRIGAMMA_INVERSE = 0, 1, 2, 3
 _LOWER, _UPPER, _LOG_LOWER, _LOG_UPPER = 0, 1, 2, 3
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_family_array(x: NDArray[np.float64], kind: int) -> NDArray[np.float64]:
     out = np.empty(x.size)
     for i in range(x.size):
@@ -1264,7 +1256,7 @@ def _gamma_family_array(x: NDArray[np.float64], kind: int) -> NDArray[np.float64
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _log_beta_array(
     a: NDArray[np.float64], b: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1274,7 +1266,7 @@ def _log_beta_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _gammainc_array(
     a: NDArray[np.float64], x: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1292,7 +1284,7 @@ def _gammainc_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _betainc_array(
     a: NDArray[np.float64], b: NDArray[np.float64], x: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:

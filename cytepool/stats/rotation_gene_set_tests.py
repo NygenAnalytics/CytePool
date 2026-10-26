@@ -182,12 +182,11 @@ import operator
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
+from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag, positive_integer
 from cytepool.stats.distributions import t_sf
@@ -877,22 +876,15 @@ def _counts(
     The rotations are drawn ``_ROTATION_BATCH`` at a time, which bounds the memory
     they take; numpy's generator gives the same stream however its draws are split.
     """
-    threads = numba.get_num_threads()
     total: npt.NDArray[np.int64] | None = None
     for first in range(0, n_rotations, _ROTATION_BATCH):
         rotations = _rotation_vectors(
             generator, min(_ROTATION_BATCH, n_rotations - first), dimension
         )
-        n_batch = rotations.shape[0]
-        if threads > 1 and n_batch > 1:
-            # Several chunks of rotations per thread balance the work. The counts are
-            # sums of integers, so they do not depend on the number of threads.
-            n_chunks = max(1, min(n_batch, 4 * threads))
-            counts = parallel(*arguments, observed, rotations, n_chunks)
-        else:
-            # Without a parallel region, which forked processes and several Python
-            # threads at once can run whatever numba's threading layer.
-            counts = serial(*arguments, observed, rotations)
+        # The counts are sums of integers, so they do not depend on the chunks.
+        counts = by_chunks(
+            parallel, serial, (*arguments, observed, rotations), rotations.shape[0]
+        )
         total = counts if total is None else total + counts
     assert total is not None  # n_rotations is at least 1
     return total

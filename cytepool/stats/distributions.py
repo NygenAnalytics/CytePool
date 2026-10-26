@@ -87,9 +87,9 @@ import math
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from cytepool._jit import jit_numpy_errors
 from cytepool.stats.special import (
     _apply,
-    _compile,
     _deviance_term,
     _log1mexp,
     _log_beta_positive,
@@ -235,7 +235,7 @@ _CDF, _SF, _LOGCDF, _LOGSF, _PPF, _ISF = 0, 1, 2, 3, 4, 5
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _normal_upper(x: float) -> float:
     """Return Q(x) = P(Z > x) for x >= 0."""
     if x < 0.5:
@@ -250,7 +250,7 @@ def _normal_upper(x: float) -> float:
     return 0.5 * math.erfc(u) - _INV_SQRT_PI * math.exp(-u * u) * du
 
 
-@_compile
+@jit_numpy_errors
 def _normal_log_upper(x: float) -> float:
     """Return log Q(x) for x >= 0."""
     if x < 37.0:  # Q(37) = 5.7e-300 is still a normal double
@@ -263,7 +263,7 @@ def _normal_log_upper(x: float) -> float:
     return -0.5 * x * x - _LN_SQRT_2PI - math.log(t)
 
 
-@_compile
+@jit_numpy_errors
 def norm_cdf_scalar(x: float) -> float:
     """Return P(Z <= x) for a standard normal Z."""
     if math.isnan(x):
@@ -273,13 +273,13 @@ def norm_cdf_scalar(x: float) -> float:
     return 1.0 - _normal_upper(x)
 
 
-@_compile
+@jit_numpy_errors
 def norm_sf_scalar(x: float) -> float:
     """Return P(Z > x) for a standard normal Z."""
     return norm_cdf_scalar(-x)
 
 
-@_compile
+@jit_numpy_errors
 def norm_logcdf_scalar(x: float) -> float:
     """Return log P(Z <= x) for a standard normal Z."""
     if math.isnan(x):
@@ -289,13 +289,13 @@ def norm_logcdf_scalar(x: float) -> float:
     return math.log1p(-_normal_upper(x))
 
 
-@_compile
+@jit_numpy_errors
 def norm_logsf_scalar(x: float) -> float:
     """Return log P(Z > x) for a standard normal Z."""
     return norm_logcdf_scalar(-x)
 
 
-@_compile
+@jit_numpy_errors
 def _polynomial7(c: NDArray[np.float64], r: float) -> float:
     s: float = c[7]
     for k in range(6, -1, -1):
@@ -303,7 +303,7 @@ def _polynomial7(c: NDArray[np.float64], r: float) -> float:
     return s
 
 
-@_compile
+@jit_numpy_errors
 def norm_ppf_scalar(p: float) -> float:
     """Return the standard normal quantile z with P(Z <= z) = p (Wichura 1988, AS 241)."""
     if math.isnan(p) or p < 0.0 or p > 1.0:
@@ -326,7 +326,7 @@ def norm_ppf_scalar(p: float) -> float:
     return -z if q < 0.0 else z
 
 
-@_compile
+@jit_numpy_errors
 def norm_isf_scalar(p: float) -> float:
     """Return the z with P(Z > z) = p."""
     return -norm_ppf_scalar(p)
@@ -337,7 +337,7 @@ def norm_isf_scalar(p: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _t_two_sided(x: float, df: float) -> tuple[float, float]:
     """Return log P(|T| > |x|) and log P(|T| <= |x|) for T ~ t(df), 0 < df < inf.
 
@@ -374,7 +374,7 @@ def _t_two_sided(x: float, df: float) -> tuple[float, float]:
     return _log_betainc_pair(a, 0.5, w, v, log_w, log_v, lam)
 
 
-@_compile
+@jit_numpy_errors
 def t_sf_scalar(x: float, df: float) -> float:
     """Return P(T > x) for T ~ t(df); df > 0, df = inf gives the normal distribution."""
     if math.isnan(x) or math.isnan(df) or df <= 0.0:
@@ -387,13 +387,13 @@ def t_sf_scalar(x: float, df: float) -> float:
     return 1.0 - 0.5 * both
 
 
-@_compile
+@jit_numpy_errors
 def t_cdf_scalar(x: float, df: float) -> float:
     """Return P(T <= x) for T ~ t(df)."""
     return t_sf_scalar(-x, df)
 
 
-@_compile
+@jit_numpy_errors
 def t_logsf_scalar(x: float, df: float) -> float:
     """Return log P(T > x) for T ~ t(df)."""
     if math.isnan(x) or math.isnan(df) or df <= 0.0:
@@ -406,7 +406,7 @@ def t_logsf_scalar(x: float, df: float) -> float:
     return math.log1p(-0.5 * math.exp(log_both))
 
 
-@_compile
+@jit_numpy_errors
 def _t_log_density(t: float, df: float, log_norm: float) -> float:
     """Return log f(t) of the t density for t >= 0, given its log normalising constant."""
     if t < 1e150:
@@ -416,7 +416,7 @@ def _t_log_density(t: float, df: float, log_norm: float) -> float:
     return log_norm - 0.5 * (df + 1.0) * log_kernel
 
 
-@_compile
+@jit_numpy_errors
 def _t_quantile_residual(
     t: float, df: float, log_norm: float, central: bool, target: float
 ) -> tuple[float, float]:
@@ -435,7 +435,7 @@ def _t_quantile_residual(
     return h, h * math.exp(log_s - log_density) / t
 
 
-@_compile
+@jit_numpy_errors
 def _t_upper_quantile(p: float, df: float) -> float:
     """Return the t > 0 with P(T > t) = p, for 0 < p < 1/2 and 0 < df < inf.
 
@@ -522,7 +522,7 @@ def _t_upper_quantile(p: float, df: float) -> float:
     return _INF if (h > 0.0) != central else _NAN
 
 
-@_compile
+@jit_numpy_errors
 def t_isf_scalar(p: float, df: float) -> float:
     """Return the t with P(T > t) = p for T ~ t(df)."""
     if math.isnan(p) or math.isnan(df) or p < 0.0 or p > 1.0 or df <= 0.0:
@@ -540,7 +540,7 @@ def t_isf_scalar(p: float, df: float) -> float:
     return _t_upper_quantile(p, df)
 
 
-@_compile
+@jit_numpy_errors
 def t_ppf_scalar(p: float, df: float) -> float:
     """Return the t with P(T <= t) = p for T ~ t(df)."""
     return -t_isf_scalar(p, df)
@@ -551,7 +551,7 @@ def t_ppf_scalar(p: float, df: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _f_tails(x: float, dfn: float, dfd: float) -> tuple[float, float]:
     """Return log P(F > x) and log P(F <= x) for F(dfn, dfd); NaN outside the domain."""
     if math.isnan(x) or math.isnan(dfn) or math.isnan(dfd) or dfn <= 0.0 or dfd <= 0.0:
@@ -596,25 +596,25 @@ def _f_tails(x: float, dfn: float, dfd: float) -> tuple[float, float]:
     return _log_betainc_pair(0.5 * dfd, 0.5 * dfn, w, v, log_w, log_v, lam)
 
 
-@_compile
+@jit_numpy_errors
 def f_cdf_scalar(x: float, dfn: float, dfd: float) -> float:
     """Return P(F <= x) for F ~ F(dfn, dfd)."""
     return math.exp(_f_tails(x, dfn, dfd)[1])
 
 
-@_compile
+@jit_numpy_errors
 def f_sf_scalar(x: float, dfn: float, dfd: float) -> float:
     """Return P(F > x) for F ~ F(dfn, dfd); dfn or dfd may be inf."""
     return math.exp(_f_tails(x, dfn, dfd)[0])
 
 
-@_compile
+@jit_numpy_errors
 def f_logsf_scalar(x: float, dfn: float, dfd: float) -> float:
     """Return log P(F > x) for F ~ F(dfn, dfd)."""
     return _f_tails(x, dfn, dfd)[0]
 
 
-@_compile
+@jit_numpy_errors
 def _f_log_x_density(x: float, dfn: float, dfd: float) -> float:
     """Return log(x f(x)) for the density f of F(dfn, dfd), x > 0 and finite dfn.
 
@@ -645,7 +645,7 @@ def _f_log_x_density(x: float, dfn: float, dfd: float) -> float:
     return _log_beta_prefactor(a, 0.5 * dfd, v, w, log_v, log_w, lam)
 
 
-@_compile
+@jit_numpy_errors
 def _f_quantile_residual(
     x: float, dfn: float, dfd: float, upper: bool, target: float
 ) -> tuple[float, float]:
@@ -661,7 +661,7 @@ def _f_quantile_residual(
     return h, (h * ratio if upper else -h * ratio)
 
 
-@_compile
+@jit_numpy_errors
 def _f_quantile_finish(
     x: float, dfn: float, dfd: float, upper: bool, target: float, high: float
 ) -> float:
@@ -682,7 +682,7 @@ def _f_quantile_finish(
     return x
 
 
-@_compile
+@jit_numpy_errors
 def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float:
     """Return the x > 0 with log P(F > x) = log_p if upper, else log P(F <= x) = log_p.
 
@@ -778,7 +778,7 @@ def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float
     return _NAN
 
 
-@_compile
+@jit_numpy_errors
 def _f_quantile(p: float, upper: bool, dfn: float, dfd: float) -> float:
     """Return the x with P(F > x) = p if upper, else P(F <= x) = p, for 0 < p < 1.
 
@@ -798,7 +798,7 @@ def _f_quantile(p: float, upper: bool, dfn: float, dfd: float) -> float:
     return _f_tail_quantile(math.log1p(-p), not upper, dfn, dfd)
 
 
-@_compile
+@jit_numpy_errors
 def f_isf_scalar(p: float, dfn: float, dfd: float) -> float:
     """Return the x with P(F > x) = p for F ~ F(dfn, dfd); dfn or dfd may be inf."""
     if math.isnan(p) or math.isnan(dfn) or math.isnan(dfd):
@@ -812,7 +812,7 @@ def f_isf_scalar(p: float, dfn: float, dfd: float) -> float:
     return _f_quantile(p, True, dfn, dfd)
 
 
-@_compile
+@jit_numpy_errors
 def f_ppf_scalar(p: float, dfn: float, dfd: float) -> float:
     """Return the x with P(F <= x) = p for F ~ F(dfn, dfd); dfn or dfd may be inf."""
     if math.isnan(p) or math.isnan(dfn) or math.isnan(dfd):
@@ -831,7 +831,7 @@ def f_ppf_scalar(p: float, dfn: float, dfd: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _chi2_tails(x: float, df: float) -> tuple[float, float]:
     """Return log P(X <= x) and log P(X > x) for chi-squared(df); NaN outside the domain."""
     if math.isnan(x) or math.isnan(df) or not (0.0 < df < _INF):
@@ -843,25 +843,25 @@ def _chi2_tails(x: float, df: float) -> tuple[float, float]:
     return _log_gammainc_pair(0.5 * df, z, log_z, 0.5 * (df - x))
 
 
-@_compile
+@jit_numpy_errors
 def chi2_cdf_scalar(x: float, df: float) -> float:
     """Return P(X <= x) for X ~ chi-squared(df)."""
     return math.exp(_chi2_tails(x, df)[0])
 
 
-@_compile
+@jit_numpy_errors
 def chi2_sf_scalar(x: float, df: float) -> float:
     """Return P(X > x) for X ~ chi-squared(df)."""
     return math.exp(_chi2_tails(x, df)[1])
 
 
-@_compile
+@jit_numpy_errors
 def chi2_logsf_scalar(x: float, df: float) -> float:
     """Return log P(X > x) for X ~ chi-squared(df)."""
     return _chi2_tails(x, df)[1]
 
 
-@_compile
+@jit_numpy_errors
 def chi2_isf_scalar(p: float, df: float) -> float:
     """Return the x with P(X > x) = p for X ~ chi-squared(df), 0 < df < inf."""
     if math.isnan(df) or not (0.0 < df < _INF):
@@ -870,7 +870,7 @@ def chi2_isf_scalar(p: float, df: float) -> float:
     return df * f_isf_scalar(p, df, _INF)
 
 
-@_compile
+@jit_numpy_errors
 def chi2_ppf_scalar(p: float, df: float) -> float:
     """Return the x with P(X <= x) = p for X ~ chi-squared(df), 0 < df < inf."""
     if math.isnan(df) or not (0.0 < df < _INF):
@@ -878,7 +878,7 @@ def chi2_ppf_scalar(p: float, df: float) -> float:
     return df * f_ppf_scalar(p, df, _INF)
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_tails(x: float, shape: float, scale: float) -> tuple[float, float]:
     """Return log P(X <= x) and log P(X > x) for Gamma(shape, scale); NaN off the domain."""
     if (
@@ -899,13 +899,13 @@ def _gamma_tails(x: float, shape: float, scale: float) -> tuple[float, float]:
     return _log_gammainc_pair(shape, z, log_z, d)
 
 
-@_compile
+@jit_numpy_errors
 def gamma_cdf_scalar(x: float, shape: float, scale: float) -> float:
     """Return P(X <= x) for X ~ Gamma(shape, scale)."""
     return math.exp(_gamma_tails(x, shape, scale)[0])
 
 
-@_compile
+@jit_numpy_errors
 def gamma_sf_scalar(x: float, shape: float, scale: float) -> float:
     """Return P(X > x) for X ~ Gamma(shape, scale)."""
     return math.exp(_gamma_tails(x, shape, scale)[1])
@@ -916,7 +916,7 @@ def gamma_sf_scalar(x: float, shape: float, scale: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _beta_tails(x: float, a: float, b: float) -> tuple[float, float]:
     """Return log P(X <= x) and log P(X > x) for Beta(a, b); NaN outside the domain."""
     if (
@@ -934,13 +934,13 @@ def _beta_tails(x: float, a: float, b: float) -> tuple[float, float]:
     return _log_betainc_pair_at(a, b, x)
 
 
-@_compile
+@jit_numpy_errors
 def beta_cdf_scalar(x: float, a: float, b: float) -> float:
     """Return P(X <= x) for X ~ Beta(a, b)."""
     return math.exp(_beta_tails(x, a, b)[0])
 
 
-@_compile
+@jit_numpy_errors
 def beta_sf_scalar(x: float, a: float, b: float) -> float:
     """Return P(X > x) for X ~ Beta(a, b)."""
     return math.exp(_beta_tails(x, a, b)[1])
@@ -951,7 +951,7 @@ def beta_sf_scalar(x: float, a: float, b: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _log_binomial_probability(
     k: float, n: float, p: float, q: float, d: float
 ) -> float:
@@ -975,7 +975,7 @@ def _log_binomial_probability(
     )
 
 
-@_compile
+@jit_numpy_errors
 def _hypergeom_log_probability(k: float, M: float, n: float, N: float) -> float:
     """Return log P(X = k) for k in the support, 0 < N < M (Loader 2000).
 
@@ -1000,7 +1000,7 @@ def _hypergeom_log_probability(k: float, M: float, n: float, N: float) -> float:
     )
 
 
-@_compile
+@jit_numpy_errors
 def _hypergeom_log_tails(k: float, M: float, n: float, N: float) -> tuple[float, float]:
     """Return log P(X > k) and log P(X <= k) for Hypergeom(M, n, N); NaN off the domain."""
     if math.isnan(k) or math.isnan(M) or math.isnan(n) or math.isnan(N):
@@ -1070,13 +1070,13 @@ def _hypergeom_log_tails(k: float, M: float, n: float, N: float) -> tuple[float,
     return _log1mexp(-log_cdf), log_cdf
 
 
-@_compile
+@jit_numpy_errors
 def hypergeom_sf_scalar(k: float, M: float, n: float, N: float) -> float:
     """Return P(X > k) for X ~ Hypergeom(M, n, N)."""
     return math.exp(_hypergeom_log_tails(k, M, n, N)[0])
 
 
-@_compile
+@jit_numpy_errors
 def hypergeom_logsf_scalar(k: float, M: float, n: float, N: float) -> float:
     """Return log P(X > k) for X ~ Hypergeom(M, n, N)."""
     return _hypergeom_log_tails(k, M, n, N)[0]
@@ -1087,7 +1087,7 @@ def hypergeom_logsf_scalar(k: float, M: float, n: float, N: float) -> float:
 # ---------------------------------------------------------------------------------------
 
 
-@_compile
+@jit_numpy_errors
 def _norm_array(x: NDArray[np.float64], kind: int) -> NDArray[np.float64]:
     out = np.empty(x.size)
     for i in range(x.size):
@@ -1106,7 +1106,7 @@ def _norm_array(x: NDArray[np.float64], kind: int) -> NDArray[np.float64]:
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _t_array(
     x: NDArray[np.float64], df: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1125,7 +1125,7 @@ def _t_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _f_array(
     x: NDArray[np.float64],
     dfn: NDArray[np.float64],
@@ -1149,7 +1149,7 @@ def _f_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _chi2_array(
     x: NDArray[np.float64], df: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1170,7 +1170,7 @@ def _chi2_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _gamma_array(
     x: NDArray[np.float64],
     shape: NDArray[np.float64],
@@ -1184,7 +1184,7 @@ def _gamma_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _beta_array(
     x: NDArray[np.float64], a: NDArray[np.float64], b: NDArray[np.float64], kind: int
 ) -> NDArray[np.float64]:
@@ -1195,7 +1195,7 @@ def _beta_array(
     return out
 
 
-@_compile
+@jit_numpy_errors
 def _hypergeom_array(
     k: NDArray[np.float64],
     M: NDArray[np.float64],

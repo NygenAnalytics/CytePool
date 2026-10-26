@@ -198,12 +198,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
+from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, column_space
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import real_number
@@ -1040,12 +1039,9 @@ def _maximize(
         np.ascontiguousarray(prior_means, dtype=np.float64),
         float(precision),
     )
-    threads = numba.get_num_threads()
-    if threads > 1 and counts.shape[0] > 1:
-        n_chunks = max(1, min(counts.shape[0], 4 * threads))
-        result: FloatArray = _maximize_in_parallel(*arguments, n_chunks)
-    else:
-        result = _maximize_in_order(*arguments)
+    result: FloatArray = by_chunks(
+        _maximize_in_parallel, _maximize_in_order, arguments, counts.shape[0]
+    )
     return result
 
 
@@ -1311,14 +1307,9 @@ def _fitted_means(
         np.full(x.shape[1], _NATURAL_RIDGE),
         np.ascontiguousarray(start.T),
     )
-    threads = numba.get_num_threads()
-    if threads > 1 and n_genes > 1:
-        n_chunks = max(1, min(n_genes, 4 * threads))
-        coefficients, fitted_by_gene, converged, iterations = _fit_in_parallel(
-            *arguments, n_chunks
-        )
-    else:
-        coefficients, fitted_by_gene, converged, iterations = _fit_in_order(*arguments)
+    coefficients, fitted_by_gene, converged, iterations = by_chunks(
+        _fit_in_parallel, _fit_in_order, arguments, n_genes
+    )
     return coefficients, np.ascontiguousarray(fitted_by_gene.T), converged, iterations
 
 

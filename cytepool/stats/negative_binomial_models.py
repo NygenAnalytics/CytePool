@@ -164,12 +164,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import numba
 import numpy as np
 import numpy.typing as npt
 from numba import prange
 
-from cytepool._jit import jit, thread_limit
+from cytepool._jit import by_chunks, jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import non_negative_number, positive_integer
 from cytepool.design.design import _refuse_random_effects
@@ -804,19 +803,9 @@ def _fit(
         layout.one_way,
         max_iterations,
     )
-    threads = numba.get_num_threads()
-    if threads > 1:
-        # Several runs of genes per thread balance the work. Each gene is fitted by the
-        # same operations whatever its run, so the result does not depend on the
-        # number of threads.
-        n_chunks = max(1, min(counts.shape[0], 4 * threads))
-        fitted: tuple[FloatArray, FloatArray, FloatArray, IntArray, BoolArray] = (
-            _fit_in_parallel(*arguments, n_chunks)
-        )
-    else:
-        # Without a parallel region, which forked processes and several Python threads
-        # at once can run whatever numba's threading layer.
-        fitted = _fit_in_order(*arguments)
+    fitted: tuple[FloatArray, FloatArray, FloatArray, IntArray, BoolArray] = by_chunks(
+        _fit_in_parallel, _fit_in_order, arguments, counts.shape[0]
+    )
     coefficients, values, deviance, iterations, converged = fitted
     if not layout.one_way:
         coefficients = np.linalg.solve(layout.triangular, coefficients.T).T
