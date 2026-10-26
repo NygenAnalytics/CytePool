@@ -9,6 +9,14 @@ them, not here.
 
 ## Adapted material
 
+### MyST book theme
+
+- Source: <https://github.com/jupyter-book/myst-theme>
+- Copyright (c) 2023 Executable Books.
+- License: MIT
+- Used in: `docs/build_docs.py` adjusts the documentation theme so navigation sections
+  are expanded in the initial page and remain expanded when browser code starts.
+
 ### PyDESeq2
 
 `cytepool/stats/deseq2.py` takes from PyDESeq2 0.5.4 (https://github.com/owkin/PyDESeq2,
