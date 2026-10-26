@@ -43,7 +43,13 @@ Methods:
       t and F distributions with many degrees of freedom). For a shape below 1 the tail
       given by the fraction can be close to 1; the other tail then comes from a
       term-by-term series of its own rather than from 1 minus it (the analogue of the
-      incomplete gamma case).
+      incomplete gamma case). For two shapes from 1e10 within about one standard
+      deviation of the center, where the fraction's steps grow like the cube root of
+      the shapes, Temme's (1982) uniform expansion replaces it, as for the incomplete
+      gamma function. Shapes from 2^500, and shapes below 1e-280, take forms of the
+      fraction and its prefactor whose products and quotients stay in the double range;
+      a shape below 1e-3 whose series exponent would be absorbed by the Stirling
+      corrections takes it divided by the shape.
 
 Limits:
     Accuracy is checked against 50-digit mpmath values (``validation/distributions.py``)
@@ -51,11 +57,13 @@ Limits:
     the t and F distributions with degrees of freedom from 0.5 to 1e12 and infinity:
     relative errors stay below 1e-12 down to probabilities of 1e-300. In deep tails they
     are of order eps |log p| (about 2e-13 at p = 1e-300), because a probability is
-    evaluated through its logarithm. Larger shapes keep working: the incomplete beta
-    fraction needs a few thousand steps at shapes of 1e12, and the uniform expansion
-    serves the incomplete gamma function near the center for every shape from 1e3. A
-    series or continued fraction that has not converged after 1e7 steps gives NaN rather
-    than an inaccurate value.
+    evaluated through its logarithm. Larger shapes keep working: the uniform expansions
+    serve the incomplete gamma function near the center for every shape from 1e3, and
+    the incomplete beta function for two shapes from 1e10. The incomplete beta function
+    is checked, too, at every combination of shapes and arguments from the smallest
+    subnormal to the largest double (relative errors below 1e-12 there as well), and
+    takes under a millisecond for any of them. A series or continued fraction that has
+    not converged after 1e7 steps gives NaN rather than an inaccurate value.
 
 References:
     Olver FWJ, Olde Daalhuis AB, Lozier DW, Schneider BI, Boisvert RF, Clark CW,
@@ -81,6 +89,10 @@ References:
 
     Temme NM (1979). The asymptotic expansion of the incomplete gamma functions. SIAM
     Journal on Mathematical Analysis 10, 757-766. doi:10.1137/0510071
+
+    Temme NM (1982). The uniform asymptotic expansion of a class of integrals related to
+    cumulative distribution functions. SIAM Journal on Mathematical Analysis 13,
+    239-253. doi:10.1137/0513017
 
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
     differential expression in microarray experiments. Statistical Applications in

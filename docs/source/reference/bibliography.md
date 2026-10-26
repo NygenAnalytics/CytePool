@@ -78,6 +78,7 @@ SumRank and the prediction of held-out studies [@nakatsuka2025; @irwin1927; @hal
 
 [@cleveland1979; @cleveland1981; @deboor1978; @hastie1992; @scott1979; @freedman1981;
 @abramowitz1964; @johnson1995; @olver2026; @wichura1988; @paulson1942; @temme1979;
+@temme1982;
 @lentz1976; @thompson1986; @loader2000; @maechler2012; @dekker1971; @knuth1997;
 @ogita2005; @neumaier1974; @kendall1945; @golub2013; @giraud2005; @berrut2004;
 @brent1973; @dowell1971; @graham1969; @briggs1993; @goldberg1991; @hoare1961;
@@ -87,7 +88,8 @@ SumRank and the prediction of held-out studies [@nakatsuka2025; @irwin1927; @hal
 
 Classical scaling for MDS plots, forest plots, violin plots and the bandwidth of their
 densities, and the check of the colour palette for colour-vision deficiency [@gower1966;
-@lewis2001; @hintze1998; @silverman1986; @machado2009].
+@lewis2001; @hintze1998; @silverman1986; @machado2009]; principal components
+[@pearson1901].
 
 ## Data structures, file formats and standards
 

@@ -1962,6 +1962,18 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         {"contrasts": None},
     ),
+    # Principal components: of an array, or of a cube's group (an object).
+    "cytepool.principal_components.principal_components": Entry(
+        lambda c: {"data": log_cpm(COUNTS), "top": 4},
+        {"data": None},
+        options=("top",),
+    ),
+    "cytepool.principal_components.principal_components[cube]": Entry(
+        lambda c: {"data": _bulk_cube(), "group": "bulk", "min_cells": 1},
+        {},
+        options=("group", "min_cells"),
+        objects=("data",),
+    ),
     # Meta-analysis. NaN marks a study that did not measure a feature.
     "cytepool.meta_analysis.meta_analysis": Entry(
         lambda c: {
@@ -2093,6 +2105,53 @@ ENTRY_POINTS: dict[str, Entry] = {
         {},
         options=("group", "color_by", "min_cells"),
         objects=("data", "ax"),
+    ),
+    "cytepool.plotting.plot_pca": Entry(
+        lambda c: {
+            "data": log_cpm(COUNTS),
+            "color_by": ["a", "b", "a", "b"],
+            "marker_by": ["x", "x", "y", "y"],
+            "labels": ["S1", "S2", "S3", "S4"],
+            "top": 4,
+            "components": (1, 2),
+            "ax": _axes(),
+        },
+        {
+            "data": None,
+            "color_by": None,
+            "marker_by": None,
+            "labels": None,
+            "components": None,
+        },
+        options=("top",),
+        objects=("ax",),
+    ),
+    "cytepool.plotting.plot_pca[cube]": Entry(
+        lambda c: {
+            "data": _bulk_cube(),
+            "group": "bulk",
+            "color_by": "condition",
+            "min_cells": 1,
+            "ax": _axes(),
+        },
+        {},
+        options=("group", "color_by", "min_cells"),
+        objects=("data", "ax"),
+    ),
+    # Genes, groups and samples named by id; the cube is an object.
+    "cytepool.plotting.plot_dotplot": Entry(
+        lambda c: {
+            "cube": c.cube,
+            "genes": ["feature_0", "feature_2"],
+            "groups": ["T", "B"],
+            "samples": ["S1", "S2"],
+            "standard_scale": "gene",
+            "mean_only_expressed": True,
+            "ax": _axes(),
+        },
+        {"genes": None, "groups": None, "samples": None},
+        options=("standard_scale", "mean_only_expressed"),
+        objects=("cube", "ax"),
     ),
     "cytepool.plotting.plot_cell_numbers": Entry(
         lambda c: {"cube": c.cube, "min_cells": 1, "numbers": True, "ax": _axes()},
@@ -2653,6 +2712,7 @@ RECORDS = {
     "cytepool.stats.combined_p_values.CombinedPValues",
     "cytepool.stats.multiple_testing.TrueNullProportion",
     "cytepool.sumrank.SumRankFit",
+    "cytepool.principal_components.PrincipalComponents",
     "cytepool.stats.dream.ModeratedFixedEffectTests",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodFit",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",

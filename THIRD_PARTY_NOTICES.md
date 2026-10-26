@@ -187,6 +187,49 @@ of neurodegenerative diseases through meta-analysis. Nature Communications 16, 7
 doi:10.1038/s41467-025-62579-z. The code is distributed under the Apache License,
 Version 2.0 (Copyright 2024 Nathan Nakatsuka; http://www.apache.org/licenses/LICENSE-2.0).
 
+### scanpy
+
+`plot_dotplot` in `cytepool/plotting.py` follows three conventions of scanpy 1.12.4's
+dot plot (https://github.com/scverse/scanpy, `src/scanpy/plotting/_dotplot.py`) that its
+documentation leaves open: the largest fraction rounded up to a tenth, the steps of the
+key of the dots' areas (0.2, 0.1 or 0.05), and a scaled row of equal values drawn as 0.
+No code is copied. scanpy is described in Wolf FA, Angerer P, Theis FJ (2018). SCANPY:
+large-scale single-cell gene expression data analysis. Genome Biology 19, 15.
+doi:10.1186/s13059-017-1382-0. It is distributed under the BSD 3-Clause License:
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2025 scverse®
+Copyright (c) 2017 F. Alexander Wolf, P. Angerer, Theis Lab
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### numba
 
 `cytepool/_jit.py` places the cache of its compiled routines with subclasses of numba's

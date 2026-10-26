@@ -1,9 +1,12 @@
+import itertools
 import math
+import time
 from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.testing import assert_allclose, assert_array_equal
 
 from cytepool.stats import special
 
@@ -129,6 +132,85 @@ def test_incomplete_beta_matches_high_precision_values() -> None:
     assert_probability_close(special.betaincc(a, b, x), data["C"])
     assert_log_close(special.log_betainc(a, b, x), data["logI"])
     assert_log_close(special.log_betaincc(a, b, x), data["logC"])
+
+
+def test_incomplete_beta_matches_high_precision_values_at_extreme_arguments() -> None:
+    # Shapes from the smallest subnormal to the largest double, and points near the
+    # center of shapes from 1e10, where the uniform expansion serves them.
+    data = _load("betainc_extreme")
+    a, b, x = data["a"], data["b"], data["x"]
+    assert_probability_close(special.betainc(a, b, x), data["I"])
+    assert_probability_close(special.betaincc(a, b, x), data["C"])
+    assert_log_close(special.log_betainc(a, b, x), data["logI"])
+    assert_log_close(special.log_betaincc(a, b, x), data["logC"])
+
+
+LARGEST = float(np.finfo(np.float64).max)
+EDGES = [0.0, 5e-324, 1e-300, 1e-8, 0.5, 1.0 - 2.0**-53, 1.0, 2.0, 30.0, 1e8, 1e300]
+EDGES.append(LARGEST)
+
+
+def test_incomplete_beta_is_fast_at_every_extreme_argument() -> None:
+    # Some of these once ran 10^7 steps of the continued fraction (0.15 s a value),
+    # and with a + b beyond the double range a deviance term never returned.
+    a, b, x = (np.array(v) for v in zip(*itertools.product(EDGES, repeat=3)))
+    special.log_betainc(2.0, 3.0, 0.5)  # compiled
+    start = time.perf_counter()
+    log_i = special.log_betainc(a, b, x)
+    log_c = special.log_betaincc(a, b, x)
+    elapsed = time.perf_counter() - start
+
+    # 3,456 values take about 0.01 s; the bound leaves room for slow machines.
+    assert elapsed < 2.0
+    domain = (a > 0.0) & (b > 0.0) & (x <= 1.0)
+    assert not np.isnan(log_i[domain]).any() and not np.isnan(log_c[domain]).any()
+    assert np.isnan(log_i[~domain]).all() and np.isnan(log_c[~domain]).all()
+    # One tail is the complement of the other.
+    both = domain & (log_i > -700.0) & (log_c > -700.0)
+    assert_allclose(np.exp(log_i[both]) + np.exp(log_c[both]), 1.0, rtol=4 * EPS)
+
+
+def test_incomplete_beta_of_equal_shapes_is_one_half_at_one_half() -> None:
+    shapes = np.array([1e10, 3e15, 1e20, 1e300, LARGEST])
+    assert_array_equal(special.betainc(shapes, shapes, 0.5), 0.5)
+    assert_array_equal(special.betaincc(shapes, shapes, 0.5), 0.5)
+
+
+def test_incomplete_beta_near_the_center_of_large_shapes_is_its_reflection() -> None:
+    # I_x(a, b) = 1 - I_(1-x)(b, a), with x and 1 - x exact, in the band of the uniform
+    # expansion (about one standard deviation, 2.2e-7, of the center) and beyond it,
+    # where the continued fraction takes over.
+    a, b = 1e12, 3e12
+    sd = math.sqrt(3.0 / 16.0 / (a + b + 1.0))
+    x = 0.25 + np.arange(-6, 7) * 2.0**-23
+    assert np.abs(x - 0.25).max() > 3.0 * sd
+    total = special.betainc(a, b, x) + special.betainc(b, a, 1.0 - x)
+    assert_allclose(total, 1.0, rtol=2 * EPS)
+    assert np.all(np.diff(special.betainc(a, b, x)) > 0.0)
+
+
+def test_incomplete_gamma_returns_where_the_shape_and_the_argument_overflow() -> None:
+    # Loader's deviance term of a + x beyond the double range once never returned.
+    # mpmath, from Legendre's continued fraction at 40 digits, gives
+    # log Q(1e300, LARGEST) = -1.7976929347904657564e308.
+    assert_allclose(special.log_gammaincc(1e300, LARGEST), -1.7976929347904657564e308)
+    assert special.gammainc(LARGEST, LARGEST) == 0.5  # 1/2 + 1/(3 sqrt(2 pi a))
+    assert special.log_gammainc(LARGEST, 1e300) == -np.inf  # below -LARGEST
+
+
+@pytest.mark.parametrize("a", [1e-8, 1e-20, 1e-300, 5e-324])
+def test_incomplete_beta_of_a_tiny_shape_against_its_closed_form(a: float) -> None:
+    # 1 - I_x(a, 1) = 1 - x^a = -expm1(t) with t = a log x, whose logarithm is
+    # log(a) + log(-log x) + log(expm1(t) / t); t is subnormal for the smallest a.
+    x = np.array([1e-300, 1e-8, 0.5, 0.99])
+    t = a * np.log(x)
+    ratio = np.where(np.abs(t) > 1e-300, np.expm1(t) / np.where(t == 0.0, 1.0, t), 1.0)
+    expected = np.log(a) + np.log(-np.log(x)) + np.log(ratio)
+    assert_allclose(special.log_betaincc(a, 1.0, x), expected, rtol=4 * EPS)
+    # 1 - x is exact from x = 1/2.
+    assert_allclose(
+        special.log_betainc(1.0, a, 1.0 - x[2:]), expected[2:], rtol=4 * EPS
+    )
 
 
 # ---------------------------------------------------------------------------------------

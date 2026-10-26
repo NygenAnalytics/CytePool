@@ -17,8 +17,12 @@ settings.
 The figures:
 
 - Samples: :func:`plot_mds`, the multidimensional scaling plot of limma's ``plotMDS``
-  (Ritchie et al. 2015), whose distances are leading log2 fold changes.
-- Cubes: :func:`plot_cell_numbers`, the cells pooled into each sample and group.
+  (Ritchie et al. 2015), whose distances are leading log2 fold changes;
+  :func:`plot_pca`, the principal component plot of DESeq2's ``plotPCA`` (Love et al.
+  2014; Pearson 1901).
+- Cubes: :func:`plot_cell_numbers`, the cells pooled into each sample and group;
+  :func:`plot_dotplot`, scanpy's dot plot of the fraction of cells that express each
+  gene and its mean expression in each group (Wolf et al. 2018), from the cube's sums.
 - Composition: :func:`plot_composition`, the cell-type proportions of every sample, as
   speckle's ``plotCellTypeProps`` draws them; :func:`plot_proportions`, the proportions
   of every cell type by condition, with the adjusted p-values of ``propeller``
@@ -183,6 +187,13 @@ References:
     Improving reproducibility of differentially expressed genes in single-cell
     transcriptomic studies of neurodegenerative diseases through meta-analysis.
     Nature Communications 16, 7436. doi:10.1038/s41467-025-62579-z
+
+    Pearson K (1901). On lines and planes of closest fit to systems of points in space.
+    The London, Edinburgh, and Dublin Philosophical Magazine and Journal of Science 2,
+    559-572. doi:10.1080/14786440109462720
+
+    Wolf FA, Angerer P, Theis FJ (2018). SCANPY: large-scale single-cell gene expression
+    data analysis. Genome Biology 19, 15. doi:10.1186/s13059-017-1382-0
 """
 
 import importlib
@@ -220,6 +231,7 @@ from .held_out_prediction import HeldOutPrediction
 from .meta_analysis import MetaAnalysisResult
 from .normalization import filter_by_expression, log_cpm, tmm_factors
 from .pathway_scores import PathwayScores
+from .principal_components import PrincipalComponents, principal_components
 from .replication import ReplicationResult
 from .stats.deseq2 import DESeq2Dispersions, DESeq2Fit, DESeq2Results
 from .stats.distributions import f_cdf, f_sf, norm_isf
@@ -244,6 +256,7 @@ __all__ = [
     "plot_cell_numbers",
     "plot_composition",
     "plot_dispersions",
+    "plot_dotplot",
     "plot_enrichment",
     "plot_forest",
     "plot_gene_sets",
@@ -256,6 +269,7 @@ __all__ = [
     "plot_over_representation",
     "plot_p_values",
     "plot_pathway_scores",
+    "plot_pca",
     "plot_proportions",
     "plot_quasi_dispersions",
     "plot_replicated_genes",
@@ -4369,3 +4383,594 @@ def plot_held_out_auc(
     ax.set_xlabel("AUC of the held-out study's cases against its controls")
     _legend(ax, handles)
     return ax
+
+
+# Principal components and dot plots.
+
+# DESeq2's plotPCA takes the 500 genes of largest variance.
+_PCA_TOP = 500
+# scanpy's dot plots: the area of the dot of the largest fraction, in points squared,
+# and the power of the fraction that sets a dot's area.
+_DOT_AREA = 200.0
+_DOT_EXPONENT = 1.5
+_DOT_SCALES = ("gene", "group")
+
+
+def plot_pca(
+    data: Any,
+    *,
+    group: str | None = None,
+    color_by: str | Sequence[Any] | None = None,
+    marker_by: str | Sequence[Any] | None = None,
+    labels: bool | Sequence[Any] = False,
+    top: int | None = None,
+    components: Sequence[int] = (1, 2),
+    min_cells: int | None = None,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot samples on two principal components of their most variable genes.
+
+    DESeq2's ``plotPCA`` (Love et al. 2014): the samples' coordinates on two components
+    of :func:`~cytepool.principal_components.principal_components`, which takes the
+    ``top`` genes of largest variance over the samples, centres each on its mean, and
+    decomposes them by singular values (Pearson 1901); the sign of each component makes
+    its largest coordinate positive. The axes are labelled as ``plotPCA`` labels them,
+    with each component's share of the variance rounded to a whole percent, as in
+    "PC1: 45% variance", and drawn to the same scale, as ``plotPCA`` draws them, so that
+    the distances between samples are drawn true. The coordinates are those of
+    ``principal_components``; pass its result as ``data`` to draw the components it
+    holds.
+
+    Draws the samples as points (gid ``"samples"``), coloured by ``color_by`` and
+    marked by ``marker_by`` as :func:`plot_mds` draws them, with a legend of their
+    levels, and labels the samples (gid ``"sample labels"``) when asked.
+
+    Args:
+        data: A :class:`~cytepool.principal_components.PrincipalComponents`, or what
+            ``principal_components`` takes: a :class:`~cytepool.cube.Cube`, a
+            :class:`~cytepool.stats.voom.VoomResult`, or ``(n_samples, n_genes)``
+            log-expression values, finite.
+        group: The group (cell type) of a cube to plot; it may be left out when the
+            cube has one group. Only cubes take it.
+        color_by: The variable whose levels colour the points: a column of the
+            samples' table (a cube's, or that of a PrincipalComponents), or one label
+            per sample (of the cube, for a cube). With more than three levels and no
+            ``marker_by``, each level also gets a marker.
+        marker_by: The variable whose levels mark the points, as ``color_by``; at most
+            12 levels.
+        labels: True to write each sample's id next to it (numbers from 1 for an
+            array), or one label per sample.
+        top: The number of genes of largest variance used, at least 1; 500 by
+            default, as DESeq2's ``ntop``. Not for a PrincipalComponents.
+        components: The two components to plot, counted from 1 in decreasing order
+            of the variance they explain.
+        min_cells: The fewest cells a sample needs in the group to be plotted, 10 by
+            default as for ``limma_voom``; for a cube that records cell numbers.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
+        ValueError: As ``principal_components``, or if the data have fewer components
+            than asked for, ``group``, ``top`` or ``min_cells`` is given with a
+            PrincipalComponents, or a sample variable has the wrong length, a missing
+            label or too many levels.
+        KeyError: If the group, or a variable named, is not in the data.
+    """
+    _check_axes(ax)
+    first, second = _component_pair(components)
+    _check_variable(color_by, "color_by")
+    _check_variable(marker_by, "marker_by")
+    if not isinstance(labels, bool | np.bool_):
+        reject_masked(labels, "labels")
+    if isinstance(data, PrincipalComponents):
+        for name, value in (("group", group), ("top", top), ("min_cells", min_cells)):
+            if value is not None:
+                reject_masked(value, name)
+                raise ValueError(
+                    f"{name} applies to the values that principal_components takes; "
+                    "data holds its components already"
+                )
+        result = data
+    else:
+        result = principal_components(
+            data,
+            group=group,
+            top=_PCA_TOP if top is None else top,
+            min_cells=min_cells,
+        )
+    if result.n_components < max(first, second):
+        raise ValueError(
+            f"components {first} and {second} need {max(first, second)} components; "
+            f"the data have {result.n_components}, one fewer than the samples and at "
+            "most the genes used"
+        )
+    samples = _component_samples(data, result)
+    x = np.asarray(result.coordinates[:, first - 1], dtype=np.float64)
+    y = np.asarray(result.coordinates[:, second - 1], dtype=np.float64)
+    ax = _axes(ax, (6.5, 4.5))
+    _draw_samples(ax, x, y, samples, color_by, marker_by, labels)
+    share = result.variance_explained
+    ax.set_xlabel(f"PC{first}: {100 * share[first - 1]:.0f}% variance")
+    ax.set_ylabel(f"PC{second}: {100 * share[second - 1]:.0f}% variance")
+    ax.set_aspect("equal", adjustable="datalim")
+    return ax
+
+
+def _component_pair(value: Any) -> tuple[int, int]:
+    reject_masked(value, "components")
+    if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
+        raise TypeError(
+            f"components must be a pair of components, such as (1, 2), got {value!r}"
+        )
+    first = positive_integer(value[0], "components[0]")
+    second = positive_integer(value[1], "components[1]")
+    if first == second:
+        raise ValueError(f"components must be two different components, got {value!r}")
+    return first, second
+
+
+def _component_samples(data: Any, result: PrincipalComponents) -> _Samples:
+    """The samples of principal components, with the variables of their table: a
+    cube's sample table for a cube, so that labels follow its samples."""
+    table = result.samples
+    if isinstance(data, Cube):
+        position = {
+            value: i for i, value in enumerate(data.samples["sample_id"].tolist())
+        }
+        rows = [position[value] for value in table["sample_id"].tolist()]
+        return _cube_samples(data, np.array(rows, dtype=np.intp))
+    n = len(table)
+    ids = [str(value) for value in table["sample_id"].tolist()]
+    if not isinstance(data, PrincipalComponents):
+        return _Samples(ids, list(range(n)), n)
+    return _Samples(
+        ids=ids,
+        rows=list(range(n)),
+        n_rows=n,
+        variables={name: table[name] for name in table.columns},
+        source="the samples' table",
+    )
+
+
+def _draw_samples(
+    ax: "Axes",
+    x: FloatArray,
+    y: FloatArray,
+    samples: _Samples,
+    color_by: Any,
+    marker_by: Any,
+    labels: Any,
+) -> None:
+    """Samples as points, coloured and marked by their variables, as plot_mds draws
+    them: a hue per level of color_by, a marker per level of marker_by, or of color_by
+    when it has more levels than scatter plots keep apart; labels when asked; and a
+    legend of the levels."""
+    n_samples = x.size
+    colors = None if color_by is None else samples.labels(color_by, "color_by")
+    markers = None if marker_by is None else samples.labels(marker_by, "marker_by")
+    remedy = "give it as marker_by, or as labels"
+    hues = {} if colors is None else _hues(colors[1], "color_by", remedy)
+    shapes_follow_colors = (
+        markers is None and colors is not None and len(colors[1]) > _SCATTER_HUES
+    )
+    if markers is not None:
+        shapes, by_shape = _shapes(markers[1], "marker_by"), markers[0]
+    elif colors is not None and shapes_follow_colors:
+        shapes, by_shape = _shapes(colors[1], "color_by"), colors[0]
+    else:
+        shapes, by_shape = {}, None
+    if isinstance(labels, bool | np.bool_):
+        texts = list(samples.ids) if labels else None
+    else:
+        texts = samples.labels(labels, "labels")[0]
+    color_of = [hues[level] for level in colors[0]] if colors else [_BLUE] * n_samples
+    marker_of = [shapes[level] for level in by_shape] if by_shape else None
+    marker_of = marker_of or [_MARKERS[0]] * n_samples
+    for marker in dict.fromkeys(marker_of):
+        rows = [i for i in range(n_samples) if marker_of[i] == marker]
+        ax.scatter(
+            x[rows],
+            y[rows],
+            c=[color_of[i] for i in rows],
+            marker=marker,
+            s=_SPARSE,
+            edgecolors="white",
+            linewidths=0.6,
+            zorder=3,
+            gid="samples",
+        )
+    if texts is not None:
+        for i, text in enumerate(texts):
+            ax.annotate(
+                text,
+                (x[i], y[i]),
+                xytext=(4, 4),
+                textcoords="offset points",
+                fontsize=8,
+                gid="sample labels",
+            )
+    handles: list[Any] = []
+    if colors is not None:
+        if isinstance(color_by, str):
+            handles.append(_key(color_by, marker=""))
+        for level in colors[1]:
+            shape = shapes[level] if shapes_follow_colors else _MARKERS[0]
+            handles.append(_key(level, marker=shape, color=hues[level]))
+    if markers is not None:
+        if isinstance(marker_by, str):
+            handles.append(_key(marker_by, marker=""))
+        for level in markers[1]:
+            handles.append(_key(level, marker=shapes[level], color=_GREY))
+    if handles:
+        _legend(ax, handles)
+
+
+def plot_dotplot(
+    cube: Cube,
+    genes: Any,
+    *,
+    groups: Sequence[str] | None = None,
+    samples: Any = None,
+    standard_scale: str | None = None,
+    mean_only_expressed: bool = False,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot how many cells of each group express each gene, and how much, as dots.
+
+    scanpy's dot plot (``scanpy.pl.dotplot``; Wolf et al. 2018), drawn from the sums
+    that a cube keeps instead of from the cells: for each group (cell type), a row,
+    and each gene, a column, the fraction of the group's cells with a positive count,
+    ``detected`` over ``n_cells``, sets the area of the dot, and the mean of the cells'
+    log-normalized values, ``log_sum`` over ``n_cells``, its colour. Both are pooled
+    over the samples, every sample's sums added before dividing, so that they are the
+    fractions and means scanpy computes from the cells the cube was pooled from (with
+    its default ``expression_cutoff`` of 0); ``samples`` pools some of them only.
+    A dot's area is 200 (f / f_max)^1.5 points squared, f its fraction and f_max the
+    largest fraction shown rounded up to a tenth, as scanpy sizes its dots, and the
+    key of the areas shows fractions in scanpy's steps. The colours run from the
+    smallest to the largest value shown.
+
+    ``standard_scale`` scales the means of each gene over the groups (``"gene"``,
+    scanpy's ``"var"``), or of each group over the genes (``"group"``), to run from 0
+    to 1, (m - min) / (max - min), 0 where they are all equal, as scanpy does.
+    ``mean_only_expressed`` takes the mean over the cells that express the gene,
+    ``log_sum`` over ``detected`` (0 where none does), as scanpy's option of that name;
+    it needs a cube whose transform maps a zero count to zero, one whose normalization
+    records a pseudocount of 1, as :func:`~cytepool.cube.from_cells` records it. Genes
+    given as a mapping are
+    drawn in groups, under a bracket labelled with the group's name, as scanpy draws
+    ``var_names`` given as a dict.
+
+    Draws the dots (gid ``"dots"``: their sizes are the areas, and their array the
+    values that the colours show) and, for genes in groups, the brackets (gid
+    ``"gene groups"``) and their names (gid ``"gene group names"``).
+
+    Args:
+        cube: A cube with cell numbers and the layers ``detected`` and ``log_sum``,
+            as :func:`~cytepool.cube.from_cells` builds it.
+        genes: The genes, the columns from left to right: feature ids or symbols of
+            the cube's features; or a mapping of names to such lists, for groups of
+            genes.
+        groups: The groups, the rows from the top; by default every group, in the
+            cube's order.
+        samples: The samples whose cells are pooled: sample ids, or a boolean mask
+            over the cube's samples; by default every sample.
+        standard_scale: ``"gene"``, ``"group"`` or None.
+        mean_only_expressed: Whether the mean is taken over the cells that express
+            the gene only.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If an argument has the wrong type, or is or holds a numpy masked
+            array.
+        ValueError: If the cube lacks cell numbers, ``detected`` or ``log_sum``, a
+            group has no cells in the samples pooled, ``genes``, ``groups`` or
+            ``samples`` is empty or names one twice, a symbol names several genes,
+            ``mean_only_expressed`` is asked of a cube without a pseudocount of 1, or
+            an option is out of range.
+        KeyError: If a gene, group or sample is not in the cube.
+    """
+    _check_axes(ax)
+    if not isinstance(cube, Cube):
+        raise TypeError(f"cube must be a Cube, got {type(cube).__name__}")
+    scale = (
+        None
+        if standard_scale is None
+        else checked_choice(standard_scale, "standard_scale", _DOT_SCALES)
+    )
+    expressed_only = checked_flag(mean_only_expressed, "mean_only_expressed")
+    lacking = [name for name in ("detected", "log_sum") if name not in cube.layer_names]
+    if cube.n_cells is None or lacking:
+        what = (
+            "cell numbers"
+            if cube.n_cells is None
+            else f"the layer(s) {quoted(lacking)}"
+        )
+        raise ValueError(
+            f"the cube lacks {what}; a dot plot needs cell numbers and the layers "
+            "'detected' and 'log_sum', as from_cells computes them"
+        )
+    columns, names, gene_groups = _dot_genes(cube, genes)
+    rows = _chosen_ids(groups, cube.groups["group_id"].tolist(), "groups", "group")
+    pooled = _pooled_samples(cube, samples)
+    if expressed_only:
+        normalization = cube.normalization or {}
+        if normalization.get("pseudocount") != 1:
+            raise ValueError(
+                "mean_only_expressed needs a cube whose transform maps a zero count to "
+                "zero, one whose normalization records a pseudocount of 1, as from_cells "
+                f"records it; this cube's normalization is {normalization or None!r}"
+            )
+    fractions, means = _dot_values(cube, rows, columns, pooled, expressed_only)
+    shown = (
+        means if scale is None else _min_max_scaled(means, 0 if scale == "gene" else 1)
+    )
+
+    largest = float(fractions.max())
+    f_max = math.ceil(largest * 10) / 10 if largest > 0.0 else 1.0
+    areas = _DOT_AREA * (fractions / f_max) ** _DOT_EXPONENT
+    n_groups, n_genes = fractions.shape
+    colors = _module("matplotlib.colors")
+    ramp = colors.LinearSegmentedColormap.from_list("cytepool_blues", _BLUES)
+    low, high = float(shown.min()), float(shown.max())
+    norm = colors.Normalize(vmin=low, vmax=high if high > low else low + 1.0)
+    width = min(14.0, 3.0 + 0.4 * n_genes)
+    ax = _axes(ax, (width, min(12.0, max(4.0, 1.6 + 0.4 * n_groups))))
+    y, x = np.indices((n_groups, n_genes))
+    ax.scatter(
+        x.ravel(),
+        y.ravel(),
+        s=areas.ravel(),
+        c=shown.ravel(),
+        cmap=ramp,
+        norm=norm,
+        edgecolors=_INK,
+        linewidths=0.2,
+        gid="dots",
+    )
+    group_ids = cube.groups["group_id"].tolist()
+    ax.set_yticks(range(n_groups), [group_ids[g] for g in rows])
+    ax.set_xticks(range(n_genes), names, rotation=90)
+    ax.set_xlim(-0.6, n_genes - 0.4)
+    ax.set_ylim(n_groups - 0.4, -0.6)
+    ax.tick_params(length=0)
+    if gene_groups:
+        _draw_gene_groups(ax, gene_groups)
+    if scale is not None:
+        label = f"Mean expression\nin group, scaled\nper {scale}"
+    elif expressed_only:
+        label = "Mean expression in\nexpressing cells"
+    else:
+        label = "Mean expression\nin group"
+    mappable = _module("matplotlib.cm").ScalarMappable(norm=norm, cmap=ramp)
+    # The bar starts below the top of the plot, to leave room for its label above
+    # it, where scanpy writes it; a label along the bar ran into the key below it.
+    bar = ax.figure.colorbar(mappable, ax=ax, shrink=0.4, anchor=(0.0, 0.85))
+    handles = [
+        _key(
+            f"{round(100 * share):d}",
+            color=_GREY,
+            markeredgecolor=_INK,
+            markeredgewidth=0.2,
+            markersize=math.sqrt(_DOT_AREA * (share / f_max) ** _DOT_EXPONENT),
+        )
+        for share in _fraction_keys(f_max)
+    ]
+    key = bar.ax.legend(
+        handles=handles,
+        title="Fraction of cells\nin group (%)",
+        loc="upper left",
+        bbox_to_anchor=(0.0, -0.06),
+        borderaxespad=0.0,
+        frameon=False,
+        alignment="left",
+    )
+    key.get_title().set_fontweight("bold")
+    bar.ax.set_title(
+        label,
+        loc="left",
+        fontsize=key.get_title().get_fontsize(),
+        fontweight="bold",
+    )
+    return ax
+
+
+def _dot_genes(
+    cube: Cube, genes: Any
+) -> tuple[list[int], list[str], list[tuple[str, int, int]]]:
+    """The cube's features of the genes asked for, the names shown, and the groups of
+    genes as (name, first column, last column)."""
+    reject_masked(genes, "genes")
+    if isinstance(genes, str):
+        named: dict[str, Any] = {"": [genes]}
+    elif isinstance(genes, Mapping):
+        named = dict(genes)
+    else:
+        named = {"": genes}
+    features = cube.features
+    ids = features["feature_id"].tolist()
+    index = {value: j for j, value in enumerate(ids)}
+    symbols = features["symbol"].tolist() if "symbol" in features else []
+    by_symbol: dict[Any, list[int]] = {}
+    for j, symbol in enumerate(symbols):
+        by_symbol.setdefault(symbol, []).append(j)
+    columns: list[int] = []
+    names: list[str] = []
+    gene_groups: list[tuple[str, int, int]] = []
+    for label, members in named.items():
+        if not isinstance(label, str):
+            raise TypeError(
+                f"the names of groups of genes must be text, got {type(label).__name__}"
+            )
+        if isinstance(members, str):
+            members = [members]
+        if not isinstance(members, Sequence | np.ndarray):
+            raise TypeError(
+                "genes must be feature ids or symbols, or a mapping of names to them, "
+                f"got {type(members).__name__}"
+            )
+        start = len(columns)
+        for gene in list(members):
+            if not isinstance(gene, str):
+                raise TypeError(
+                    f"genes must be feature ids or symbols (str), got "
+                    f"{type(gene).__name__} {gene!r}"
+                )
+            if gene in index:
+                columns.append(index[gene])
+            elif gene in by_symbol:
+                found = by_symbol[gene]
+                if len(found) > 1:
+                    raise ValueError(
+                        f"the symbol {gene!r} names {len(found)} genes, "
+                        f"{quoted([ids[j] for j in found])}; give their feature ids"
+                    )
+                columns.append(found[0])
+            else:
+                raise KeyError(
+                    f"no gene {gene!r} among the cube's {len(ids):,} features, by "
+                    "feature_id or symbol"
+                )
+            names.append(gene)
+        if len(columns) == start:
+            raise ValueError(
+                "genes is empty; give at least one gene"
+                if not label
+                else f"the group of genes {label!r} is empty"
+            )
+        if label:
+            gene_groups.append((label, start, len(columns) - 1))
+    return columns, names, gene_groups
+
+
+def _chosen_ids(value: Any, ids: list[str], name: str, kind: str) -> list[int]:
+    """The positions of the ids chosen, in the order given; every id for None."""
+    if value is None:
+        return list(range(len(ids)))
+    reject_masked(value, name)
+    chosen = [value] if isinstance(value, str) else value
+    if not isinstance(chosen, Sequence | np.ndarray):
+        raise TypeError(
+            f"{name} must be a list of {kind} ids, got {type(value).__name__}"
+        )
+    index = {identifier: i for i, identifier in enumerate(ids)}
+    positions = []
+    for identifier in list(chosen):
+        if not isinstance(identifier, str):
+            raise TypeError(
+                f"{name} must hold {kind} ids (str), got {type(identifier).__name__} "
+                f"{identifier!r}"
+            )
+        if identifier not in index:
+            raise KeyError(f"no {kind} {identifier!r}; {kind}s are: {quoted(ids)}")
+        positions.append(index[identifier])
+    if not positions:
+        raise ValueError(f"{name} is empty; give at least one {kind}")
+    if len(set(positions)) != len(positions):
+        raise ValueError(f"{name} names a {kind} more than once")
+    return positions
+
+
+def _pooled_samples(cube: Cube, samples: Any) -> list[int]:
+    """The positions of the samples pooled: ids, a boolean mask, or every sample."""
+    ids = cube.samples["sample_id"].tolist()
+    if samples is not None and not isinstance(samples, str):
+        reject_masked(samples, "samples")
+        mask = np.asarray(samples)
+        if mask.dtype == bool:
+            if mask.shape != (len(ids),):
+                raise ValueError(
+                    f"a boolean mask of samples needs one entry per sample "
+                    f"({len(ids)}), got shape {mask.shape}"
+                )
+            if not mask.any():
+                raise ValueError("samples is empty; the mask selects no sample")
+            return np.flatnonzero(mask).tolist()
+    return _chosen_ids(samples, ids, "samples", "sample")
+
+
+def _dot_values(
+    cube: Cube,
+    rows: list[int],
+    columns: list[int],
+    pooled: list[int],
+    expressed_only: bool,
+) -> tuple[FloatArray, FloatArray]:
+    """The fraction of cells detected and the mean log value, groups x genes, each
+    from the sums over the samples pooled."""
+    n_cells = np.asarray(cube.n_cells, dtype=np.int64)
+    fractions = np.empty((len(rows), len(columns)))
+    means = np.empty((len(rows), len(columns)))
+    group_ids = cube.groups["group_id"].tolist()
+    for i, g in enumerate(rows):
+        cells = int(n_cells[pooled, g].sum())
+        if cells == 0:
+            raise ValueError(
+                f"group {group_ids[g]!r} has no cells in the samples pooled, so its "
+                "fractions and means are undefined; leave it out with groups"
+            )
+        detected = np.asarray(cube.layer("detected", g))[pooled][:, columns]
+        log_sum = np.asarray(cube.layer("log_sum", g), dtype=np.float64)[pooled]
+        expressing = detected.sum(axis=0, dtype=np.int64).astype(np.float64)
+        total = log_sum[:, columns].sum(axis=0)
+        fractions[i] = expressing / cells
+        if expressed_only:
+            means[i] = np.divide(
+                total, expressing, out=np.zeros_like(total), where=expressing > 0
+            )
+        else:
+            means[i] = total / cells
+    return fractions, means
+
+
+def _min_max_scaled(values: FloatArray, axis: int) -> FloatArray:
+    """(v - min) / (max - min) along an axis, 0 where every value is equal."""
+    shifted = values - values.min(axis=axis, keepdims=True)
+    spread = shifted.max(axis=axis, keepdims=True)
+    scaled: FloatArray = np.divide(
+        shifted, spread, out=np.zeros_like(shifted), where=spread > 0.0
+    )
+    return scaled
+
+
+def _fraction_keys(f_max: float) -> list[float]:
+    """The fractions of the key of a dot plot's areas, in scanpy's steps: 0.2 apart
+    from f_max down, 0.1 when f_max is at most 0.6 and 0.05 when at most 0.3."""
+    step = 0.2 if f_max > 0.6 else (0.1 if f_max > 0.3 else 0.05)
+    return [float(value) for value in np.arange(f_max, 0.0, -step)[::-1]]
+
+
+def _draw_gene_groups(ax: "Axes", gene_groups: list[tuple[str, int, int]]) -> None:
+    """Brackets above the columns of each group of genes, labelled with its name;
+    the names turned upright when any is longer than four characters."""
+    transform = _text_transform(ax)
+    rotation = 90 if max(len(name) for name, _, _ in gene_groups) > 4 else 0
+    for name, start, end in gene_groups:
+        left, right = start - 0.3, end + 0.3
+        ax.plot(
+            [left, left, right, right],
+            [1.01, 1.04, 1.04, 1.01],
+            transform=transform,
+            color=_INK,
+            linewidth=0.8,
+            clip_on=False,
+            gid="gene groups",
+        )
+        ax.text(
+            (left + right) / 2.0,
+            1.06,
+            name,
+            transform=transform,
+            ha="center",
+            va="bottom",
+            rotation=rotation,
+            fontsize=9,
+            gid="gene group names",
+        )
