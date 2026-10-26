@@ -36,7 +36,8 @@ a variable that is constant within each donor, such as sex: that variable is con
 with the donor effects, and {api}`Design.check` says so. A random intercept per donor
 ({api}`dream_voom`) keeps the correlation between the samples of a donor and still
 estimates donor-level effects. [Mixed models, REML and dream](mixed_models.md) explains
-the model.
+the model, and [Genes that change in each cell type](../guides/genes_per_cell_type.ipynb) and
+[Repeated measures and donors](../guides/repeated_measures.ipynb) show both designs on data.
 
 ## One matrix of counts
 

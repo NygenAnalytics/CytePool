@@ -10,7 +10,8 @@ correlation, but it also absorbs every variable that is constant within a donor,
 disease status or sex, which then cannot be tested. A random intercept per donor models
 the correlation instead and keeps donor-level variables testable. dream applies this to
 gene expression [@hoffman2021], and dreamlet to the pseudobulk profiles of every cell
-type [@hoffman2026a].
+type [@hoffman2026a]. [Repeated measures and donors](../guides/repeated_measures.ipynb)
+shows dream and variance partitioning on data.
 
 ## The model
 
