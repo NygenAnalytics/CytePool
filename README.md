@@ -33,6 +33,7 @@ what is planned.
 | Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, and `dream_voom`: dream, with the design's random intercepts, such as a donor's, in every group's fits, dream's choice of Kenward-Roger's or Satterthwaite's degrees of freedom by the number of samples in each group, and F-tests of several contrasts, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR, variancePartition; on simulated data and on published single-cell data |
 | Variance partitioning | `variance_fractions`: the fraction of every gene's variance that each variable of a design explains, as variancePartition's `fitExtractVarPartModel`: a mixed model of every gene by maximum likelihood (or REML), with the categorical variables as random intercepts, the continuous ones as fixed effects and precision weights such as voom's, or a linear model without random effects; `variance_partitioning`: the same on every cell type of a cube, with dream's precision weights, the samples each fit used and a provenance record | variancePartition, lme4 |
 | Meta-analysis | `meta_analysis`: for every gene, the fixed-effect (inverse-variance) or random-effects estimate of a common effect from the effects and standard errors of several studies, with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I² and H², z-tests or the Knapp-Hartung adjustment, and genes measured in some studies only; `differential_expression_meta_analysis`: the same for the `limma_voom` or `limma_trend` results of several cubes, matched by cell type, contrast and gene id, with p-values adjusted over the genes and a provenance record | metafor |
+| Combined p-values and replication | `combine_p_values`: every gene's p-values combined over the studies that tested it, by Fisher's, Stouffer's (weighted), Tippett's, Wilkinson's, Pearson's, Mudholkar and George's or Simes's method, one-sided or two-sided with the directions of the effects; `partial_conjunction`: the p-value that at least u studies have an effect, in one direction (Benjamini and Heller); `proportion_of_true_nulls`: pi0 and pi1 as qvalue's `pi0est`, with its smoother and bootstrap; `differential_expression_replication`: for the studies of a `CubeCollection`, every gene's combined and replication p-values, the studies that find it, its sign agreement and heterogeneity, pi1 and sign agreement of every pair of studies, and the genes found in at least k studies, with their figures | scipy, metap, qvalue, metafor, mpmath |
 | Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
 | Figures | `cytepool.plotting` (optional extra `plot`, matplotlib): the plots of limma, edgeR, DESeq2, speckle and metafor from CytePool's results, in one call each: MDS plots of pseudobulk samples (`plotMDS`), the cells pooled into each sample and cell type, cell-type composition and `propeller`'s results, voom's mean-variance trend, residual variances and their prior (`plotSA`), sample quality weights, MD and volcano plots, p-value histograms, the genes up and down in each cell type, barcode plots and summaries of gene-set tests, DESeq2's dispersions (`plotDispEsts`), edgeR's quasi-dispersions (`plotQLDisp`), forest plots of meta-analyses, the fractions of variance of every variable over the genes (`plotVarPart`) and of chosen genes (`plotPercentBars`), and heatmaps of pathway scores | limma, edgeR, DESeq2, metafor, speckle, variancePartition, GSVA |
 | Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
@@ -56,8 +57,8 @@ These are not implemented yet:
 - Dose-response fits, benchmark doses and synergy
 - Meta-regression (meta-analysis with study-level covariates) and multivariate
   meta-analysis of correlated effects
-- Combined p-values and replication measures across studies, and cell types aligned
-  up the Cell Ontology
+- Cell types aligned up the Cell Ontology, and held-out prediction of case status from
+  the genes of several studies
 
 ## Known limits
 
@@ -311,6 +312,16 @@ These are not implemented yet:
   the same low counts in different samples can be, are ordered by the last bit of
   their probabilities, which R computes differently: on counts of 0 to 6, the scores
   of their sets differed from GSVA's by up to 2.2e-3 of the largest score.
+- `combine_p_values` and `partial_conjunction` take the studies as independent, with
+  p-values uniform without effects. With directions, a two-sided p-value below the
+  smallest normal double (2.2e-308) loses digits when halved, and one of 5e-324 halves
+  to 0. They keep p-values of 0 and 1 and a single study, which metap leaves out or
+  refuses. `proportion_of_true_nulls` gives an estimate where qvalue stops: where no
+  p-value reaches the largest lambda, and where the estimate is at most 0 (it is 0);
+  with more than 49 values of lambda it keeps a knot at every one, where R's
+  `smooth.spline` keeps some. `differential_expression_replication` reads limma's
+  two-sided p-values with the signs of the log2 fold changes, so it needs a contrast,
+  not an F-test.
 - numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
   are refused with a `TypeError` that names the argument, because numpy drops the
   mask when it converts one and the masked entries would be read as data. Where an

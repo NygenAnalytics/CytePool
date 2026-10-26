@@ -3,7 +3,8 @@
 Brent's (1973) method: golden section search with parabolic interpolation, with R's
 stopping rule, so that the sequence of evaluations, and so the result, is that of R's
 ``optimize``. limma's estimate of the prior degrees of freedom and edgeR's common
-dispersion are found with it.
+dispersion are found with it, and the smoothing parameter of R's ``smooth.spline``,
+whose search is the same with a relative precision of its own.
 
 References:
     Brent RP (1973). Algorithms for Minimization without Derivatives. Prentice-Hall,
@@ -21,17 +22,23 @@ _GOLDEN = 0.5 * (3.0 - math.sqrt(5.0))
 
 
 def brent_minimum(
-    function: Callable[[float], float], low: float, high: float, tolerance: float
+    function: Callable[[float], float],
+    low: float,
+    high: float,
+    tolerance: float,
+    *,
+    relative: float | None = None,
 ) -> float:
     """The minimiser of a function on [low, high] by Brent's (1973) method.
 
     Golden section search with parabolic interpolation, as in Brent's procedure
     ``localmin`` (chapter 5) and R's ``optimize``, with its stopping rule: the search
-    ends when the best point lies within 2 (sqrt(eps) |x| + tolerance / 3) of both
-    ends of the bracket. The sequence of evaluations, and so the result, is that of
-    R's ``optimize`` (checked against it).
+    ends when the best point lies within 2 (relative |x| + tolerance / 3) of both
+    ends of the bracket, ``relative`` being sqrt(eps), as in R's ``optimize``, unless
+    given. The sequence of evaluations, and so the result, is that of R's
+    ``optimize`` (checked against it).
     """
-    eps = math.sqrt(_EPS)
+    eps = math.sqrt(_EPS) if relative is None else relative
     a, b = low, high
     x = w = v = a + _GOLDEN * (b - a)
     fx = fw = fv = function(x)

@@ -43,6 +43,9 @@ The figures:
   2014); :func:`plot_quasi_dispersions`, edgeR's ``plotQLDisp`` (Chen et al. 2016).
 - Meta-analysis: :func:`plot_forest`, the forest plot (Lewis and Clarke 2001) that
   metafor's ``forest`` draws (Viechtbauer 2010).
+- Replication across studies: :func:`plot_study_agreement`, pi1 or the sign agreement
+  of every pair of studies (Storey and Tibshirani 2003); :func:`plot_replicated_genes`,
+  the genes that each number of studies finds (Nakatsuka et al. 2025).
 - Variance partitioning: :func:`plot_variance_fractions`, the violins (Hintze and
   Nelson 1998) of the fractions of variance of every variable over the genes, as
   variancePartition's ``plotVarPart`` draws them (Hoffman and Schadt 2016);
@@ -50,7 +53,9 @@ The figures:
   bars, as its ``plotPercentBars`` draws them.
 
 ``validation/plotting.py`` compares what each figure shows with what the R function it
-follows draws for the same data, where one exists.
+follows draws for the same data, where one exists, and
+``validation/combined_p_values_and_replication.py`` the replication figures with what R
+computes for them.
 
 Colours:
     Categories, such as the cell types of a composition or the levels of a sample
@@ -151,6 +156,15 @@ References:
 
     Silverman BW (1986). Density Estimation for Statistics and Data Analysis. Chapman
     and Hall, London.
+
+    Storey JD, Tibshirani R (2003). Statistical significance for genomewide studies.
+    Proceedings of the National Academy of Sciences 100, 9440-9445.
+    doi:10.1073/pnas.1530509100
+
+    Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
+    Improving reproducibility of differentially expressed genes in single-cell
+    transcriptomic studies of neurodegenerative diseases through meta-analysis.
+    Nature Communications 16, 7436. doi:10.1038/s41467-025-62579-z
 """
 
 import importlib
@@ -186,6 +200,7 @@ from .gene_sets import GeneSets
 from .meta_analysis import MetaAnalysisResult
 from .normalization import filter_by_expression, log_cpm, tmm_factors
 from .pathway_scores import PathwayScores
+from .replication import ReplicationResult
 from .stats.deseq2 import DESeq2Dispersions, DESeq2Fit, DESeq2Results
 from .stats.distributions import f_cdf, f_sf, norm_isf
 from .stats.empirical_bayes import ModeratedFit, TreatFit
@@ -220,9 +235,11 @@ __all__ = [
     "plot_pathway_scores",
     "plot_proportions",
     "plot_quasi_dispersions",
+    "plot_replicated_genes",
     "plot_residual_variances",
     "plot_sample_weights",
     "plot_significant_genes",
+    "plot_study_agreement",
     "plot_variance_fractions",
     "plot_volcano",
 ]
@@ -3280,6 +3297,186 @@ def _analysis(
             f"{pairs or '(none)'}"
         )
     return keys[0]
+
+
+# Replication across studies.
+
+_AGREEMENT = {
+    "pi1": "π₁ of the genes the discovery study finds",
+    "sign_agreement": "Share of the genes the discovery study finds\nwith the same sign",
+}
+
+
+def plot_study_agreement(
+    result: ReplicationResult,
+    *,
+    measure: str = "pi1",
+    numbers: bool | None = None,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot how well each study replicates the genes that each other study finds.
+
+    A heatmap of the pairs of studies of a
+    :func:`~cytepool.replication.differential_expression_replication`: a row per
+    discovery study and a column per replication study, in the collection's order,
+    shaded from 0 to 1 by ``measure`` of the genes the discovery study finds and the
+    replication study tested (``study_pairs``): pi1, Storey's estimate of the share of
+    them with an effect in the replication study (Storey and Tibshirani 2003), or the
+    share whose log2 fold changes have the same sign.
+    A pair without such genes, and the diagonal, are pale.
+
+    Draws the image (gid ``"agreement"``) and, when asked, each entry's value with the
+    number of genes it covers (gid ``"numbers"``).
+
+    Args:
+        result: The replication of a group and contrast.
+        measure: ``"pi1"`` or ``"sign_agreement"``.
+        numbers: Whether to write each entry; by default, when there are at most 800.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``result`` is not a ReplicationResult or an option has the
+            wrong type.
+        ValueError: If ``measure`` is unknown.
+    """
+    _check_axes(ax)
+    if not isinstance(result, ReplicationResult):
+        raise TypeError(
+            f"result must be a ReplicationResult, got {type(result).__name__}"
+        )
+    chosen = checked_choice(measure, "measure", tuple(_AGREEMENT))
+    if numbers is not None:
+        numbers = checked_flag(numbers, "numbers")
+    studies = [
+        study
+        for study, analysed in zip(
+            result.studies["study"].tolist(),
+            result.studies["analysed"].tolist(),
+            strict=True,
+        )
+        if analysed
+    ]
+    index = {study: position for position, study in enumerate(studies)}
+    k = len(studies)
+    shown = np.full((k, k), np.nan)
+    counts = np.zeros((k, k), dtype=np.int64)
+    pairs = result.study_pairs
+    for discovery, replication, value, count in zip(
+        pairs["discovery"].tolist(),
+        pairs["replication"].tolist(),
+        pairs[chosen].tolist(),
+        pairs["n_found"].tolist(),
+        strict=True,
+    ):
+        shown[index[discovery], index[replication]] = value
+        counts[index[discovery], index[replication]] = count
+    write = k * k <= _NUMBERED_ENTRIES if numbers is None else numbers
+    colors = _module("matplotlib.colors")
+    ramp = colors.LinearSegmentedColormap.from_list("cytepool_blues", _BLUES)
+    ramp = ramp.with_extremes(bad=_PALE)
+    norm = colors.Normalize(vmin=0.0, vmax=1.0)
+    ax = _axes(ax, (min(12.0, 3.0 + 0.9 * k), min(10.0, 1.8 + 0.8 * k)))
+    image = ax.imshow(shown, cmap=ramp, norm=norm, aspect="auto", interpolation="none")
+    image.set_gid("agreement")
+    ax.set_xticks(range(k), studies, rotation=45, ha="right")
+    ax.set_yticks(range(k), studies)
+    ax.set_xlabel("Replication study")
+    ax.set_ylabel("Discovery study")
+    ax.tick_params(length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    if write:
+        for row in range(k):
+            for column in range(k):
+                if row == column or np.isnan(shown[row, column]):
+                    continue
+                face = ramp(norm(shown[row, column]))
+                ax.text(
+                    column,
+                    row,
+                    f"{shown[row, column]:.2f}\n{counts[row, column]:,} genes",
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                    color="white" if _luminance(face) < 0.3 else _INK,
+                    gid="numbers",
+                )
+    settings = result.settings
+    ax.set_title(
+        f"{settings['group']}, {settings['contrast']}: genes at adjusted p < "
+        f"{settings['alpha']:g}",
+        fontsize=10,
+    )
+    ax.figure.colorbar(image, ax=ax, label=_AGREEMENT[chosen])
+    return ax
+
+
+def plot_replicated_genes(
+    result: ReplicationResult, *, ax: "Axes | None" = None
+) -> "Axes":
+    """Plot how many genes each number of studies finds.
+
+    For every k from 1 to the number of studies that analysed the group and contrast
+    of a :func:`~cytepool.replication.differential_expression_replication`, a bar of
+    the genes that exactly k studies find (adjusted p-value below its ``alpha`` in
+    each), split into those that every one of them finds in the same direction and
+    those found up in some and down in others, with the numbers above. Most genes
+    that one study finds are usually found by no other (Nakatsuka et al. 2025).
+
+    Draws the bars of genes found in one direction (gid ``"same direction"``) and in
+    both (gid ``"both directions"``), and their totals (gid ``"numbers"``).
+
+    Args:
+        result: The replication of a group and contrast.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``result`` is not a ReplicationResult.
+    """
+    _check_axes(ax)
+    if not isinstance(result, ReplicationResult):
+        raise TypeError(
+            f"result must be a ReplicationResult, got {type(result).__name__}"
+        )
+    genes = result.genes
+    found = np.asarray(genes["n_found"], dtype=np.int64)
+    one_way = np.maximum(genes["n_found_up"], genes["n_found_down"]) == found
+    k = len(result.found_in)
+    studies = np.arange(1, k + 1)
+    same = np.array([np.count_nonzero((found == j) & one_way) for j in studies])
+    both = np.array([np.count_nonzero((found == j) & ~one_way) for j in studies])
+    ax = _axes(ax, (min(10.0, 3.0 + 0.7 * k), 4.0))
+    ax.bar(studies, same, width=0.7, color=_BLUE, gid="same direction")
+    ax.bar(studies, both, width=0.7, bottom=same, color=_ORANGE, gid="both directions")
+    tallest = int((same + both).max(initial=0))
+    for x, total in zip(studies.tolist(), (same + both).tolist(), strict=True):
+        ax.text(
+            x,
+            total + 0.01 * max(tallest, 1),
+            f"{total:,}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            gid="numbers",
+        )
+    ax.set_xticks(studies)
+    ax.set_xlim(0.4, k + 0.6)
+    ax.set_ylim(0.0, 1.12 * max(tallest, 1))
+    ax.set_xlabel("Studies that find the gene")
+    settings = result.settings
+    ax.set_ylabel(f"Genes at adjusted p < {settings['alpha']:g}")
+    ax.set_title(f"{settings['group']}, {settings['contrast']}", fontsize=10)
+    _legend(
+        ax,
+        [_patch("Same direction", _BLUE), _patch("Up and down", _ORANGE)],
+    )
+    return ax
 
 
 # Variance partitioning.

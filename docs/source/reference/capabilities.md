@@ -50,6 +50,9 @@ size; its sections give every check.
 | limma-voom on published single-cell data (Kang et al. 2018) | {api}`from_cells`, {api}`limma_voom` | limma 3.62.1, edgeR 4.4.0 | exact | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) |
 | Cell-type composition (speckle's propeller) | {api}`propeller` | speckle 1.6.0, limma 3.62.1 | exact; close for the robust prior | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) |
 | Meta-analysis by fixed and random effects (metafor's `rma.uni`) | {api}`meta_analysis`, {api}`differential_expression_meta_analysis` | metafor 5.0.1 | exact; close for REML and Paule-Mandel | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) |
+| Combined p-values of several studies (Fisher, Stouffer with weights, Tippett, Wilkinson, Pearson, Mudholkar and George, Simes), one-sided or two-sided with the directions of the effects; partial conjunctions, an effect in at least u studies | {api}`combine_p_values`, {api}`partial_conjunction` | scipy 1.18.1, metap 1.1, mpmath 1.3.0 | exact | [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) |
+| The proportion of true nulls, pi0, and pi1 (qvalue's `pi0est`, its smoother and bootstrap) | {api}`proportion_of_true_nulls` | qvalue 2.38.0 | exact | [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) |
+| Replication across the studies of a collection: combined and partial conjunction p-values, sign agreement, heterogeneity, pi1 between studies, genes found in k studies, and its figures | {api}`differential_expression_replication`, {api}`plot_study_agreement`, {api}`plot_replicated_genes` | metap 1.1, qvalue 2.38.0, metafor 5.0.1 | exact; close for REML | [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) |
 | Figures of limma, edgeR, DESeq2, speckle and metafor (MDS, voom's trend, plotSA, MD and volcano plots, barcode plots, dispersions, composition, forest plots) | {api}`cytepool.plotting` | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, speckle 1.6.0, metafor 5.0.1 | exact for what is drawn; close for plotSA's prior | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) |
 | Tails and quantiles of distributions, special functions | {api}`cytepool.stats.distributions`, {api}`cytepool.stats.special` | mpmath 1.3.0 | exact (1e-15 to 1e-12) | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) |
 | LOWESS, natural spline bases | {api}`lowess`, {api}`natural_spline_basis` | R 4.4.3 | close for LOWESS; exact for spline bases | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) |
@@ -67,7 +70,7 @@ have no CytePool function yet:
 - dose-response fits, benchmark doses and drug synergy;
 - factorization of samples across cell types;
 - shrinkage of effects across conditions (mashr) and meta-regression;
-- combined p-values and replication measures across studies, and cell types aligned
-  up the Cell Ontology;
+- cell types aligned up the Cell Ontology, and held-out prediction of case status
+  from the genes of several studies;
 - edgeR's quasi-likelihood F-tests and DESeq2's tests on every cell type of a cube, and
   DESeq2's shrunken fold changes.

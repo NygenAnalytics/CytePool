@@ -1,8 +1,47 @@
-"""Adjustment of p-values for multiple testing.
+"""Adjustment of p-values for multiple testing, and the proportion of true nulls.
 
-The procedures follow R's ``p.adjust`` exactly (R Core Team 2025), including its
-conventions for missing values and for families declared larger than the p-values
-observed in them, so adjusted p-values can be compared with R output directly.
+:func:`adjust_p_values` follows R's ``p.adjust`` exactly (R Core Team 2025),
+including its conventions for missing values and for families declared larger than
+the p-values observed in them, so adjusted p-values can be compared with R output
+directly.
+
+:func:`proportion_of_true_nulls` estimates pi0, the proportion of the tests whose null
+hypothesis is true, from their p-values, as qvalue's ``pi0est`` (Storey and
+Tibshirani 2003); 1 - pi0, pi1, is the proportion with an effect, which the p-values
+of one study among the genes that another study finds measure as a replication rate.
+
+The proportion of true nulls:
+    Null p-values are uniform, so the m p-values at least lambda hold about
+    pi0 m (1 - lambda) null ones, and pi0(lambda) = #{p >= lambda} / (m (1 - lambda))
+    estimates pi0 with a bias that falls, and a variance that grows, as lambda rises
+    (Storey 2002). qvalue counts the p-values at least lambda, where the paper counts
+    those above it (found by probing). With one lambda this is the estimate; with
+    several, in increasing order:
+
+    - ``"smoother"`` (qvalue's default): the value at the largest lambda of a cubic
+      smoothing spline with ``smooth_df`` equivalent degrees of freedom through
+      pi0(lambda), or with ``smooth_log`` through log pi0(lambda), back-transformed
+      (Storey and Tibshirani 2003), as R's ``smooth.spline`` fits it (found by
+      probing; see ``cytepool.stats.smoothing``).
+    - ``"bootstrap"``: pi0(lambda) at the lambda that minimizes a bootstrap estimate
+      of its mean squared error (Storey, Taylor and Siegmund 2004), in closed form:
+      the variance of a binomial count, W (1 - W / m) / (m (1 - lambda))^2 for the
+      W = #{p >= lambda}, plus the square of pi0(lambda) minus a reference value,
+      which qvalue takes as the 10% quantile (R's type 7) of the pi0(lambda) (found by
+      probing); the smallest lambda where several minimize it.
+
+    The estimate is capped at 1.
+
+    Deliberate differences from qvalue 2.38.0:
+        - qvalue stops with an error where no p-value reaches the largest lambda, with
+          the smoother and the bootstrap alike (found by probing). Here a count of zero
+          enters the smoother as it is, and has no variance in the bootstrap; the
+          smoother of logarithms, which a count of zero leaves without a value,
+          refuses it.
+        - qvalue stops where the estimate is at most 0; here it is 0.
+        - With more than 49 values of lambda, R's smoother keeps a knot at some of
+          them only, a regression spline; here every lambda is a knot, as for fewer.
+          Duplicated values of lambda are refused.
 
 References:
     Holm S (1979). A simple sequentially rejective multiple test procedure. Scandinavian
@@ -27,18 +66,39 @@ References:
 
     R Core Team (2025). R: A Language and Environment for Statistical Computing. R
     Foundation for Statistical Computing, Vienna. https://www.R-project.org/
+
+    Storey JD (2002). A direct approach to false discovery rates. Journal of the Royal
+    Statistical Society B 64, 479-498. doi:10.1111/1467-9868.00346
+
+    Storey JD, Tibshirani R (2003). Statistical significance for genomewide studies.
+    Proceedings of the National Academy of Sciences 100, 9440-9445.
+    doi:10.1073/pnas.1530509100
+
+    Storey JD, Taylor JE, Siegmund D (2004). Strong control, conservative point
+    estimation and simultaneous conservative consistency of false discovery rates: a
+    unified approach. Journal of the Royal Statistical Society B 66, 187-205.
+    doi:10.1111/j.1467-9868.2004.00439.x
 """
 
 import math
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 
 from cytepool._jit import jit
-from cytepool._masked_arrays import unmasked_array
-from cytepool._options import index_integer
+from cytepool._masked_arrays import read_only, unmasked_array
+from cytepool._options import checked_choice, checked_flag, index_integer, real_number
+from cytepool.stats.smoothing import _smoothing_spline_fit
 
 _EULER_GAMMA = 0.5772156649015329
+# qvalue's lambda, seq(0.05, 0.95, 0.05) in R: 0.05 + 0.05 k for k = 0, ..., 17, and
+# 0.95 itself, where 0.05 + 0.05 * 18 rounds to 0.9500000000000001 (found by probing).
+_DEFAULT_LAMBDAS = np.append(0.05 + 0.05 * np.arange(18.0), 0.95)
+_PI0_METHODS = ("smoother", "bootstrap")
+_FEWEST_LAMBDAS = 4  # several lambdas must be at least this many, as for qvalue
+_BOOTSTRAP_QUANTILE = 0.1  # of the pi0(lambda), the reference of the bootstrap
 
 # Accepted method names (lower case) and the procedure each one selects.
 _PROCEDURES = {
@@ -325,3 +385,171 @@ def _hommel_sorted(
                 start += 1
             adjusted[f, r] = max((n - start) * x, largest_before[start])
     return adjusted
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class TrueNullProportion:
+    """Storey's estimate of the proportion of true null hypotheses, from
+    :func:`proportion_of_true_nulls`, with qvalue's ``pi0est`` names.
+
+    Attributes:
+        pi0: The estimate, in [0, 1]; 1 - pi0 is pi1, the proportion of the tests with
+            an effect.
+        lambdas: The values of lambda, in increasing order (``lambda``).
+        pi0_lambda: The estimate at each lambda, #{p >= lambda} / (m (1 - lambda)),
+            which can exceed 1 (``pi0.lambda``).
+        pi0_smooth: The smoother's values at each lambda, with ``"smoother"`` and
+            several lambdas; None otherwise (``pi0.smooth``).
+        method: ``"smoother"`` or ``"bootstrap"``.
+        n_p_values: m, the number of p-values (NaN left out).
+    """
+
+    pi0: float
+    lambdas: NDArray[np.float64]
+    pi0_lambda: NDArray[np.float64]
+    pi0_smooth: NDArray[np.float64] | None
+    method: str
+    n_p_values: int
+
+    @property
+    def pi1(self) -> float:
+        """1 - pi0, the estimated proportion of the tests with an effect."""
+        return 1.0 - self.pi0
+
+    def __repr__(self) -> str:
+        return (
+            f"TrueNullProportion(pi0={self.pi0:.6g}, method={self.method!r}, "
+            f"{self.lambdas.size} lambda{'' if self.lambdas.size == 1 else 's'}, "
+            f"{self.n_p_values} p-values)"
+        )
+
+
+def proportion_of_true_nulls(
+    p: ArrayLike,
+    *,
+    lambdas: ArrayLike | None = None,
+    method: str = "smoother",
+    smooth_df: float = 3.0,
+    smooth_log: bool = False,
+) -> TrueNullProportion:
+    """Estimate the proportion of true null hypotheses among tests, as qvalue's pi0est.
+
+    Storey's (2002) estimate pi0(lambda) = #{p >= lambda} / (m (1 - lambda)), at one
+    lambda or smoothed over several (Storey and Tibshirani 2003) or chosen by a
+    bootstrap estimate of its mean squared error (Storey, Taylor and Siegmund 2004),
+    with the defaults and options of qvalue's ``pi0est``; the module description
+    gives the method and the deliberate differences from qvalue. 1 - pi0 (``pi1``) of
+    one study's p-values among the genes another study finds is the proportion of
+    those genes with an effect in it (Storey and Tibshirani 2003).
+
+    Args:
+        p: p-values in [0, 1]; NaN marks a missing one, which is left out, as qvalue
+            leaves out NA.
+        lambdas: One value of lambda in [0, 1), or at least four distinct values, in
+            any order; by default 0.05, 0.10, ..., 0.95 (qvalue's ``lambda``).
+        method: ``"smoother"`` (qvalue's default) or ``"bootstrap"``
+            (``pi0.method``), for several lambdas.
+        smooth_df: The equivalent degrees of freedom of the smoother, above 1 and at
+            most the number of lambdas (``smooth.df``).
+        smooth_log: Whether the smoother fits log pi0(lambda) (``smooth.log.pi0``).
+
+    Returns:
+        The estimate, with pi0(lambda) at every lambda and the smoother's values.
+
+    Raises:
+        TypeError: If ``p`` or ``lambdas`` does not hold real numbers or is a numpy
+            masked array, or an option has the wrong type.
+        ValueError: If a p-value lies outside [0, 1], there is none, ``lambdas`` are
+            outside [0, 1), repeated, or two or three, ``method`` is unknown,
+            ``smooth_df`` is out of range, or ``smooth_log`` meets a lambda that no
+            p-value reaches.
+
+    Example:
+        >>> import numpy as np
+        >>> rng = np.random.default_rng(1)
+        >>> p = np.concatenate([rng.uniform(size=800), rng.beta(0.2, 3.0, size=200)])
+        >>> estimate = proportion_of_true_nulls(p, lambdas=0.5)
+        >>> bool(estimate.pi0 == np.mean(p >= 0.5) / 0.5)
+        True
+    """
+    chosen = checked_choice(method, "method", _PI0_METHODS)
+    log_scale = checked_flag(smooth_log, "smooth_log")
+    values = _p_value_array(p)
+    values = np.sort(values[~np.isnan(values)].reshape(-1))
+    m = values.size
+    if m == 0:
+        raise ValueError("there are no p-values: p is empty or every value is NaN")
+    grid = _lambdas(lambdas)
+    df = real_number(smooth_df, "smooth_df", finite=True)
+    if grid.size > 1 and chosen == "smoother" and not 1.0 < df <= grid.size:
+        raise ValueError(
+            f"smooth_df must be above 1 and at most the number of lambdas "
+            f"({grid.size}), got {df}"
+        )
+    # W(lambda), the p-values at least lambda.
+    counts = m - np.searchsorted(values, grid, side="left").astype(np.float64)
+    pi0_lambda = counts / (m * (1.0 - grid))
+    smooth = None
+    if grid.size == 1:
+        estimate = float(pi0_lambda[0])
+    elif chosen == "smoother":
+        if log_scale:
+            if not (counts > 0.0).all():
+                lowest = float(grid[np.flatnonzero(counts == 0.0)[0]])
+                raise ValueError(
+                    f"no p-value is at least lambda = {lowest:g}, so log pi0(lambda) "
+                    "has no value there: smooth_log=False smooths it, or choose "
+                    "smaller lambdas"
+                )
+            smooth = np.exp(_smoothing_spline_fit(grid, np.log(pi0_lambda), df))
+        else:
+            smooth = _smoothing_spline_fit(grid, pi0_lambda, df)
+        estimate = float(smooth[-1])
+    else:
+        quantile = _type7_quantile(pi0_lambda, _BOOTSTRAP_QUANTILE)
+        error = (
+            counts / (m**2 * (1.0 - grid) ** 2) * (1.0 - counts / m)
+            + (pi0_lambda - quantile) ** 2
+        )
+        estimate = float(pi0_lambda[int(np.argmin(error))])
+    return TrueNullProportion(
+        pi0=min(max(estimate, 0.0), 1.0),
+        lambdas=read_only(grid),
+        pi0_lambda=read_only(pi0_lambda),
+        pi0_smooth=None if smooth is None else read_only(smooth),
+        method=chosen,
+        n_p_values=m,
+    )
+
+
+def _lambdas(value: Any) -> NDArray[np.float64]:
+    if value is None:
+        return _DEFAULT_LAMBDAS.copy()
+    array = unmasked_array(value, "lambdas")
+    if array.dtype.kind not in "iuf":
+        raise TypeError(f"lambdas must hold real numbers, got dtype {array.dtype}")
+    grid = np.sort(np.array(array, dtype=np.float64).reshape(-1))
+    if grid.size == 0:
+        raise ValueError("lambdas is empty; give one value or at least four")
+    if not ((grid >= 0.0) & (grid < 1.0)).all():
+        raise ValueError(f"lambdas must lie in [0, 1), got {grid.tolist()}")
+    if 1 < grid.size < _FEWEST_LAMBDAS:
+        raise ValueError(
+            f"lambdas must be one value or at least {_FEWEST_LAMBDAS}, got "
+            f"{grid.size}, as for qvalue"
+        )
+    if (np.diff(grid) == 0.0).any():
+        raise ValueError(f"lambdas must be distinct, got {grid.tolist()}")
+    return grid
+
+
+def _type7_quantile(values: NDArray[np.float64], probability: float) -> float:
+    """R's quantile of type 7, (1 - g) x_(j) + g x_(j + 1), as its help page gives
+    it, with j and g the whole and fractional parts of 1 + (n - 1) probability."""
+    ordered = np.sort(values)
+    position = 1.0 + (ordered.size - 1) * probability
+    j = int(math.floor(position))
+    g = position - j
+    if g == 0.0 or j >= ordered.size:
+        return float(ordered[j - 1])
+    return float((1.0 - g) * ordered[j - 1] + g * ordered[j])

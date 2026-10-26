@@ -67,6 +67,7 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._masked_arrays import Missing, reject_masked, unmasked_array
 from cytepool._options import integral_number, real_number
+from cytepool.stats._optimize import brent_minimum
 
 __all__ = ["choose_lowess_span", "lowess", "natural_spline_basis"]
 
@@ -97,6 +98,24 @@ _FLAT_WINDOW = 1e-7
 # does (found by probing).
 _KNOT_SHOVE = 0.125
 _CUBIC_ORDER = 4
+# R's smooth.spline(x, y, df = df), the smoother of qvalue's pi0est. Its help page
+# gives the fit, (X'WX + lambda Sigma) c = X'Wy for the B-splines X of a knot at every
+# distinct x scaled to [0, 1], lambda = r 256^(3 spar - 1), and the criterion of the
+# search for spar, 3 + (df - tr S)^2; the rest was found by probing R 4.4.3:
+# - Sigma integrates the products of the second derivatives of the B-splines, which
+#   are linear between knots, with the weight 0.333 for the product of their slopes
+#   where the exact integral has 1/3 (Sigma of keep.stuff = TRUE has these entries);
+# - r is the ratio of the sums of the 3rd to the (nk - 3)th diagonal entries of
+#   X'WX and Sigma, for nk B-splines;
+# - spar is searched in [-1.5, 1.5] by Brent's method with tolerance 1e-4 and
+#   relative precision 2e-8 (control.spar's trace shows the steps);
+# - the fit is that of the last spar evaluated, within the search's tolerance of the
+#   best one, which R reports as spar.
+_SPAR_INTERVAL = (-1.5, 1.5)
+_SPAR_TOLERANCE = 1e-4
+_SPAR_RELATIVE = 2e-8
+_SLOPE_PRODUCT = 0.333
+_CRITERION_OFFSET = 3.0
 
 
 def lowess(
@@ -867,6 +886,132 @@ def _ratio(numerator: FloatArray, denominator: FloatArray) -> FloatArray:
     safe = np.where(denominator > 0.0, denominator, 1.0)
     result: FloatArray = np.where(denominator > 0.0, numerator / safe, 0.0)
     return result
+
+
+def _smoothing_spline_fit(x: FloatArray, y: FloatArray, df: float) -> FloatArray:
+    """Fitted values at x of R's ``smooth.spline(x, y, df = df)`` with unit weights.
+
+    The cubic smoothing spline with a knot at every x whose equivalent degrees of
+    freedom, the trace of its smoother matrix, are as near ``df`` as R's search for
+    its smoothing parameter takes them; the constants above say how R computes it.
+    x must hold at least four distinct values in increasing order, and ``df`` lie in
+    (1, len(x)]: the callers check both. With more than 49 values R keeps a knot at
+    some of them only, a regression spline; here every value is a knot.
+    """
+    scaled = (x - x[0]) / (x[-1] - x[0])
+    ends = _CUBIC_ORDER - 1
+    knots = np.concatenate([np.zeros(ends), scaled, np.ones(ends)])
+    basis = np.ascontiguousarray(_bspline_derivatives(scaled, knots, 0))
+    penalty = _spline_penalty(scaled, knots)
+    gram, rhs = _normal_equations(basis, np.ascontiguousarray(y, dtype=np.float64))
+    n_splines = basis.shape[1]
+    inner = range(ends - 1, n_splines - ends)
+    ratio = sum(gram[i, i] for i in inner) / sum(penalty[i, i] for i in inner)
+    fitted = np.empty(x.size)
+    last = [math.nan]
+
+    def criterion(spar: float) -> float:
+        last[0] = spar
+        lam = ratio * 256.0 ** (3.0 * spar - 1.0)
+        trace = _penalized_fit(basis, gram, penalty, rhs, lam, fitted)
+        # A smoother whose system rounding makes singular is far from any df.
+        return _CRITERION_OFFSET + (df - trace) ** 2 if trace == trace else math.inf
+
+    low, high = _SPAR_INTERVAL
+    brent_minimum(criterion, low, high, _SPAR_TOLERANCE, relative=_SPAR_RELATIVE)
+    _penalized_fit(
+        basis, gram, penalty, rhs, ratio * 256.0 ** (3.0 * last[0] - 1.0), fitted
+    )
+    return fitted
+
+
+def _spline_penalty(scaled: FloatArray, knots: FloatArray) -> FloatArray:
+    """Sigma, the integrals of the products of the second derivatives of the cubic
+    B-splines on [0, 1], as R's smooth.spline weighs them (``_SLOPE_PRODUCT``)."""
+    second = _bspline_derivatives(scaled, knots, 2)
+    n_splines = second.shape[1]
+    penalty = np.zeros((n_splines, n_splines))
+    for i in range(scaled.size - 1):
+        width = scaled[i + 1] - scaled[i]
+        start = second[i]
+        slope = second[i + 1] - start
+        penalty += width * (
+            np.outer(start, start)
+            + 0.5 * (np.outer(slope, start) + np.outer(start, slope))
+            + _SLOPE_PRODUCT * np.outer(slope, slope)
+        )
+    return penalty
+
+
+@jit
+def _normal_equations(
+    basis: FloatArray, y: FloatArray
+) -> tuple[FloatArray, FloatArray]:
+    """X'X and X'y for the B-splines X, with unit weights."""
+    n, n_splines = basis.shape
+    gram = np.zeros((n_splines, n_splines))
+    rhs = np.zeros(n_splines)
+    for i in range(n):
+        for j in range(n_splines):
+            b = basis[i, j]
+            if b != 0.0:
+                rhs[j] += b * y[i]
+                for k in range(n_splines):
+                    gram[j, k] += b * basis[i, k]
+    return gram, rhs
+
+
+@jit(error_model="numpy")
+def _penalized_fit(
+    basis: FloatArray,
+    gram: FloatArray,
+    penalty: FloatArray,
+    rhs: FloatArray,
+    lam: float,
+    fitted: FloatArray,
+) -> float:
+    """Solve (X'X + lam Sigma) c = X'y by Cholesky's factorization, write the fitted
+    values X c into ``fitted``, and return the trace of the smoother matrix,
+    sum over i of x_i' (X'X + lam Sigma)^-1 x_i; NaN where the factorization fails."""
+    n, n_splines = basis.shape
+    factor = gram + lam * penalty
+    for j in range(n_splines):
+        pivot = factor[j, j]
+        for k in range(j):
+            pivot -= factor[j, k] * factor[j, k]
+        if not pivot > 0.0:
+            return math.nan
+        root = math.sqrt(pivot)
+        factor[j, j] = root
+        for i in range(j + 1, n_splines):
+            entry = factor[i, j]
+            for k in range(j):
+                entry -= factor[i, k] * factor[j, k]
+            factor[i, j] = entry / root
+    coefficients = np.empty(n_splines)
+    for j in range(n_splines):
+        entry = rhs[j]
+        for k in range(j):
+            entry -= factor[j, k] * coefficients[k]
+        coefficients[j] = entry / factor[j, j]
+    for j in range(n_splines - 1, -1, -1):
+        entry = coefficients[j]
+        for k in range(j + 1, n_splines):
+            entry -= factor[k, j] * coefficients[k]
+        coefficients[j] = entry / factor[j, j]
+    solved = np.empty(n_splines)
+    trace = 0.0
+    for i in range(n):
+        value = 0.0
+        for j in range(n_splines):
+            value += basis[i, j] * coefficients[j]
+            entry = basis[i, j]
+            for k in range(j):
+                entry -= factor[j, k] * solved[k]
+            solved[j] = entry / factor[j, j]
+            trace += solved[j] * solved[j]
+        fitted[i] = value
+    return trace
 
 
 def _real_vector(values: Any, name: str, *, missing: Missing = None) -> FloatArray:

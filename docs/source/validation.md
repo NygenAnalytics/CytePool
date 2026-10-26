@@ -17,8 +17,9 @@ exits with an error when any check falls outside its tolerance.
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
 `variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
-`gsea.py`, `cube_collection.py` and `pathway_scores.py`, and for `dream.py`, which
-printed the same table again after changes to the code it checks; on
+`gsea.py`, `cube_collection.py`, `pathway_scores.py` and
+`combined_p_values_and_replication.py`, and for `dream.py`, which printed the same
+table again after changes to the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -68,10 +69,11 @@ covers and the largest difference among them. Run a script to see every check.
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
+| [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) | Combined p-values and replication | scipy 1.18.1, mpmath 1.3.0, R 4.4.3, metap 1.1, qvalue 2.38.0, metafor 5.0.1 | 54 | 47 pass, 7 deliberate differences | 67.4 s | 444 MiB |
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,213** | **1,907 pass, none failed; 174 information, 130 deliberate differences, 2 controls** | | |
+| **All** | | | **2,267** | **1,954 pass, none failed; 174 information, 137 deliberate differences, 2 controls** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -2009,6 +2011,69 @@ CytePool's REML estimate is zero; metafor's step halving approaches zero and sto
 its threshold, at about 1e-6 by default. With standard errors 1e-8 of the spread of the
 effects, the two programs agree to 1.5e-14.
 
+## Combined p-values and replication
+
+[`validation/combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py)
+checks combined p-values, partial conjunctions, the proportion of true nulls and the
+replication of studies. p-values of 2, 5 and 20 studies for 300, 400 and 200 features
+(seed 20261102), a third of the features with effects, none, 15% and 5% missing, with
+the signs of the effects and the square roots of sample sizes as weights, are combined
+by every method and compared with scipy's `combine_pvalues`, feature by feature on the
+p-values each has, and with metap's `sumlog`, `sumz` (with the weights), `minimump`,
+`wilkinsonp` (r = 2), `maximump` and `logitp`, and Simes's combination as the smallest
+Benjamini-Hochberg p-value of `p.adjust`. With directions, R combines the one-sided
+p-values of metap's `two2one` for each direction and doubles the smaller; `two2one`
+rounds 1 - p / 2 to a double, which loses the digits of p / 2 for small p, so those
+rows hold the features whose p-values are all at least 1e-5, and 13 features of
+p-values from 5e-324 to 1 - 1e-15 are compared with mpmath at 400 digits instead. The
+partial conjunction p-values, for u = 1 to 3, are computed in R from their definition
+[@benjamini2008]: `sumlog`, `sumz` or Simes's combination of the n - u + 1 largest
+p-values. `proportion_of_true_nulls` is compared with qvalue's `pi0est` on five sets of
+60 to 20,000 p-values, one of them rounded to 0.01 so that p-values equal values of
+lambda, with its defaults, `smooth.df = 5`, `smooth.log.pi0`, `pi0.method =
+"bootstrap"`, one lambda and three other grids. Then three cohorts of 6, 4 and 8 donors,
+before and after a stimulation that changes 15% of 700 genes in two cell types, alike in
+every cohort up to 50% more or less, each measuring part of the genes, are aligned in a
+`CubeCollection` and tested by `limma_voom`; `differential_expression_replication` runs
+on both cell types with three settings, and R computes every column from the cohorts'
+tables with metap, qvalue, `p.adjust` and metafor's `rma.uni` (REML with `control =
+list(threshold = 1e-13, maxiter = 10000)`, or DerSimonian-Laird). The figures are
+compared with what R computes for them. Reference: scipy 1.18.1, mpmath 1.3.0; R 4.4.3,
+metap 1.1, qvalue 2.38.0, jsonlite 2.0.0; metafor 5.0.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Fisher, Pearson, Tippett, Stouffer with weights, Mudholkar and George: statistics and p-values of 2, 5 and 20 studies | `combine_pvalues` | 7.1e-15 | 1e-10 | 15 pass |
+| Fisher, Stouffer, Tippett, Wilkinson, the maximum, the logit and Simes, as given and with directions, in the 3 cases | metap, `p.adjust` | 1.2e-12 | 1e-10 | 6 pass |
+| Partial conjunctions, u = 1 to 3, by Simes, Fisher and Stouffer, with and without directions | the definition, with metap and `p.adjust` | 7.8e-13 | 1e-10 | 6 pass |
+| 13 features of p-values from 5e-324 to 1 - 1e-15, every method, with and without directions | mpmath, 400 digits | 2.0e-14 | 1e-10 | 1 pass |
+| pi0: defaults, `smooth.df = 5`, `smooth.log.pi0`, bootstrap, one lambda and three grids, on 4 or 5 sets each | `pi0est` | 1.5e-12 | 1e-10 | 8 pass |
+| pi0 with a missing p-value; options both refuse (the log smoother where no p-value reaches a lambda, two values of lambda, lambda = 1) | `pi0est` | 6.7e-14 | 1e-10 | 4 pass |
+| Replications, genes: counts, directions, sign agreement, combined and partial conjunction p-values, adjusted | metap, `p.adjust` | 3.1e-15 | 1e-10 | 1 pass |
+| Replications, heterogeneity: Q, its p-value, I² and tau², by REML and DerSimonian-Laird | `rma.uni` | 2.0e-12 | 1e-6 (REML), 1e-10 | 2 pass |
+| Replications, pairs of studies: genes found, sign agreement, pi1 where qvalue gives it; genes found in at least k studies | `pi0est`, R | 0 | 1e-10, 0 mismatches | 2 pass |
+| `plot_study_agreement` and `plot_replicated_genes`: the values and bars drawn | `pi0est`, R | 0 | 1e-10, 0 mismatches | 2 pass |
+| metap at a p-value of 0 and for one study; pi0est where no p-value reaches the largest lambda (smoother, bootstrap), where its estimate is at most 0, for pi1 of 20 pairs of studies, and for 96 values of lambda | metap, `pi0est` | listed below | n/a | 7 deliberate differences |
+
+Differences are scaled by max(\|reference\|, 1), and p-values by
+max(p, 1e-300) max(1, \|log p\|); counts and directions must be equal. qvalue's
+smoother is R's `smooth.spline`, which CytePool follows step by step in its search for
+the smoothing parameter: the estimates agree to about 1e-12. Deliberate differences:
+
+- metap leaves out a p-value of 0 (with the warning "Some studies omitted") and stops
+  with fewer than two p-values; CytePool combines 0 as the limit it is, which makes
+  Fisher's p-value 0, and gives a single study its own p-value.
+- qvalue stops with an error where no p-value reaches the largest lambda, with the
+  smoother ("missing or infinite values in inputs are not allowed") and the bootstrap
+  alike; CytePool smooths the zero, and gives the count no variance in the bootstrap.
+  This is common for pi1 between studies, whose genes have small p-values: of the 36
+  pairs of the replications, qvalue stopped for all 12 with its defaults, 7 of 12 with
+  the bootstrap and 1 of 12 with lambda = 0.5, where its estimate was 0.
+- qvalue stops where its estimate is at most 0; CytePool gives 0.
+- With more than 49 values of lambda, R's `smooth.spline` keeps a knot at some of them
+  only; CytePool keeps one at every lambda. For 96 values (0, 0.01, ..., 0.95) the
+  estimates differed by 2.6e-5, relative.
+
 ## Figures
 
 [`validation/plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py)
@@ -2268,6 +2333,8 @@ python validation/differential_expression_options.py
 python validation/interferon_stimulated_pbmcs.py
 RSCRIPT=$REF/r-speckle/bin/Rscript python validation/composition_tests.py
 RSCRIPT=$REF/r-metafor/bin/Rscript python validation/meta_analysis.py
+RSCRIPT=$REF/r-meta/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
+    python validation/combined_p_values_and_replication.py
 RSCRIPT=$REF/r/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
     SPECKLE_RSCRIPT=$REF/r-speckle/bin/Rscript python validation/plotting.py
 # variancePartition, in an R environment of its own with lme4 1.1-38 (below).
@@ -2319,8 +2386,18 @@ conda create -p $REF/r-mixed -c conda-forge r-base=4.4.3 r-lme4=2.0_6 \
     r-lmertest=3.2_1 r-numderiv=2016.8_1.1 r-jsonlite=2.0.0
 ```
 
-metafor 5.0.1 (CRAN), which `meta_analysis.py` runs, has one too, with R 4.4.3 and
-jsonlite 2.0.0:
+metap 1.1 (CRAN) and qvalue 2.38.0 (Bioconductor 3.20), which
+`combined_p_values_and_replication.py` runs, have an R environment of their own, with R
+4.4.3 and jsonlite 2.0.0, from conda-forge and bioconda:
+
+```bash
+conda create -p $REF/r-meta -c conda-forge -c bioconda r-base=4.4.3 r-metap=1.1 \
+    bioconductor-qvalue=2.38.0 r-jsonlite=2.0.0
+```
+
+metafor 5.0.1 (CRAN), which `meta_analysis.py` and
+`combined_p_values_and_replication.py` run, has one too, with R 4.4.3 and jsonlite
+2.0.0:
 
 ```bash
 conda create -p $REF/r-metafor -c conda-forge r-base=4.4.3 r-metafor=5.0.1 \
