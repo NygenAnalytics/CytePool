@@ -112,7 +112,12 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
+from cytepool._linear_algebra import (
+    RANK_TOLERANCE,
+    cholesky,
+    cholesky_solve,
+    column_space,
+)
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import (
     number_at_least,
@@ -884,27 +889,7 @@ def _cholesky_solve(
     largest = 0.0
     for k in range(n):
         largest = max(largest, abs(matrix[k, k]))
-    for k in range(n):
-        total = matrix[k, k]
-        for j in range(k):
-            total -= matrix[k, j] * matrix[k, j]
-        if not total > _SINGULAR * n * largest:
-            return False
-        pivot = math.sqrt(total)
-        matrix[k, k] = pivot
-        for i in range(k + 1, n):
-            total = matrix[i, k]
-            for j in range(k):
-                total -= matrix[i, j] * matrix[k, j]
-            matrix[i, k] = total / pivot
-    for i in range(n):
-        total = right[i]
-        for j in range(i):
-            total -= matrix[i, j] * solution[j]
-        solution[i] = total / matrix[i, i]
-    for i in range(n - 1, -1, -1):
-        total = solution[i]
-        for j in range(i + 1, n):
-            total -= matrix[j, i] * solution[j]
-        solution[i] = total / matrix[i, i]
+    if not cholesky(matrix, n, _SINGULAR * n * largest):
+        return False
+    cholesky_solve(matrix, n, right, solution)
     return True

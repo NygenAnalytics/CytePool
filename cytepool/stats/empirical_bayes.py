@@ -97,7 +97,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
-from cytepool._linear_algebra import column_space
+from cytepool._linear_algebra import column_space, correlation_matrix
 from cytepool._masked_arrays import unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import checked_flag, real_number
@@ -1688,7 +1688,7 @@ def _f_statistics(
 ) -> tuple[FloatArray, int]:
     """Moderated F-statistics and their numerator degrees of freedom."""
     n_features, k = t.shape
-    correlation = _unit_correlation(fit.cov_coefficients)
+    correlation = correlation_matrix(fit.cov_coefficients, unit_diagonal=True)
     eigenvalues, eigenvectors = np.linalg.eigh(correlation)
     keep = eigenvalues > _F_RANK_TOLERANCE * eigenvalues.max()
     rank = int(keep.sum())
@@ -1716,22 +1716,6 @@ def _f_statistics(
         degenerate = values[:, 0] <= _F_RANK_TOLERANCE * values[:, -1]
         f_value[complete] = np.where(degenerate, np.nan, statistic)
     return f_value, rank
-
-
-def _unit_correlation(covariance: FloatArray) -> FloatArray:
-    """Correlation matrix, with a coefficient of zero variance uncorrelated.
-
-    limma gives such a coefficient (an all-zero contrast) correlations of zero and
-    keeps it in the rank of the F-test (found by probing).
-    """
-    scale = np.sqrt(np.diag(covariance))
-    constant = scale == 0.0
-    safe = np.where(constant, 1.0, scale)
-    correlation: FloatArray = covariance / np.outer(safe, safe)
-    correlation[constant, :] = 0.0
-    correlation[:, constant] = 0.0
-    correlation[constant, constant] = 1.0
-    return correlation
 
 
 # ---------------------------------------------------------------------------------------

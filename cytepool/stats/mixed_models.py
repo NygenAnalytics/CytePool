@@ -166,7 +166,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit, thread_limit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
+from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, column_space, symmetric
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._summation import observed_means
 from cytepool.design.checks import _aliasing, _random_checks
@@ -511,7 +511,7 @@ def _fit(
     mean_weights = np.broadcast_to(np.mean(weight_rows, axis=1), n_features)
     return MixedModelFit(
         coefficients=_frozen(coefficients),
-        cov_coefficients=_frozen(_symmetric(covariance)),
+        cov_coefficients=_frozen(symmetric(covariance)),
         variance_components=_frozen(ratios * residual_variance[:, None]),
         residual_variance=_frozen(residual_variance),
         reml_criterion=_frozen(np.full(n_features, np.nan) if ml else criterion),
@@ -519,7 +519,7 @@ def _fit(
         converged=_frozen(converged, np.bool_),
         iterations=_frozen(iterations, np.int64),
         variance_parameter_covariance=_frozen(parameter_covariance),
-        cov_coefficients_derivatives=_frozen(_symmetric(derivatives)),
+        cov_coefficients_derivatives=_frozen(symmetric(derivatives)),
         coefficient_names=names,
         component_names=components,
         design=_frozen(x),
@@ -838,12 +838,6 @@ def _frozen(values: Any, dtype: type = np.float64) -> Any:
     array: npt.NDArray[Any] = np.array(values, dtype=dtype)
     array.flags.writeable = False
     return array
-
-
-def _symmetric(matrices: FloatArray) -> FloatArray:
-    """Average each trailing square matrix with its transpose."""
-    result: FloatArray = (matrices + np.swapaxes(matrices, -1, -2)) / 2.0
-    return result
 
 
 # The fits, compiled.
@@ -1386,7 +1380,7 @@ def _criterion(
             chol[s, t] = scale[s] * gam[s, t] * scale[t]
         if s < q_rest:
             chol[s, s] += 1.0
-    if not _cholesky(chol, pivots):
+    if not cholesky(chol, pivots, 0.0):
         return np.inf
     log_random = 0.0
     for t in range(q_rest):
@@ -1956,7 +1950,7 @@ def _inverse_positive_definite(
     L^-T L^-1. ``matrix`` is overwritten. Returns False if the matrix is not
     positive definite.
     """
-    if not _cholesky(matrix, size):
+    if not cholesky(matrix, size, 0.0):
         return False
     for i in range(size):
         for j in range(size):
@@ -1968,28 +1962,6 @@ def _inverse_positive_definite(
             for t in range(max(i, j), size):
                 total += work[t, i] * work[t, j]
             inverse[i, j] = total
-    return True
-
-
-@jit
-def _cholesky(matrix: FloatArray, size: int) -> bool:
-    """The lower Cholesky factor of ``matrix[:size, :size]`` in place.
-
-    Reads the lower triangle. Returns False if the matrix is not positive definite.
-    """
-    for j in range(size):
-        total = matrix[j, j]
-        for k in range(j):
-            total -= matrix[j, k] * matrix[j, k]
-        if not total > 0.0:
-            return False
-        diagonal = math.sqrt(total)
-        matrix[j, j] = diagonal
-        for i in range(j + 1, size):
-            total = matrix[i, j]
-            for k in range(j):
-                total -= matrix[i, k] * matrix[j, k]
-            matrix[i, j] = total / diagonal
     return True
 
 

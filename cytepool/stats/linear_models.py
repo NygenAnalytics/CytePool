@@ -37,7 +37,12 @@ import numpy.typing as npt
 from numba import prange
 
 from cytepool._jit import by_chunks, jit, thread_limit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
+from cytepool._linear_algebra import (
+    RANK_TOLERANCE,
+    column_space,
+    correlation_matrix,
+    symmetric,
+)
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool.design.contrasts import (
     _is_named_contrasts,
@@ -445,7 +450,7 @@ def contrasts_fit(
     involved = (matrix != 0.0).astype(np.float64)
     undefined = unusable.astype(np.float64) @ involved > 0.0
     coefficients = np.where(unusable, 0.0, fit.coefficients) @ matrix
-    cov_coefficients = _symmetric(matrix.T @ fit.cov_coefficients @ matrix)
+    cov_coefficients = symmetric(matrix.T @ fit.cov_coefficients @ matrix)
 
     stored = fit.cov_coefficients_per_feature
     per_feature: FloatArray | None = None
@@ -466,7 +471,7 @@ def contrasts_fit(
         # that it does not refactorise the design for each feature.
         exact = False
         stdev = np.where(unusable, 0.0, fit.stdev_unscaled)
-        correlations = _correlation_matrix(fit.cov_coefficients)
+        correlations = correlation_matrix(fit.cov_coefficients)
         variances = np.empty((n_features, n_contrasts))
         for j in range(n_contrasts):
             scaled = stdev * matrix[:, j]
@@ -968,26 +973,7 @@ def _aliased_columns(x: FloatArray) -> list[int]:
 def _inverse_cross_product(r: FloatArray) -> FloatArray:
     """(R'R)^-1 from the triangular factor R of a QR factorisation."""
     r_inverse = np.linalg.solve(r, np.eye(r.shape[0]))
-    return _symmetric(r_inverse @ r_inverse.T)
-
-
-def _symmetric(matrix: FloatArray) -> FloatArray:
-    return (matrix + matrix.T) / 2.0
-
-
-def _correlation_matrix(covariance: FloatArray) -> FloatArray:
-    """Correlations of a covariance matrix, zero for a constant coefficient.
-
-    A coefficient with zero variance contributes nothing to a contrast's
-    variance whatever its correlations, so they are set to zero.
-    """
-    scale = np.sqrt(np.diag(covariance))
-    constant = scale == 0.0
-    scale = np.where(constant, 1.0, scale)
-    correlations: FloatArray = covariance / np.outer(scale, scale)
-    correlations[constant, :] = 0.0
-    correlations[:, constant] = 0.0
-    return correlations
+    return symmetric(r_inverse @ r_inverse.T)
 
 
 def _design_matrix(

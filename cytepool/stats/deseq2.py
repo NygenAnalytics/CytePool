@@ -203,7 +203,12 @@ import numpy.typing as npt
 from numba import prange
 
 from cytepool._jit import by_chunks, jit, thread_limit
-from cytepool._linear_algebra import RANK_TOLERANCE, column_space
+from cytepool._linear_algebra import (
+    RANK_TOLERANCE,
+    cholesky,
+    cholesky_solve,
+    column_space,
+)
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import real_number
 from cytepool._summation import accurate_sums
@@ -2352,32 +2357,15 @@ def _linear_predictors(
 def _solve_positive_definite(
     matrix: FloatArray, factor: FloatArray, rhs: FloatArray, out: FloatArray
 ) -> bool:
-    """Solve matrix out = rhs by the Cholesky factor of the lower triangle of matrix;
-    False if it is not positive definite."""
+    """Solve matrix out = rhs by the Cholesky factor of the lower triangle of matrix,
+    formed in ``factor``; False if it is not positive definite."""
     p = rhs.size
     for a in range(p):
-        total = matrix[a, a]
-        for k in range(a):
-            total -= factor[a, k] * factor[a, k]
-        if not total > 0.0:
-            return False
-        diagonal = math.sqrt(total)
-        factor[a, a] = diagonal
-        for b in range(a + 1, p):
-            total = matrix[b, a]
-            for k in range(a):
-                total -= factor[b, k] * factor[a, k]
-            factor[b, a] = total / diagonal
-    for a in range(p):
-        total = rhs[a]
-        for k in range(a):
-            total -= factor[a, k] * out[k]
-        out[a] = total / factor[a, a]
-    for a in range(p - 1, -1, -1):
-        total = out[a]
-        for k in range(a + 1, p):
-            total -= factor[k, a] * out[k]
-        out[a] = total / factor[a, a]
+        for b in range(a, p):
+            factor[b, a] = matrix[b, a]
+    if not cholesky(factor, p, 0.0):
+        return False
+    cholesky_solve(factor, p, rhs, out)
     return True
 
 

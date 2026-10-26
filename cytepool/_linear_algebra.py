@@ -4,16 +4,28 @@
 Gram-Schmidt applied twice, which keeps the basis orthonormal to rounding (Giraud,
 Langou and Rozloznik 2005), with the rank rule of R's ``qr()``.
 
+``cholesky`` and ``cholesky_solve`` factor and solve the small symmetric positive
+definite systems of the count models' Newton steps, of the REML of sample weights and
+of the mixed models, compiled, in the order of operations of the column-oriented
+algorithm (Golub and Van Loan 2013); ``symmetric`` and ``correlation_matrix`` finish
+covariance matrices.
+
 References:
     Giraud L, Langou J, Rozloznik M (2005). The loss of orthogonality in the
     Gram-Schmidt orthogonalization process. Computers & Mathematics with Applications
     50, 1069-1075. doi:10.1016/j.camwa.2005.08.009
+
+    Golub GH, Van Loan CF (2013). Matrix Computations, 4th edition. Johns Hopkins
+    University Press, Baltimore.
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
+
+from ._jit import jit
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -106,3 +118,76 @@ def column_space(matrix: npt.ArrayLike) -> ColumnSpace:
     return ColumnSpace(
         tuple(kept), tuple(aliased), basis[:, : len(kept)], remainders, scales
     )
+
+
+@jit
+def cholesky(matrix: FloatArray, size: int, floor: float) -> bool:
+    """The lower Cholesky factor of ``matrix[:size, :size]``, in place.
+
+    Reads the lower triangle and overwrites it with the factor. Every pivot must be
+    above ``floor``: zero, or a bound below which the matrix counts as singular.
+
+    Returns:
+        False, with the factor incomplete, when a pivot is not above ``floor``.
+    """
+    for j in range(size):
+        total = matrix[j, j]
+        for k in range(j):
+            total -= matrix[j, k] * matrix[j, k]
+        if not total > floor:
+            return False
+        diagonal = math.sqrt(total)
+        matrix[j, j] = diagonal
+        for i in range(j + 1, size):
+            total = matrix[i, j]
+            for k in range(j):
+                total -= matrix[i, k] * matrix[j, k]
+            matrix[i, j] = total / diagonal
+    return True
+
+
+@jit
+def cholesky_solve(
+    factor: FloatArray, size: int, right: FloatArray, solution: FloatArray
+) -> None:
+    """Solve L L' solution = right for the Cholesky factor L in the lower triangle of
+    ``factor[:size, :size]``: forward, then backward substitution, dividing by the
+    pivots."""
+    for i in range(size):
+        total = right[i]
+        for j in range(i):
+            total -= factor[i, j] * solution[j]
+        solution[i] = total / factor[i, i]
+    for i in range(size - 1, -1, -1):
+        total = solution[i]
+        for j in range(i + 1, size):
+            total -= factor[j, i] * solution[j]
+        solution[i] = total / factor[i, i]
+
+
+def symmetric(matrices: FloatArray) -> FloatArray:
+    """Average each trailing square matrix with its transpose."""
+    result: FloatArray = (matrices + np.swapaxes(matrices, -1, -2)) / 2.0
+    return result
+
+
+def correlation_matrix(
+    covariance: FloatArray, *, unit_diagonal: bool = False
+) -> FloatArray:
+    """Correlations of a covariance matrix, zero for a coefficient of zero variance.
+
+    A coefficient with zero variance contributes nothing to a contrast's variance
+    whatever its correlations, so they are set to zero. With ``unit_diagonal``, its
+    correlation with itself is 1: limma gives such a coefficient (an all-zero
+    contrast) correlations of zero and keeps it in the rank of the F-test (found by
+    probing).
+    """
+    scale = np.sqrt(np.diag(covariance))
+    constant = scale == 0.0
+    safe = np.where(constant, 1.0, scale)
+    correlations: FloatArray = covariance / np.outer(safe, safe)
+    correlations[constant, :] = 0.0
+    correlations[:, constant] = 0.0
+    if unit_diagonal:
+        correlations[constant, constant] = 1.0
+    return correlations
