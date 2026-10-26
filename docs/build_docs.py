@@ -17,6 +17,7 @@ A site served below a path, as docs.nygen.io/CytePool/ is, is built with that pa
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import zlib
@@ -261,6 +262,95 @@ def stage_site() -> Path:
     return SITE
 
 
+def link_shared_brand_assets(html: Path) -> None:
+    import yaml
+
+    source_options = yaml.safe_load((SOURCE / "myst.yml").read_text())["site"][
+        "options"
+    ]
+    config = json.loads((html / "config.json").read_text())
+    urls = {
+        config["options"][key]: source_options[key]
+        for key in ("logo", "logo_dark", "favicon", "style")
+    }
+    nodes = [config["parts"]["navbar_end"]["mdast"]]
+    symbols = []
+    while nodes:
+        node = nodes.pop()
+        if node.get("type") == "image" and node.get("class") == "brand-symbol":
+            symbols.append(node["url"])
+        nodes.extend(node.get("children", []))
+    if len(symbols) != 1:
+        raise ValueError(f"Expected one Nygen symbol in {html / 'config.json'}")
+    urls[symbols[0]] = "https://docs.nygen.io/assets/brand/logo/nygen-symbol.svg"
+    base_url = os.environ.get("BASE_URL", "").rstrip("/")
+    for page in html.rglob("*"):
+        if page.suffix not in {".html", ".json"}:
+            continue
+        contents = page.read_text()
+        for local, public in urls.items():
+            contents = contents.replace(f"{base_url}/build{local}", public)
+            contents = contents.replace(local, public)
+        for name, public in (
+            ("favicon.ico", source_options["favicon"]),
+            ("myst-theme.css", source_options["style"]),
+        ):
+            contents = contents.replace(f"{base_url}/{name}", public)
+        page.write_text(contents)
+    roots = list((html / "build").glob("root-*.js"))
+    if len(roots) != 1:
+        raise ValueError(f"Expected one generated theme root in {html / 'build'}")
+    contents = roots[0].read_text()
+    for name, public in (
+        ("favicon.ico", source_options["favicon"]),
+        ("myst-theme.css", source_options["style"]),
+    ):
+        pattern = r'href:`\$\{[\w$]+\|\|""\}/' + re.escape(name) + r"`"
+        contents, count = re.subn(pattern, f"href:{json.dumps(public)}", contents)
+        if count != 1:
+            raise ValueError(f"Expected one {name} link in {roots[0]}")
+    roots[0].write_text(contents)
+    renames = {
+        roots[0].name: f"root-{hashlib.sha256(contents.encode()).hexdigest()[:12]}.js"
+    }
+    manifests = list((html / "build").glob("manifest-*.js"))
+    if len(manifests) != 1:
+        raise ValueError(f"Expected one generated manifest in {html / 'build'}")
+    contents = manifests[0].read_text().replace(roots[0].name, renames[roots[0].name])
+    renames[manifests[0].name] = (
+        f"manifest-{hashlib.sha256(contents.encode()).hexdigest()[:12]}.js"
+    )
+    for page in html.rglob("*"):
+        if page.suffix not in {".html", ".json", ".js"}:
+            continue
+        contents = page.read_text()
+        updated = contents
+        for old, new in renames.items():
+            updated = updated.replace(old, new)
+        if updated != contents:
+            page.write_text(updated)
+    for old, new in renames.items():
+        (html / "build" / old).rename(html / "build" / new)
+    for local in urls:
+        (html / "build" / local.lstrip("/")).unlink()
+    (html / "favicon.ico").unlink()
+    (html / "myst-theme.css").unlink()
+
+
+def set_crawler_origin(html: Path) -> None:
+    sitemap = html / "sitemap.xml"
+    origin = re.search(r"<loc>(https?://[^<]+)</loc>", sitemap.read_text())
+    if origin is None:
+        raise ValueError(f"Expected a sitemap URL in {sitemap}")
+    for name in ("sitemap.xml", "robots.txt"):
+        path = html / name
+        path.write_text(
+            path.read_text().replace(
+                origin[1].rstrip("/"), "https://docs.nygen.io/CytePool"
+            )
+        )
+
+
 def main() -> None:
     if not (API / "index.html").is_file():
         raise SystemExit(f"Build the API reference into {API} first: make -C docs api")
@@ -276,12 +366,21 @@ def main() -> None:
         )
     except ValueError as error:
         raise SystemExit(str(error)) from None
+    script_url = "https://docs.nygen.io/assets/brand/docs.js"
+    script = f'<script defer src="{script_url}"></script>'
+    for page in html.rglob("*.html"):
+        contents = page.read_text()
+        if contents.count("</head>") != 1:
+            raise ValueError(f"Expected one HTML head in {page}")
+        page.write_text(contents.replace("</head>", script + "</head>", 1))
     shutil.copytree(
         API,
         html / "api",
         ignore=shutil.ignore_patterns(".buildinfo", ".doctrees"),
         dirs_exist_ok=True,
     )
+    link_shared_brand_assets(html)
+    set_crawler_origin(html)
     print(f"Documentation written to {html}")
 
 

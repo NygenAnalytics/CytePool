@@ -551,7 +551,7 @@ docs = [
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "myst-parser", specifier = ">=4" },
-    { name = "mystmd", specifier = "==1.8.1" },
+    { name = "mystmd", specifier = "==1.11.0" },
     { name = "nbclient", specifier = ">=0.10" },
     { name = "nbformat", specifier = ">=5.10" },
     { name = "pyyaml", specifier = ">=6" },
@@ -1457,15 +1457,15 @@ wheels = [
 
 [[package]]
 name = "mystmd"
-version = "1.8.1"
+version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nodeenv" },
     { name = "platformdirs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/27/98af31e70e24c7336909b9a00bc77d3cf4678136218b2383ec8eadfb3f11/mystmd-1.8.1.tar.gz", hash = "sha256:2c2254020484b0af60890736f39eff973384c323d4c3afee5d5aa204f1145ead", size = 2783357, upload-time = "2026-02-13T22:49:03.58Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/e0/05c4acc244e317a83cf8da27c2f29b62f86c8ee00d42c3668bf316461b1d/mystmd-1.11.0.tar.gz", hash = "sha256:afc8ca35bcf34cd694b2d5f275dba5baa2e78cf72b4a770369f9a2b6183d7d59", size = 2750170, upload-time = "2026-09-21T16:32:28.084Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/81/8266bf0bb65c6bd4d6c831f622007a827ad6fc3cdc8272b048ec4d89fd6c/mystmd-1.8.1-py3-none-any.whl", hash = "sha256:2995d866fb6ae3143421a6eb41e2257db5b5b929b58e1534be84b1ff25b1b528", size = 2814510, upload-time = "2026-02-13T22:49:02.05Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/5e/4566006965545a6461d4b250faafd57a3ff04a193ed664790fbbfe7ba91d/mystmd-1.11.0-py3-none-any.whl", hash = "sha256:52ece5bff807e24e979ca86a806153a3c00247df32321547adc533b8720edab6", size = 2780949, upload-time = "2026-09-21T16:32:26.306Z" },
 ]
 
 [[package]]
