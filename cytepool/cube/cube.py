@@ -10,11 +10,11 @@ import numpy as np
 from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
 from ..table import Table
+from ._axes import INT64_MAX, checked_axis_table, checked_n_cells, first_index
 from .fingerprints import (
     _block_digest,
     _cells_digest,
     _check_record,
-    _column_type,
     _digest_record,
     _layer_type,
     _normalization_digest,
@@ -35,17 +35,9 @@ POOLED_SAMPLES_COLUMN = "n_pooled_samples"
 """The sample column that ``Cube.collapse_samples`` fills with pooled sample counts."""
 
 _MOMENT_TOLERANCE = 1e-6  # relative slack of the Cauchy-Schwarz check on the moments
-# The largest int64. Integer layers and n_cells hold values from 0 to it, so every
-# value converts to int64 exactly, and a sum is exact in int64 whenever it fits.
-_INT64_MAX = 2**63 - 1
 _CELL_LAYERS = ("detected", "log_sum", "log_sum_sq", "linear_sum")
 _NORMALIZED_LAYERS = ("log_sum", "log_sum_sq", "linear_sum")
 _NON_NEGATIVE_LAYERS = frozenset({"counts", "detected", "log_sum_sq", "linear_sum"})
-_OPTIONAL_TEXT_COLUMNS = {
-    "groups": ("cell_ontology_id", "parent"),
-    "features": ("symbol",),
-}
-_OPTIONAL_BOOLEAN_COLUMNS = {"features": ("measured",)}
 # The parts of a cube that have one digest each besides its layers, as messages name
 # them.
 _PART_NAMES = {
@@ -242,16 +234,18 @@ class Cube:
         # A flag read by its truth value would read a masked one through its mask.
         if not isinstance(copy, bool | np.bool_):
             raise TypeError(f"copy must be a bool, got {type(copy).__name__}")
-        sample_table, sample_index = _axis_table(samples, "samples", "sample_id")
-        group_table, group_index = _axis_table(groups, "groups", "group_id")
-        feature_table, feature_index = _axis_table(features, "features", "feature_id")
+        sample_table, sample_index = checked_axis_table(samples, "samples", "sample_id")
+        group_table, group_index = checked_axis_table(groups, "groups", "group_id")
+        feature_table, feature_index = checked_axis_table(
+            features, "features", "feature_id"
+        )
         ids = (
             group_table["group_id"],
             sample_table["sample_id"],
             feature_table["feature_id"],
         )
         shape = (len(group_table), len(sample_table), len(feature_table))
-        cells = None if n_cells is None else _as_n_cells(n_cells, ids)
+        cells = None if n_cells is None else checked_n_cells(n_cells, ids)
         normalization_text = (
             None if normalization is None else _normalization_text(normalization)
         )
@@ -1814,7 +1808,7 @@ class _Plan:
                         total += term
                 except FloatingPointError:
                     # numpy writes the sums before it raises.
-                    index = _first(~np.isfinite(total))
+                    index = first_index(~np.isfinite(total))
                     raise _float_overflow(subject(index)) from None
                 del term  # before the next member is read
             return total
@@ -1824,7 +1818,7 @@ class _Plan:
         for member in members[1:]:
             term = read(int(member), samples, features)
             bound += _largest_possible(term)
-            if bound > _INT64_MAX and total.dtype != object:
+            if bound > INT64_MAX and total.dtype != object:
                 total = total.astype(object)
             if total.dtype == object:
                 # As Python integers: a Python integer plus a numpy integer would be
@@ -1838,9 +1832,9 @@ class _Plan:
                 np.add(total, term, out=total)
             del term  # before the next member is read
         if total.dtype == object:
-            too_large = total > _INT64_MAX
+            too_large = total > INT64_MAX
             if too_large.any():
-                index = _first(too_large)
+                index = first_index(too_large)
                 raise _integer_overflow(subject(index), total[index])
             total = total.astype(np.int64)
         return total
@@ -2022,155 +2016,8 @@ def _digest_record_of(cube: Cube, layers: Mapping[str, list[str]]) -> dict[str, 
     return _digest_record(shape, cube._part_digests(), typed)
 
 
-def _axis_table(
-    value: object, axis: str, id_column: str
-) -> tuple[Table, dict[str, int]]:
-    try:
-        table = value if isinstance(value, Table) else Table(value)
-    except (TypeError, ValueError) as error:
-        error.add_note(f"(while reading the {axis} table)")
-        raise
-    if id_column not in table:
-        raise ValueError(
-            f"the {axis} table needs a {id_column!r} column; it has: "
-            f"{', '.join(table.columns) or '(none)'}"
-        )
-    if len(table) == 0:
-        # An empty column cannot hold a wrong value, but numpy reads [] as float64.
-        text_columns = (id_column, *_OPTIONAL_TEXT_COLUMNS.get(axis, ()))
-        empty: dict[str, np.ndarray] = {
-            name: np.empty(0, dtype=object) for name in text_columns if name in table
-        }
-        for name in _OPTIONAL_BOOLEAN_COLUMNS.get(axis, ()):
-            if name in table:
-                empty[name] = np.empty(0, dtype=bool)
-        table = table.with_columns(empty)
-    ids = table[id_column]
-    if ids.dtype != object:
-        raise TypeError(
-            f"{axis}[{id_column!r}] must hold text ids, got dtype {ids.dtype}; convert "
-            "the ids to strings first"
-        )
-    index: dict[str, int] = {}
-    for position, identifier in enumerate(ids.tolist()):
-        if identifier is None or identifier == "":
-            raise ValueError(
-                f"{axis}[{id_column!r}] has a missing or empty id at row {position}"
-            )
-        if identifier in index:
-            raise ValueError(
-                f"{axis}[{id_column!r}] repeats the id {identifier!r}; ids must be "
-                "unique"
-            )
-        index[identifier] = position
-    for column in _OPTIONAL_TEXT_COLUMNS.get(axis, ()):
-        if column in table and table[column].dtype != object:
-            raise TypeError(
-                f"{axis}[{column!r}] must hold text, got dtype {table[column].dtype}"
-            )
-    for column in _OPTIONAL_BOOLEAN_COLUMNS.get(axis, ()):
-        if column in table and table[column].dtype != np.bool_:
-            raise TypeError(
-                f"{axis}[{column!r}] must be boolean, got dtype {table[column].dtype}"
-            )
-    for column in table.columns:  # the types a fingerprint and a cube file encode
-        if table[column].dtype.kind != "O":
-            _column_type(table[column].dtype, f"{axis}[{column!r}]")
-    return table, index
-
-
 def _index_of(ids: np.ndarray) -> dict[str, int]:
     return {value: position for position, value in enumerate(ids.tolist())}
-
-
-def _as_n_cells(
-    value: Any, ids: tuple[np.ndarray, np.ndarray, np.ndarray]
-) -> np.ndarray:
-    group_ids, sample_ids, _ = ids
-    if all(hasattr(value, attribute) for attribute in ("index", "columns", "to_numpy")):
-        value = _aligned_by_labels(value, sample_ids, group_ids)
-    array = unmasked_array(value, "n_cells")
-    if array.dtype.kind not in "iu":
-        raise TypeError(f"n_cells must be an integer array, got dtype {array.dtype}")
-    expected = (sample_ids.size, group_ids.size)
-    if array.shape != expected:
-        raise ValueError(
-            f"n_cells must have shape (n_samples, n_groups) = {expected}, got "
-            f"{array.shape}"
-        )
-    # Only uint64 (in either byte order) holds values above 2**63 - 1.
-    if array.dtype.kind == "u" and array.dtype.itemsize == 8 and array.size:
-        too_large = array > _INT64_MAX
-        if too_large.any():
-            sample, group = _first(too_large)
-            raise ValueError(
-                f"n_cells is above 2**63 - 1 ({array[sample, group]}) for sample "
-                f"{sample_ids[sample]!r} and group {group_ids[group]!r}; cell numbers "
-                "must be at most 2**63 - 1, the largest int64"
-            )
-    cells = array.astype(np.int64)
-    negative = np.argwhere(cells < 0)
-    if negative.size:
-        sample, group = negative[0]
-        raise ValueError(
-            f"n_cells is negative ({cells[sample, group]}) for sample "
-            f"{sample_ids[sample]!r} and group {group_ids[group]!r}"
-        )
-    cells.flags.writeable = False
-    return cells
-
-
-def _aligned_by_labels(
-    frame: Any, sample_ids: np.ndarray, group_ids: np.ndarray
-) -> np.ndarray:
-    """Reorder a DataFrame of cell numbers to the cube's sample and group order."""
-    positions = []
-    for axis, labels, ids in (
-        ("rows", list(frame.index), sample_ids.tolist()),
-        ("columns", list(frame.columns), group_ids.tolist()),
-    ):
-        where = {label: i for i, label in enumerate(labels)}
-        known = set(ids)
-        missing = [identifier for identifier in ids if identifier not in where]
-        extra = [label for label in labels if label not in known]
-        if missing or extra or len(where) != len(labels):
-            kind = "sample" if axis == "rows" else "group"
-            raise ValueError(
-                f"the {axis} of an n_cells DataFrame must be the {kind} ids, each once; "
-                f"missing: {missing[:5]}, unexpected: {extra[:5]}; pass a numpy array "
-                "to give cell numbers by position"
-            )
-        positions.append([where[identifier] for identifier in ids])
-    values = np.asarray(frame.to_numpy())
-    if values.dtype == object:  # for example pandas' nullable integer columns
-        if hasattr(frame, "isna") and np.asarray(frame.isna().to_numpy()).any():
-            raise ValueError(
-                "an n_cells DataFrame has missing values; every entry needs a number "
-                "of cells"
-            )
-        # Keep a conversion only when it is exact: 1.5 would become 1, and pandas
-        # turns a UInt64 count of 2**63 into -2**63 in int64. uint64 keeps such a
-        # count for the caller to report; otherwise the caller reports the dtype.
-        overflowed = False
-        for dtype in (np.int64, np.uint64):
-            try:
-                integers = np.asarray(frame.to_numpy(dtype=dtype))
-            except OverflowError:
-                overflowed = True
-                continue
-            except (TypeError, ValueError):
-                continue
-            if bool(np.all(integers == values)):
-                values = integers
-                break
-        else:
-            if overflowed:
-                raise ValueError(
-                    "an n_cells DataFrame holds a number of cells outside the int64 "
-                    "range; cell numbers must be from 0 to 2**63 - 1"
-                )
-    aligned: np.ndarray = values[np.ix_(*positions)]
-    return aligned
 
 
 def _store_layers(
@@ -2311,22 +2158,22 @@ def _check_values(
         if not np.isfinite(total):
             bad = ~np.isfinite(block)  # the sum may also overflow with finite values
             if bad.any():
-                sample, feature = _first(bad)
+                sample, feature = first_index(bad)
                 raise ValueError(
                     f"layer {name!r} has a non-finite value ({block[sample, feature]}) "
                     f"at {where(sample, feature)}"
                 )
     # Only uint64 holds values above 2**63 - 1, and no unsigned value is negative.
     if block.dtype.kind == "u" and block.dtype.itemsize == 8:
-        if block.max() > _INT64_MAX:
-            sample, feature = _first(block > _INT64_MAX)
+        if block.max() > INT64_MAX:
+            sample, feature = first_index(block > INT64_MAX)
             raise ValueError(
                 f"layer {name!r} has a value above 2**63 - 1 ({block[sample, feature]}) "
                 f"at {where(sample, feature)}; integer layers must be at most "
                 "2**63 - 1, the largest int64"
             )
     elif name in _NON_NEGATIVE_LAYERS and block.dtype.kind != "u" and block.min() < 0:
-        sample, feature = _first(block < 0)
+        sample, feature = first_index(block < 0)
         raise ValueError(
             f"layer {name!r} has a negative value ({block[sample, feature]}) at "
             f"{where(sample, feature)}; it must be non-negative"
@@ -2345,17 +2192,12 @@ def _check_values(
             )
     empty = np.flatnonzero(cells == 0)
     if empty.size and block[empty].any():
-        row, feature = _first(block[empty] != 0)
+        row, feature = first_index(block[empty] != 0)
         sample = int(empty[row])
         raise ValueError(
             f"layer {name!r} is {block[sample, feature]} at {where(sample, feature)}, "
             "where n_cells is 0; an entry without cells must be zero in every layer"
         )
-
-
-def _first(mask: np.ndarray) -> tuple[int, ...]:
-    """Return the index of the first entry, in C order, where a mask is true."""
-    return tuple(int(position) for position in np.argwhere(mask)[0])
 
 
 def _where(
@@ -2396,7 +2238,7 @@ def _check_moments(
     """
     bad = numerator < -_MOMENT_TOLERANCE * squares
     if bad.any():
-        sample, feature = _first(bad)
+        sample, feature = first_index(bad)
         square = squares[sample, feature]
         raise ValueError(
             "layers 'log_sum' and 'log_sum_sq' disagree at "
@@ -2649,13 +2491,13 @@ def _checked_sum(
         except FloatingPointError:
             with np.errstate(over="ignore", invalid="ignore"):
                 sums = reduce(values, np.float64)
-            raise _float_overflow(subject(_first(~np.isfinite(sums)))) from None
-    if _largest_possible(values) * n_terms <= _INT64_MAX:
+            raise _float_overflow(subject(first_index(~np.isfinite(sums)))) from None
+    if _largest_possible(values) * n_terms <= INT64_MAX:
         return reduce(values, np.int64)
     sums = reduce(values.astype(object), object)
-    too_large = sums > _INT64_MAX
+    too_large = sums > INT64_MAX
     if too_large.any():
-        index = _first(too_large)
+        index = first_index(too_large)
         raise _integer_overflow(subject(index), sums[index])
     return sums.astype(np.int64)
 

@@ -600,6 +600,8 @@ NO_PUBLISHED_WORK = {
     "cytepool._options": "checks flags and choices among names",
     "cytepool._version": "holds the version that the build writes",
     "cytepool.cube": "the package's namespace; its modules cite their sources",
+    "cytepool.cube._axes": "reads the axis tables, cell numbers and cell labels of "
+    "CytePool's own cubes",
     "cytepool.cube.cube": "CytePool's own structure of sums per sample, group and "
     "feature; its digests are those of cytepool.cube.fingerprints",
     "cytepool.cube.provenance": "CytePool's own record of how a cube was made, "
