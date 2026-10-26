@@ -66,14 +66,12 @@ References:
 """
 
 import math
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, NamedTuple
 
-import numba
 import numpy as np
 import numpy.typing as npt
 
-from .._jit import jit
+from .._jit import by_runs, jit
 from .._linear_algebra import cholesky, column_space, symmetric
 from .distributions import f_sf, t_sf
 
@@ -175,23 +173,12 @@ def kenward_roger_parts(fit: Any, average_weight: bool) -> InferenceParts:
         covariance,
     )
     outputs = (adjusted, derivatives, parameter_covariance)
-    threads = min(numba.get_num_threads(), n_features)
-    if threads > 1:
-        # Runs of consecutive features on Python threads; the compiled routine
-        # releases the GIL, and each feature is computed by the same operations.
-        n_runs = min(n_features, 4 * threads)
-        bounds = [
-            (run * n_features // n_runs, (run + 1) * n_features // n_runs)
-            for run in range(n_runs)
-        ]
-        with ThreadPoolExecutor(max_workers=threads) as pool:
-            for _ in pool.map(
-                lambda run: _kenward_roger_features(*arguments, *run, *outputs),
-                bounds,
-            ):
-                pass
-    else:
-        _kenward_roger_features(*arguments, 0, n_features, *outputs)
+    # Runs of consecutive features on Python threads; the compiled routine releases
+    # the GIL, and each feature is computed by the same operations.
+    by_runs(
+        lambda start, stop: _kenward_roger_features(*arguments, start, stop, *outputs),
+        n_features,
+    )
     # Back to the coefficients of x: beta = r^-1 beta_q.
     adjusted = np.einsum("ij,gjk,lk->gil", inverse, adjusted, inverse, optimize=True)
     derivatives = np.einsum(

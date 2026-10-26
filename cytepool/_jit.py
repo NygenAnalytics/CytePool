@@ -12,15 +12,18 @@ installed numba no longer provides the interfaces used here, routines are
 compiled in every process instead.
 
 Parallel routines use numba's threads; ``thread_limit`` caps how many of them one
-call uses, and ``by_chunks`` runs a loop over items in parallel or on the calling
-thread.
+call uses, ``by_chunks`` runs a loop over items in parallel or on the calling
+thread, and ``by_runs`` runs a routine that releases the GIL over runs of items on
+Python threads.
 """
 
+import gc
 import hashlib
 import logging
 import os
 import tempfile
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
@@ -130,6 +133,43 @@ def by_chunks(
     if threads > 1 and n_items > 1:
         return parallel(*arguments, max(1, min(n_items, 4 * threads)))
     return serial(*arguments)
+
+
+def by_runs(run: Callable[[int, int], Any], n_items: int) -> None:
+    """Run a compiled routine over runs of consecutive items on Python threads.
+
+    ``run(start, stop)`` computes the items ``start:stop`` and releases the GIL while
+    it works, as a routine compiled with ``nogil=True`` does. With more than one of
+    numba's threads and more than one item, the items are split into about four runs
+    per thread. The first run goes on the calling thread, so that the routine is
+    compiled, or loaded from the cache, there and never on a worker thread; the
+    others go to a pool of Python threads, with the garbage collector paused until
+    they finish. A collection that started on a worker thread would run the
+    finalizers of the objects it frees on that thread, and some objects may only be
+    finalized on the thread that made them: those of Tk, which matplotlib's
+    interactive backend makes, raise an error there, and a cold compile on a worker
+    thread once crashed the interpreter in the collector. Each item is computed by
+    the same operations whatever its run, so the result does not depend on the
+    number of threads.
+    """
+    threads = min(numba.get_num_threads(), n_items)
+    if threads <= 1:
+        run(0, n_items)
+        return
+    n_runs = min(n_items, 4 * threads)
+    bounds = [
+        (k * n_items // n_runs, (k + 1) * n_items // n_runs) for k in range(n_runs)
+    ]
+    run(*bounds[0])
+    collecting = gc.isenabled()
+    gc.disable()
+    try:
+        with ThreadPoolExecutor(max_workers=threads) as pool:
+            for _ in pool.map(lambda bound: run(*bound), bounds[1:]):
+                pass
+    finally:
+        if collecting:
+            gc.enable()
 
 
 @cache
