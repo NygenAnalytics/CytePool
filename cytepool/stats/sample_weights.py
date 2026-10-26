@@ -117,6 +117,7 @@ from cytepool._linear_algebra import (
     cholesky,
     cholesky_solve,
     column_space,
+    orthogonalise,
 )
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import (
@@ -841,7 +842,7 @@ def _project_gene(
             continue
         for t in range(m):
             column[t] /= norm
-        _orthogonalise(column, gene_basis, rank, m)
+        orthogonalise(column, gene_basis, rank, m)
         remainder = 0.0
         for t in range(m):
             remainder += column[t] * column[t]
@@ -853,27 +854,13 @@ def _project_gene(
         rank += 1
     for t in range(m):
         residuals[t] = math.sqrt(weights[rows[t]]) * response[rows[t]]
-    _orthogonalise(residuals, gene_basis, rank, m)
+    orthogonalise(residuals, gene_basis, rank, m)
     for t in range(m):
         total = 0.0
         for a in range(rank):
             total += gene_basis[a, t] * gene_basis[a, t]
         leverages[t] = total
     return m, rank
-
-
-@jit
-def _orthogonalise(
-    vector: FloatArray, gene_basis: FloatArray, rank: int, m: int
-) -> None:
-    """Remove from ``vector[:m]`` its projection on ``gene_basis[:rank, :m]``, twice."""
-    for _ in range(2):
-        for a in range(rank):
-            dot = 0.0
-            for t in range(m):
-                dot += gene_basis[a, t] * vector[t]
-            for t in range(m):
-                vector[t] -= dot * gene_basis[a, t]
 
 
 @jit

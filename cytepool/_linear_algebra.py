@@ -191,3 +191,23 @@ def correlation_matrix(
     if unit_diagonal:
         correlations[constant, constant] = 1.0
     return correlations
+
+
+@jit
+def orthogonalise(
+    vector: FloatArray, gene_basis: FloatArray, rank: int, m: int
+) -> None:
+    """Remove from ``vector[:m]`` its projection on ``gene_basis[:rank, :m]``, twice.
+
+    Modified Gram-Schmidt with one reorthogonalisation: the projection on each row of
+    the orthonormal basis is subtracted in turn, and the whole is done twice, which
+    keeps the result orthogonal to the basis to rounding (Giraud, Langou and Rozloznik
+    2005).
+    """
+    for _ in range(2):
+        for a in range(rank):
+            dot = 0.0
+            for t in range(m):
+                dot += gene_basis[a, t] * vector[t]
+            for t in range(m):
+                vector[t] -= dot * gene_basis[a, t]

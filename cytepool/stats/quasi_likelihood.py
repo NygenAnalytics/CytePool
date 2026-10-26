@@ -195,6 +195,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit, thread_limit
+from cytepool._linear_algebra import orthogonalise
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import (
@@ -768,13 +769,7 @@ def _orthonormal_columns(
             total += value * value
         if total == 0.0:
             continue
-        for _ in range(2):
-            for k in range(rank):
-                product = 0.0
-                for i in range(n_samples):
-                    product += basis[k, i] * basis[rank, i]
-                for i in range(n_samples):
-                    basis[rank, i] -= product * basis[k, i]
+        orthogonalise(basis[rank], basis, rank, n_samples)
         remaining = 0.0
         for i in range(n_samples):
             remaining += basis[rank, i] * basis[rank, i]
