@@ -1,3 +1,4 @@
+import gc
 import importlib.util
 import os
 import sys
@@ -229,3 +230,68 @@ def test_thread_limit_rejects_invalid_counts(
         with _jit.thread_limit(n_threads):  # type: ignore[arg-type]
             pass
     assert numba.get_num_threads() == before
+
+
+@pytest.mark.skipif(
+    numba.config.NUMBA_NUM_THREADS < 2, reason="needs two threads to use a pool"
+)
+def test_by_runs_covers_every_item_once_and_starts_on_the_calling_thread() -> None:
+    calls: list[tuple[int, int, int]] = []
+    lock = threading.Lock()
+
+    def run(start: int, stop: int) -> None:
+        with lock:
+            calls.append((start, stop, threading.get_ident()))
+
+    with _jit.thread_limit(2):
+        _jit.by_runs(run, 23)
+    items = sorted(i for start, stop, _ in calls for i in range(start, stop))
+    assert items == list(range(23))
+    # Two threads give eight runs, the first of them on this thread, where the
+    # routine compiles before any worker uses it.
+    assert len(calls) == 8
+    assert calls[0][:2] == (0, 2) and calls[0][2] == threading.get_ident()
+
+
+def test_by_runs_on_one_thread_runs_everything_here() -> None:
+    calls: list[tuple[int, int, int]] = []
+    with _jit.thread_limit(1):
+        _jit.by_runs(
+            lambda start, stop: calls.append((start, stop, threading.get_ident())), 5
+        )
+    assert calls == [(0, 5, threading.get_ident())]
+
+
+@pytest.mark.skipif(
+    numba.config.NUMBA_NUM_THREADS < 2, reason="needs two threads to use a pool"
+)
+def test_by_runs_finalizes_the_garbage_of_its_workers_on_the_calling_thread() -> None:
+    """Objects that only the collector frees are finalized where a collection runs.
+    With the collector running at almost every allocation, the workers' garbage
+    would be finalized on the workers; by_runs pauses it, so they are finalized
+    here, where objects such as Tk's must be."""
+    finalized_on: list[int] = []
+
+    class Cycle:
+        def __init__(self) -> None:
+            self.itself = self
+
+        def __del__(self) -> None:
+            finalized_on.append(threading.get_ident())
+
+    def run(start: int, stop: int) -> None:
+        for _ in range(200):
+            Cycle()
+
+    threshold = gc.get_threshold()
+    gc.collect()
+    gc.set_threshold(1)
+    try:
+        with _jit.thread_limit(2):
+            _jit.by_runs(run, 16)
+    finally:
+        gc.set_threshold(*threshold)
+    gc.collect()
+    assert len(finalized_on) == 8 * 200
+    assert set(finalized_on) == {threading.get_ident()}
+    assert gc.isenabled()

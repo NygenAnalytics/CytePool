@@ -220,15 +220,13 @@ References:
 import math
 from collections import namedtuple
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import numba
 import numpy as np
 import numpy.typing as npt
 
-from cytepool._jit import jit, thread_limit
+from cytepool._jit import by_runs, jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, symmetric
 from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
 from cytepool._options import checked_choice
@@ -605,24 +603,12 @@ def _fit(
         level_starts,
         ml,
     )
-    threads = min(numba.get_num_threads(), n_features)
-    if threads > 1:
-        # Runs of consecutive features on Python threads, several per thread to
-        # balance the work; the compiled fits release the GIL. Each feature is
-        # fitted by the same operations whatever its run, so the result does not
-        # depend on the number of threads.
-        n_runs = min(n_features, 4 * threads)
-        bounds = [
-            (run * n_features // n_runs, (run + 1) * n_features // n_runs)
-            for run in range(n_runs)
-        ]
-        with ThreadPoolExecutor(max_workers=threads) as pool:
-            for _ in pool.map(
-                lambda run: _fit_features(*arguments, *run, *outputs), bounds
-            ):
-                pass
-    else:
-        _fit_features(*arguments, 0, n_features, *outputs)
+    # Runs of consecutive features on Python threads; the compiled fits release the
+    # GIL, and each feature is fitted by the same operations whatever its run.
+    by_runs(
+        lambda start, stop: _fit_features(*arguments, start, stop, *outputs),
+        n_features,
+    )
     (
         coefficients,
         unscaled_covariance,
