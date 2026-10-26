@@ -4,10 +4,10 @@ dream (Hoffman and Roussos 2021) is limma-voom with a linear mixed model in plac
 the linear model, for designs with repeated measures: several samples of a donor,
 tissues of one patient, time courses. The donor (or another grouping factor) gets a
 random intercept, whose variance is estimated for every gene, and contrasts of the
-fixed effects are tested with Satterthwaite's (1946) degrees of freedom. dreamlet
-(Hoffman et al. 2026) runs it on the pseudobulk profiles of every cell type. The
-steps, as variancePartition runs them (``voomWithDreamWeights``, ``dream``,
-``eBayes`` and ``topTable``):
+fixed effects are tested with Kenward and Roger's (1997) degrees of freedom in small
+studies and Satterthwaite's (1946) in larger ones. dreamlet (Hoffman et al. 2026) runs
+it on the pseudobulk profiles of every cell type. The steps, as variancePartition runs
+them (``voomWithDreamWeights``, ``dream``, ``eBayes`` and ``topTable``):
 
 1. Precision weights, :func:`voom_with_dream_weights`. voom's (Law et al. 2014): the
    log2 counts per million are fitted, the square roots of the residual standard
@@ -16,15 +16,20 @@ steps, as variancePartition runs them (``voomWithDreamWeights``, ``dream``,
    (:mod:`cytepool.stats.voom`). The fit is the mixed model of every feature, by
    maximum likelihood, and the fitted values include the predicted random effects.
 2. Fits and tests: :func:`~cytepool.stats.mixed_models.fit_mixed_model` by REML with
-   those weights, and :func:`~cytepool.stats.mixed_models.fixed_effect_tests`, whose
-   t-statistics have Satterthwaite's degrees of freedom.
+   those weights, and :func:`~cytepool.stats.mixed_models.fixed_effect_tests`, with
+   the degrees of freedom of dream's ``ddf``: by default (``"adaptive"``) Kenward and
+   Roger's for fewer than 20 samples, with their adjusted standard errors, and
+   Satterthwaite's otherwise.
 3. Moderation, :func:`moderated_fixed_effect_tests`. The residual variance of every
    feature, that of an observation of its average weight, is shrunk towards a prior
    by limma's empirical Bayes (Smyth 2004) on the approximate residual degrees of
    freedom of the mixed model, tr((I - H)' (I - H)) for its hat matrix H
    (``MixedModelFit.residual_df``). The moderated t-statistic divides an estimate by
    its standard error with the posterior variance in place of the residual
-   variance, and has Satterthwaite's degrees of freedom plus the prior's.
+   variance, and has the degrees of freedom of the test plus the prior's. Several
+   contrasts are tested at once by the moderated F-statistic t' R^-1 t / r, limma's,
+   for their moderated t-statistics and the correlation matrix R of their estimates,
+   with r the number of linearly independent contrasts.
 
 Conventions that the documentation leaves open were found by running
 variancePartition 1.36.2, with limma 3.62.1 and lme4 1.1-38, as a black box:
@@ -62,8 +67,24 @@ variancePartition 1.36.2, with limma 3.62.1 and lme4 1.1-38, as a black box:
   the two-sided p-value: the z-statistic with the p-value of the t-statistic, so
   that tests on different degrees of freedom can be compared. It computes it from
   the p-value floored at 1e-300.
+- ``dream(ddf = "adaptive")``, the default, uses Kenward and Roger's method for 19
+  samples and Satterthwaite's for 20; the help page says "<= 20 samples". With
+  ``ddf = "Kenward-Roger"`` it tests with lmerTest's ``contest``, which calls
+  pbkrtest: Kenward and Roger's adjustment is computed with every observation at the
+  average weight (see :mod:`cytepool.stats.mixed_models`), the standard errors are
+  the adjusted ones, and ``eBayes`` moderates the tests as it does Satterthwaite's. A gene whose adjusted
+  covariance matrix of the coefficients is not positive definite or has a condition
+  number above 1e6, by R's estimate ``kappa``, is tested by Satterthwaite's method
+  instead (variancePartition's NEWS for 1.31.16 states the rule; the bound was found
+  by probing). The condition number depends on the units of continuous covariates.
+- ``topTable`` with several coefficients gives the coefficients, ``AveExpr``, ``F``,
+  ``P.Value``, ``adj.P.Val`` and ``F.std``: F is limma's moderated F-statistic, from
+  the moderated t-statistics and each gene's covariance matrix of the coefficients,
+  Kenward and Roger's adjusted one under their method, and ``F.std`` the F-statistic
+  on infinite denominator degrees of freedom with the same p-value.
 
-Deliberate differences from variancePartition, reported by ``validation/dream.py``:
+Deliberate differences from variancePartition, reported by ``validation/dream.py``
+and ``validation/kenward_roger_and_f_tests.py``:
 
 - The LOWESS span is chosen from the number of features by default, as
   :func:`~cytepool.stats.voom.voom` and limma's ``voom`` (since limma 3.66) choose it.
@@ -75,10 +96,22 @@ Deliberate differences from variancePartition, reported by ``validation/dream.py
   it is left out of the trend, its weights are read at its values, which the effects
   reproduce, and its tests are NaN. lme4 fits it with a residual standard deviation
   near zero, which enters the trend, and ``dream`` tests it.
+- ``topTable`` computes the p-values of an F-test of every gene on the total degrees
+  of freedom of the first gene for the first coefficient listed (found by probing),
+  so that they change with the order of the genes and of the coefficients. Here each
+  gene has its own: F is the mean of the squares of r uncorrelated moderated
+  t-statistics, those of the eigenvectors of R, whose degrees of freedom are those of
+  their contrasts plus the prior's, and the denominator degrees of freedom combine
+  them as lmerTest combines those of its F-tests (2 E / (E - r), with E = sum nu_m /
+  (nu_m - 2); see :mod:`cytepool.stats.mixed_models`). With one contrast, the F-test
+  is the moderated t-test. ``F.std`` uses the number of coefficients where it
+  differs from their rank; here the rank, the F-test's numerator degrees of freedom.
+- ``dream_voom`` decides which genes fall back to Satterthwaite's method from the
+  exact condition number, where dream uses R's estimate: they agree except within
+  about 2% of 1e6.
 
-Kenward-Roger's degrees of freedom (``dream``'s default up to 20 samples), random
-slopes and F-tests of several contrasts are not implemented yet; variancePartition's
-variance partitioning is :mod:`cytepool.variance_partitioning`.
+Random slopes are not implemented yet; variancePartition's variance partitioning is
+:mod:`cytepool.variance_partitioning`.
 
 References:
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
@@ -94,6 +127,9 @@ References:
     Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
     analysis tools for RNA-seq read counts. Genome Biology 15, R29.
     doi:10.1186/gb-2014-15-2-r29
+
+    Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
+    restricted maximum likelihood. Biometrics 53, 983-997. doi:10.2307/2533558
 
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
     differential expression in microarray experiments. Statistical Applications in
@@ -126,12 +162,27 @@ from cytepool.stats._mean_variance_trend import (
     voom_log_cpm,
     voom_mean_log_count,
 )
+from cytepool.stats._fixed_effect_inference import (
+    InferenceParts,
+    combined_df,
+    contrast_rank,
+    correlation_directions,
+    kenward_roger_parts,
+    satterthwaite_parts,
+)
 from cytepool.stats._mixed_model_designs import (
     MixedDesign,
     maximum_likelihood,
     mixed_design,
 )
-from cytepool.stats.distributions import norm_isf, norm_logsf, t_logsf, t_sf
+from cytepool.stats.distributions import (
+    f_isf,
+    f_sf,
+    norm_isf,
+    norm_logsf,
+    t_logsf,
+    t_sf,
+)
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import LinearModelFit
 from cytepool.stats.mixed_models import FixedEffectTests, _fit
@@ -187,6 +238,19 @@ class ModeratedFixedEffectTests:
         proportion: The assumed proportion of non-zero contrasts behind ``lods``.
         prior_estimator: The estimator of the prior: ``"moments"`` or
             ``"likelihood"``.
+        f_statistic: ``(n_features,)`` moderated F-statistics testing every
+            contrast of ``tests`` at once: t' R^-1 t / ``f_df1``, for the moderated
+            t-statistics t and the correlation matrix R of their estimates
+            (``topTable``'s ``F`` for these contrasts).
+        f_df1: The numerator degrees of freedom of the F-tests, the number of
+            linearly independent contrasts.
+        f_df2: ``(n_features,)`` their denominator degrees of freedom; see the
+            module docstring.
+        f_p_value: ``(n_features,)`` p-values of ``f_statistic`` on ``f_df1`` and
+            ``f_df2`` degrees of freedom.
+        standardized_f_statistic: ``(n_features,)`` the F-statistic on ``f_df1``
+            and infinite degrees of freedom with the same p-value (``topTable``'s
+            ``F.std``), so that tests on different degrees of freedom compare.
     """
 
     tests: FixedEffectTests
@@ -203,6 +267,11 @@ class ModeratedFixedEffectTests:
     coefficient_prior_variance: FloatArray
     proportion: float
     prior_estimator: str
+    f_statistic: FloatArray
+    f_df1: int
+    f_df2: FloatArray
+    f_p_value: FloatArray
+    standardized_f_statistic: FloatArray
 
     def __repr__(self) -> str:
         return (
@@ -312,12 +381,15 @@ def moderated_fixed_effect_tests(
     shrunk towards a prior on the approximate residual degrees of freedom by limma's
     empirical Bayes (:func:`~cytepool.stats.empirical_bayes.moderated_statistics`,
     with its estimators and options), each contrast's t-statistic uses the posterior
-    variance, and its degrees of freedom are Satterthwaite's plus the prior's. See
-    the module docstring.
+    variance, and its degrees of freedom are those of the tests (Satterthwaite's or
+    Kenward and Roger's) plus the prior's. The moderated F-statistic tests every
+    contrast of ``tests`` at once, as ``topTable`` does for several coefficients.
+    See the module docstring.
 
     Args:
         tests: Tests from :func:`~cytepool.stats.mixed_models.fixed_effect_tests`,
-            of a REML fit as ``dream`` makes them by default.
+            of a REML fit as ``dream`` makes them by default. To F-test some of the
+            contrasts, test those alone.
         proportion: Assumed proportion of non-zero contrasts, in (0, 1).
         stdev_coef_lim: Limits for the standard deviation of a non-zero contrast,
             as for ``moderated_statistics``.
@@ -342,6 +414,38 @@ def moderated_fixed_effect_tests(
             f"tests must be a FixedEffectTests, from fixed_effect_tests, got "
             f"{type(tests).__name__}"
         )
+    if tests.df_method == "kenward_roger":
+        parts = kenward_roger_parts(tests.fit, tests.kenward_roger_weights == "average")
+    else:
+        parts = satterthwaite_parts(tests.fit)
+    return _moderated_tests(
+        tests,
+        parts,
+        proportion=proportion,
+        stdev_coef_lim=stdev_coef_lim,
+        trend=trend,
+        robust=robust,
+        winsor_tail_p=winsor_tail_p,
+        prior_estimator=prior_estimator,
+    )
+
+
+def _moderated_tests(
+    tests: FixedEffectTests,
+    parts: InferenceParts,
+    *,
+    proportion: float = 0.01,
+    stdev_coef_lim: Sequence[float] = (0.1, 4.0),
+    trend: bool | npt.ArrayLike = False,
+    robust: bool = False,
+    winsor_tail_p: float | Sequence[float] = (0.05, 0.1),
+    prior_estimator: Literal["moments", "likelihood"] | None = None,
+) -> ModeratedFixedEffectTests:
+    """The steps of :func:`moderated_fixed_effect_tests`, with the parts of the tests.
+
+    ``parts`` are those from which ``tests`` were computed, feature by feature: the
+    degrees of freedom of the directions of the F-test come from them.
+    """
     fit = tests.fit
     matrix = tests.contrasts
     if matrix.shape[1] == 0:
@@ -362,10 +466,9 @@ def moderated_fixed_effect_tests(
     sigma = np.sqrt(variance)
     with np.errstate(divide="ignore", invalid="ignore"):
         stdev_unscaled = tests.standard_error / sigma[:, np.newaxis]
-        per_feature = (
-            np.einsum("jc,gjk,kd->gcd", matrix, fit.cov_coefficients, matrix)
-            / variance[:, np.newaxis, np.newaxis]
-        )
+        # The covariance matrix that the tests use: dream's cov.coefficients.list,
+        # Kenward and Roger's adjusted one under their method (found by probing).
+        per_feature = tests.covariance / variance[:, np.newaxis, np.newaxis]
     cross = fit.design.T @ fit.design
     linear = LinearModelFit(
         coefficients=tests.estimate,
@@ -393,6 +496,12 @@ def moderated_fixed_effect_tests(
     df_total = tests.df + prior_df[:, np.newaxis]
     t = moderated.t
     p_value = 2.0 * np.asarray(t_sf(np.abs(t), df_total), dtype=np.float64)
+    f_value, f_df1, f_df2 = _moderated_f(t, tests, parts, prior_df)
+    with np.errstate(invalid="ignore"):
+        f_p_value = np.asarray(f_sf(f_value, float(f_df1), f_df2), dtype=np.float64)
+        standardized = np.asarray(
+            f_isf(f_p_value, float(f_df1), np.inf), dtype=np.float64
+        )
     return ModeratedFixedEffectTests(
         tests=tests,
         residual_variance_at_mean_weight=_frozen(variance),
@@ -408,7 +517,41 @@ def moderated_fixed_effect_tests(
         coefficient_prior_variance=moderated.coefficient_prior_variance,
         proportion=moderated.proportion,
         prior_estimator=moderated.prior_estimator,
+        f_statistic=_frozen(f_value),
+        f_df1=f_df1,
+        f_df2=_frozen(f_df2),
+        f_p_value=_frozen(f_p_value),
+        standardized_f_statistic=_frozen(standardized),
     )
+
+
+def _moderated_f(
+    t: FloatArray, tests: FixedEffectTests, parts: InferenceParts, prior_df: FloatArray
+) -> tuple[FloatArray, int, FloatArray]:
+    """dream's moderated F-statistic of every contrast, and its degrees of freedom.
+
+    F = t' R^-1 t / r, for the moderated t-statistics and the correlation matrix R of
+    the estimates, is the mean of the squares of r uncorrelated moderated
+    t-statistics, those of the eigenvectors of R (``correlation_directions``). Each
+    has the degrees of freedom of its contrast plus the prior's, as a moderated
+    t-statistic of dream does, and the denominator degrees of freedom combine them
+    as lmerTest combines those of an F-test (``combined_df``).
+
+    Returns:
+        The F-statistics, the numerator and the denominator degrees of freedom.
+    """
+    rank = contrast_rank(tests.contrasts)
+    n_features = t.shape[0]
+    if rank == 0:
+        return np.full(n_features, np.nan), 0, np.full(n_features, np.nan)
+    values, vectors, df = correlation_directions(
+        parts, tests.contrasts, tests.covariance, rank
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scores = np.einsum("gc,gcm->gm", t, vectors) / np.sqrt(values)
+        f_value: FloatArray = np.sum(scores**2, axis=1) / rank
+    f_df2 = combined_df(df + prior_df[:, np.newaxis])
+    return f_value, rank, f_df2
 
 
 def _dream_weights(

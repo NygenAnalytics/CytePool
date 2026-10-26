@@ -12,12 +12,14 @@ factors may be nested, such as ``(1 | donor/sample)``, or crossed, such as
 ``(1 | donor) + (1 | batch)``. The variance parameters are estimated by restricted
 maximum likelihood (REML; Patterson and Thompson 1971), or by maximum likelihood
 (``method="ml"``), and the fixed effects by generalised least squares given them, as
-lme4's ``lmer`` with ``REML = TRUE`` (or ``FALSE``) does (Bates et al. 2015). Tests of
-contrasts of the fixed effects use Satterthwaite's degrees of freedom, as lmerTest
-computes them (Kuznetsova et al. 2017), which variancePartition's ``dream`` uses for
-repeated measures in gene expression (Hoffman and Roussos 2021);
-:mod:`cytepool.stats.dream` builds dream's precision weights and moderated tests on
-these fits.
+lme4's ``lmer`` with ``REML = TRUE`` (or ``FALSE``) does (Bates et al. 2015). Contrasts
+of the fixed effects are tested one at a time by t-tests (:func:`fixed_effect_tests`),
+or several at once by F-tests (:func:`fixed_effect_f_test`), with Satterthwaite's
+degrees of freedom, as lmerTest computes them (Kuznetsova et al. 2017), or Kenward and
+Roger's, as pbkrtest computes them (Halekoh and Hojsgaard 2014). variancePartition's
+``dream`` uses both for repeated measures in gene expression (Hoffman and Roussos
+2021); :mod:`cytepool.stats.dream` builds dream's precision weights and moderated
+tests on these fits.
 
 The REML criterion:
     With theta_k = sigma_k / sigma, the relative standard deviations that lme4
@@ -108,9 +110,58 @@ Satterthwaite's degrees of freedom:
     by probing lmerTest). lmerTest computes the derivatives numerically; here they
     are exact.
 
+Kenward and Roger's method:
+    With few samples the variance parameters are estimated imprecisely, and the
+    covariance matrix C of the estimates, computed as if they were known,
+    understates the variance of the fixed effects. Kenward and Roger (1997) add to C
+    a correction for its own bias and for the variability of the variance parameters,
+    of order 1 / n, to second order in their estimation error, whose covariance they
+    take as the inverse of the expected information of REML; the t-statistic of a
+    contrast uses the adjusted matrix, and its degrees of freedom are Satterthwaite's
+    formula with that expected information in place of the observed one. For an
+    F-test of l contrasts they scale the Wald statistic and match its first two
+    moments to an F distribution on (l, m) degrees of freedom. The covariance matrix
+    of the observations is linear in the variance parameters, so the second
+    derivatives that their formula also allows for vanish. A variance component
+    estimated at zero takes part, as in pbkrtest, so that the degrees of freedom are
+    smaller than Satterthwaite's, which leave it out. In balanced designs, such as a
+    randomised block design, the adjustment vanishes and the method gives the tests
+    of the analysis of variance, which are exact there.
+
+    With weights, pbkrtest builds the covariance matrix of the observations without
+    the prior weights of an lme4 fit, with the residual variance of an observation
+    of weight one, while it takes C from the fit, which the weights enter (found by
+    probing pbkrtest 0.5.3); lmerTest's Kenward-Roger tests are pbkrtest's. dream
+    divides each feature's weights by their mean before it fits, so that its tests
+    are those of every observation at the average weight, which do not depend on the
+    scale of the weights. ``kenward_roger_weights="average"`` computes these.
+    ``"precision"`` uses each observation's own weight, the covariance
+    matrix of the model fitted: Kenward and Roger's method for it, which pbkrtest
+    gives for the same model fitted without weights to the values, fixed effects and
+    random effects multiplied by the square roots of the weights. With voom's
+    weights the two can differ by tens of percent in the degrees of freedom and by
+    several percent in the standard errors, and the first can make standard errors
+    smaller than the unadjusted ones, which the second never does (the Validation
+    page gives sizes). Each feature costs O(n^3) operations for n samples, as in
+    pbkrtest.
+
+F-tests:
+    :func:`fixed_effect_f_test` tests that the contrasts L beta are all zero. With
+    Satterthwaite's method, as lmerTest's ``contestMD``, the contrasts are replaced by
+    the eigenvectors of their covariance matrix L C L' with positive eigenvalues
+    (in the order of R's ``eigen``, the largest first), whose estimates are
+    uncorrelated; F is the mean of their squared t-statistics, and its denominator
+    degrees of freedom are 2 E / (E - l) with E = sum nu_m / (nu_m - 2) over their
+    Satterthwaite degrees of freedom nu_m, which matches the mean of F (Fai and
+    Cornelius 1996): their mean when they differ by less than 1e-8, and 2 when one is
+    at most 2, as lmerTest's ``get_Fstat_ddf`` documents. These depend on how the
+    contrasts span the hypothesis, as lmerTest's do. Kenward and Roger's F-test, as
+    pbkrtest's ``KRmodcomp``, does not. The F-test of one contrast is its t-test, on
+    the same degrees of freedom even below 2, as ``contestMD`` gives it (found by
+    running it).
+
 Limits of this version:
-    Random slopes, Kenward-Roger degrees of freedom (dream's default for 20 samples
-    or fewer) and F-tests of several contrasts at once are not implemented yet.
+    Random slopes are not implemented yet.
     :mod:`cytepool.variance_partitioning` partitions the variance of these fits.
     Every feature needs a value for every sample, with a positive weight. Designs
     whose fixed and random effects together span every sample, and so reproduce
@@ -125,12 +176,21 @@ References:
     constraints. SIAM Journal on Control and Optimization 20, 221-246.
     doi:10.1137/0320018
 
+    Fai AH-T, Cornelius PL (1996). Approximate F-tests of multiple degree of freedom
+    hypotheses in generalized least squares analyses of unbalanced split-plot
+    experiments. Journal of Statistical Computation and Simulation 54, 363-378.
+    doi:10.1080/00949659608811740
+
     Giesbrecht FG, Burns JC (1985). Two-stage analysis based on a mixed model:
     large-sample asymptotic theory and small-sample simulation results. Biometrics 41,
     477-486. doi:10.2307/2530872
 
     Golub GH, Van Loan CF (2013). Matrix Computations, 4th edition. Johns Hopkins
     University Press, Baltimore.
+
+    Halekoh U, Hojsgaard S (2014). A Kenward-Roger approximation and parametric
+    bootstrap methods for tests in linear mixed models: the R package pbkrtest.
+    Journal of Statistical Software 59(9), 1-32. doi:10.18637/jss.v059.i09
 
     Harville DA (1977). Maximum likelihood approaches to variance component estimation
     and to related problems. Journal of the American Statistical Association 72,
@@ -142,6 +202,9 @@ References:
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
     repeated measures designs. Bioinformatics 37, 192-201.
     doi:10.1093/bioinformatics/btaa687
+
+    Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
+    restricted maximum likelihood. Biometrics 53, 983-997. doi:10.2307/2533558
 
     Kuznetsova A, Brockhoff PB, Christensen RHB (2017). lmerTest package: tests in
     linear mixed effects models. Journal of Statistical Software 82(13), 1-26.
@@ -168,17 +231,32 @@ import numpy.typing as npt
 from cytepool._jit import jit, thread_limit
 from cytepool._linear_algebra import RANK_TOLERANCE, cholesky, symmetric
 from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
+from cytepool._options import checked_choice
 from cytepool._summation import observed_means
 from cytepool.design._contrast_weights import contrast_matrix
 from cytepool.design.design import Design
+from cytepool.stats._fixed_effect_inference import (
+    InferenceParts,
+    contrast_rank,
+    contrast_tests,
+    f_test,
+    kenward_roger_parts,
+    satterthwaite_parts,
+)
 from cytepool.stats._mixed_model_designs import (
     MixedDesign,
     maximum_likelihood,
     mixed_design,
 )
-from cytepool.stats.distributions import t_sf
 
-__all__ = ["FixedEffectTests", "MixedModelFit", "fit_mixed_model", "fixed_effect_tests"]
+__all__ = [
+    "FixedEffectFTest",
+    "FixedEffectTests",
+    "MixedModelFit",
+    "fit_mixed_model",
+    "fixed_effect_f_test",
+    "fixed_effect_tests",
+]
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
@@ -268,6 +346,10 @@ class MixedModelFit:
             of an observation of the feature's average weight.
         mean_expression: ``(n_features,)`` unweighted mean of each feature's values
             (limma's ``Amean``, R's ``rowMeans`` to the last bit).
+        weights: The precision weights of the fit, as given: ``(n_samples,)`` sample
+            weights, ``(n_samples, n_features)`` observation weights, or None.
+        component_levels: ``(n_components, n_samples)`` the level of each sample in
+            the grouping factor of each variance component, numbered from 0.
     """
 
     coefficients: FloatArray
@@ -289,6 +371,8 @@ class MixedModelFit:
     residual_df: FloatArray
     mean_weights: FloatArray
     mean_expression: FloatArray
+    weights: FloatArray | None
+    component_levels: IntArray
 
     def __repr__(self) -> str:
         return (
@@ -311,33 +395,91 @@ class FixedEffectTests:
         contrasts: ``(n_coefficients, n_contrasts)`` weights of each contrast on the
             fit's coefficients.
         contrast_names: Names of the contrasts.
-        df_method: How the degrees of freedom were computed: ``"satterthwaite"``.
+        df_method: How the degrees of freedom were computed: ``"satterthwaite"`` or
+            ``"kenward_roger"``.
+        kenward_roger_weights: For Kenward and Roger's method, how its adjustment
+            took the weights: ``"average"`` or ``"precision"`` (see
+            :func:`fixed_effect_tests`); None for Satterthwaite's.
         estimate: ``(n_features, n_contrasts)`` estimates c' beta.
         standard_error: ``(n_features, n_contrasts)`` standard errors
-            (c' C c)^(1/2), with C the covariance matrix of the coefficients.
+            (c' C c)^(1/2), with C the covariance matrix of the coefficients:
+            the fit's (``cov_coefficients``) for Satterthwaite's method, Kenward
+            and Roger's adjusted one for theirs.
         t: ``(n_features, n_contrasts)`` t-statistics, the estimates over their
             standard errors.
-        df: ``(n_features, n_contrasts)`` Satterthwaite's degrees of freedom; NaN
-            where the asymptotic covariance of the variance parameters is not
-            defined.
+        df: ``(n_features, n_contrasts)`` degrees of freedom; NaN where they are
+            not defined, as where the asymptotic covariance of the variance
+            parameters is not.
         p_value: ``(n_features, n_contrasts)`` two-sided p-values of ``t`` on ``df``
             degrees of freedom.
+        covariance: ``(n_features, n_contrasts, n_contrasts)`` the covariance
+            matrix of the estimates, L' C L for the contrasts L and the C of
+            ``standard_error``.
     """
 
     fit: MixedModelFit
     contrasts: FloatArray
     contrast_names: tuple[str, ...]
     df_method: str
+    kenward_roger_weights: str | None
     estimate: FloatArray
     standard_error: FloatArray
     t: FloatArray
     df: FloatArray
     p_value: FloatArray
+    covariance: FloatArray
 
     def __repr__(self) -> str:
         return (
             f"FixedEffectTests(n_features={self.t.shape[0]}, "
             f"contrast_names={self.contrast_names!r}, df_method={self.df_method!r})"
+        )
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class FixedEffectFTest:
+    """F-tests that several contrasts of the fixed effects are all zero.
+
+    One test per feature, of the hypothesis that every contrast is zero; the arrays
+    are read-only.
+
+    Attributes:
+        fit: The mixed model fit.
+        contrasts: ``(n_coefficients, n_contrasts)`` weights of each contrast on the
+            fit's coefficients.
+        contrast_names: Names of the contrasts.
+        df_method: ``"satterthwaite"`` or ``"kenward_roger"``.
+        kenward_roger_weights: ``"average"`` or ``"precision"`` for Kenward and
+            Roger's method, as in :class:`FixedEffectTests`; None for
+            Satterthwaite's.
+        f_statistic: ``(n_features,)`` F-statistics; Kenward and Roger's are
+            scaled by ``scaling``.
+        df1: The numerator degrees of freedom, the number of linearly independent
+            contrasts.
+        df2: ``(n_features,)`` denominator degrees of freedom.
+        p_value: ``(n_features,)`` p-values of ``f_statistic`` on ``df1`` and
+            ``df2`` degrees of freedom.
+        scaling: ``(n_features,)`` the factor by which Kenward and Roger scale the
+            Wald statistic (pbkrtest's ``F.scaling``); 1 for Satterthwaite's
+            method.
+    """
+
+    fit: MixedModelFit
+    contrasts: FloatArray
+    contrast_names: tuple[str, ...]
+    df_method: str
+    kenward_roger_weights: str | None
+    f_statistic: FloatArray
+    df1: int
+    df2: FloatArray
+    p_value: FloatArray
+    scaling: FloatArray
+
+    def __repr__(self) -> str:
+        return (
+            f"FixedEffectFTest(n_features={self.f_statistic.shape[0]}, "
+            f"contrast_names={self.contrast_names!r}, df1={self.df1}, "
+            f"df_method={self.df_method!r})"
         )
 
 
@@ -425,7 +567,7 @@ def _fit(
     x, names, codes, n_levels, components = parts
     n_samples, n_coefficients = x.shape
     values = _response_matrix(y, n_samples)
-    weight_rows = _positive_weights(weights, values.shape)
+    weight_rows, given_weights = _positive_weights(weights, values.shape)
     n_features = values.shape[1]
 
     # The fixed effects in an orthonormal basis of the columns of x, x = q r: the
@@ -533,6 +675,8 @@ def _fit(
         residual_df=_frozen(residual_df),
         mean_weights=_frozen(mean_weights),
         mean_expression=_frozen(observed_means(values)),
+        weights=None if given_weights is None else _frozen(given_weights),
+        component_levels=_frozen(codes, np.int64),
     )
 
 
@@ -541,15 +685,21 @@ def fixed_effect_tests(
     contrasts: Any = None,
     *,
     names: Sequence[str] | None = None,
-    df_method: Literal["satterthwaite"] = "satterthwaite",
+    df_method: Literal["satterthwaite", "kenward_roger"] = "satterthwaite",
+    kenward_roger_weights: Literal["average", "precision"] = "average",
 ) -> FixedEffectTests:
-    """t-tests of contrasts of the fixed effects with Satterthwaite's degrees of freedom.
+    """t-tests of contrasts of the fixed effects, by Satterthwaite or Kenward-Roger.
 
-    For a contrast c, the t-statistic is c' beta / (c' C c)^(1/2) and its degrees of
-    freedom are Satterthwaite's, as lmerTest's ``contest(fit, L, joint = FALSE)``
-    and ``summary`` compute them; see the module docstring. Without contrasts, each
-    coefficient is tested, as in lmerTest's coefficient table. Kenward-Roger's
-    degrees of freedom, and F-tests of several contrasts at once, are planned.
+    For a contrast c, the t-statistic is c' beta / (c' C c)^(1/2). With
+    ``df_method="satterthwaite"``, C is the fit's covariance matrix and the degrees
+    of freedom are Satterthwaite's, as lmerTest's ``contest(fit, L, joint = FALSE)``
+    and ``summary`` compute them. With ``"kenward_roger"``, C is Kenward and Roger's
+    adjusted covariance matrix, which allows for the estimation of the variance
+    parameters, and the degrees of freedom are theirs, as lmerTest's ``contest1D(fit,
+    L, ddf = "Kenward-Roger")`` computes them with pbkrtest's ``vcovAdj`` and
+    ``get_Lb_ddf``. The module docstring gives both methods. Without contrasts, each
+    coefficient is tested, as in lmerTest's coefficient table.
+    :func:`fixed_effect_f_test` tests several contrasts at once.
 
     Contrasts that name the coefficients they weigh are matched to
     ``fit.coefficient_names`` by name, as by
@@ -559,14 +709,24 @@ def fixed_effect_tests(
     its index. Weights without names are taken in the order of the coefficients.
 
     Args:
-        fit: A fit from :func:`fit_mixed_model`.
+        fit: A fit from :func:`fit_mixed_model`; by REML for Kenward and Roger's
+            method.
         contrasts: The contrasts, one per column of a ``(n_coefficients,
             n_contrasts)`` matrix: a ``Contrasts``, a pandas DataFrame, a mapping of
             contrast name to weights, a matrix or a single vector. None tests every
             coefficient.
         names: Contrast names, when ``contrasts`` is not a mapping or a
             ``Contrasts``; see ``contrasts_fit``.
-        df_method: ``"satterthwaite"``, the only method so far.
+        df_method: ``"satterthwaite"`` (lmerTest's default) or
+            ``"kenward_roger"``.
+        kenward_roger_weights: How Kenward and Roger's adjustment and degrees of
+            freedom take a fit's weights: ``"average"`` computes them with every
+            observation at its feature's average weight, as variancePartition's
+            ``dream`` does with pbkrtest, which leaves out the weights of an lme4 fit
+            (lmerTest's ``ddf = "Kenward-Roger"`` gives the same for weights of mean
+            one); ``"precision"`` with each observation's own weight, the covariance
+            of the model fitted. The two agree without weights or with equal
+            weights; see the module docstring. Ignored for Satterthwaite's method.
 
     Returns:
         The estimates, standard errors, t-statistics, degrees of freedom and
@@ -575,50 +735,137 @@ def fixed_effect_tests(
     Raises:
         TypeError: If ``fit`` is not a ``MixedModelFit``, or ``contrasts`` or
             ``names`` is not valid or is or holds a numpy masked array.
-        ValueError: If the contrasts do not match the coefficients, are not finite,
-            or ``df_method`` is unknown.
+        ValueError: If the contrasts do not match the coefficients or are not
+            finite, ``df_method`` or ``kenward_roger_weights`` is unknown, or
+            Kenward and Roger's method is asked of a maximum likelihood fit.
     """
-    if not isinstance(fit, MixedModelFit):
-        raise TypeError(f"fit must be a MixedModelFit, got {type(fit).__name__}")
-    if df_method != "satterthwaite":
-        raise ValueError(
-            f"df_method must be 'satterthwaite', got {df_method!r}; Kenward-Roger's "
-            "degrees of freedom are not available yet"
-        )
-    if contrasts is None:
-        reject_masked(names, "names")
-        if names is not None:
-            raise ValueError("names are given only with contrasts")
-        matrix = np.eye(len(fit.coefficient_names))
-        contrast_names = fit.coefficient_names
-    else:
-        matrix, contrast_names = contrast_matrix(
-            contrasts, names, fit.coefficient_names
-        )
-    estimate = fit.coefficients @ matrix
-    variance = np.einsum("jc,gjk,kc->gc", matrix, fit.cov_coefficients, matrix)
-    gradient = np.einsum(
-        "jc,gajk,kc->gca", matrix, fit.cov_coefficients_derivatives, matrix
+    fit = _checked_fit(fit)
+    matrix, contrast_names = _contrasts_of(fit, contrasts, names)
+    parts, variant = _inference_parts(fit, df_method, kenward_roger_weights)
+    estimate, standard_error, t, df, p_value = contrast_tests(
+        fit.coefficients, parts, matrix
     )
-    spread = np.einsum(
-        "gca,gab,gcb->gc", gradient, fit.variance_parameter_covariance, gradient
-    )
-    with np.errstate(divide="ignore", invalid="ignore"):
-        standard_error = np.sqrt(variance)
-        t = estimate / standard_error
-        df = np.where(spread > 0.0, 2.0 * variance**2 / spread, np.nan)
-    p_value = 2.0 * np.asarray(t_sf(np.abs(t), df))
     return FixedEffectTests(
         fit=fit,
         contrasts=_frozen(matrix),
         contrast_names=tuple(contrast_names),
-        df_method=df_method,
+        df_method=parts.method,
+        kenward_roger_weights=variant,
         estimate=_frozen(estimate),
         standard_error=_frozen(standard_error),
         t=_frozen(t),
         df=_frozen(df),
         p_value=_frozen(p_value),
+        covariance=_frozen(
+            symmetric(np.einsum("jc,gjk,kd->gcd", matrix, parts.covariance, matrix))
+        ),
     )
+
+
+def fixed_effect_f_test(
+    fit: MixedModelFit,
+    contrasts: Any,
+    *,
+    names: Sequence[str] | None = None,
+    df_method: Literal["satterthwaite", "kenward_roger"] = "satterthwaite",
+    kenward_roger_weights: Literal["average", "precision"] = "average",
+) -> FixedEffectFTest:
+    """F-tests that several contrasts of the fixed effects are all zero.
+
+    One test per feature of the hypothesis L beta = 0, for the contrasts in the
+    columns of L, such as every difference among three time points or the levels of
+    an interaction. With ``df_method="satterthwaite"`` it is lmerTest's
+    ``contestMD(fit, L)``: the Wald statistic over the number of independent
+    contrasts, whose denominator degrees of freedom combine those of independent
+    contrasts that span the hypothesis (Fai and Cornelius 1996; Kuznetsova et al.
+    2017). With ``"kenward_roger"`` it is pbkrtest's ``KRmodcomp(fit, L)`` (and
+    lmerTest's ``contestMD(fit, L, ddf = "Kenward-Roger")``): the Wald statistic with
+    the adjusted covariance matrix, scaled, on Kenward and Roger's degrees of freedom.
+    The module docstring gives both. Contrasts that are linear combinations of the
+    others add nothing to the hypothesis: the numerator degrees of freedom are the
+    number of independent contrasts, by the rank rule of R's ``qr()``.
+
+    Contrasts are matched to the coefficients as by :func:`fixed_effect_tests`.
+
+    Args:
+        fit: A fit from :func:`fit_mixed_model`; by REML for Kenward and Roger's
+            method.
+        contrasts: The contrasts, one per column of a ``(n_coefficients,
+            n_contrasts)`` matrix, in any form :func:`fixed_effect_tests` takes.
+        names: Contrast names, when ``contrasts`` is not a mapping or a
+            ``Contrasts``.
+        df_method: ``"satterthwaite"`` or ``"kenward_roger"``.
+        kenward_roger_weights: ``"average"`` or ``"precision"``, as for
+            :func:`fixed_effect_tests`.
+
+    Returns:
+        The F-statistic, its degrees of freedom and its p-value for every feature.
+
+    Raises:
+        TypeError: As :func:`fixed_effect_tests`.
+        ValueError: As :func:`fixed_effect_tests`, or if every contrast is zero.
+    """
+    fit = _checked_fit(fit)
+    matrix, contrast_names = _contrasts_of(fit, contrasts, names)
+    rank = contrast_rank(matrix)
+    if rank == 0:
+        raise ValueError(
+            "the contrasts are all zero, so they state no hypothesis to test; give "
+            "at least one contrast with a non-zero weight"
+        )
+    parts, variant = _inference_parts(fit, df_method, kenward_roger_weights)
+    tests = f_test(fit.coefficients, parts, matrix, rank)
+    return FixedEffectFTest(
+        fit=fit,
+        contrasts=_frozen(matrix),
+        contrast_names=tuple(contrast_names),
+        df_method=parts.method,
+        kenward_roger_weights=variant,
+        f_statistic=_frozen(tests.statistic),
+        df1=tests.df1,
+        df2=_frozen(tests.df2),
+        p_value=_frozen(tests.p_value),
+        scaling=_frozen(tests.scaling),
+    )
+
+
+def _checked_fit(fit: Any) -> MixedModelFit:
+    if not isinstance(fit, MixedModelFit):
+        raise TypeError(f"fit must be a MixedModelFit, got {type(fit).__name__}")
+    return fit
+
+
+def _contrasts_of(
+    fit: MixedModelFit, contrasts: Any, names: Sequence[str] | None
+) -> tuple[FloatArray, tuple[str, ...]]:
+    """The contrast matrix on the fit's coefficients and the contrasts' names."""
+    if contrasts is None:
+        reject_masked(names, "names")
+        if names is not None:
+            raise ValueError("names are given only with contrasts")
+        return np.eye(len(fit.coefficient_names)), fit.coefficient_names
+    matrix, contrast_names = contrast_matrix(contrasts, names, fit.coefficient_names)
+    return matrix, tuple(contrast_names)
+
+
+def _inference_parts(
+    fit: MixedModelFit, df_method: Any, kenward_roger_weights: Any
+) -> tuple[InferenceParts, str | None]:
+    """The parts of the tests by the method asked for, and how Kenward and Roger's
+    adjustment took the weights (None for Satterthwaite's method)."""
+    method = checked_choice(df_method, "df_method", ("satterthwaite", "kenward_roger"))
+    variant = checked_choice(
+        kenward_roger_weights, "kenward_roger_weights", ("average", "precision")
+    )
+    if method == "satterthwaite":
+        return satterthwaite_parts(fit), None
+    if fit.method != "reml":
+        raise ValueError(
+            "Kenward and Roger's method is defined for REML fits, and this fit "
+            "maximised the likelihood; fit with method='reml', as lmerTest and "
+            "pbkrtest require (pbkrtest refits such a model by REML)"
+        )
+    return kenward_roger_parts(fit, variant == "average"), variant
 
 
 # Arguments.
@@ -651,10 +898,11 @@ def _response_matrix(y: npt.ArrayLike, n_samples: int) -> FloatArray:
 
 def _positive_weights(
     weights: npt.ArrayLike | None, shape: tuple[int, int]
-) -> FloatArray:
-    """The weights as rows of samples, one per feature or one for all."""
+) -> tuple[FloatArray, FloatArray | None]:
+    """The weights as rows of samples, one per feature or one for all, and as given
+    (None without weights)."""
     if weights is None:
-        return np.ones((1, shape[0]))
+        return np.ones((1, shape[0])), None
     w = real_array(unmasked_array(weights, "weights"), "weights")
     if w.shape == (shape[0],):
         rows = w[np.newaxis, :]
@@ -675,7 +923,7 @@ def _positive_weights(
             "not finite. A mixed model is fitted to every sample of a feature: lme4 "
             "gives an infinite REML criterion for a zero weight"
         )
-    return _writable_c_array(rows, np.float64)
+    return _writable_c_array(rows, np.float64), np.asarray(w, dtype=np.float64)
 
 
 def _writable_c_array(values: npt.NDArray[Any], dtype: type) -> npt.NDArray[Any]:

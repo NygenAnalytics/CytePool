@@ -121,8 +121,8 @@ import numpy.typing as npt
 
 from ._analysis_records import (
     cube_record,
-    design_record,
     matched_samples,
+    mixed_design_record,
     software_versions,
 )
 from ._columns import text_column
@@ -912,7 +912,7 @@ def variance_partitioning(
             "versions": software_versions(),
             "cube": cube_record(cube),
             "layer": COUNTS_LAYER,
-            "design": _design_record(design, no_contrasts),
+            "design": mixed_design_record(design, no_contrasts),
             "settings": {**settings, **_FIXED_SETTINGS},
             "groups": [_group_record(fit, sample_ids, settings) for fit in fits],
         },
@@ -1009,17 +1009,6 @@ def _summary_table(fits: list[_GroupFit]) -> Table:
             ),
         }
     )
-
-
-def _design_record(design: Design, contrasts: Contrasts) -> dict[str, Any]:
-    """The design's record, with its random effects and the variables they group by."""
-    record = design_record(design, contrasts)
-    record["random"] = [str(effect) for effect in design.random]
-    samples = design.samples
-    for effect in design.random:
-        for name in effect.grouping:
-            record["samples"].setdefault(name, samples[name].tolist())
-    return record
 
 
 def _group_record(

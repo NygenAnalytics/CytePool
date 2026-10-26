@@ -28,6 +28,7 @@ size; its sections give every check.
 | Model matrices from R formulas, named contrasts, design checks | {api}`Design`, {api}`model_matrix`, {api}`make_contrasts`, {api}`Design.check` | R 4.4.3, limma 3.62.1, lme4 2.0.6 | exact | [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) |
 | Linear models of every gene, contrasts (limma's `lmFit`, `contrasts.fit`) | {api}`fit_linear_model`, {api}`contrasts_fit` | limma 3.62.1 | exact | [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) |
 | Mixed models with random intercepts by REML or ML, Satterthwaite's t-tests | {api}`fit_mixed_model`, {api}`fixed_effect_tests` | lme4 2.0.6, lmerTest 3.2.1 | close | [`mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py) |
+| Kenward-Roger's t-tests and F-tests of mixed models, Satterthwaite's F-tests (pbkrtest's `vcovAdj` and `KRmodcomp`, lmerTest's `contestMD`); dream's choice of degrees of freedom and its F-tests | {api}`fixed_effect_tests`, {api}`fixed_effect_f_test`, {api}`dream_voom`, {api}`moderated_fixed_effect_tests` | pbkrtest 0.5.3, lmerTest 3.1-3, lme4 1.1-38, variancePartition 1.36.2 | exact at given estimates; close at the optimum and for dream | [`kenward_roger_and_f_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/kenward_roger_and_f_tests.py) |
 | voom precision weights, limma's span rule | {api}`voom`, {api}`choose_lowess_span` | limma 3.62.1, edgeR 4.4.0 | exact; close on rarefied counts | [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) |
 | Sample quality weights (`arrayWeights`, `voomWithQualityWeights`) | {api}`sample_quality_weights`, {api}`voom_with_quality_weights` | limma 3.62.1, edgeR 4.4.0 | close | [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) |
 | Negative binomial models of every gene (edgeR's `glmFit`), deviances | {api}`fit_negative_binomial_model`, {api}`negative_binomial_deviance`, {api}`negative_binomial_unit_deviance` | edgeR 4.4.0, mpmath 1.3.0 | close | [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) |
@@ -55,8 +56,7 @@ size; its sections give every check.
 These methods come up in the questions that studies ask ([Overview](../index.md)) and
 have no CytePool function yet:
 
-- random slopes, Kenward-Roger's degrees of freedom and F-tests of several contrasts in
-  mixed models;
+- random slopes in mixed models;
 - composition tests with precision weights or random effects (crumblr), and Bayesian
   count models of composition;
 - pathway and transcription-factor activity scores;

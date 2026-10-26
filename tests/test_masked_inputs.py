@@ -274,14 +274,17 @@ def _weighted_by_cells(context: Context) -> dict[str, Any]:
 
 def _dream(context: Context) -> dict[str, Any]:
     """As _differential_expression, with a random donor intercept and no quality
-    weights, which dream_voom does not estimate."""
+    weights, which dream_voom does not estimate, and an F-test."""
     arguments = _differential_expression(context)
     del arguments["quality_weights"]
     return arguments | {
         "design": Design(
             SAMPLE_TABLE, "~ condition", random="(1 | donor)", levels=LEVELS
         ),
+        "f_tests": {"both": ["stim"]},
         "span": 0.6,
+        "df_method": "kenward_roger",
+        "kenward_roger_weights": "precision",
         "n_threads": 1,
     }
 
@@ -804,7 +807,19 @@ ENTRY_POINTS: dict[str, Entry] = {
             "names": ["u", "v"],
         },
         {"contrasts": None, "names": None},
-        options=("df_method",),
+        options=("df_method", "kenward_roger_weights"),
+        objects=("fit",),
+    ),
+    "cytepool.stats.mixed_models.fixed_effect_f_test": Entry(
+        lambda c: {
+            "fit": fit_mixed_model(**_mixed_model(c)),
+            "contrasts": np.eye(2),
+            "names": ["u", "v"],
+            "df_method": "kenward_roger",
+            "kenward_roger_weights": "precision",
+        },
+        {"contrasts": None, "names": None},
+        options=("df_method", "kenward_roger_weights"),
         objects=("fit",),
     ),
     # dream: voom weights from mixed models, and their moderated tests.
@@ -1495,6 +1510,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         _dream,
         {
             "contrasts": None,
+            "f_tests": None,
             "groups": None,
             "min_cells": None,
             "expression_filter": None,
@@ -1504,12 +1520,14 @@ ENTRY_POINTS: dict[str, Entry] = {
             "min_counts",
             "normalization",
             "span",
+            "df_method",
+            "kenward_roger_weights",
             "robust",
             "trend",
             "adjust_across_groups",
         ),
         objects=("cube", "design"),
-        keys={"contrasts": "stim", "expression_filter": "min_count"},
+        keys={"contrasts": "stim", "f_tests": "both", "expression_filter": "min_count"},
     ),
     "cytepool.differential_expression.dream_voom[prior_weights]": Entry(
         _dream_by_cells, {}, options=("prior_weights",)
@@ -2001,6 +2019,7 @@ RECORDS = {
     "cytepool.stats.deseq2.DESeq2Dispersions",
     "cytepool.stats.deseq2.DESeq2Fit",
     "cytepool.stats.deseq2.DESeq2Results",
+    "cytepool.stats.mixed_models.FixedEffectFTest",
     "cytepool.stats.mixed_models.FixedEffectTests",
     "cytepool.stats.mixed_models.MixedModelFit",
     "cytepool.meta_analysis.MetaAnalysisFit",

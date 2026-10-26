@@ -3,8 +3,10 @@
 Compares ``cytepool.stats.dream`` (``voom_with_dream_weights``,
 ``moderated_fixed_effect_tests``), the mixed models behind them (``fit_mixed_model``
 by maximum likelihood and REML, with fitted values and approximate residual degrees
-of freedom) and ``dream_voom`` with variancePartition's ``voomWithDreamWeights``,
-``dream(ddf = "Satterthwaite")``, ``eBayes`` and ``topTable``, on counts simulated from
+of freedom) and ``dream_voom(df_method="satterthwaite")`` with variancePartition's
+``voomWithDreamWeights``, ``dream(ddf = "Satterthwaite")``, ``eBayes`` and ``topTable``
+(``validation/kenward_roger_and_f_tests.py`` checks the other choices of degrees of
+freedom and the F-tests), on counts simulated from
 fixed seeds: a random donor intercept with a condition, a covariate and a contrast,
 and ``eBayes`` with ``robust = TRUE`` and ``trend = TRUE``; crossed random intercepts
 with sample prior weights; unbalanced donors, some with a single sample; and
@@ -612,8 +614,15 @@ def compare_cube(
     results: Results,
 ) -> None:
     for variant in ("default", "trend"):
+        # dream(ddf = "Satterthwaite"), which the R script runs; dream_voom's default
+        # is dream's adaptive choice (validation/kenward_roger_and_f_tests.py).
         result = dream_voom(
-            cube, design, prior_weights="n_cells", span=0.5, trend=variant == "trend"
+            cube,
+            design,
+            prior_weights="n_cells",
+            span=0.5,
+            trend=variant == "trend",
+            df_method="satterthwaite",
         )
         for group, given in inputs.items():
             ref, label = (

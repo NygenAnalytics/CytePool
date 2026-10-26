@@ -794,8 +794,12 @@ def test_invalid_tests_are_refused() -> None:
         fixed_effect_tests(
             fit_linear_model(reference("one_intercept")["y"], fit.design)
         )
-    with pytest.raises(ValueError, match="Kenward-Roger's degrees of freedom are not"):
-        fixed_effect_tests(fit, df_method="kenward_roger")  # type: ignore[arg-type]
+    with pytest.raises(
+        ValueError, match="df_method must be one of 'satterthwaite', 'kenward_roger'"
+    ):
+        fixed_effect_tests(fit, df_method="containment")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="kenward_roger_weights must be one of"):
+        fixed_effect_tests(fit, kenward_roger_weights=1)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="names are given only with contrasts"):
         fixed_effect_tests(fit, names=["a"])
     with pytest.raises(ValueError, match=r"must weigh exactly the fit's coefficients"):

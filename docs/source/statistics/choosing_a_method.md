@@ -17,7 +17,7 @@ finds differences that do not hold across donors [@squair2021; @zimmerman2021;
 | --- | --- | --- |
 | Conditions, with covariates or a pairing as fixed effects, such as `~ donor + condition` | {api}`limma_voom` | Log-CPM values with voom's precision weights, a weighted linear model, empirical Bayes moderation [@law2014; @ritchie2015] |
 | The same, with library sizes within about threefold of each other | {api}`limma_trend` | Log-CPM values, a linear model, a prior variance that follows the expression level |
-| Several samples of each donor, and a variable that differs between donors, such as disease or sex | {api}`dream_voom` | voom's weights from mixed models, a random intercept per donor, Satterthwaite's t-tests, empirical Bayes [@hoffman2021] |
+| Several samples of each donor, and a variable that differs between donors, such as disease or sex | {api}`dream_voom` | voom's weights from mixed models, a random intercept per donor, Kenward-Roger's or Satterthwaite's t-tests as dream chooses them, empirical Bayes [@hoffman2021] |
 
 Each runs on every group (cell type) of a cube, one at a time, and returns a
 {api}`DifferentialExpressionResult` with a table for every cell type and contrast

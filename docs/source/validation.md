@@ -16,13 +16,15 @@ exits with an error when any check falls outside its tolerance.
 
 This page summarises the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py` and
-`variance_partitioning.py` and `gene_set_files_and_ora.py`; on
+`variance_partitioning.py` and `gene_set_files_and_ora.py` and
+`kenward_roger_and_f_tests.py`, and for `dream.py`, which printed the same table again
+after changes to the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
 `mixed_models.py`, `voom.py`, `empirical_bayes.py`, `sample_quality_weights.py`,
 `negative_binomial_fits.py`, `quasi_likelihood.py`, `deseq2_tests.py`,
-`differential_expression.py`, `differential_expression_options.py`, `dream.py`,
+`differential_expression.py`, `differential_expression_options.py`,
 `interferon_stimulated_pbmcs.py`, `gene_set_tests.py`, `rotation_gene_set_tests.py`,
 `composition_tests.py` and `meta_analysis.py`, and for `design.py`, which printed the
 same table again after changes to the code it checks; and on **2026-10-24** for the
@@ -58,6 +60,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
 | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
 | [`dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py) | dream | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | 63 | 53 pass, 5 information, 5 deliberate differences | 30.5 s | 390 MiB |
+| [`kenward_roger_and_f_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/kenward_roger_and_f_tests.py) | Kenward-Roger's tests and F-tests | R 4.4.3, variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3 | 143 | 115 pass, 16 information, 12 deliberate differences | 3 min 59 s | 390 MiB |
 | [`variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py) | Variance partitioning | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | 31 | 22 pass, 6 information, 3 deliberate differences | 63.1 s | 394 MiB |
 | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
@@ -65,7 +68,7 @@ covers and the largest difference among them. Run a script to see every check.
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,007** | **1,736 pass, none failed; 156 information, 114 deliberate differences, 1 control** | | |
+| **All** | | | **2,150** | **1,851 pass, none failed; 172 information, 126 deliberate differences, 1 control** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -1314,7 +1317,9 @@ CytePool refuses the two together as well.
 compares `voom_with_dream_weights`, `moderated_fixed_effect_tests` and `dream_voom`,
 and the maximum likelihood fits, fitted values and approximate residual degrees of
 freedom of `fit_mixed_model` behind them, with variancePartition's
-`voomWithDreamWeights`, `dream(ddf = "Satterthwaite")`, `eBayes` and `topTable`, on
+`voomWithDreamWeights`, `dream(ddf = "Satterthwaite")`, `eBayes` and `topTable`
+(`dream_voom` with `df_method="satterthwaite"`; [the next section](#validation-kenward-roger)
+checks its default, the other choices of degrees of freedom and the F-tests), on
 negative binomial counts of 60 genes from fixed seeds (20261025 to 20261029): a random
 donor intercept with a condition, an age and the contrast `conditionstim - age` (10
 donors x 3 samples, with two hypervariable genes), moderated also with `robust = TRUE`
@@ -1397,6 +1402,102 @@ Deliberate differences:
 - A cell type left with one sample per donor: `voomWithDreamWeights` stops ("Initial
   model failed"); `dream_voom` reports the status `random_effects_not_estimable` and
   goes on with the other cell types.
+
+(validation-kenward-roger)=
+## Kenward-Roger's tests and F-tests
+
+[`validation/kenward_roger_and_f_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/kenward_roger_and_f_tests.py)
+compares `fixed_effect_tests(df_method="kenward_roger")` with lmerTest's `summary` and
+`contest1D` (`ddf = "Kenward-Roger"`) and pbkrtest's `vcovAdj`, and
+`fixed_effect_f_test` with pbkrtest's `KRmodcomp` and lmerTest's `contestMD` (by
+Kenward-Roger and by Satterthwaite), gene by gene, in 9 cases of 24 genes from fixed
+seeds: a time course of three time points within 6 donors with an age per donor, with
+the F-tests of two contrasts and of three that span two dimensions; unbalanced donors
+with 1 to 5 samples; crossed donor and batch intercepts; nested intercepts
+(`(1 | donor/sample)`); a design simulated without donor variance, so that 15 of the 24
+fits lie on the boundary; and observation weights like voom's, with one and with two
+random intercepts, each taken both ways: every observation at the average weight,
+against lme4 fits whose weights are divided by their mean, as dream fits them, and the
+precision weights, against pbkrtest on the same model without weights, its values,
+fixed effects and random effects multiplied by the square roots of the weights, which is
+the weighted model. It then compares dream with variancePartition's `dream` with
+`ddf = "Kenward-Roger"`, `"adaptive"` and `"Satterthwaite"`, `eBayes` and `topTable`,
+on negative binomial counts of 40 genes in studies of 12, 18, 19, 20 and 24 samples (a
+time course of three time points and an age), including `topTable`'s F-test of time,
+and `dream_voom` with its defaults on two cubes: cell types left with 12 and with 24
+samples, and one of 15 samples whose age, 32 years on average and about 1 apart, makes
+the adjusted covariance matrices ill conditioned. Reference: R 4.4.3, variancePartition
+1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3 and minqa 1.2.8.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Adjusted covariance matrix of the coefficients, relative to each gene's largest entry | pbkrtest `vcovAdj` | 1.4e-13 | 1e-10 | 9 pass |
+| Kenward-Roger t-tests of every coefficient and a contrast: estimates (relative to the larger of their absolute value and standard error), standard errors and t-statistics (relative to max(\|t\|, 1)) | lmerTest `summary`, `contest1D` | 1.7e-12 | 1e-10 | 9 pass |
+| Their df and p-values | lmerTest `summary`, `contest1D` | 1.8e-12 | 1e-10 | 9 pass |
+| Kenward-Roger F-tests: F, numerator and denominator df, scaling and p-value, and lmerTest's F and df | pbkrtest `KRmodcomp`, lmerTest `contestMD` | 8.2e-13 | 1e-10 | 13 pass |
+| Satterthwaite F-statistics | lmerTest `contestMD` | 8.2e-13 | 1e-10 | 13 pass |
+| Satterthwaite F-tests: denominator df and p-values | lmerTest `contestMD` | 1.9e-7 | 1e-5 | 13 pass |
+| Kenward-Roger standard errors and df at lme4's own optimum | lmerTest `summary` | 1.2e-7 | 1e-6 | 9 pass |
+| dream: precision weights | `voomWithDreamWeights` | 2.1e-8 | 1e-6 | 5 pass |
+| dream with each `ddf`: standard errors and df of the tests | `dream` | 8.0e-8 | 1e-6 | 9 pass |
+| Moderated t-statistics, B-statistics and z-statistics (relative to max(\|x\|, 1)), total df and p-values | `eBayes`, `topTable` | 5.0e-8 | 1e-6 | 9 pass |
+| Moderated F-statistics of time | `topTable` | 4.1e-8 | 1e-6 | 11 pass |
+| `dream_voom`: samples used and features tested | the rules of `dream_voom` | 0 differences | 0 | 3 pass |
+| `dream_voom` with its defaults: t, B and z-statistics, df and p-values of every contrast | `dream`, `eBayes`, `topTable` | 3.3e-7 | 1e-6 | 3 pass |
+| Fits with a variance at zero; the two treatments of the weights; the default against Satterthwaite's method | CytePool | below | n/a | 16 information |
+| Deliberate differences, listed below | variancePartition | 12 inputs | n/a | 12 deliberate differences |
+
+At CytePool's estimates, which the script passes to lme4 as starting values with one
+evaluation allowed, as for [mixed models](#validation-mixed-models), pbkrtest computes
+Kenward and Roger's quantities from dense matrices without numerical derivatives, so
+they are compared to the exact tier; lmerTest's Satterthwaite F-tests differentiate the
+deviance numerically, compared to 1e-5. At lme4's own optimum, with Powell's BOBYQA and
+its trust region shrunk to 1e-10 as in the section on dream, and in dream's fits, which
+the script runs with that optimiser, the estimates agree to the close tier. P-values are
+scaled by max(p, 1e-300) max(1, \|log p\|), as for voom.
+
+The checks confirm what probing pbkrtest, lmerTest and variancePartition as black boxes
+found, and the documentation of `cytepool.stats.mixed_models` and
+`cytepool.stats.dream` lists: pbkrtest takes the inverse of the expected information
+of REML, includes a variance component estimated at zero, which 15 fits of the
+boundary case have, and builds the covariance matrix of the observations without lme4's
+prior weights while it takes the covariance matrix of the coefficients from the
+weighted fit; lmerTest's `contest1D` and `summary` use the adjusted standard errors with
+pbkrtest's degrees of freedom; `dream` uses Kenward and Roger's method with the adjusted
+standard errors for 19 samples and Satterthwaite's for 20 under `ddf = "adaptive"`, and
+`topTable`'s F-statistic is limma's, from the moderated t-statistics and each gene's
+covariance matrix of the coefficients, the adjusted one under Kenward and Roger's
+method. In the ill-conditioned cell type `dream` tested 24 genes by Satterthwaite's
+method because R's estimate of the condition number of their adjusted covariance
+exceeded 1e6, and `dream_voom` the same 24, from the exact condition number.
+
+The information rows give the size of the two treatments of the weights. Against the
+precision weights, every observation at the average weight gave standard errors 0.976
+times as large at the median (0.51 to 1.05) and df 0.91 times (0.26 to 3.7) with one
+random intercept, and 0.977 (0.81 to 1.02) and 0.89 (0.27 to 3.4) with two; its standard
+errors were below the unadjusted ones for 61% and 33% of the genes, the precision
+weights' for none. And they give how dream's default changes the results of small
+studies against Satterthwaite's method, with which `dream_voom` tested them before:
+with 12 samples, p-values 1.12 times as large at the median (0.97 to 1.66 for 90% of the
+genes), with standard errors 1.06 times as large at the median and smaller for 20% of
+the genes; with 18 samples, 1.00 (0.91 to 1.07), and standard errors 1.00, smaller for
+48%; in the cube's cell type with 12 samples, 0.99 (0.73 to 1.12), with as many genes
+below an adjusted p-value of 0.05 (12) as before.
+
+Deliberate differences:
+
+- The p-values of `topTable`'s F-tests: dream computes those of every gene on the total
+  degrees of freedom of the first gene for the first coefficient listed, which the
+  script reproduces to 3e-14 in the 11 F-tests; CytePool gives each gene its own (see
+  `cytepool.stats.dream`). Its p-values were 0.14 to 11.5 times dream's.
+- Which genes fall back to Satterthwaite's method: dream decides from R's estimate of
+  the condition number (`kappa`), CytePool from the exact one; they can differ within
+  about 2% of 1e6. Here they decided alike for every gene tested, and the tests agree
+  to 3.3e-7.
+
+dream also computes `F.std` with the number of coefficients where they are linearly
+dependent, and CytePool with their rank, the numerator degrees of freedom of the F-test;
+the F-tests here have independent coefficients.
 
 (validation-variance-partitioning)=
 ## Variance partitioning
@@ -1989,6 +2090,7 @@ RSCRIPT=$REF/r/bin/Rscript METAFOR_RSCRIPT=$REF/r-metafor/bin/Rscript \
     SPECKLE_RSCRIPT=$REF/r-speckle/bin/Rscript python validation/plotting.py
 # variancePartition, in an R environment of its own with lme4 1.1-38 (below).
 RSCRIPT=$REF/r-dream/bin/Rscript python validation/dream.py
+RSCRIPT=$REF/r-dream/bin/Rscript python validation/kenward_roger_and_f_tests.py
 RSCRIPT=$REF/r-dream/bin/Rscript python validation/variance_partitioning.py
 python validation/distributions.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube.py

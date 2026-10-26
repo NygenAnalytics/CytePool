@@ -65,6 +65,10 @@ pooled per group. A bulk cube has one group.
 sampling error, measured by the between-study variance tau², Cochran's Q and I².
 [Meta-analysis](../statistics/meta_analysis.md)
 
+**Kenward-Roger's method.** An adjustment of the standard errors of a mixed model's
+estimates, and of the degrees of freedom of their tests, for the uncertainty of its
+variance components in small samples. [Mixed models, REML and dream](../statistics/mixed_models.md)
+
 **Layer.** One statistic of a cube, summed over cells: counts, detected cells, or sums
 of normalized and log-normalized values. [The cube and its additive
 layers](../statistics/cubes.md)

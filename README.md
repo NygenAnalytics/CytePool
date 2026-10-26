@@ -19,9 +19,9 @@ what is planned.
 | Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
 | Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
 | Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
-| Mixed models | `fit_mixed_model`: linear mixed models with random intercepts of one or more grouping factors (nested or crossed), with observation weights, fitted to every gene by REML or maximum likelihood, with exact zeros for variance components at the boundary, fitted values with the predicted random effects, and approximate residual degrees of freedom; `fixed_effect_tests`: t-tests of contrasts with Satterthwaite's degrees of freedom, as lmerTest computes them for dream | lme4, lmerTest, variancePartition |
+| Mixed models | `fit_mixed_model`: linear mixed models with random intercepts of one or more grouping factors (nested or crossed), with observation weights, fitted to every gene by REML or maximum likelihood, with exact zeros for variance components at the boundary, fitted values with the predicted random effects, and approximate residual degrees of freedom; `fixed_effect_tests`: t-tests of contrasts with Satterthwaite's degrees of freedom, as lmerTest computes them, or Kenward-Roger's adjusted standard errors and degrees of freedom, as pbkrtest computes them, with precision weights taken as dream takes them (every observation at its gene's average weight) or as the weighted model has them; `fixed_effect_f_test`: F-tests of several contrasts at once by either method (lmerTest's `contestMD`, pbkrtest's `KRmodcomp`) | lme4, lmerTest, pbkrtest, variancePartition |
 | Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
-| dream | `voom_with_dream_weights`: voom's precision weights from the mean-variance trend of every gene's mixed model, fitted by maximum likelihood, as variancePartition's `voomWithDreamWeights`; `moderated_fixed_effect_tests`: Satterthwaite t-tests of a mixed model moderated by empirical Bayes as variancePartition's `eBayes` moderates `dream` fits, with `topTable`'s z-statistic | variancePartition |
+| dream | `voom_with_dream_weights`: voom's precision weights from the mean-variance trend of every gene's mixed model, fitted by maximum likelihood, as variancePartition's `voomWithDreamWeights`; `moderated_fixed_effect_tests`: Satterthwaite or Kenward-Roger t-tests of a mixed model moderated by empirical Bayes as variancePartition's `eBayes` moderates `dream` fits, with `topTable`'s z-statistic, and the moderated F-test of several contrasts | variancePartition |
 | Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
 | Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
 | Quasi-likelihood F-tests | `fit_quasi_likelihood` and `quasi_likelihood_f_test`: edgeR 4's `glmQLFit` and `glmQLFTest` with their defaults: the common negative binomial dispersion of the most highly expressed genes by Cox-Reid adjusted profile likelihood (`common_dispersion`), deviances adjusted for small counts with exact moments of the unit deviance (`negative_binomial_unit_deviance_moments`), the average quasi-dispersion, limma's prior for unequal degrees of freedom with a trend in the average log CPM (`average_log_cpm`) or robust, prior weights and offsets, and F-tests of coefficients and named contrasts with edgeR's columns (logFC, logCPM, F, PValue, FDR) | edgeR, limma, mpmath |
@@ -29,7 +29,7 @@ what is planned.
 | Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
 | Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a linear model, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position. Gene sets read from and written to GMT files (MSigDB, Reactome, WikiPathways, the Gene Ontology), with the source, version and licence of the collection, matched to an analysis and filtered by size; over-representation analysis of the genes up, down or either way in a differential-expression result, a table or a list of genes (limma's `kegga` and `goana`), with its dot plot | limma, R, decoupler |
 | Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
-| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, and `dream_voom`: dream, with the design's random intercepts, such as a donor's, in every group's fits, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR, variancePartition; on simulated data and on published single-cell data |
+| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, and `dream_voom`: dream, with the design's random intercepts, such as a donor's, in every group's fits, dream's choice of Kenward-Roger's or Satterthwaite's degrees of freedom by the number of samples in each group, and F-tests of several contrasts, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR, variancePartition; on simulated data and on published single-cell data |
 | Variance partitioning | `variance_fractions`: the fraction of every gene's variance that each variable of a design explains, as variancePartition's `fitExtractVarPartModel`: a mixed model of every gene by maximum likelihood (or REML), with the categorical variables as random intercepts, the continuous ones as fixed effects and precision weights such as voom's, or a linear model without random effects; `variance_partitioning`: the same on every cell type of a cube, with dream's precision weights, the samples each fit used and a provenance record | variancePartition, lme4 |
 | Meta-analysis | `meta_analysis`: for every gene, the fixed-effect (inverse-variance) or random-effects estimate of a common effect from the effects and standard errors of several studies, with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I² and H², z-tests or the Knapp-Hartung adjustment, and genes measured in some studies only; `differential_expression_meta_analysis`: the same for the `limma_voom` or `limma_trend` results of several cubes, matched by cell type, contrast and gene id, with p-values adjusted over the genes and a provenance record | metafor |
 | Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
@@ -45,13 +45,10 @@ These are not implemented yet:
   group of a cube, and their `legacy = TRUE` methods
 - DESeq2's shrunken log fold changes (`lfcShrink` with apeglm, ashr or normal priors),
   its replacement of outlier counts, and its local and glmGamPoi dispersion trends
-- The rest of dream (variancePartition): Kenward-Roger degrees of freedom (dream's
-  default for 20 samples or fewer), F-tests of several contrasts at once, and random
-  slopes, with which variancePartition also partitions the variance within subsets of
-  the samples. dream with random intercepts and Satterthwaite's
-  degrees of freedom is implemented (see the table above); `fit_linear_model` refuses
-  a design whose random effects it would drop, and its message points to
-  `fit_mixed_model`.
+- Random slopes in mixed models, with which variancePartition also partitions the
+  variance within subsets of the samples. dream with random intercepts is implemented
+  (see the table above); `fit_linear_model` refuses a design whose random effects it
+  would drop, and its message points to `fit_mixed_model`.
 - Pathway or transcription-factor activity
 - Composition tests with precision weights or random effects (crumblr)
 - Ligand-receptor scoring and differential interactions
@@ -76,7 +73,11 @@ These are not implemented yet:
 - A mixed model stores, for every gene, the covariance matrix of the coefficients and
   its derivative with respect to each variance parameter, for Satterthwaite's degrees
   of freedom: about 8 x genes x (components + 2) x coefficients² bytes, so 23 MB for
-  20,000 genes, two random intercepts and 6 coefficients. `fit_mixed_model` fits random
+  20,000 genes, two random intercepts and 6 coefficients, and its weights, as many
+  floats as the values. Kenward-Roger's tests invert each gene's n x n covariance
+  matrix of the observations, as pbkrtest does: O(n³) operations per gene for n
+  samples, 0.7 s for 20,000 genes of 20 samples and 13 s for 120 samples on one
+  thread, where Satterthwaite's take 0.1 s. `fit_mixed_model` fits random
   intercepts only, by REML or maximum likelihood, to complete data with positive
   weights: missing values or a zero weight make it raise an error, as no gene is
   fitted to fewer samples. Its fitted values take as much memory as the values. It also
@@ -231,9 +232,16 @@ These are not implemented yet:
   limma's `contrasts.fit` refuses, and they report the contrasts that cannot be
   estimated, which limma either refuses or, when they weigh no aliased column,
   computes with a changed meaning.
-- `dream_voom` and `moderated_fixed_effect_tests` use Satterthwaite's degrees of
-  freedom, as `dream(ddf = "Satterthwaite")`; dream's default, `ddf = "adaptive"`,
-  uses Kenward-Roger's for 20 samples or fewer, which are not available yet, nor are
+- `dream_voom` chooses the degrees of freedom as `dream(ddf = "adaptive")` does:
+  Kenward-Roger's for fewer than 20 samples in a group (with 20, dream uses
+  Satterthwaite's, although its help page says "<= 20"), computed as dream computes
+  them with pbkrtest, with every observation at its gene's average weight, which can
+  make standard errors smaller than the unadjusted ones
+  (`kenward_roger_weights="precision"` uses each observation's weight), and
+  Satterthwaite's for a gene whose adjusted covariance
+  matrix is ill conditioned, which dream decides from R's estimate of the condition
+  number and CytePool from the exact one. dream's `topTable` gives the F-test of every
+  gene the degrees of freedom of the first gene; CytePool gives each gene its own. No
   sample quality weights for dream. As variancePartition, they moderate the residual
   variance of an observation of each gene's average weight, which keeps the
   mean-variance trend that voom's weights remove; `trend=True` lets the prior follow

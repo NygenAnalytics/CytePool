@@ -20,7 +20,7 @@ the credit for the methods belongs to their authors.
 | `quality_weights=True`, {api}`sample_quality_weights`, {api}`voom_with_quality_weights` | [@ritchie2006; @liu2015] |
 | `prior_weights="n_cells"` | dreamlet [@hoffman2026a] |
 | {api}`dream_voom`, {api}`voom_with_dream_weights`, {api}`moderated_fixed_effect_tests` | dream [@hoffman2021] |
-| {api}`fit_mixed_model`, {api}`fixed_effect_tests` | lme4 [@bates2015]; Satterthwaite's tests as lmerTest computes them [@kuznetsova2017] |
+| {api}`fit_mixed_model`, {api}`fixed_effect_tests`, {api}`fixed_effect_f_test` | lme4 [@bates2015]; Satterthwaite's tests as lmerTest computes them [@kuznetsova2017]; Kenward and Roger's [@kenward1997] as pbkrtest computes them [@halekoh2014] |
 | {api}`treat` | [@mccarthy2009] |
 | {api}`fit_quasi_likelihood`, {api}`quasi_likelihood_f_test` | edgeR 4 [@chen2025]; quasi-likelihood [@lund2012] |
 | {api}`fit_negative_binomial_model`, {api}`common_dispersion` | [@mccarthy2012] |
