@@ -55,6 +55,7 @@ test = [
 
 [project.urls]
 Homepage = "https://github.com/NygenAnalytics/CytePool"
+Documentation = "https://docs.nygen.io/CytePool/"
 Issues = "https://github.com/NygenAnalytics/CytePool/issues"
 
 [dependency-groups]

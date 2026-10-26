@@ -1,0 +1,163 @@
+name: Publish to PyPI
+
+# Publishing a release on GitHub uploads CytePool to PyPI, built from the commit that
+# the release's tag names, once that commit has passed every check below. The
+# installation page of the documentation ("Make a release") describes the steps and
+# the setup they need on PyPI and GitHub.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# One publication per tag at a time; a second run waits instead of racing.
+concurrency:
+  group: publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+# Every job works on github.sha, the commit that the tag named when the release was
+# published.
+jobs:
+  tests:
+    name: Require a passed Tests run of the release commit
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+    steps:
+    - name: Find the latest Tests run of the commit
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # A pull request's run tests the merge of its branch into master, not this
+        # commit, so only runs started by a push or by hand count.
+        run="$(gh api --method GET \
+          "repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs" \
+          -f head_sha="$GITHUB_SHA" -f per_page=100 --paginate \
+          --jq '.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")
+            | [.run_number, .status, (.conclusion | tostring), .html_url] | @tsv' \
+          | sort -nr | sed -n '1p')"
+        if [[ -z "$run" ]]; then
+          echo "::error::No Tests run of ${GITHUB_SHA} was started by a push or by hand. Run Tests on the release tag, then re-run this workflow."
+          exit 1
+        fi
+        IFS=$'\t' read -r number status conclusion url <<< "$run"
+        echo "Tests run ${number} of ${GITHUB_SHA}: ${status}, ${conclusion} (${url})"
+        if [[ "$status" != "completed" || "$conclusion" != "success" ]]; then
+          echo "::error::The latest Tests run of ${GITHUB_SHA} has not passed: ${url}"
+          exit 1
+        fi
+
+  docs:
+    name: Build the documentation
+    uses: ./.github/workflows/docs.yml
+    with:
+      ref: ${{ github.sha }}
+
+  build:
+    name: Build and check the release files
+    runs-on: ubuntu-26.04
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+    - name: Require the release tag to name the commit
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: |
+        tagged="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+        if [[ "$tagged" != "$GITHUB_SHA" ]]; then
+          echo "::error::The tag ${RELEASE_TAG} names ${tagged}, not ${GITHUB_SHA}, the commit it named when the release was published"
+          exit 1
+        fi
+    - name: Install uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        python-version: "3.13"
+        version: "0.13.5"
+    - name: Build the wheel and the source distribution
+      env:
+        # setuptools-scm takes the version from the tag, without a local part, and
+        # stops the build if the checkout has changes.
+        SETUPTOOLS_SCM_OVERRIDES_FOR_CYTEPOOL: '{local_scheme = "no-local-version-strict"}'
+      run: |
+        require_clean() {
+          status="$(git status --porcelain=v1)"
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            echo "::error::The checkout has changes $1"
+            exit 1
+          fi
+        }
+        git describe --tags --long --dirty
+        require_clean "before the build"
+        uv build --clear --build-constraints .github/build-constraints.txt
+        require_clean "after the build"
+    - name: Check the release files against the tag and the source tree
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: >-
+        uv run --no-project --with packaging==26.3
+        python tests/validate_release_artifacts.py --release-tag "$RELEASE_TAG" dist/*
+    - name: Store the release files
+      uses: actions/upload-artifact@v7
+      with:
+        name: python-package-distributions
+        path: dist/
+        if-no-files-found: error
+
+  smoke:
+    name: Smoke-test the wheel (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04]
+        python-version: ["3.13", "3.14", "3.15"]
+        include:
+          - os: windows-2025
+            python-version: "3.13"
+          - os: macos-26
+            python-version: "3.13"
+    defaults:
+      run:
+        # Bash expands the wheel's name on every runner, Windows included.
+        shell: bash
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.sha }}
+    - name: Install uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        python-version: ${{ matrix.python-version }}
+        version: "0.13.5"
+    - name: Download the release files
+      uses: actions/download-artifact@v8
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Install the wheel in a clean environment and run a small analysis
+      run: uv run --no-project python tests/smoke_test_wheel.py dist/*.whl
+
+  publish:
+    name: Upload to PyPI
+    needs: [tests, docs, build, smoke]
+    runs-on: ubuntu-26.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cytepool
+    permissions:
+      # Trusted publishing: PyPI accepts this workflow's OpenID Connect token for the
+      # project, so no API token is stored.
+      id-token: write
+    steps:
+    - name: Download the release files
+      uses: actions/download-artifact@v8
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Upload to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
