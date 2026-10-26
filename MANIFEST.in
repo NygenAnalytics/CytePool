@@ -1,0 +1,10 @@
+# The source distribution holds the package, the files that build it, the README and
+# the licence files. setuptools-scm adds every file that git tracks; the tests, the
+# documentation, the validation scripts and the repository's tooling are removed here.
+# tests/validate_release_artifacts.py refuses any other file.
+prune .github
+prune docs
+prune tests
+prune validation
+exclude .gitignore .python-version uv.lock *.md
+include README.md THIRD_PARTY_NOTICES.md

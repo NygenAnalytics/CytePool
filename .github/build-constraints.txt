@@ -1,0 +1,8 @@
+# The build tools of a release: the build backend that pyproject.toml names and every
+# package it needs, pinned so that .github/workflows/publish.yml builds a release as
+# tests/test_release_artifacts.py builds and checks it.
+packaging==26.3
+setuptools==84.2.1
+setuptools-scm==10.3.4
+vcs-versioning==2.6.0
+wheel==0.48.0

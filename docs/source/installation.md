@@ -1,5 +1,5 @@
 ---
-description: Install CytePool from its repository with Python 3.13 or newer, set up a development environment, and build this documentation.
+description: Install CytePool from its repository with Python 3.13 or newer, set up a development environment, build this documentation, and make a release.
 ---
 
 (installation)=
@@ -139,3 +139,55 @@ data names its datasets in its metadata `datasets`
 ([Datasets](reference/datasets.md)); `make -C docs execute` prepares them.
 `uv run --group docs python docs/coverage_report.py` lists the public names that no page
 uses or explains yet.
+
+(make-a-release)=
+## Make a release
+
+To release a version, check that the Tests run of the commit on master passed, then
+draft a new release on GitHub, create its tag with that commit as the target, and
+publish the release. The tag is the version, such as `0.1.0`, or `0.2.0rc1` for a
+release candidate, which PyPI lists as a pre-release. Publishing the release starts
+the [release workflow](https://github.com/NygenAnalytics/CytePool/blob/master/.github/workflows/publish.yml),
+which builds CytePool from the commit that the tag names and uploads it to PyPI once
+all of these pass:
+
+- the latest run of the Tests workflow for that commit, started by a push or by hand
+  (a pull request's run tests a merge commit instead), passed;
+- the documentation builds, as the Docs workflow builds it;
+- the wheel and the source distribution, built from a clean checkout of the commit with
+  the build tools pinned in `.github/build-constraints.txt`, name the version of the
+  tag, declare what `pyproject.toml` declares, and hold the package and no other file
+  of the repository (`tests/validate_release_artifacts.py`);
+- the wheel, installed in a clean environment on Linux with Python 3.13, 3.14 and 3.15
+  and on Windows and macOS with Python 3.13, pools a small dataset into a cube, gives
+  limma's tables from `limma_voom`, and loads its compiled routines from the cache in a
+  second run (`tests/smoke_test_wheel.py`).
+
+When the `pypi` environment has required reviewers, one of them approves the upload
+after the checks. When a check fails, nothing is uploaded: fix the cause on master,
+delete the release and its tag, and publish the release again with the fixed commit as
+the target. Running the failed workflow again checks the same commit, which helps only
+when the failure came from outside it, such as a network error.
+
+`uv run pytest` builds the two files and checks them as the workflow does. To run the
+smoke test on a wheel you build:
+
+```bash
+uv build --wheel --clear --out-dir dist/
+uv run --no-project python tests/smoke_test_wheel.py dist/cytepool-*.whl
+```
+
+### Before the first release
+
+The owner of the repository sets up two things once:
+
+1. On PyPI, a trusted publisher, so that the workflow uploads without a stored token:
+   at <https://pypi.org/manage/account/publishing/>, add a pending publisher for
+   GitHub with the project name `cytepool`, the owner `NygenAnalytics`, the repository
+   `CytePool`, the workflow `publish.yml` and the environment `pypi`. The first upload
+   creates the project, owned by that account.
+2. On GitHub, in the repository's settings, an environment named `pypi`: add the
+   people who approve uploads as required reviewers, and under *Deployment branches
+   and tags* choose *Selected branches and tags* and add a tag rule `*`, so that only
+   a run for a tag can upload. Without it, the first run creates an environment that
+   protects nothing.
