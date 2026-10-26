@@ -146,4 +146,5 @@ gene by gene, and {api}`differential_expression_meta_analysis` combines them
 study measured and the cell types that every study has: a cube holds no missing values,
 so it refuses the others rather than fill them with zeros. The collection's provenance
 names each study's cube by its fingerprint, with the alignment, and so does the
-provenance of a stacked cube.
+provenance of a stacked cube. [Combine studies](../guides/combine_studies.ipynb) aligns
+six cohorts this way.

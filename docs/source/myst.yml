@@ -58,6 +58,10 @@ project:
     children:
     - file: guides/bulk_rna_seq.ipynb
       title: Bulk RNA-seq
+    - file: guides/combine_studies.ipynb
+      title: Combine studies
+    - file: guides/replication_across_studies.ipynb
+      title: Replication across studies
   - title: How the statistics work
     children:
     - file: statistics/choosing_a_method.md

@@ -273,7 +273,7 @@ the dataset below, their inputs are generated with fixed random seeds. Reference
 in those files come from the packages each script names.
 
 The pages of the documentation (`docs/source/`) read the datasets that `docs/datasets.py`
-prepares in a cache outside the repository: two simulated with fixed random seeds by
+prepares in a cache outside the repository: three simulated with fixed random seeds by
 that script, and the two below, GEO series GSE96583 and the MSigDB Hallmark
 interferon-alpha response set. No file of these datasets is in the repository; the
 script records the source, licence, citation and checksum of each. Two guides also

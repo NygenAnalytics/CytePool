@@ -46,9 +46,9 @@ Heterogeneity:
 
 Not done:
     The r-values of Heller, Bogomolov and Benjamini (2014), which claim replication
-    in a follow-up study of the genes a primary study selects, and held-out
-    prediction of case status from the genes the studies find (Nakatsuka et al.
-    2025).
+    in a follow-up study of the genes a primary study selects. Held-out prediction
+    of case status from the genes the studies find (Nakatsuka et al. 2025) is
+    :func:`cytepool.held_out_prediction.held_out_prediction`.
 
 References:
     Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).

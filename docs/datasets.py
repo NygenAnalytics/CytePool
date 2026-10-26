@@ -1,13 +1,13 @@
 """The datasets of the documentation, prepared once and kept outside the repository.
 
 Several pages read the same data: a simulated single-cell study (its cells, and the
-cube pooled from them), a simulated bulk RNA-seq experiment, the published
-interferon-beta stimulation of Kang et al. (2018), and the MSigDB Hallmark gene set
-of the interferon-alpha response. This script makes them deterministically into a
-cache outside the repository and records, for each, where it comes from, its
-licence, how to cite it, the SHA-256 of every file it downloads, and what it must
-contain: the fingerprint of every cube it writes and the digest of every other file.
-Pages open the cubes with ``read_cube``.
+cube pooled from them), a simulated bulk RNA-seq experiment, six simulated cohorts of
+one disease, the published interferon-beta stimulation of Kang et al. (2018), and the
+MSigDB Hallmark gene set of the interferon-alpha response. This script makes them
+deterministically into a cache outside the repository and records, for each, where it
+comes from, its licence, how to cite it, the SHA-256 of every file it downloads, and
+what it must contain: the fingerprint of every cube it writes and the digest of every
+other file. Pages open the cubes with ``read_cube``.
 
 Usage, from the repository root::
 
@@ -46,7 +46,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.cube import from_bulk, from_cells
+from cytepool.cube import Cube, from_bulk, from_cells
 from cytepool.io import read_cube, write_cube
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -259,6 +259,169 @@ def simulated_bulk(downloads: Path, output: Path) -> None:
         true_log2_fold_change_drug_a=log2_fc["drug_a"],
         true_log2_fold_change_drug_b=log2_fc["drug_b"],
         outlying_sample=np.array(outlier),
+    )
+
+
+# Six case-control cohorts of one disease: name, cases, controls, cells per sample
+# relative to the others, counts per cell, and the standard deviation of a gene's log2
+# expression between donors.
+COHORTS = (
+    ("cohort_1", 30, 30, 1.0, 3_000, 0.50),
+    ("cohort_2", 16, 16, 0.8, 2_500, 0.50),
+    ("cohort_3", 12, 12, 1.2, 2_000, 0.55),
+    ("cohort_4", 8, 8, 0.7, 3_500, 0.50),
+    ("cohort_5", 6, 6, 0.5, 1_500, 0.65),
+    ("cohort_6", 10, 10, 1.0, 2_500, 0.55),
+)
+# The cell types by their Cell Ontology ids, with their mean cells per sample: B cell,
+# CD4-positive alpha-beta T cell, natural killer cell, CD14-positive monocyte.
+COHORT_CELL_TYPES = (
+    ("CL:0000236", 60),
+    ("CL:0000624", 250),
+    ("CL:0000623", 50),
+    ("CL:0001054", 180),
+)
+# Each cohort's own names of the cell types. cohort_4 annotated its CD4 T cells as
+# naive (CL:0000895) and memory (CL:0000897) cells, and cohort_6 has no NK cells.
+COHORT_GROUP_NAMES = {
+    "cohort_1": ("B cells", "CD4 T cells", "NK cells", "CD14 monocytes"),
+    "cohort_2": ("B", "CD4", "NK", "CD14 Mono"),
+    "cohort_3": ("B cell", "CD4+ T cell", "NK cell", "CD14+ monocyte"),
+    "cohort_4": ("B", ("CD4 naive", "CD4 memory"), "NK", "Mono CD14"),
+    "cohort_5": ("Bcell", "T_CD4", "NK", "Mono_CD14"),
+    "cohort_6": ("B cells", "CD4+ T cells", None, "CD14+ monocytes"),
+}
+CD4_SUBSETS = ("CL:0000895", "CL:0000897")
+# The genes of each cell type that the disease changes in every cohort alike, that it
+# changes in every cohort by amounts that vary between cohorts, and that each cohort
+# alone changes, per cohort.
+COHORT_CHANGES = {
+    "CL:0000236": (10, 0, 0),
+    "CL:0000624": (30, 10, 5),
+    "CL:0000623": (0, 0, 0),
+    "CL:0001054": (80, 20, 10),
+}
+
+
+def simulated_cohorts(downloads: Path, output: Path) -> None:
+    """Six case-control cohorts of one disease, each a cube as its source exported it.
+
+    12 to 60 donors per cohort, one sample each, with the pseudobulk counts of four
+    cell types over 2,000 genes. Each cell type has its own profile; each cohort
+    shifts every gene a little; a gene's log2 expression varies between donors by a
+    standard deviation of 0.5 to 0.65, more in the small cohort_5. The disease
+    changes some genes in every cohort, by 0.3 to 0.9 on the log2 scale alike in
+    every cohort or by 0.3 to 0.8 with a standard deviation of 0.4 between cohorts,
+    each case by an activity of its own (gamma-distributed, mean 1); in every cohort
+    it also changes a few genes of its own by 0.8 to 1.5, in every case alike, as a
+    confounder of that cohort would.
+    The cohorts differ as cohorts from different sources do: donors are numbered
+    D01, D02, ... in each; cohort_3's annotation lacks 200 genes and cohort_5 wrote
+    zeros for 150 genes it did not measure, marked in its feature column
+    ``measured``; the cell types carry Cell Ontology ids and names of each cohort's
+    own. Writes a cube per cohort and the true log2 fold changes.
+    """
+    rng = np.random.default_rng(20261028)
+    n_genes = 2_000
+    genes = np.array([f"gene_{g:04d}" for g in range(1, n_genes + 1)])
+    n_cohorts, n_types = len(COHORTS), len(COHORT_CELL_TYPES)
+    profiles = rng.normal(0.0, 1.6, n_genes) + rng.normal(0.0, 0.6, (n_types, n_genes))
+    log2_fc = np.zeros((n_cohorts, n_types, n_genes))
+    own_change = np.zeros((n_cohorts, n_types, n_genes), dtype=bool)
+    for t, (ontology_id, _) in enumerate(COHORT_CELL_TYPES):
+        alike, varying, single = COHORT_CHANGES[ontology_id]
+        chosen = rng.permutation(n_genes)[: alike + varying + n_cohorts * single]
+        signs = rng.choice([-1.0, 1.0], chosen.size)
+        shared = chosen[:alike]
+        log2_fc[:, t, shared] = signs[:alike] * rng.uniform(0.3, 0.9, alike)
+        log2_fc[:, t, shared] += rng.normal(0.0, 0.1, (n_cohorts, alike))
+        apart = chosen[alike : alike + varying]
+        log2_fc[:, t, apart] = signs[alike : alike + varying] * rng.uniform(
+            0.3, 0.8, varying
+        ) + rng.normal(0.0, 0.4, (n_cohorts, varying))
+        for c in range(n_cohorts):
+            start = alike + varying + c * single
+            own = chosen[start : start + single]
+            log2_fc[c, t, own] = signs[start : start + single] * rng.uniform(
+                0.8, 1.5, single
+            )
+            own_change[c, t, own] = True
+    order = rng.permutation(n_genes)
+    absent = {"cohort_3": np.sort(order[:200]), "cohort_5": np.sort(order[200:350])}
+    cohort_shift = rng.normal(0.0, 0.3, (n_cohorts, n_genes))
+    for c, (name, cases, controls, cell_scale, depth, spread) in enumerate(COHORTS):
+        n = cases + controls
+        condition = rng.permutation(np.array(["control"] * controls + ["case"] * cases))
+        activity = np.where(condition == "case", rng.gamma(2.0, 0.5, n), 0.0)
+        group_ids, ontology_ids, parts = [], [], []
+        for t, ((ontology_id, mean_cells), names) in enumerate(
+            zip(COHORT_CELL_TYPES, COHORT_GROUP_NAMES[name], strict=True)
+        ):
+            if names is None:
+                continue
+            subsets = isinstance(names, tuple)
+            for k, group in enumerate(names if subsets else (names,)):
+                profile = profiles[t]
+                if subsets:
+                    profile = profile + rng.normal(0.0, 0.3, n_genes)
+                group_ids.append(group)
+                ontology_ids.append(CD4_SUBSETS[k] if subsets else ontology_id)
+                parts.append(
+                    (t, profile, mean_cells * ((0.45, 0.55)[k] if subsets else 1))
+                )
+        counts = np.zeros((len(group_ids), n, n_genes), dtype=np.int64)
+        n_cells = np.zeros((n, len(group_ids)), dtype=np.int64)
+        for g, (t, profile, mean_cells) in enumerate(parts):
+            for j in range(n):
+                effect = np.where(
+                    own_change[c, t],
+                    (condition[j] == "case") * log2_fc[c, t],
+                    activity[j] * log2_fc[c, t],
+                )
+                log2_mean = (
+                    profile
+                    + cohort_shift[c]
+                    + effect
+                    + rng.normal(0.0, spread, n_genes)
+                )
+                proportion = 2.0**log2_mean / np.sum(2.0**log2_mean)
+                n_cells[j, g] = rng.poisson(mean_cells * cell_scale)
+                library = n_cells[j, g] * rng.lognormal(np.log(depth), 0.2)
+                counts[g, j] = rng.poisson(library * proportion)
+        features: dict[str, Any] = {"feature_id": genes}
+        if name == "cohort_3":
+            kept = np.setdiff1d(np.arange(n_genes), absent[name])
+            counts, features = counts[:, :, kept], {"feature_id": genes[kept]}
+        elif name == "cohort_5":
+            measured = ~np.isin(np.arange(n_genes), absent[name])
+            counts[:, :, ~measured] = 0
+            features = {"feature_id": genes, "measured": measured}
+        cube = Cube(
+            {"counts": counts.astype(np.uint32)},
+            samples={
+                "sample_id": [f"D{j + 1:02d}" for j in range(n)],
+                "condition": condition,
+            },
+            groups={"group_id": group_ids, "cell_ontology_id": ontology_ids},
+            features=features,
+            n_cells=n_cells,
+            provenance={
+                "source": {
+                    "dataset": "simulated_cohorts",
+                    "cohort": name,
+                    "generator": "docs/datasets.py, numpy.random.default_rng(20261028)",
+                }
+            },
+        )
+        write_cube(cube, output / f"simulated_{name}.cube.zarr", overwrite=True)
+    np.savez_compressed(
+        output / "simulated_cohorts_truth.npz",
+        feature_id=genes,
+        studies=np.array([name for name, *_ in COHORTS]),
+        cell_ontology_ids=np.array(
+            [ontology_id for ontology_id, _ in COHORT_CELL_TYPES]
+        ),
+        true_log2_fold_change=log2_fc,
     )
 
 
@@ -477,6 +640,33 @@ DATASETS = {
                 "a8a0275532e3cafb02401846176a7ddfa037579aceb804c5f9c007700f022977",
             },
             build=simulated_bulk,
+        ),
+        Dataset(
+            id="simulated_cohorts",
+            title="Simulated case-control cohorts",
+            description="6 cohorts of one disease, 12 to 60 donors each, 4 cell types "
+            "and 2,000 genes, with changes of every cohort and of one cohort only",
+            source="simulated by simulated_cohorts() in this script, numpy's PCG64 "
+            "generator with seed 20261028",
+            licence=SIMULATION_LICENCE,
+            citation=None,
+            files={
+                "simulated_cohort_1.cube.zarr": "sha256:"
+                "e97a0a97353376a5ac3a5c1e34f7e5f6fad6b0ac07c09b738b808fba6ccedb9e",
+                "simulated_cohort_2.cube.zarr": "sha256:"
+                "f5644603a625381e2eb95ad6e62d8f52780c59b6679d58a10d43f5295965ce96",
+                "simulated_cohort_3.cube.zarr": "sha256:"
+                "281cc4e81aecec198fd3c357271f95c4041ea33fbed711222acb6ad0846709ed",
+                "simulated_cohort_4.cube.zarr": "sha256:"
+                "a03544c081ee531297c9ff7aef0b6e073e626a932364ff33fb4b0746ffea0632",
+                "simulated_cohort_5.cube.zarr": "sha256:"
+                "7eb6775b5b70f8d8f691308aaca864792ddecd76c0e17921f275880897ad124b",
+                "simulated_cohort_6.cube.zarr": "sha256:"
+                "3fb7291bb67093b8883e2dfe177f2e88efe4c014d8b77b16dd6d7615decdb733",
+                "simulated_cohorts_truth.npz": "sha256:"
+                "6599ea11dddb183f630183846f7ece9991003a4cc77875e4e7822317f66346ec",
+            },
+            build=simulated_cohorts,
         ),
         Dataset(
             id="kang2018",
