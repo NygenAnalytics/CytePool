@@ -77,8 +77,8 @@ Deliberate differences from variancePartition, reported by ``validation/dream.py
   near zero, which enters the trend, and ``dream`` tests it.
 
 Kenward-Roger's degrees of freedom (``dream``'s default up to 20 samples), random
-slopes, F-tests of several contrasts and variance partitioning are not implemented
-yet.
+slopes and F-tests of several contrasts are not implemented yet; variancePartition's
+variance partitioning is :mod:`cytepool.variance_partitioning`.
 
 References:
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for

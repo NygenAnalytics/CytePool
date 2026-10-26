@@ -40,6 +40,7 @@ size; its sections give every check.
 | limma-voom and limma-trend on every cell type of a cube | {api}`limma_voom`, {api}`limma_trend` | limma 3.62.1, edgeR 4.4.0 | exact; close with robust moderation | [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) |
 | Options for pseudobulk data: quality weights, weights from cell numbers, a minimum count, adjustment across cell types | {api}`limma_voom`, {api}`limma_trend` | limma 3.62.1, edgeR 4.4.0 | exact; close with quality weights | [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) |
 | dream on every cell type of a cube | {api}`dream_voom`, {api}`voom_with_dream_weights`, {api}`moderated_fixed_effect_tests` | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | close | [`dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py) |
+| Variance partitioning (`fitExtractVarPartModel`), on every cell type of a cube, and its figures (`plotVarPart`, `plotPercentBars`) | {api}`variance_fractions`, {api}`variance_partitioning`, {api}`plot_variance_fractions`, {api}`plot_gene_variance_fractions` | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | close; exact at given estimates and for linear models | [`variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py) |
 | limma-voom on published single-cell data (Kang et al. 2018) | {api}`from_cells`, {api}`limma_voom` | limma 3.62.1, edgeR 4.4.0 | exact | [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) |
 | Cell-type composition (speckle's propeller) | {api}`propeller` | speckle 1.6.0, limma 3.62.1 | exact; close for the robust prior | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) |
 | Meta-analysis by fixed and random effects (metafor's `rma.uni`) | {api}`meta_analysis`, {api}`differential_expression_meta_analysis` | metafor 5.0.1 | exact; close for REML and Paule-Mandel | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) |
@@ -52,8 +53,8 @@ size; its sections give every check.
 These methods come up in the questions that studies ask ([Overview](../index.md)) and
 have no CytePool function yet:
 
-- variance partitioning, random slopes, Kenward-Roger's degrees of freedom and F-tests
-  of several contrasts in mixed models;
+- random slopes, Kenward-Roger's degrees of freedom and F-tests of several contrasts in
+  mixed models;
 - composition tests with precision weights or random effects (crumblr), and Bayesian
   count models of composition;
 - pathway and transcription-factor activity scores;

@@ -244,12 +244,11 @@ References:
 """
 
 import json
-import numbers
 import warnings
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -261,14 +260,28 @@ from ._analysis_records import (
 )
 from ._columns import text_column
 from ._counts import effective_library_sizes
+from ._group_fits import (
+    COUNTS_LAYER,
+    FITTED,
+    GroupInputs,
+    GroupRecord,
+    filter_setting,
+    group_positions,
+    min_cells_setting,
+    min_counts_setting,
+    normalization_setting,
+    prepare_group,
+    prior_weight_setting,
+    sample_table,
+    span_setting,
+    threads_setting,
+)
 from ._jit import thread_limit
 from ._masked_arrays import reject_masked
 from ._messages import PACKAGE_DIRECTORY, listing
 from ._options import (
     checked_choice,
     checked_flag,
-    index_integer,
-    non_negative_number,
     number_at_least,
     positive_finite_number,
     positive_integer,
@@ -277,19 +290,9 @@ from ._options import (
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design._design_matrices import is_random_intercept, refuse_random_effects
-from .design.checks import _aliasing, _contrast_violations
-from .normalization import (
-    filter_by_expression,
-    library_sizes,
-    log_cpm,
-    tmm_factors,
-)
+from .normalization import log_cpm
 from .stats._mean_variance_trend import scaled_prior_weights, trend_span, voom_inputs
-from .stats._mixed_model_designs import (
-    MixedDesign,
-    mixed_design_of_samples,
-    random_intercepts,
-)
+from .stats._mixed_model_designs import random_intercepts
 from .stats.dream import _dream_weights, moderated_fixed_effect_tests
 from .stats.empirical_bayes import moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
@@ -307,16 +310,7 @@ from .table import Table
 
 __all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
 
-_FITTED = "fitted"  # the status of a group whose contrasts were tested
-_LAYER = "counts"
 _ACROSS_GROUPS = "adjusted_p_value_across_groups"
-# edgeR's filterByExpr defaults.
-_FILTER_DEFAULTS = {
-    "min_count": 10.0,
-    "min_total_count": 15.0,
-    "large_n": 10.0,
-    "min_prop": 0.7,
-}
 # The settings of sample quality weights: limma's defaults (arrayWeights and
 # voomWithQualityWeights), and the method by default. voomWithQualityWeights
 # estimates the weights gene by gene; arrayWeights' "auto" chooses REML for values
@@ -581,7 +575,7 @@ class DifferentialExpressionResult:
                 f"{listing(list(self._contrasts.names))}"
             )
         entry = record[group]
-        if entry["status"] != _FITTED:
+        if entry["status"] != FITTED:
             raise KeyError(
                 f"group {group!r} was not fitted ({entry['status']}): {entry['reason']}"
             )
@@ -592,7 +586,7 @@ class DifferentialExpressionResult:
 
     def __repr__(self) -> str:
         statuses = self._summary["status"].tolist()
-        fitted = statuses.count(_FITTED)
+        fitted = statuses.count(FITTED)
         lines = [
             f"DifferentialExpressionResult ({self._method}): {len(statuses)} "
             f"group{'' if len(statuses) == 1 else 's'}, {fitted} fitted; "
@@ -602,7 +596,7 @@ class DifferentialExpressionResult:
         ]
         for row in range(len(statuses)):
             group = self._summary["group_id"][row]
-            if statuses[row] != _FITTED:
+            if statuses[row] != FITTED:
                 lines.append(f"  {group}: not fitted ({statuses[row]})")
                 continue
             used = int(self._summary["n_samples_used"][row])
@@ -768,18 +762,18 @@ def limma_voom(
         groups=groups,
         contrasts=contrasts,
         settings={
-            "min_cells": _min_cells(min_cells),
-            "min_counts": _min_counts(min_counts),
-            "expression_filter": _filter_settings(expression_filter),
-            "normalization": _normalization(normalization),
-            "span": _span(span),
+            "min_cells": min_cells_setting(min_cells),
+            "min_counts": min_counts_setting(min_counts),
+            "expression_filter": filter_setting(expression_filter),
+            "normalization": normalization_setting(normalization),
+            "span": span_setting(span),
             **_sample_weight_settings(prior_weights, quality_weights, "limma_voom"),
             "robust": checked_flag(robust, "robust"),
             "contrast_standard_errors": standard_errors,
             "adjust_across_groups": checked_flag(
                 adjust_across_groups, "adjust_across_groups"
             ),
-            "n_threads": _threads(n_threads),
+            "n_threads": threads_setting(n_threads),
         },
     )
 
@@ -874,10 +868,10 @@ def limma_trend(
         groups=groups,
         contrasts=contrasts,
         settings={
-            "min_cells": _min_cells(min_cells),
-            "min_counts": _min_counts(min_counts),
-            "expression_filter": _filter_settings(expression_filter),
-            "normalization": _normalization(normalization),
+            "min_cells": min_cells_setting(min_cells),
+            "min_counts": min_counts_setting(min_counts),
+            "expression_filter": filter_setting(expression_filter),
+            "normalization": normalization_setting(normalization),
             "prior_count": count,
             **_sample_weight_settings(prior_weights, quality_weights, "limma_trend"),
             "robust": checked_flag(robust, "robust"),
@@ -992,18 +986,18 @@ def dream_voom(
         groups=groups,
         contrasts=contrasts,
         settings={
-            "min_cells": _min_cells(min_cells),
-            "min_counts": _min_counts(min_counts),
-            "expression_filter": _filter_settings(expression_filter),
-            "normalization": _normalization(normalization),
-            "span": _span(span),
-            "prior_weights": _prior_weight_setting(prior_weights),
+            "min_cells": min_cells_setting(min_cells),
+            "min_counts": min_counts_setting(min_counts),
+            "expression_filter": filter_setting(expression_filter),
+            "normalization": normalization_setting(normalization),
+            "span": span_setting(span),
+            "prior_weights": prior_weight_setting(prior_weights),
             "robust": checked_flag(robust, "robust"),
             "trend": checked_flag(trend, "trend"),
             "adjust_across_groups": checked_flag(
                 adjust_across_groups, "adjust_across_groups"
             ),
-            "n_threads": _threads(n_threads),
+            "n_threads": threads_setting(n_threads),
         },
     )
 
@@ -1012,44 +1006,12 @@ def dream_voom(
 
 
 @dataclass
-class _GroupFit:
+class _GroupFit(GroupRecord):
     """What happened in one group, and its tables."""
 
-    group_id: str
-    used: np.ndarray  # bool, per design sample in cube order
-    reasons: list[str]  # why each design sample was left out; "" when used
-    status: str = _FITTED
-    reason: str = ""
-    aliased: tuple[str, ...] = ()
-    not_estimable: dict[str, str] = field(default_factory=dict)
-    df_residual: float = float("nan")
     prior_df: float = float("nan")
-    tested: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.intp))
-    library_sizes: np.ndarray | None = None  # per used sample, when fitted
-    norm_factors: np.ndarray | None = None
-    prior_weights: np.ndarray | None = None  # per used sample, when fitted with them
     quality_weights: np.ndarray | None = None
-    voom_span: float | None = None  # the span of voom's trend, once voom has run
-    features_not_fitted: int = 0  # dream: features whose mixed model has no minimum
-    features_not_converged: int = 0  # dream: fitted features whose fit did not converge
-    warnings: list[str] = field(default_factory=list)  # given as the group is fitted
     tables: dict[str, Table] = field(default_factory=dict)
-
-    def stop(self, status: str, reason: str) -> "_GroupFit":
-        self.status, self.reason = status, reason
-        return self
-
-
-@dataclass(frozen=True)
-class _Inputs:
-    """The checked inputs shared by every group."""
-
-    method: str
-    cube: Cube
-    model_rows: np.ndarray  # the design's rows in cube order
-    cube_rows: np.ndarray  # the cube position of each, increasing
-    contrasts: Contrasts
-    settings: Mapping[str, Any]
 
 
 def _analyse(
@@ -1105,8 +1067,8 @@ def _analyse(
         data_ids="the cube's sample ids",
     )
     tested = _contrasts_to_test(design, contrasts, method)
-    positions = _group_positions(cube, groups)
-    inputs = _Inputs(method, cube, order, cube_rows, tested, settings)
+    positions = group_positions(cube, groups)
+    inputs = GroupInputs(method, cube, order, cube_rows, tested, settings)
     fit_group = _fit_dream_group if method == "dream_voom" else _fit_group
     fits = []
     for g in positions:
@@ -1125,7 +1087,7 @@ def _analyse(
         method,
         tested,
         _summary_table(fits),
-        _sample_table(cube, cube_rows, sample_ids, positions, fits, settings),
+        sample_table(cube, cube_rows, sample_ids, positions, fits, settings),
         {
             (fit.group_id, contrast): table
             for fit in fits
@@ -1135,7 +1097,7 @@ def _analyse(
             "method": method,
             "versions": software_versions(),
             "cube": cube_record(cube),
-            "layer": _LAYER,
+            "layer": COUNTS_LAYER,
             "design": design_record(design, tested),
             "settings": {
                 **settings,
@@ -1149,129 +1111,17 @@ def _analyse(
     )
 
 
-@dataclass(frozen=True)
-class _GroupData:
-    """The checked data of one group, ready for the fits of a method."""
-
-    x: np.ndarray  # the rows of the full design for the samples used, kept columns
-    columns: tuple[str, ...]  # the names of the kept columns
-    kept: list[int]  # the kept columns among the design's
-    estimable: list[int]  # the contrasts that the samples can estimate
-    counts: np.ndarray  # samples used x features tested
-    sizes: np.ndarray  # library sizes over the features tested
-    factors: np.ndarray | None  # normalization factors, or None
-    prior: np.ndarray | None  # prior weights of the samples used, or None
-    mixed: MixedDesign | None  # the mixed model's design of the samples used
-
-
-def _prepare_group(
-    inputs: _Inputs, design: Design, g: int, *, mixed: bool = False
-) -> tuple[_GroupFit, _GroupData | None]:
-    """The samples, design, features and normalization of one group.
-
-    Returns the group's record and its data, or no data when the group cannot be
-    fitted, with the record saying why. With ``mixed``, the random effects of the
-    design are also checked on the samples used.
-    """
-    cube, settings = inputs.cube, inputs.settings
-    counts = cube.layer(_LAYER, g)[inputs.cube_rows]  # design samples, cube order
-    cells = None if cube.n_cells is None else cube.n_cells[inputs.cube_rows, g]
-    min_counts = settings["min_counts"]
-    reasons = _left_out(counts, cells, settings["min_cells"], min_counts)
-    used = np.array([not reason for reason in reasons], dtype=bool)
-    fit = _GroupFit(str(cube.groups["group_id"][g]), used, reasons)
-    if counts.shape[1] == 0:
-        return fit.stop("no_features", "the cube has no features"), None
-    n_used = int(np.count_nonzero(used))
-    if n_used == 0:
-        # No counts is fewer than any positive minimum.
-        rules = (
-            f"fewer than {_amount(min_counts)} counts" if min_counts else "no counts"
-        )
-        if cells is not None:
-            rules = f"fewer than {settings['min_cells']} cells, or {rules}"
-        reason = f"every one of the {used.size} samples was left out ({rules})"
-        return fit.stop("no_samples", reason), None
-
-    # The rows of the full design, and the columns that span them.
-    x = design.matrix[inputs.model_rows][used]
-    aliasing = _aliasing(x)
-    kept = list(aliasing.kept)
-    fit.aliased = tuple(design.columns[j] for j in aliasing.aliased)
-    fit.df_residual = float(n_used - len(kept))
-    if n_used == len(kept):
-        return fit.stop(
-            "no_residual_df",
-            f"no residual degrees of freedom: the design has rank {len(kept)} on the "
-            f"{n_used} sample{'' if n_used == 1 else 's'} left, so it fits "
-            f"{'it' if n_used == 1 else 'them'} exactly and no variance can be "
-            "estimated",
-        ), None
-    contrasts = inputs.contrasts
-    violations = _contrast_violations(
-        replace(design.model_matrix, matrix=x), aliasing, contrasts
-    )
-    for position, relations in violations.items():
-        fit.not_estimable[contrasts.names[position]] = (
-            "not estimable from the samples of this group, which cannot separate the "
-            "effects it depends on: " + "; ".join(relations)
-        )
-    estimable = [p for p in range(len(contrasts)) if p not in violations]
-    if not estimable:
-        return fit.stop(
-            "no_estimable_contrast",
-            "no contrast is estimable from the samples of this group",
-        ), None
-    x_kept = np.ascontiguousarray(x[:, kept])
-    columns = tuple(design.columns[j] for j in kept)
-    parts = None
-    if mixed:
-        try:
-            parts = mixed_design_of_samples(
-                design, inputs.model_rows[used], x_kept, columns
-            )
-        except ValueError as error:
-            return fit.stop("random_effects_not_estimable", str(error)), None
-
-    y = np.asarray(counts[used], dtype=np.float64)
-    filter_settings = settings["expression_filter"]
-    if filter_settings is None:
-        keep = np.ones(y.shape[1], dtype=bool)
-    else:
-        keep = filter_by_expression(y, design=x_kept, **filter_settings)
-    fit.tested = np.flatnonzero(keep)
-    n_tested = fit.tested.size
-    if n_tested == 0:
-        return fit.stop("no_features", "no feature passed the expression filter"), None
-    y = np.ascontiguousarray(y[:, keep])
-    sizes = library_sizes(y)
-    if not np.all(sizes > 0.0):
-        sample_ids = cube.samples["sample_id"][inputs.cube_rows][used]
-        empty = sample_ids[sizes == 0.0].tolist()
-        return fit.stop(
-            "empty_library",
-            f"{listing(empty)} {'has' if len(empty) == 1 else 'have'} no counts in "
-            f"the {n_tested} features that passed the expression filter",
-        ), None
-    factors = tmm_factors(y) if settings["normalization"] == "tmm" else None
-    # Prior weights are positive: a used sample has counts, so it has cells.
-    prior = None
-    if settings["prior_weights"] == "n_cells" and cells is not None:
-        prior = np.asarray(cells[used], dtype=np.float64)
-    data = _GroupData(x_kept, columns, kept, estimable, y, sizes, factors, prior, parts)
-    return fit, data
-
-
-def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
+def _fit_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
     """Fit one group by limma, or record why it cannot be fitted."""
     cube, settings = inputs.cube, inputs.settings
-    fit, data = _prepare_group(inputs, design, g)
+    fit, data = prepare_group(_GroupFit, inputs, design, g)
     if data is None:
         return fit
     x_kept, columns, kept, estimable = data.x, data.columns, data.kept, data.estimable
     y, sizes, factors, prior = data.counts, data.sizes, data.factors, data.prior
     n_used, n_tested = y.shape
-    contrasts = inputs.contrasts
+    # Differential expression always has contrasts to test.
+    contrasts = cast(Contrasts, inputs.contrasts)
     quality_settings = settings["quality_weights"]
 
     if inputs.method == "limma_voom":
@@ -1371,10 +1221,10 @@ def _fit_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
     return fit
 
 
-def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
+def _fit_dream_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
     """Fit one group by dream, or record why it cannot be fitted."""
     cube, settings = inputs.cube, inputs.settings
-    fit, data = _prepare_group(inputs, design, g, mixed=True)
+    fit, data = prepare_group(_GroupFit, inputs, design, g, mixed=True)
     if data is None or data.mixed is None:
         return fit
     y = data.counts
@@ -1397,7 +1247,8 @@ def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             return fit.stop("failed", f"voom with dream weights: {error}")
         model = _fit_mixed_model(weighted.log_cpm, weighted.weights, False, data.mixed)
     fit.voom_span = weighted.span
-    contrasts = inputs.contrasts
+    # Differential expression always has contrasts to test.
+    contrasts = cast(Contrasts, inputs.contrasts)
     names = tuple(contrasts.names[p] for p in data.estimable)
     # An estimable contrast is its kept part applied to the fit on the kept columns.
     tests = fixed_effect_tests(
@@ -1441,33 +1292,6 @@ def _fit_dream_group(inputs: _Inputs, design: Design, g: int) -> _GroupFit:
             }
         )
     return fit
-
-
-def _left_out(
-    counts: np.ndarray, cells: np.ndarray | None, min_cells: int, min_counts: float
-) -> list[str]:
-    """Why each sample is left out of a group's fit, or "" when it is used."""
-    has_counts = counts.any(axis=1)
-    # Totals over every feature, exact for whole counts, as R's colSums gives them.
-    totals = library_sizes(counts) if min_counts > 0.0 and counts.size else None
-    reasons = []
-    for sample in range(counts.shape[0]):
-        if cells is not None and cells[sample] < min_cells:
-            n = int(cells[sample])
-            reasons.append(
-                f"{n} cell{'' if n == 1 else 's'}, fewer than min_cells ({min_cells})"
-            )
-        elif not has_counts[sample]:
-            reasons.append("no counts")
-        elif totals is not None and totals[sample] < min_counts:
-            total = float(totals[sample])
-            reasons.append(
-                f"{_amount(total)} count{'' if total == 1.0 else 's'}, fewer than "
-                f"min_counts ({_amount(min_counts)})"
-            )
-        else:
-            reasons.append("")
-    return reasons
 
 
 def _voom_weights(
@@ -1565,73 +1389,11 @@ def _contrasts_to_test(design: Design, contrasts: Any, function: str) -> Contras
     return chosen
 
 
-def _group_positions(cube: Cube, groups: str | Sequence[str] | None) -> list[int]:
-    ids = cube.groups["group_id"].tolist()
-    if groups is None:
-        return list(range(len(ids)))
-    if isinstance(groups, str):
-        chosen: list[Any] = [groups]
-    elif isinstance(groups, Sequence | np.ndarray):
-        chosen = list(groups)
-    else:
-        raise TypeError(
-            f"groups must be a group id or a list of group ids, got "
-            f"{type(groups).__name__}"
-        )
-    if not chosen:
-        raise ValueError(
-            "groups is empty; give at least one group id, or None for every group"
-        )
-    index = {value: i for i, value in enumerate(ids)}
-    positions = []
-    for value in chosen:
-        if not isinstance(value, str):
-            raise TypeError(
-                f"groups must be group ids (str), got {type(value).__name__} {value!r}"
-            )
-        if value not in index:
-            raise KeyError(
-                f"no group with id {value!r}; groups are: {listing(ids) or '(none)'}"
-            )
-        if index[value] in positions:
-            raise ValueError(f"group {value!r} is listed more than once")
-        positions.append(index[value])
-    return positions
-
-
-def _min_cells(value: Any) -> int:
-    if isinstance(value, bool | np.bool_):
-        raise TypeError("min_cells must be a whole number of cells, not bool")
-    number = index_integer(value, "min_cells", expected="a whole number of cells")
-    if number < 0:
-        raise ValueError(f"min_cells must be at least 0, got {number}")
-    return number
-
-
-def _min_counts(value: Any) -> float:
-    # real_number would refuse a masked value too, but without saying how to fix it.
-    reject_masked(value, "min_counts")
-    return non_negative_number(value, "min_counts")
-
-
-def _prior_weight_setting(prior_weights: Any) -> str | None:
-    """The checked prior weights: "n_cells" or None."""
-    if prior_weights is not None and not (
-        isinstance(prior_weights, str) and prior_weights == "n_cells"
-    ):
-        error = ValueError if isinstance(prior_weights, str) else TypeError
-        raise error(
-            "prior_weights must be 'n_cells', for the number of cells of each sample "
-            f"in the group, or None, got {prior_weights!r}"
-        )
-    return None if prior_weights is None else "n_cells"
-
-
 def _sample_weight_settings(
     prior_weights: Any, quality_weights: Any, method: str
 ) -> dict[str, Any]:
     """The checked settings of the sample weights, which are alternatives."""
-    _prior_weight_setting(prior_weights)
+    prior_weight_setting(prior_weights)
     quality = _quality_settings(quality_weights, _QUALITY_METHODS[method])
     if prior_weights is not None and quality is not None:
         raise ValueError(
@@ -1681,68 +1443,6 @@ def _quality_settings(value: Any, method: str) -> dict[str, Any] | None:
     }
 
 
-def _span(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool | np.bool_) or not isinstance(value, numbers.Real):
-        raise TypeError(
-            "span must be a real number in (0, 1], or None to choose it in each group "
-            f"from the number of features tested, got {type(value).__name__}"
-        )
-    number = float(value)
-    if not 0.0 < number <= 1.0:
-        raise ValueError(
-            "span must be in (0, 1], or None to choose it in each group from the "
-            f"number of features tested, got {number}"
-        )
-    return number
-
-
-def _threads(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool | np.bool_):
-        raise TypeError("n_threads must be a positive integer or None, not bool")
-    number = index_integer(value, "n_threads", expected="a positive integer or None")
-    if number < 1:
-        raise ValueError(f"n_threads must be at least 1, got {number}")
-    return number
-
-
-def _filter_settings(value: Any) -> dict[str, float] | None:
-    reject_masked(value, "expression_filter")
-    if isinstance(value, bool | np.bool_):
-        return dict(_FILTER_DEFAULTS) if value else None
-    if not isinstance(value, Mapping):
-        raise TypeError(
-            "expression_filter must be True, False or a mapping of filterByExpr "
-            f"settings such as {{'min_count': 5}}, got {type(value).__name__}"
-        )
-    settings = dict(_FILTER_DEFAULTS)
-    for name, number in value.items():
-        if name not in _FILTER_DEFAULTS:
-            raise ValueError(
-                f"expression_filter has the unknown setting {name!r}; the settings are "
-                f"{', '.join(_FILTER_DEFAULTS)}"
-            )
-        settings[name] = non_negative_number(number, f"expression_filter[{name!r}]")
-    if settings["min_prop"] > 1.0:
-        raise ValueError(
-            f"expression_filter['min_prop'] must be in [0, 1], got {settings['min_prop']}"
-        )
-    return settings
-
-
-def _normalization(value: Any) -> str | None:
-    if value is None or (isinstance(value, str) and value == "tmm"):
-        return value
-    error = ValueError if isinstance(value, str) else TypeError
-    raise error(
-        "normalization must be 'tmm' (edgeR's TMM factors) or None (library sizes "
-        f"alone), got {value!r}"
-    )
-
-
 # Results.
 
 
@@ -1759,7 +1459,7 @@ def _summary_table(fits: list[_GroupFit]) -> Table:
                 [np.count_nonzero(~fit.used) for fit in fits], dtype=np.int64
             ),
             "n_features_tested": np.array(
-                [fit.tested.size if fit.status == _FITTED else 0 for fit in fits],
+                [fit.tested.size if fit.status == FITTED else 0 for fit in fits],
                 dtype=np.int64,
             ),
             "df_residual": np.array([fit.df_residual for fit in fits], dtype=float),
@@ -1771,52 +1471,13 @@ def _summary_table(fits: list[_GroupFit]) -> Table:
     )
 
 
-def _sample_table(
-    cube: Cube,
-    cube_rows: np.ndarray,
-    sample_ids: np.ndarray,
-    positions: list[int],
-    fits: list[_GroupFit],
-    settings: Mapping[str, Any],
-) -> Table:
-    n = cube_rows.size
-    numbers = {
-        "library_size": "library_sizes",
-        "norm_factor": "norm_factors",
-    }
-    if settings["prior_weights"] is not None:
-        numbers["prior_weight"] = "prior_weights"
-    if settings.get("quality_weights") is not None:
-        numbers["quality_weight"] = "quality_weights"
-    # Per group and design sample; NaN where the number did not enter a fit.
-    values = {column: np.full((len(fits), n), np.nan) for column in numbers}
-    for row, fit in enumerate(fits):
-        if fit.status != _FITTED:
-            continue
-        for column, attribute in numbers.items():
-            values[column][row, fit.used] = getattr(fit, attribute)
-    columns: dict[str, Any] = {
-        "group_id": text_column([fit.group_id for fit in fits for _ in range(n)]),
-        "sample_id": text_column(np.tile(sample_ids, len(fits)).tolist()),
-    }
-    if cube.n_cells is not None:
-        cells = cube.n_cells[np.ix_(cube_rows, positions)]  # samples x groups
-        columns["n_cells"] = np.ascontiguousarray(cells.T).reshape(-1)
-    columns |= {
-        "used": np.concatenate([fit.used for fit in fits] or [np.zeros(0, bool)]),
-        "reason": text_column([reason for fit in fits for reason in fit.reasons]),
-    }
-    columns |= {column: array.reshape(-1) for column, array in values.items()}
-    return Table(columns)
-
-
 # The provenance record.
 
 
 def _group_record(
     fit: _GroupFit, sample_ids: np.ndarray, method: str, settings: Mapping[str, Any]
 ) -> dict[str, Any]:
-    fitted = fit.status == _FITTED
+    fitted = fit.status == FITTED
     record: dict[str, Any] = {
         "group_id": fit.group_id,
         "status": fit.status,
@@ -1848,11 +1509,3 @@ def _group_record(
             record[key] = weights.tolist() if fitted and weights is not None else None
     record["warnings"] = list(fit.warnings)
     return record
-
-
-# Messages.
-
-
-def _amount(value: float) -> str:
-    """A number of counts as text, without a decimal point when it is whole."""
-    return f"{value:.15g}"

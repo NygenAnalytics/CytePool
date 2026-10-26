@@ -110,8 +110,8 @@ Satterthwaite's degrees of freedom:
 
 Limits of this version:
     Random slopes, Kenward-Roger degrees of freedom (dream's default for 20 samples
-    or fewer), F-tests of several contrasts at once and variance partitioning are
-    not implemented yet.
+    or fewer) and F-tests of several contrasts at once are not implemented yet.
+    :mod:`cytepool.variance_partitioning` partitions the variance of these fits.
     Every feature needs a value for every sample, with a positive weight. Designs
     whose fixed and random effects together span every sample, and so reproduce
     every feature exactly, are refused, although their criterion can have a minimum

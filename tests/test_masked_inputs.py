@@ -65,6 +65,7 @@ from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.voom import voom, voom_with_quality_weights
 from cytepool.table import Table
+from cytepool.variance_partitioning import variance_partitioning
 
 # anndata and mudata, which the conversions of cubes call, warn about their own use
 # of pandas options that pandas 4 removes.
@@ -287,6 +288,38 @@ def _dream_by_cells(context: Context) -> dict[str, Any]:
     """As _dream, with prior weights from the cell numbers of _weighted_by_cells."""
     arguments = _weighted_by_cells(context)
     return arguments | {"design": _dream(context)["design"]}
+
+
+def _variance_partitioning(context: Context) -> dict[str, Any]:
+    """The bulk cube of _differential_expression with a random donor intercept, and a
+    value for every option of variance_partitioning."""
+    arguments = _differential_expression(context)
+    for name in ("contrasts", "quality_weights", "adjust_across_groups"):
+        del arguments[name]
+    return arguments | {
+        "design": Design(SAMPLE_TABLE, "~ 1", random="(1 | donor)"),
+        "span": 0.6,
+        "method": "reml",
+        "n_threads": 1,
+    }
+
+
+def _variance_partitioning_by_cells(context: Context) -> dict[str, Any]:
+    """As _variance_partitioning, with prior weights from the cell numbers of
+    _weighted_by_cells."""
+    arguments = _weighted_by_cells(context)
+    for name in ("contrasts", "adjust_across_groups"):
+        del arguments[name]
+    return arguments | {"design": _variance_partitioning(context)["design"]}
+
+
+@functools.cache
+def _variance_partition() -> Any:
+    """The fractions of variance of the bulk cube of COUNTS with a random donor
+    intercept, every gene fitted."""
+    cube = from_bulk(COUNTS, samples={"sample_id": SAMPLE_TABLE["sample_id"]})
+    design = Design(SAMPLE_TABLE, "~ 1", random="(1 | donor)")
+    return variance_partitioning(cube, design, expression_filter=False, span=0.9)
 
 
 def _scverse_arguments(context: Context, container: str) -> dict[str, Any]:
@@ -1693,6 +1726,67 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("feature", "group", "contrast"),
         objects=("meta", "studies", "ax"),
     ),
+    "cytepool.plotting.plot_variance_fractions": Entry(
+        lambda c: {
+            "data": _variance_partition(),
+            "group": "bulk",
+            "sort": False,
+            "ax": _axes(),
+        },
+        {},
+        options=("group", "sort"),
+        objects=("data", "ax"),
+    ),
+    # Genes named by labels, one per gene.
+    "cytepool.plotting.plot_gene_variance_fractions": Entry(
+        lambda c: {
+            "data": _variance_partition(),
+            "genes": ["x1", "x2"],
+            "group": "bulk",
+            "labels": [f"x{j}" for j in range(COUNTS.shape[1])],
+            "sort": False,
+            "ax": _axes(),
+        },
+        {"genes": None, "labels": None},
+        options=("group", "sort"),
+        objects=("data", "ax"),
+    ),
+    # Variance partitioning: a mixed model, a linear model, and every group of a cube.
+    "cytepool.variance_partitioning.variance_fractions": Entry(
+        lambda c: {
+            "y": log_cpm(COUNTS),
+            "design": Design(SAMPLE_TABLE, "~ 1", random="(1 | donor)"),
+            "weights": np.full(COUNTS.shape, 2.0),
+            "method": "reml",
+            "n_threads": 1,
+        },
+        {"y": None, "weights": None, "n_threads": None},
+        options=("method",),
+        objects=("design",),
+    ),
+    "cytepool.variance_partitioning.variance_fractions[linear]": Entry(
+        lambda c: {
+            "y": log_cpm(COUNTS),
+            "design": Design(SAMPLE_TABLE, "~ condition", levels=LEVELS),
+            "weights": np.full(4, 2.0),
+        },
+        {"y": None, "weights": None},
+    ),
+    "cytepool.variance_partitioning.variance_partitioning": Entry(
+        _variance_partitioning,
+        {
+            "groups": None,
+            "min_cells": None,
+            "expression_filter": None,
+            "n_threads": None,
+        },
+        options=("min_counts", "normalization", "span", "method"),
+        objects=("cube", "design"),
+        keys={"expression_filter": "min_count"},
+    ),
+    "cytepool.variance_partitioning.variance_partitioning[prior_weights]": Entry(
+        _variance_partitioning_by_cells, {}, options=("prior_weights",)
+    ),
 }
 # Every argument of the distribution and special functions is an array, with NaN
 # for missing values; values outside a domain give NaN, so any numbers are valid.
@@ -1757,6 +1851,15 @@ NO_ARRAY_INPUT = {
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
     ),
+    "cytepool.variance_partitioning.VariancePartitioningResult": (
+        ("variables", "summary", "samples", "tables", "provenance"),
+        "variable names, Tables, which were checked when they were built, and a "
+        "record kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.variance_partitioning.VariancePartitioningResult.table": (
+        ("group",),
+        "a group id, looked up",
+    ),
     "cytepool.composition.CompositionResult": (
         (
             "contrasts",
@@ -1809,6 +1912,7 @@ RECORDS = {
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodFit",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",
     "cytepool.stats.quasi_likelihood.UnitDevianceMoments",
+    "cytepool.variance_partitioning.VarianceFractions",
 }
 
 # Callables that modules with __all__ define but do not export.
