@@ -100,6 +100,7 @@ import numpy.typing as npt
 from cytepool._jit import jit
 from cytepool._linear_algebra import column_space
 from cytepool._masked_arrays import unmasked_array
+from cytepool._messages import value_range
 from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
     _f_log_x_density,
@@ -339,8 +340,8 @@ class ModeratedFit:
         return (
             f"ModeratedFit(n_features={self.t.shape[0]}, "
             f"coefficient_names={self.fit.coefficient_names!r}, "
-            f"prior_df={_summary(self.prior_df)}, "
-            f"prior_variance={_summary(self.prior_variance)}, "
+            f"prior_df={value_range(self.prior_df)}, "
+            f"prior_variance={value_range(self.prior_variance)}, "
             f"prior_estimator={self.prior_estimator!r})"
         )
 
@@ -2177,12 +2178,3 @@ def _frozen(values: Any) -> Any:
     array = np.array(values, dtype=np.float64)
     array.flags.writeable = False
     return array
-
-
-def _summary(values: float | FloatArray) -> str:
-    if isinstance(values, float):
-        return f"{values:.6g}"
-    finite = values[np.isfinite(values)]
-    if finite.size == 0:
-        return "[non-finite]"
-    return f"[{finite.min():.6g} to {finite.max():.6g}]"

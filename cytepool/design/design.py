@@ -23,12 +23,12 @@ import numpy as np
 
 from .._columns import missing_mask
 from .._masked_arrays import reject_masked
+from .._messages import close_matches
 from ..table import Table
 from .checks import DesignReport, _same_partition, check_design
 from .contrasts import Contrasts, _is_pandas, make_contrasts
 from .formula import (
     RandomEffect,
-    _close_matches,
     parse_formula,
     parse_random_effects,
     quote_name,
@@ -489,7 +489,7 @@ def _random_parts(
         if absent:
             raise ValueError(
                 f"the random effect {label} groups by {absent[0]!r}, which is not a "
-                f"column of the sample table{_close_matches(absent[0], table.columns)}"
+                f"column of the sample table{close_matches(absent[0], table.columns)}"
                 f"; columns are: {', '.join(table.columns)}"
             )
         for name in effect.grouping:

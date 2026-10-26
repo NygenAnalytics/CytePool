@@ -196,6 +196,7 @@ import numpy.typing as npt
 
 from cytepool._jit import jit, thread_limit
 from cytepool._masked_arrays import reject_masked, unmasked_array
+from cytepool._messages import value_range
 from cytepool.design.design import _refuse_random_effects
 from cytepool.normalization import _as_counts, _non_negative
 from cytepool.stats.distributions import f_sf
@@ -1396,9 +1397,9 @@ class QuasiLikelihoodFit:
         return (
             f"QuasiLikelihoodFit(n_features={n_features}, n_samples={n_samples}, "
             f"coefficient_names={self.coefficient_names!r}, "
-            f"dispersion={_summary(self.dispersion)}, "
+            f"dispersion={value_range(self.dispersion)}, "
             f"average_quasi_dispersion={self.average_quasi_dispersion:.6g}, "
-            f"prior_df={_summary(self.prior_df)}, robust={self.robust})"
+            f"prior_df={value_range(self.prior_df)}, robust={self.robust})"
         )
 
 
@@ -1979,12 +1980,3 @@ def _frozen(values: Any) -> Any:
     if array.ndim == 0:
         return float(array)
     return _read_only(np.array(array))
-
-
-def _summary(values: float | FloatArray) -> str:
-    if isinstance(values, float):
-        return f"{values:.6g}"
-    finite = np.asarray(values)[np.isfinite(values)]
-    if finite.size == 0:
-        return "[non-finite]"
-    return f"[{finite.min():.6g} to {finite.max():.6g}]"

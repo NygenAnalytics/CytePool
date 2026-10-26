@@ -53,8 +53,7 @@ from typing import Any
 import numpy as np
 
 from .._masked_arrays import reject_masked
-from .._messages import listing, quoted
-from .formula import _close_matches
+from .._messages import close_matches, listing, quoted
 
 __all__ = ["Contrasts", "make_contrasts"]
 
@@ -445,7 +444,7 @@ def _weights_on_columns(
             problems.append(f"{quoted(missing)} {_is_or_are(missing)} missing")
         if unexpected:
             hinted = [
-                repr(name) + _close_matches(str(name), [str(m) for m in missing])
+                repr(name) + close_matches(str(name), [str(m) for m in missing])
                 for name in unexpected
             ]
             problems.append(f"{listing(hinted)} {_is_or_are(hinted)} not among them")
@@ -592,7 +591,7 @@ class _LinearExpression:
         return self.error(
             start,
             end,
-            f"{word!r} is not a column of the design{_close_matches(word, self.columns)}; "
+            f"{word!r} is not a column of the design{close_matches(word, self.columns)}; "
             f"columns are: {', '.join(self.columns)}",
         )
 
