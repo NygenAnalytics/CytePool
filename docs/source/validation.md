@@ -18,8 +18,8 @@ This page summarises the tables the scripts printed when they were run against t
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
 `variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
 `gsea.py`, `cube_collection.py`, `pathway_scores.py`,
-`combined_p_values_and_replication.py` and `activity.py`, and for `dream.py`, which
-printed the same table again after changes to the code it checks; on
+`combined_p_values_and_replication.py`, `activity.py` and `sumrank.py`, and for
+`dream.py`, which printed the same table again after changes to the code it checks; on
 **2026-10-25** for the six scripts on
 cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.py`,
 `cube_fingerprints.py` and `anndata_conversion.py`), for `linear_models.py`,
@@ -71,10 +71,11 @@ covers and the largest difference among them. Run a script to see every check.
 | [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
 | [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
 | [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) | Combined p-values and replication | scipy 1.18.1, mpmath 1.3.0, R 4.4.3, metap 1.1, qvalue 2.38.0, metafor 5.0.1 | 54 | 47 pass, 7 deliberate differences | 67.4 s | 444 MiB |
+| [`sumrank.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sumrank.py) | SumRank and held-out prediction | R 4.4.3, the authors' code (commit 46392f66), mpmath 1.3.0, scipy 1.18.1, scikit-learn 1.9.1 | 23 | 13 pass, 9 information, 1 deliberate difference | 44.9 s | 399 MiB |
 | [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
 | [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 46 | 46 pass | 6 min 39 s | 221 MiB |
 | [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,356** | **2,036 pass, none failed; 176 information, 142 deliberate differences, 2 controls** | | |
+| **All** | | | **2,379** | **2,049 pass, none failed; 185 information, 143 deliberate differences, 2 controls** | | |
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -2144,6 +2145,63 @@ the smoothing parameter: the estimates agree to about 1e-12. Deliberate differen
   only; CytePool keeps one at every lambda. For 96 values (0, 0.01, ..., 0.95) the
   estimates differed by 2.6e-5, relative.
 
+## SumRank and held-out prediction
+
+[`validation/sumrank.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sumrank.py)
+runs the authors' R code of SumRank, under the Apache-2.0 licence, as they publish it:
+`SumRank.R`, `CalibratePValueswithPermutations.R` and `MakingManhattanPlots.R` of their
+repository at commit 46392f66, downloaded and checked by their SHA-256. `SumRank.R` loads the unifed package
+only for `dirwin.hall`, the Irwin-Hall density, which it evaluates at each gene's capped
+sum; the script replaces `dirwin.hall` by the identity, so that SumRank's tables hold
+the sums, and the calibration, which compares -log10 of these values, orders the genes
+as it would. The data (seed 20261030) are five studies of cases and controls, of 10 to
+20 samples, with cell types T and B (one study without B), 300 genes (one study without
+20 of them), 30 genes changed in every study and 8 changed 8-fold in one study each,
+analysed by `limma_voom`; tables of 4 studies of 60 genes whose p-values take 6 values,
+many tied; and three studies of 6 samples, 3 cases each, whose 20 assignments of the
+labels each are all analysed. Reference: R 4.4.3, the authors' code, mpmath 1.3.0, scipy
+1.18.1, scikit-learn 1.9.1, numpy 2.5.4 and numba 0.68.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| The Irwin-Hall distribution function on a grid of 1 to 200 studies (118 values), and the Irwin-Hall p-values of `sumrank` for 3, 10 and 30 studies (1,199 genes) | mpmath, 200 digits | 6.2e-15 | 1e-12 | 2 pass |
+| The SumRank statistics of 5 studies, T and B, up and down, summing every study, 0.65 and 0.5 of them; of 4 studies with tied p-values | the authors' SumRank | 4.2e-15 | 1e-12 | 2 pass |
+| Permutation p-values of 40 permutations of the condition, up and down: (1 + the null statistics at most the gene's) / (1 + N) | the authors' null statistics | 0 | 0 | 1 pass |
+| The authors' calibration, between the null statistics strictly below the gene's and those at most it, divided by N | `CalibratePValueswithPermutations` | 0 genes outside | 0 | 1 pass |
+| The authors' calibrated p-values, against CytePool's | `CalibratePValueswithPermutations` | 0.14 | n/a | 1 deliberate difference |
+| Permutation p-values of 1,000 random permutations, 3 and 2 of 3 studies summed | the exact distribution of every assignment of the labels, 8,000 combinations | 0.49 standard errors | 4 standard errors | 2 pass |
+| The held-out score of every sample and the AUC of cases against controls, 5 studies, 2 methods | scipy's `rankdata` with UCell's formula; scikit-learn's `roc_auc_score` | 0 | 1e-12 | 2 pass |
+| The genes SumRank chose for each held-out study, T and B, up and down | the authors' SumRank on the other studies | 0 of 18 lists differ | 0 | 1 pass |
+| The Manhattan plot of `plot_sumrank`: every gene's -log10 p-value in alphabetical order, the threshold line and the genes named, for p-values of 20 permutations summing every study | the authors' `MakeManhattanPlot`, with `plot`, `abline` and `text` recording what it draws | 0 | 1e-12 | 2 pass |
+| Calibration, what each method finds, held-out AUC (simulated studies) | the simulated changes | below | n/a | 9 information |
+
+The sums of the authors' code are floating-point sums of each gene's ranks in its own
+order, written with 15 digits, so that equal sums can differ in their last digits; the
+script compares them as the integers q of q / (2 (G - 1)), G the genes ranked, which
+every sum of normalized ranks is. Its calibration then counts the null statistics
+strictly below a gene's and some of those equal to it, as the rounding decides, divided
+by N; CytePool counts every null statistic at most the gene's, plus one, divided by
+1 + N, so that no p-value is 0 and a gene at the cap has 1, which is the deliberate
+difference of 0.14. The authors' code stops when it sums the rank of one study (its
+`rowSums` takes a matrix), so the held-out runs sum 0.7 of the other studies, 2 of 3 or
+4. The standard error of a permutation p-value is taken as sqrt(p (1 - p) / B) for B
+permutations, which bounds it whatever the correlation of the genes of a permutation.
+`MakeManhattanPlot` draws its line 1e-5 above the highest gene that does not pass;
+`plot_sumrank` draws it at that gene.
+
+The information rows, on six simulated studies of 16 samples and 1,200 genes: without
+changes, the Irwin-Hall p-values summing every study fell at or below 0.05 and 0.01 in
+4.8% and 0.79% of 1,400 tests, and the permutation p-values (40 permutations) in 4.4%
+and 0.79%; summing the best 3 of 6, the Irwin-Hall p-values fell below them in 37% and
+12%, and the permutation p-values in 4.4% and 0.50%. With 60 genes changed by a log2
+fold change of 0.5 in every study and 30 changed 8-fold in one study each, SumRank with
+40 permutations found 35 of the 60 at an adjusted p-value below 0.05 and none of the 30,
+the meta-analysis with REML and z-tests 35 and none, and with the Knapp-Hartung
+adjustment none of either, as its t-test on 5 degrees of freedom gives no p-value small
+enough for the adjustment over the genes. Chosen by SumRank, 30 genes up and 30 down
+gave a held-out AUC of 1 in every study; chosen by the meta-analysis with Knapp-Hartung,
+0.977 on average (0.906 to 1).
+
 ## Figures
 
 [`validation/plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py)
@@ -2338,6 +2396,11 @@ three runs after a first call that compiled it. The peak resident memory of the 
 | Combined z-scores | 0.67 | 0.15 |
 | PLAGE | 1.95 | 0.96 |
 
+`sumrank.py --benchmark` permutes the condition of 10 studies of 40 samples and 10,000
+genes 10 times: each permutation and study took 0.21 s with `limma_voom` and 0.14 s with
+`limma_trend`, the analysis that a permutation runs again, on 2 threads, with a peak
+resident memory of 567 MiB for the run.
+
 `adjust_p_values` with Hommel's method took 0.006 s on the 100,000 p-values of
 `multiple_testing.py`. In `distributions.py`, mpmath took 395 s to compute the
 references and CytePool 3.6 s to evaluate them, including compilation.
@@ -2425,6 +2488,10 @@ SCANPY_PYTHON=$REF/python-scanpy/bin/python DECOUPLER_PYTHON=$REF/python/bin/pyt
     LIANA_PYTHON=$REF/python-liana/bin/python \
     $REF/python-anndata/bin/python validation/anndata_conversion.py
 REFERENCE_PYTHON=$REF/python-scanpy/bin/python python validation/cube_collection.py
+# Downloads the authors' SumRank code (13 kB) on its first run, into
+# ~/.cache/cytepool-validation/sumrank unless --code or SUMRANK_CODE names another.
+python validation/sumrank.py
+python validation/sumrank.py --benchmark
 ```
 
 Here `python` is `$REF/python/bin/python`, the environment below. With

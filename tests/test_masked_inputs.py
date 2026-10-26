@@ -52,6 +52,7 @@ from cytepool.design import Design, make_contrasts
 from cytepool.differential_expression import limma_voom
 from cytepool.gene_sets import GeneSets
 from cytepool.gsea import gsea
+from cytepool.held_out_prediction import held_out_prediction
 from cytepool.io.anndata import to_anndata, to_mudata
 from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.meta_analysis import differential_expression_meta_analysis
@@ -71,6 +72,7 @@ from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.voom import voom, voom_with_quality_weights
+from cytepool.sumrank import differential_expression_sumrank
 from cytepool.table import Table
 from cytepool.variance_partitioning import variance_partitioning
 
@@ -556,6 +558,55 @@ def _forest_arguments(context: Context) -> dict[str, Any]:
     meta = differential_expression_meta_analysis(results)
     feature = meta.table("bulk", "stim")["feature_id"][0]
     return {"meta": meta, "studies": results, "feature": feature}
+
+
+@functools.cache
+def _studies() -> tuple[CubeCollection, dict[str, Any]]:
+    """Two studies, the bulk cube of COUNTS twice, each tested by limma_voom."""
+    cube = from_bulk(COUNTS, samples=SAMPLE_TABLE)
+    collection = CubeCollection({"first": cube, "second": cube})
+    design = Design(SAMPLE_TABLE, "~ condition", levels=LEVELS)
+    results = {
+        study: limma_voom(
+            collection.aligned_cube(study),
+            design,
+            contrasts={"stim": [0.0, 1.0]},
+            expression_filter=False,
+        )
+        for study in collection.studies
+    }
+    return collection, results
+
+
+def _sumrank_arguments(context: Context) -> dict[str, Any]:
+    """SumRank of the two studies, with permutations and a value for every option."""
+    collection, results = _studies()
+    return {
+        "collection": collection,
+        "results": results,
+        "group": "bulk",
+        "contrast": "stim",
+        "proportion_of_studies": 1.0,
+        "n_permutations": 2,
+        "permute": "condition",
+        "rng": 1,
+    }
+
+
+def _held_out_arguments(context: Context) -> dict[str, Any]:
+    """Held-out prediction of the two studies, with a value for every option."""
+    collection, results = _studies()
+    return {
+        "collection": collection,
+        "results": results,
+        "contrast": "stim",
+        "variable": "condition",
+        "case": "stim",
+        "control": "ctrl",
+        "groups": ["bulk"],
+        "n_genes": 2,
+        "proportion_of_studies": 1.0,
+    }
 
 
 TABLE = Table({"x": [1.0, 2.0], "s": ["a", "b"]})
@@ -1985,6 +2036,29 @@ ENTRY_POINTS: dict[str, Entry] = {
         objects=("collection", "results"),
         keys={"weights": "A", "null_proportion": "lambdas"},
     ),
+    # SumRank: NaN marks a gene a study did not test. n_permutations and n_genes go
+    # through operator.index, which reads a 0-d masked integer.
+    "cytepool.sumrank.sumrank": Entry(
+        lambda c: {
+            "statistics": [[1.0, 2.0, np.nan, 0.5], [2.0, 1.0, 3.0, -1.0]],
+            "proportion_of_studies": 0.5,
+            "null_statistics": [[[0.5, 1.0, 2.0, 1.5], [1.0, 2.0, 0.0, np.nan]]],
+        },
+        {"statistics": "NaN", "null_statistics": "NaN"},
+        options=("proportion_of_studies",),
+    ),
+    "cytepool.sumrank.differential_expression_sumrank": Entry(
+        _sumrank_arguments,
+        {"n_permutations": None},
+        options=("group", "contrast", "proportion_of_studies", "permute", "rng"),
+        objects=("collection", "results"),
+    ),
+    "cytepool.held_out_prediction.held_out_prediction": Entry(
+        _held_out_arguments,
+        {"groups": None, "n_genes": None},
+        options=("contrast", "variable", "case", "control", "proportion_of_studies"),
+        objects=("collection", "results"),
+    ),
     # Figures, each drawn into an Axes that pyplot does not keep. A variable of the
     # samples is an array of labels, or a name; the other inputs are objects.
     "cytepool.plotting.plot_mds": Entry(
@@ -2331,6 +2405,28 @@ ENTRY_POINTS: dict[str, Entry] = {
         {},
         objects=("result", "ax"),
     ),
+    "cytepool.plotting.plot_sumrank": Entry(
+        lambda c: {
+            "result": differential_expression_sumrank(*_studies(), "bulk", "stim"),
+            "direction": "down",
+            "alpha": 0.1,
+            "n_labels": 2,
+            "ax": _axes(),
+        },
+        {},
+        options=("direction", "alpha", "n_labels"),
+        objects=("result", "ax"),
+    ),
+    "cytepool.plotting.plot_held_out_auc": Entry(
+        lambda c: {
+            "prediction": held_out_prediction(
+                *_studies(), "stim", "condition", "stim", "ctrl", n_genes=2
+            ),
+            "ax": _axes(),
+        },
+        {},
+        objects=("prediction", "ax"),
+    ),
     "cytepool.plotting.plot_variance_fractions": Entry(
         lambda c: {
             "data": _variance_partition(),
@@ -2500,6 +2596,16 @@ NO_ARRAY_INPUT = {
         "Tables, which were checked when they were built, and a record kept as JSON, "
         "which cannot hold an array",
     ),
+    "cytepool.sumrank.SumRankResult": (
+        ("table", "studies", "provenance"),
+        "Tables, which were checked when they were built, and a record kept as JSON, "
+        "which cannot hold an array",
+    ),
+    "cytepool.held_out_prediction.HeldOutPrediction": (
+        ("auc", "scores", "genes", "provenance"),
+        "Tables, which were checked when they were built, and a record kept as JSON, "
+        "which cannot hold an array",
+    ),
     "cytepool.meta_analysis.align_study_results": (
         ("collection", "results", "group", "contrast"),
         "a CubeCollection and results, which were checked when they were built, and a "
@@ -2546,6 +2652,7 @@ RECORDS = {
     "cytepool.meta_analysis.MetaAnalysisFit",
     "cytepool.stats.combined_p_values.CombinedPValues",
     "cytepool.stats.multiple_testing.TrueNullProportion",
+    "cytepool.sumrank.SumRankFit",
     "cytepool.stats.dream.ModeratedFixedEffectTests",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodFit",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",

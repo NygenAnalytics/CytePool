@@ -71,6 +71,9 @@ Combined p-values, partial conjunctions and replication [@fisher1932; @stouffer1
 @liptak1958; @tippett1931; @wilkinson1951; @pearson1933; @george1983; @zaykin2011;
 @owen2009; @benjamini2008; @heller2014; @storey2002; @storey2003; @storey2004].
 
+SumRank and the prediction of held-out studies [@nakatsuka2025; @irwin1927; @hall1927;
+@andreatta2021; @hanley1982; @robin2011].
+
 ## Smoothing, distributions and numerical methods
 
 [@cleveland1979; @cleveland1981; @deboor1978; @hastie1992; @scott1979; @freedman1981;
