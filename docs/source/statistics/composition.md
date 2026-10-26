@@ -9,6 +9,7 @@ records how many cells of each type every sample holds ({api}`Cube.n_cells`), an
 {api}`propeller` tests whether the share of each cell type differs between conditions,
 as speckle's `propeller` does [@phipson2022]. Proportions estimated from single-cell
 data are variable, so the test compares samples, the biological replicates, not cells.
+[Cell-type composition](../guides/composition.ipynb) runs it on a simulated study.
 
 ## The steps
 

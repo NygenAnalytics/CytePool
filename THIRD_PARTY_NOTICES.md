@@ -233,7 +233,8 @@ The pages of the documentation (`docs/source/`) read the datasets that `docs/dat
 prepares in a cache outside the repository: two simulated with fixed random seeds by
 that script, and the two below, GEO series GSE96583 and the MSigDB Hallmark
 interferon-alpha response set. No file of these datasets is in the repository; the
-script records the source, licence, citation and checksum of each.
+script records the source, licence, citation and checksum of each. Two guides also
+download the networks CollecTRI and PROGENy, as their sections below say.
 
 ### GEO series GSE96583 (Kang et al. 2018)
 
@@ -277,7 +278,9 @@ are distributed under the Creative Commons Attribution 4.0 International License
 
 ### CollecTRI (Mueller-Dott et al. 2023)
 
-`collectri()` in `cytepool/networks.py` and `validation/activity.py` download
+`collectri()` in `cytepool/networks.py`, called by `validation/activity.py` and by the
+guides `docs/source/guides/gene_sets.ipynb` and
+`docs/source/guides/pathway_activity.ipynb`, downloads
 `CollecTRI_regulons.csv`, version 2.0 of Zenodo record 8192729
 (https://zenodo.org/records/8192729, doi:10.5281/zenodo.8192729), into a cache outside
 the repository. No row of it is in the repository: `tests/data/activity` holds rows in
@@ -298,10 +301,11 @@ activities. Nucleic Acids Research 51, 10934-10949. doi:10.1093/nar/gkad841
 
 ### PROGENy (Schubert et al. 2018; Holland, Szalai and Saez-Rodriguez 2020)
 
-`progeny()` in `cytepool/networks.py` and `validation/activity.py` download the R
+`progeny()` in `cytepool/networks.py`, called by `validation/activity.py` and by the
+guide `docs/source/guides/pathway_activity.ipynb`, downloads the R
 package progeny 1.28.0 from Bioconductor 3.20
 (https://bioconductor.org/packages/3.20/bioc/src/contrib/progeny_1.28.0.tar.gz) into a
-cache outside the repository and read its data frames `model_human_full` and
+cache outside the repository and reads its data frames `model_human_full` and
 `model_mouse_full`. No value of them is in the repository: `tests/data/activity` holds
 a package in its layout whose data are simulated. progeny, its data included, is
 distributed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).

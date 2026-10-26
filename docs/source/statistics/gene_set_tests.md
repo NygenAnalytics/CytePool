@@ -20,7 +20,8 @@ ranking many sets, such as a pathway collection. The five tests of limma work on
 linear model, so they allow any design and contrast and do not permute samples; all but
 romer take voom's precision weights. Gene set enrichment analysis needs only a statistic
 of every gene, and over-representation analysis only the genes that an analysis called
-significant.
+significant. [Gene sets and pathways](../guides/gene_sets.ipynb) and [Pathway and
+regulator activity](../guides/pathway_activity.ipynb) run these methods on published data.
 
 ## The effects of each gene
 

@@ -34,14 +34,26 @@ project:
       title: Installation
     - file: quickstart.ipynb
       title: Quick start
+    - file: differential_expression.ipynb
+      title: From cells to results
   - title: Build and share cubes
     children:
     - file: guides/export_cubes.ipynb
       title: Export a cube from another tool
   - title: Compare conditions
     children:
-    - file: differential_expression.ipynb
-      title: Differential expression per cell type
+    - file: guides/normalization_and_quality.ipynb
+      title: Normalization, filtering and sample quality
+    - file: guides/genes_per_cell_type.ipynb
+      title: Genes that change in each cell type
+    - file: guides/repeated_measures.ipynb
+      title: Repeated measures and donors
+    - file: guides/composition.ipynb
+      title: Cell-type composition
+    - file: guides/gene_sets.ipynb
+      title: Gene sets and pathways
+    - file: guides/pathway_activity.ipynb
+      title: Pathway and regulator activity
   - title: Other designs and data
     children:
     - file: guides/bulk_rna_seq.ipynb

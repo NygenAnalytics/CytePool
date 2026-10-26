@@ -41,7 +41,9 @@ cell type and contrast, so a call is judged within its cell type. With
 type for the same contrast, one family per contrast. In simulations, the adjustment over
 all cell types lowered both the false discovery rate and the power, and so was very
 conservative [@crowell2020]. The adjustment across cell types is not larger for every
-test: a family with more small p-values can lower an adjusted value.
+test: a family with more small p-values can lower an adjusted value, as [Genes that
+change in each cell type](../guides/genes_per_cell_type.ipynb#adjusting-within-or-across-cell-types)
+shows on published data.
 
 ## Other families
 

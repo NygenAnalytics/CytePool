@@ -8,7 +8,9 @@ Log counts are noisier at low counts than at high ones, and a linear model that 
 every observation alike gives the noisy ones too much say. voom estimates the
 mean-variance trend of the log counts and gives every observation a precision weight
 from it, so that the weighted linear model and the empirical Bayes moderation of limma
-apply to counts [@law2014].
+apply to counts [@law2014]. [Normalization, filtering and sample
+quality](../guides/normalization_and_quality.ipynb) shows voom's trend and sample
+quality weights on data.
 
 ## voom
 
