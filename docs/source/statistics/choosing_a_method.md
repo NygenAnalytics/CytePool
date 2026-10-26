@@ -68,6 +68,7 @@ edgeR's and DESeq2's methods run on one matrix at a time, not on every group of 
 | Do the genes of a pathway respond together? | {api}`camera`, {api}`fry`, {api}`roast`, {api}`mroast`, {api}`romer` | [Gene-set tests](gene_set_tests.md) |
 | Do the genes of a pathway gather at the top or the bottom of a ranking of all genes? | {api}`gsea`, with {api}`plot_enrichment` and {api}`plot_gsea_table` | [Gene-set tests](gene_set_tests.md) |
 | Are pathways over-represented among the genes that change? | {api}`over_representation`, with sets from {api}`read_gmt` | [Gene-set tests](gene_set_tests.md) |
+| How active is a pathway in each sample, and does that differ between conditions? | {api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores`, {api}`plage`, with {api}`plot_pathway_scores`; their scores in {api}`fit_linear_model` | [Gene-set tests](gene_set_tests.md) |
 | Does the share of a cell type change? | {api}`propeller` | [Composition tests](composition.md) |
 | Do studies agree, and what is their common effect? | {api}`differential_expression_meta_analysis`, {api}`meta_analysis` | [Meta-analysis](meta_analysis.md) |
 | How many of the calls are false? | {api}`adjust_p_values` | [Multiple testing](multiple_testing.md) |

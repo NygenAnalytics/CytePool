@@ -1,5 +1,5 @@
 ---
-description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; gene set enrichment analysis of ranked genes, as fgsea computes it; over-representation analysis of the genes called significant, as limma's kegga computes it; gene sets read from GMT files; and how to choose between the tests.
+description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; gene set enrichment analysis of ranked genes, as fgsea computes it; over-representation analysis of the genes called significant, as limma's kegga computes it; scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE, as the GSVA package computes them; gene sets read from GMT files; and how to choose between the tests.
 ---
 
 # Gene-set tests
@@ -188,6 +188,67 @@ The random sets come from seeds that `rng` draws, through the Mersenne Twister
 {api}`plot_gsea_table` the top sets with their genes on the ranking, as its
 `plotGseaTable` does.
 
+## Pathway scores per sample
+
+The tests above ask one question of a contrast. A pathway score instead turns the
+expression of a set's genes in each sample into one number, so that pathways can be
+compared across samples, drawn as a heatmap, correlated with other measurements, and
+tested with the same designs and contrasts as genes [@haenzelmann2013].
+{api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores` and {api}`plage` compute the four
+methods of the GSVA package, from a samples x genes matrix or a cell type of a cube,
+whose log-CPM after TMM normalization (or counts, for GSVA's Poisson kernel) they score
+over the genes that `filterByExpr` keeps. They return a {api}`PathwayScores`, samples x
+sets, with the samples' table and the genes each set used; {api}`PathwayScores.table`
+lists the scores one per row.
+
+**GSVA** first puts each gene on a common scale: the probability of a value at most as
+high under the gene's distribution across the $n$ samples, estimated by a kernel,
+
+$$
+F_{ij} = \frac{1}{n} \sum_{k=1}^{n} \Phi\!\left(\frac{x_{ij} - x_{ik}}{h_i}\right),
+$$
+
+with the bandwidth $h_i$ a quarter of the gene's standard deviation, for continuous
+values such as log-CPM, or the Poisson probability $P(Y \le x_{ij})$ with mean
+$x_{ik} + 1/2$ for counts. Each sample ranks its $p$ genes by $F_{ij}$, and each gene
+weighs $|p/2 - r_{ij}|$, so that the genes at both ends of the ranking weigh most. A walk
+down the ranking rises at the genes of a set and falls at the others, as in gene set
+enrichment analysis, and the score is the walk's largest deviation above zero minus its
+largest deviation below: high for a set whose genes are higher than usual in the sample,
+low for one whose genes are lower, and between $-1$ and $1$. GSVA estimates $\Phi$ from a
+table of its values at steps of 0.001, and {api}`gsva` does the same, so that genes are
+ranked as in GSVA.
+
+**ssGSEA** ranks the genes of each sample by their values and sums the same walk over
+all genes rather than taking its extreme, with the genes of the set weighted by their
+ranks to the power $\alpha = 1/4$ [@barbie2009]. By default every score is divided by the
+range of all the scores, over sets and samples, so that a score depends on the other
+sets and samples scored with it. **Combined z-scores** standardize each gene across
+samples and add the $k$ z-scores of a set, divided by $\sqrt{k}$ [@lee2008]. **PLAGE**
+takes the standardized values of a set's genes as a genes x samples matrix and scores
+the samples by its first right singular vector, the direction along which the genes vary
+most together [@tomfohr2005]; its sign is arbitrary, and CytePool chooses the one that
+makes the scores rise with the set's mean standardized expression.
+
+ssGSEA ranks the values themselves, so that a set of highly expressed genes scores high
+in every sample. GSVA first sets each gene against its own distribution across the
+samples, so that a set scores high where its genes are higher than usual, compared with
+the other genes of the sample. Combined z-scores and PLAGE also set each gene against
+itself across samples, but do not compare it with other genes. GSVA's guide notes that
+the scores of larger sets vary less; to test them, fit the design to the scores and let
+the prior variance follow the set sizes, as its guide does with limma-trend:
+`moderated_statistics(fit_linear_model(scores.scores, Design(scores.samples, "~
+condition")), trend=scores.n_genes)`. {api}`plot_pathway_scores` draws the scores as a
+heatmap, with the samples grouped by a variable.
+
+The scores agree with GSVA's to rounding, except where CytePool differs on purpose:
+PLAGE's sign, GSVA's walk in samples with missing values, and inputs on which GSVA
+stops with an error. A gene's rank is decided by comparing its kernel estimate with
+those of the other genes, and genes with equal estimates in exact arithmetic, such as
+genes with the same low counts in different samples, can be ordered by the last bit of
+R's probabilities: their ranks, and the scores of their sets, can then differ slightly
+from GSVA's.
+
 ## Choices
 
 - **Competitive or self-contained.** Rank a collection with camera; ask about one set
@@ -207,3 +268,8 @@ The random sets come from seeds that `rng` draws, through the Mersenne Twister
   uses the whole ranking rather than a cutoff; like over-representation analysis it
   takes genes as independent, which camera does not. Set `min_size` and `max_size`, as
   GSEA's 15 and 500, to leave out sets too small to rely on and too large to mean much.
+- **Scores or tests.** Pathway scores serve analyses beyond one contrast: heatmaps,
+  correlations and models with any design. For one contrast, camera, fry and GSEA test
+  the genes' own statistics, where scores first reduce each set to one number per
+  sample. GSVA and ssGSEA compare a set's genes with the other genes of each sample;
+  combined z-scores and PLAGE follow each set across samples.

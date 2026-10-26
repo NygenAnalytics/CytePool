@@ -56,6 +56,7 @@ from cytepool.io.zarr import open_array, write_array, write_group
 from cytepool.meta_analysis import differential_expression_meta_analysis
 from cytepool.normalization import cpm, filter_by_expression, log_cpm
 from cytepool.over_representation import over_representation
+from cytepool.pathway_scores import gsva
 from cytepool.stats import distributions, special
 from cytepool.stats.deseq2 import deseq2_dispersions, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
@@ -460,6 +461,13 @@ def _axes() -> Any:
 def _bulk_cube() -> Cube:
     """COUNTS as a bulk cube with the sample table, for the MDS of a cube."""
     return from_bulk(COUNTS, samples=SAMPLE_TABLE)
+
+
+@functools.cache
+def _pathway_scores() -> Any:
+    """GSVA scores of two sets in the four samples of COUNTS."""
+    genes = [f"g{j}" for j in range(COUNTS.shape[1])]
+    return gsva(log_cpm(COUNTS), {"set": genes[:3], "other": genes[3:]}, gene_ids=genes)
 
 
 @functools.cache
@@ -1530,6 +1538,76 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("group", "contrast"),
         objects=("statistics", "gene_sets"),
     ),
+    # Values, gene ids and sample ids of an array; a cube's options are refused with
+    # one.
+    **{
+        f"cytepool.pathway_scores.{name}": Entry(
+            lambda c, options=options: {
+                "data": c.expression if missing else log_cpm(COUNTS),
+                "gene_sets": {"set": ["g1", "g2", "g5"], "other": ["g0", "g3"]},
+                "gene_ids": [f"g{j}" for j in range(7)] + [None],
+                "sample_ids": ["S1", "S2", "S3", "S4"],
+                **options,
+            },
+            {
+                "data": missing,
+                "gene_sets": None,
+                "gene_ids": "None",
+                "sample_ids": None,
+            },
+            options=tuple(options),
+            keys={"gene_sets": "set"},
+        )
+        for name, options, missing in (
+            (
+                "gsva",
+                {
+                    "kernel": "gaussian",
+                    "min_samples_without_kernel": 200,
+                    "exponent": 1.0,
+                    "score_type": "difference",
+                    "min_size": 1,
+                    "max_size": 5,
+                    "n_threads": 1,
+                },
+                "NaN",
+            ),
+            (
+                "ssgsea",
+                {
+                    "exponent": 0.25,
+                    "normalize": True,
+                    "min_size": 1,
+                    "max_size": 5,
+                    "n_threads": 1,
+                },
+                "NaN",
+            ),
+            ("combined_z_scores", {"min_size": 1, "max_size": 5}, "NaN"),
+            ("plage", {"min_size": 1, "max_size": 5}, None),
+        )
+    },
+    # A cube's group, its genes named by a column of its features table.
+    **{
+        f"cytepool.pathway_scores.{name}[cube]": Entry(
+            lambda c: {
+                "data": _bulk_cube(),
+                "gene_sets": {
+                    "set": ["feature_1", "feature_2", "feature_5"],
+                    "other": ["feature_0", "feature_3"],
+                },
+                "gene_ids": "feature_id",
+                "group": "bulk",
+                "values": "counts",
+                "min_cells": 1,
+                "expression_filter": False,
+            },
+            {},
+            options=("gene_ids", "group", "values", "min_cells", "expression_filter"),
+            objects=("data", "gene_sets"),
+        )
+        for name in ("gsva", "ssgsea", "combined_z_scores", "plage")
+    },
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
         lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
@@ -1964,6 +2042,19 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("group", "contrast"),
         objects=("statistics", "gene_sets"),
     ),
+    # The sets shown and the samples' labels.
+    "cytepool.plotting.plot_pathway_scores": Entry(
+        lambda c: {
+            "scores": _pathway_scores(),
+            "sets": ["other", "set"],
+            "color_by": ["a", "b", "a", "b"],
+            "standardize": True,
+            "ax": _axes(),
+        },
+        {"sets": None, "color_by": None},
+        options=("standardize",),
+        objects=("scores", "ax"),
+    ),
     "cytepool.plotting.plot_dispersions": Entry(
         lambda c: {
             "dispersions": deseq2_dispersions(
@@ -2199,6 +2290,7 @@ RECORDS = {
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",
     "cytepool.stats.quasi_likelihood.UnitDevianceMoments",
     "cytepool.variance_partitioning.VarianceFractions",
+    "cytepool.pathway_scores.PathwayScores",
 }
 
 # Callables that modules with __all__ define but do not export.

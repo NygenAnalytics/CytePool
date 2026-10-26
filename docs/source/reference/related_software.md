@@ -26,12 +26,13 @@ current releases below.
 | [metafor](https://cran.r-project.org/package=metafor) | Meta-analysis [@viechtbauer2010] | GPL (>= 2) | CRAN 5.2-1 |
 | [lme4](https://cran.r-project.org/package=lme4) and [lmerTest](https://cran.r-project.org/package=lmerTest) | Linear mixed models; Satterthwaite's and Kenward-Roger's tests [@bates2015; @kuznetsova2017] | GPL (>= 2) | CRAN 2.1-0 and 3.2-1 |
 | [fgsea](https://bioconductor.org/packages/fgsea) | Fast preranked gene set enrichment analysis, with p-values by multilevel splitting [@korotkevich2021]; CytePool's `gsea` adapts its algorithms, as `THIRD_PARTY_NOTICES.md` records | MIT | Bioconductor 1.38.0 |
+| [GSVA](https://bioconductor.org/packages/GSVA) | Scores of gene sets in every sample: GSVA, ssGSEA, combined z-scores and PLAGE [@haenzelmann2013] | Artistic-2.0 (GPL (>= 2) up to version 2.0) | Bioconductor 2.6.14 |
 | [PyDESeq2](https://github.com/scverse/PyDESeq2) | A Python implementation of DESeq2 [@muzellec2023]; CytePool also adapts some of its constants, as `THIRD_PARTY_NOTICES.md` records | MIT | PyPI 0.5.4 |
 
-Because limma, edgeR, DESeq2, variancePartition, speckle, metafor, lme4 and lmerTest are
-under copyleft licences, CytePool is written from their papers and documentation and
-never from their source code, so that it can be distributed under the BSD 3-Clause
-license.
+Because limma, edgeR, DESeq2, variancePartition, speckle, metafor, lme4, lmerTest and
+GSVA are under copyleft licences, CytePool is written from their papers and
+documentation and never from their source code, so that it can be distributed under the
+BSD 3-Clause license.
 
 ## Read and written by CytePool
 
