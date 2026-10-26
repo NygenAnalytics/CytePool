@@ -206,10 +206,7 @@ from cytepool._options import (
 from cytepool.design.design import _refuse_random_effects
 from cytepool.normalization import _as_counts
 from cytepool.stats.distributions import f_sf
-from cytepool.stats.empirical_bayes import (
-    _LIKELIHOOD_MIN_DF,
-    squeeze_variances,
-)
+from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.linear_models import _contrast_matrix, _design_matrix
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.negative_binomial_models import (
@@ -224,6 +221,7 @@ from cytepool.stats.negative_binomial_models import (
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
+from cytepool.stats._moderation import LIKELIHOOD_MIN_DF
 from cytepool.stats._optimize import brent_minimum
 from cytepool.stats._scalar_special_functions import stirling_error
 
@@ -946,13 +944,13 @@ def _check_moderation(quasi: FloatArray, df: FloatArray) -> None:
     cannot be estimated from (``squeeze_variances`` moderates no more than two)."""
     if quasi.size <= 2:
         return
-    usable = np.isfinite(quasi) & (df >= _LIKELIHOOD_MIN_DF)
+    usable = np.isfinite(quasi) & (df >= LIKELIHOOD_MIN_DF)
     positive = int(np.count_nonzero(quasi[usable] > 0.0))
     if positive < 2:
         raise ValueError(
             "the quasi-dispersions cannot be moderated: limma's prior for unequal "
             "degrees of freedom needs at least two genes with a quasi-dispersion above "
-            f"zero on at least {_LIKELIHOOD_MIN_DF:g} adjusted residual degrees of "
+            f"zero on at least {LIKELIHOOD_MIN_DF:g} adjusted residual degrees of "
             f"freedom, and {positive} have one"
         )
 

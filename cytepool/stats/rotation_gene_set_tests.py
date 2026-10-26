@@ -192,11 +192,8 @@ from cytepool._options import checked_flag, positive_integer
 from cytepool._ranks import average_ranks_in_order
 from cytepool._summation import observed_means
 from cytepool.stats.distributions import t_sf
-from cytepool.stats.empirical_bayes import (
-    _coefficient_prior_variance,
-    _log_odds,
-    squeeze_variances,
-)
+from cytepool.stats._moderation import coefficient_prior_variance, log_odds
+from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.gene_set_tests import (
     _check_matched,
     _checked_gene_sets,
@@ -1189,7 +1186,7 @@ def _shrinkage(
         whitened = reparametrised * np.sqrt(weights)[:, np.newaxis]
     v = float(np.linalg.inv(whitened.T @ whitened)[-1, -1])
     unscaled = np.full((t.size, 1), math.sqrt(v))
-    v0 = _coefficient_prior_variance(
+    v0 = coefficient_prior_variance(
         t,
         unscaled[:, 0],
         df,
@@ -1197,7 +1194,7 @@ def _shrinkage(
         _COEFFICIENT_LIMITS,
         float(np.nanmedian(prior_variance)),
     )
-    lods = _log_odds(
+    lods = log_odds(
         t[:, np.newaxis], unscaled, df, np.isinf(df), np.array([v0]), proportion
     )[:, 0]
     with np.errstate(over="ignore"):

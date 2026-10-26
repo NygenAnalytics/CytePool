@@ -168,6 +168,7 @@ from cytepool._linear_algebra import RANK_TOLERANCE
 from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag
 from cytepool._ranks import average_ranks
+from cytepool.stats._moderation import posterior_variances
 from cytepool._summation import observed_means
 from cytepool.design.contrasts import _is_named_contrasts, _weights_on_columns
 from cytepool.design.design import Design, _refuse_random_effects
@@ -438,7 +439,7 @@ def fry(
             robust=with_robust,
         )
         scale = np.sqrt(
-            _posterior_variance(
+            posterior_variances(
                 trimmed / _trimmed_mean_square_expectation(d),
                 _TRIMMED_DF_FRACTION * d,
                 np.broadcast_to(squeezed.prior_variance, trimmed.shape),
@@ -930,16 +931,6 @@ def _trimmed_mean_square_expectation(d: int) -> float:
         integrand = -2.0 * z * np.expm1(k * np.log1p(-tail))
         total += _PANEL_WIDTH / 2.0 * float(np.dot(_WEIGHTS, integrand))
     return (k - total) / d
-
-
-def _posterior_variance(
-    variances: FloatArray, df: float, prior_variance: FloatArray, prior_df: FloatArray
-) -> FloatArray:
-    """(d0 s0^2 + df s^2) / (d0 + df), and s0^2 where the prior df d0 is infinite."""
-    with np.errstate(invalid="ignore"):
-        combined = (prior_df * prior_variance + df * variances) / (prior_df + df)
-    result: FloatArray = np.where(np.isinf(prior_df), prior_variance, combined)
-    return result
 
 
 def _mixed_p_value(standardized: FloatArray, d: int) -> float:

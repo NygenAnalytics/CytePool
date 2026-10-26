@@ -102,6 +102,12 @@ from cytepool._masked_arrays import unmasked_array
 from cytepool._messages import value_range
 from cytepool._options import checked_flag, real_number
 from cytepool._ranks import average_ranks
+from cytepool.stats._moderation import (
+    LIKELIHOOD_MIN_DF,
+    coefficient_prior_variance,
+    log_odds,
+    posterior_variances,
+)
 from cytepool.stats._optimize import brent_minimum
 from cytepool._summation import accurate_sum, two_sum
 from cytepool.stats.distributions import (
@@ -113,7 +119,6 @@ from cytepool.stats.distributions import (
     f_logsf_scalar,
     f_ppf_scalar,
     f_sf,
-    t_isf,
     t_sf,
 )
 from cytepool.stats.linear_models import LinearModelFit
@@ -170,9 +175,8 @@ _QUADRATURE_NODES, _QUADRATURE_WEIGHTS = np.polynomial.legendre.leggauss(128)
 _F_RANK_TOLERANCE = 1e-8
 _EPS = float(np.finfo(np.float64).eps)
 # The likelihood estimator (limma's fitFDistUnequalDF1), all found by probing limma
-# 3.62.1: variances on fewer degrees of freedom than this take no part in the fit;
-_LIKELIHOOD_MIN_DF = 0.01
-# variances at or below zero are raised to this fraction of the median of the
+# 3.62.1: variances on fewer degrees of freedom than LIKELIHOOD_MIN_DF take no part in
+# the fit; variances at or below zero are raised to this fraction of the median of the
 # positive usable variances;
 _LIKELIHOOD_FLOOR = 1e-12
 # d0 minimises minus twice the log-likelihood over v = d0 / (d0 + 2) in this interval
@@ -195,7 +199,7 @@ _OUTLIER_LEVEL = 0.3
 # What makes a variance unusable, for error messages.
 _MOMENT_UNUSABLE = "is NaN or has zero degrees of freedom"
 _LIKELIHOOD_UNUSABLE = (
-    f"is NaN, has fewer than {_LIKELIHOOD_MIN_DF} degrees of freedom or has a zero "
+    f"is NaN, has fewer than {LIKELIHOOD_MIN_DF} degrees of freedom or has a zero "
     "prior weight"
 )
 # Warnings are attributed to the first caller outside the package.
@@ -786,7 +790,7 @@ def moderated_statistics(
     median_prior = float(np.nanmedian(prior_variance))
     v0 = np.array(
         [
-            _coefficient_prior_variance(
+            coefficient_prior_variance(
                 t[:, j], fit.stdev_unscaled[:, j], df_total, p, limits, median_prior
             )
             for j in range(t.shape[1])
@@ -800,7 +804,7 @@ def moderated_statistics(
     if failed.any():
         with np.errstate(divide="ignore"):
             v0[failed] = np.reciprocal(prior_variance[0])
-    lods = _log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
+    lods = log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
     f_value, f_df1 = _f_statistics(t, fit, exact)
     f_df2 = prior_df + fit.df_residual
     f_p_value = _as_array(f_sf(f_value, float(f_df1), f_df2))
@@ -1366,7 +1370,7 @@ def _fit_likelihood(
     if positive < 2:
         raise ValueError(
             "the likelihood estimator needs at least two usable variances above zero "
-            f"(finite, on at least {_LIKELIHOOD_MIN_DF} degrees of freedom and with a "
+            f"(finite, on at least {LIKELIHOOD_MIN_DF} degrees of freedom and with a "
             f"positive prior weight), got {positive}; limma's fitFDistUnequalDF1 "
             "returns NA and squeezeVar stops here (found by probing). The method of "
             "moments (prior_estimator='moments') does not need two"
@@ -1390,7 +1394,7 @@ def _likelihood_usable(
 ) -> npt.NDArray[np.bool_]:
     """The variances that take part in a likelihood fit."""
     result: npt.NDArray[np.bool_] = (
-        np.isfinite(x) & (d >= _LIKELIHOOD_MIN_DF) & (prior_weights > 0.0)
+        np.isfinite(x) & (d >= LIKELIHOOD_MIN_DF) & (prior_weights > 0.0)
     )
     return result
 
@@ -1412,7 +1416,7 @@ def _likelihood_location_and_df2(
     # A missing variance counts as zero, so it is raised to the floor, and a df below
     # the minimum counts as 1 (found by probing); they enter only the trend.
     raised = np.where(np.isnan(x), floor, np.maximum(x, floor))
-    shape = 0.5 * np.where(d >= _LIKELIHOOD_MIN_DF, d, 1.0)
+    shape = 0.5 * np.where(d >= LIKELIHOOD_MIN_DF, d, 1.0)
     e = np.log(raised) + _log_minus_digamma(shape)
     precision = weights / _as_array(trigamma(shape))
     # With at most two usable variances above zero the location is a constant, and
@@ -1644,24 +1648,8 @@ def _squeeze(
         moments = _fit_moments(x, d, covariate, usable)
         prior_variance, prior_df = moments.scale, moments.df2
     return SqueezedVariances(
-        _posterior_variances(x, d, prior_variance, prior_df), prior_variance, prior_df
+        posterior_variances(x, d, prior_variance, prior_df), prior_variance, prior_df
     )
-
-
-def _posterior_variances(
-    x: FloatArray,
-    d: FloatArray,
-    prior_variance: float | FloatArray,
-    prior_df: float | FloatArray,
-) -> FloatArray:
-    s0 = np.broadcast_to(prior_variance, x.shape)
-    d0 = np.broadcast_to(prior_df, x.shape)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        weighted = np.where(d > 0.0, d * x, 0.0)
-        posterior = (weighted + np.where(np.isinf(d0), 0.0, d0 * s0)) / (d + d0)
-    # An infinite prior df, or zero residual df, leaves the prior variance.
-    result: FloatArray = np.where(np.isinf(d0) | (d == 0.0), s0, posterior)
-    return result
 
 
 def _moderate(
@@ -1693,68 +1681,6 @@ def _moderate(
     prior_df = np.broadcast_to(squeezed.prior_df, df.shape)
     df_total = np.minimum(df + prior_df, float(df.sum()))
     return squeezed, df_total, estimator
-
-
-def _coefficient_prior_variance(
-    t: FloatArray,
-    stdev_unscaled: FloatArray,
-    df: FloatArray,
-    proportion: float,
-    limits: tuple[float, float],
-    median_prior: float,
-) -> float:
-    """limma's var.prior for one coefficient (Smyth 2004, section 6.3)."""
-    finite = np.isfinite(t)
-    t, stdev_unscaled, df = t[finite], stdev_unscaled[finite], df[finite]
-    n = t.size
-    n_target = math.ceil(proportion / 2.0 * n)
-    if n_target < 1:
-        return math.nan
-    # The median prior variance is positive here: a finite t-statistic needs a
-    # positive posterior variance, which with at most two features, not moderated,
-    # is the feature's own prior variance.
-    bounds = np.square(np.asarray(limits, dtype=np.float64)) / median_prior
-    size = np.abs(t)
-    if df.min() < df.max():
-        # t-statistics on fewer df are mapped to the largest df by matching tail
-        # probabilities (found by probing).
-        df_common = float(df.max())
-        size = _as_array(t_isf(_as_array(t_sf(size, df)), df_common))
-        df = np.full(n, df_common)
-    share = max(n_target / n, proportion)
-    top = np.argsort(-size, kind="stable")[:n_target]
-    size, v1, df = size[top], stdev_unscaled[top] ** 2, df[top]
-    p0 = 2.0 * _as_array(t_sf(size, df))
-    target = ((np.arange(1, n_target + 1) - 0.5) / n - (1.0 - share) * p0) / share
-    v0 = np.zeros(n_target)
-    above = target > p0
-    if above.any():
-        quantile = _as_array(t_isf(target[above] / 2.0, df[above]))
-        v0[above] = v1[above] * ((size[above] / quantile) ** 2 - 1.0)
-    v0 = np.clip(v0, bounds[0], bounds[1])
-    return float(np.mean(v0))
-
-
-def _log_odds(
-    t: FloatArray,
-    stdev_unscaled: FloatArray,
-    df_total: FloatArray,
-    infinite_prior: npt.NDArray[np.bool_],
-    v0: FloatArray,
-    proportion: float,
-) -> FloatArray:
-    with np.errstate(divide="ignore", invalid="ignore"):
-        v = stdev_unscaled**2
-        r = v / (v + v0)
-        t2 = t * t
-        df = df_total[:, np.newaxis]
-        finite = (1.0 + df) / 2.0 * np.log1p(t2 * (1.0 - r) / (t2 * r + df))
-        limit = t2 * (1.0 - r) / 2.0
-        log_ratio = np.where(infinite_prior[:, np.newaxis], limit, finite)
-        lods: FloatArray = (
-            math.log(proportion / (1.0 - proportion)) + 0.5 * np.log(r) + log_ratio
-        )
-    return lods
 
 
 def _f_statistics(
