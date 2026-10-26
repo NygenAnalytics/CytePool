@@ -430,7 +430,7 @@ def test_prose_can_change_without_executing_again() -> None:
     assert build_docs.code_fingerprint(notebook) != fingerprint
 
 
-def test_output_checks_ignore_only_the_version_of_cytepool_that_ran_a_page(
+def test_output_checks_ignore_the_versions_of_cytepool_a_page_prints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The runner imports nbclient, a documentation dependency.
@@ -452,8 +452,20 @@ def test_output_checks_ignore_only_the_version_of_cytepool_that_ran_a_page(
     changed = [fresh[0], "t = 4.3\n"]
     reported = runner.differences(saved, changed, "0.1.dev24+gabc", "0.1.dev31+gdef")
     assert [line.split(":")[0] for line in reported] == ["code cell 2"]
-    # Without a recorded version, a different version is a difference.
-    assert len(runner.differences(saved, fresh, None, "0.1.dev31+gdef")) == 1
+    # A version named after "CytePool " is left out, whichever version ran the page:
+    # a dataset prepared earlier was built by another one.
+    built_earlier = ["Built by from_cells (CytePool 0.1.dev18+g123) from 9 cells\n"]
+    now = ["Built by from_cells (CytePool 0.1.dev31+gdef) from 9 cells\n"]
+    assert (
+        runner.differences(built_earlier, now, "0.1.dev24+gabc", "0.1.dev31+gdef") == []
+    )
+    assert runner.differences(built_earlier, now, None, "0.1.dev31+gdef") == []
+    # A version printed on its own is compared, replaced only by the recorded one.
+    alone, alone_now = ["0.1.dev24+gabc\n"], ["0.1.dev31+gdef\n"]
+    assert (
+        runner.differences(alone, alone_now, "0.1.dev24+gabc", "0.1.dev31+gdef") == []
+    )
+    assert len(runner.differences(alone, alone_now, None, "0.1.dev31+gdef")) == 1
 
 
 def test_every_public_module_is_in_the_api_reference() -> None:
@@ -901,7 +913,7 @@ def test_every_page_has_a_kind_and_the_lists_of_kinds_name_pages() -> None:
     assert kinds["statistics/choosing_a_method.md"] == page_index.EXPLANATION
     assert kinds["reference/cube_files.md"] == page_index.EXPLANATION
     assert kinds["reference/capabilities.md"] == page_index.INDEX
-    assert kinds["differential_expression.ipynb"] == page_index.GUIDE
+    assert kinds["quickstart.ipynb"] == page_index.GUIDE
 
 
 @pytest.mark.parametrize(
@@ -909,13 +921,13 @@ def test_every_page_has_a_kind_and_the_lists_of_kinds_name_pages() -> None:
     [
         ("index.md", "/"),
         ("installation.md", "/installation"),
-        ("differential_expression.ipynb", "/differential-expression"),
+        ("why_pseudobulk.ipynb", "/why-pseudobulk"),
         ("statistics/empirical_bayes.md", "/statistics/empirical-bayes"),
         ("guides/Bulk_RNA.seq.ipynb", "/guides/bulk-rna-seq"),
     ],
 )
 def test_page_urls_follow_the_rule_of_myst(file: str, url: str) -> None:
-    # MyST 1.8.1 serves differential_expression.ipynb at /differential-expression and,
+    # MyST 1.8.1 serves why_pseudobulk.ipynb at /why-pseudobulk and,
     # with folders, stats/a_page.md at /stats/a-page; build_docs.py checks every page
     # against the built site's myst.xref.json.
     assert page_index.page_url(file) == url
@@ -1120,17 +1132,19 @@ def test_api_entries_link_back_to_the_pages_that_use_and_explain_them() -> None:
         for page in links.explained_in["cytepool.differential_expression.limma_voom"]
     }
 
-    assert "differential_expression.ipynb" in used  # its code imports it
+    assert "quickstart.ipynb" in used  # its code imports it
     assert "guides/bulk_rna_seq.ipynb" in used
     assert "statistics/choosing_a_method.md" in explained
     # Index pages link to many names and give no links back.
     index = {page.file for page in page_index.pages() if page.kind == page_index.INDEX}
     for pages in (*links.used_in.values(), *links.explained_in.values()):
         assert not index & {page.file for page in pages}
-    lines = page_index.backlink_lines("cytepool.stats.voom.voom", links)
+    lines = page_index.backlink_lines(
+        "cytepool.differential_expression.limma_voom", links
+    )
     assert lines[0] == ""
     assert lines[1].startswith("**Used in:** `Quick start <../quickstart/>`__")
-    assert "`Precision weights <../statistics/precision-weights/>`__" in lines[3]
+    assert "`Choosing a method <../statistics/choosing-a-method/>`__" in lines[3]
     assert page_index.backlink_lines("cytepool.stats.special.lgamma", links) == []
 
 

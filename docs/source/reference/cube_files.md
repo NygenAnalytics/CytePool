@@ -8,7 +8,8 @@ A cube file stores a cube so that any Zarr v3 reader can open it, and so that a 
 can tell whether it holds what was written. Its fingerprint names the cube's values, and
 its provenance record says how the cube was made. This page describes all three, for
 programs that read or write cubes; [Export a cube from another
-tool](../guides/export_cubes.ipynb) shows the steps in code.
+tool](../guides/export_cubes.ipynb) shows the steps in code, and [Save, share and trace
+cubes](../guides/save_and_trace_cubes.ipynb) what a reader can check with them.
 
 ## The file
 

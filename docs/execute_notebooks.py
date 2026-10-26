@@ -17,8 +17,11 @@ With ``--check``, notebooks run the same way but are not saved: the command fail
 the text they print differs from the saved outputs, as it does when a change to the
 package changed their results. Figures and standard error are not compared, and
 neither is CytePool's own version, which changes with every commit of a development
-version and which a page can print, for example in a cube's history: the saved text is
-compared with the version that ran it replaced by the version running now.
+version and which a page can print: the saved text is compared with the version that
+ran it replaced by the version running now, and a version written after "CytePool ",
+as a cube's history writes the version that built it, is left out of both. A dataset
+prepared before the page ran was built by another version, and on CI every dataset is
+built again by the version being checked.
 
 Usage, from the repository root::
 
@@ -31,6 +34,7 @@ Pages are named relative to ``docs/source``, with or without ``.ipynb``.
 
 import argparse
 import copy
+import re
 import tempfile
 import time
 from datetime import UTC, datetime
@@ -155,18 +159,30 @@ def printed_text(notebook: nbformat.NotebookNode) -> list[str]:
     return texts
 
 
+# A version of CytePool where printed text names it, as in "CytePool 0.1.dev42+g6991e63f8".
+_NAMED_VERSION = re.compile(
+    r"(?<=CytePool )\d+(?:\.\d+)*(?:(?:a|b|rc|\.dev|\.post)\d+)*(?:\+[0-9A-Za-z.]+)?"
+)
+
+
 def differences(
     saved: list[str], fresh: list[str], saved_version: str | None, version: str
 ) -> list[str]:
     """The code cells whose printed text differs, other than in CytePool's version.
 
     ``saved_version`` is the version that ran the saved notebook (None if it was
-    not recorded) and ``version`` the one that ran it again.
+    not recorded) and ``version`` the one that ran it again. A version written after
+    "CytePool " is left out of both texts.
     """
+
+    def compared(text: str) -> str:
+        return _NAMED_VERSION.sub("<version>", text)
+
     return [
         f"code cell {number}: saved {old!r}, now {new!r}"
         for number, (old, new) in enumerate(zip(saved, fresh, strict=True), start=1)
-        if (old.replace(saved_version, version) if saved_version else old) != new
+        if compared(old.replace(saved_version, version) if saved_version else old)
+        != compared(new)
     ]
 
 
