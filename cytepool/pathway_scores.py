@@ -182,6 +182,12 @@ import numpy as np
 import numpy.typing as npt
 from numba import prange
 
+from ._analysis_records import (
+    keep_provenance,
+    provenance_of,
+    provenance_text,
+    restore_provenance,
+)
 from ._columns import text_column
 from ._expression_values import MIN_CELLS, ExpressionValues, expression_values
 from ._jit import by_chunks, jit, thread_limit
@@ -244,6 +250,31 @@ class PathwayScores:
     method: str
     settings: Mapping[str, Any]
 
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        # The settings are a read-only view, which pickle cannot write: a dict
+        # travels in their place, and the provenance kept outside the fields with it.
+        return (
+            _restored_scores,
+            (
+                self.scores,
+                self.samples,
+                self.gene_sets,
+                self.method,
+                dict(self.settings),
+                provenance_text(self),
+            ),
+        )
+
+    @property
+    def provenance(self) -> dict[str, Any] | None:
+        """A JSON-serialisable record of what produced the scores of a cube's group,
+        as a new dict: the method, the CytePool, numpy, numba and Python versions,
+        the cube's fingerprint, the digests it is built from and its provenance
+        (``"cube"``), the layer read and the settings; None for scores of values
+        given as an array. The cube's record costs what it costs for
+        :func:`~cytepool.differential_expression.limma_voom` ("Provenance")."""
+        return provenance_of(self)
+
     @property
     def n_genes(self) -> IntArray:
         """The number of genes of each set that were used, in the order of
@@ -279,6 +310,25 @@ class PathwayScores:
         )
 
 
+def _restored_scores(
+    scores: FloatArray,
+    samples: Table,
+    gene_sets: GeneSets,
+    method: str,
+    settings: dict[str, Any],
+    provenance: str | None,
+) -> PathwayScores:
+    """Pathway scores unpickled: read-only again, with their provenance."""
+    restored = PathwayScores(
+        read_only(np.asarray(scores)),
+        samples,
+        gene_sets,
+        method,
+        MappingProxyType(settings),
+    )
+    return restore_provenance(restored, provenance)
+
+
 def gsva(
     data: Any,
     gene_sets: Mapping[str, Any],
@@ -288,7 +338,7 @@ def gsva(
     group: str | None = None,
     values: str = "log_cpm",
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     kernel: str = "auto",
     min_samples_without_kernel: int = 200,
     exponent: float = 1.0,
@@ -327,7 +377,11 @@ def gsva(
             scored, at least 0, as for
             :func:`~cytepool.differential_expression.limma_voom`.
         expression_filter: For a cube, whether to score only the genes that
-            :func:`~cytepool.normalization.filter_by_expression` keeps.
+            :func:`~cytepool.normalization.filter_by_expression` keeps, with the
+            samples as one group; or a mapping of its settings, which may name a
+            column of the cube's samples whose values group them, such as
+            ``{"sample_groups": "condition"}``, as
+            :func:`~cytepool.differential_expression.limma_voom` takes it.
         kernel: How each gene's distribution is estimated (GSVA's ``kcdf``):
             ``"gaussian"`` for continuous values, ``"poisson"`` for counts (whole
             numbers of at least 0), ``"none"`` for the empirical distribution
@@ -423,7 +477,7 @@ def ssgsea(
     group: str | None = None,
     values: str = "log_cpm",
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     exponent: float = 0.25,
     normalize: bool = True,
     min_size: int = 1,
@@ -517,7 +571,7 @@ def combined_z_scores(
     group: str | None = None,
     values: str = "log_cpm",
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     min_size: int = 1,
     max_size: int | None = None,
 ) -> PathwayScores:
@@ -592,7 +646,7 @@ def plage(
     group: str | None = None,
     values: str = "log_cpm",
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     min_size: int = 1,
     max_size: int | None = None,
 ) -> PathwayScores:
@@ -787,13 +841,16 @@ def _result(
         file=collection.file,
         sha256=collection.sha256,
     )
-    return PathwayScores(
+    result = PathwayScores(
         read_only(np.ascontiguousarray(scores, dtype=np.float64)),
         expression.samples,
         used,
         method,
         MappingProxyType(dict(settings)),
     )
+    if expression.cube is not None:
+        keep_provenance(result, method, expression.cube, settings)
+    return result
 
 
 # GSVA: the kernel estimates, their ranks and the walks.

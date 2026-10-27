@@ -19,7 +19,9 @@ off by default, add sample quality weights, prior weights from the number of cel
 minimum total count per sample, and p-values adjusted across groups. The result holds
 a table per group and contrast, a summary of every group, the samples used and left
 out with the weights of each fit, and a record that traces every number to the
-profiles of the cube that produced it.
+profiles of the cube that produced it. It keeps the cube and design it analysed, and
+{meth}`~cytepool.differential_expression.DifferentialExpressionResult.fit` computes a
+group's fit again, with the values, weights and moderated tests behind its tables.
 
 ```{eval-rst}
 .. automodule:: cytepool.differential_expression

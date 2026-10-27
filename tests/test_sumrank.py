@@ -7,6 +7,7 @@ permutations. Other values are worked out by hand below, or are closed forms and
 invariants that a wrong ranking, sum or count would break.
 """
 
+import io
 import math
 import pickle
 from functools import cache
@@ -33,6 +34,7 @@ from cytepool.sumrank import (
     differential_expression_sumrank,
     sumrank,
 )
+from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "sumrank"
 CONTRAST = "case_vs_ctrl"
@@ -387,7 +389,10 @@ def studies() -> tuple[CubeCollection, dict[str, DifferentialExpressionResult]]:
 
 def test_studies_of_a_collection_are_ranked_as_sumrank_ranks_their_results() -> None:
     collection, results = studies()
-    with pytest.warns(RuntimeWarning, match="best 2 of 3 studies' ranks are too small"):
+    # The warning's lines are at most 80 characters.
+    with pytest.warns(
+        RuntimeWarning, match=r"best 2 of 3 studies' ranks are too\ssmall"
+    ):
         result = differential_expression_sumrank(
             collection, results, "T", CONTRAST, proportion_of_studies=0.7
         )
@@ -524,8 +529,9 @@ def test_the_result_records_its_studies_and_is_immutable() -> None:
     copy = pickle.loads(pickle.dumps(result))
     assert copy.table.equals(result.table) and copy.provenance == record
     text = repr(result)
-    assert "3 studies, the best 3 summed" in text
+    assert "3 studies, the best 3 summed" in " ".join(text.split())
     assert "2 permutations of 'condition'" in text
+    assert max(map(len, text.splitlines())) <= 80
 
 
 def test_permutations_need_a_variable_of_each_design() -> None:
@@ -667,6 +673,136 @@ def test_the_figure_shows_the_p_values_in_alphabetical_order() -> None:
         plot_sumrank(result, direction="both")
     with pytest.raises(TypeError, match="SumRankResult"):
         plot_sumrank(table)  # type: ignore[arg-type]
+
+
+def tied_result() -> SumRankResult:
+    """200 genes, of which 30 next to each other in alphabetical order share the
+    smallest p-value of 100 permutations, with statistics in a shuffled order."""
+    n = 200
+    rng = np.random.default_rng(3)
+    p = rng.uniform(0.05, 1.0, n)
+    tied = np.arange(50, 80)
+    p[tied] = 1.0 / 101.0
+    statistic = rng.permutation(n).astype(np.float64)
+    adjusted = np.where(np.isin(np.arange(n), tied), 0.01, 0.9)
+    table = Table(
+        {
+            "feature_id": [f"g{j:03d}" for j in range(n)],
+            "symbol": [f"GENE{j:03d}" for j in range(n)],
+            "up_statistic": statistic,
+            "up_p_value": p,
+            "up_adjusted_p_value": adjusted,
+            "down_statistic": statistic,
+            "down_p_value": p,
+            "down_adjusted_p_value": adjusted,
+        }
+    )
+    settings = {
+        "group": "T",
+        "contrast": CONTRAST,
+        "n_studies": 3,
+        "n_studies_summed": 3,
+        "p_values": "permutation",
+        "n_permutations": 100,
+        "permute": "condition",
+    }
+    return SumRankResult(
+        table, Table({"study": ["a", "b", "c"]}), {"settings": settings}
+    )
+
+
+def test_tied_p_values_are_labelled_by_statistic_and_the_labels_kept_apart() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from matplotlib.text import Text
+
+    from cytepool.plotting import plot_sumrank
+
+    result = tied_result()
+    figure = Figure()
+    FigureCanvasAgg(figure)
+    ax = plot_sumrank(result, n_labels=10, ax=figure.subplots())
+    labels = [text for text in ax.texts if text.get_gid() == "labels"]
+    # Of the 30 genes tied at the smallest p-value, the 10 with the smallest
+    # statistics, the best ranks.
+    statistic = result.table["up_statistic"]
+    tied = np.arange(50, 80)
+    best = tied[np.argsort(statistic[tied], kind="stable")[:10]]
+    assert sorted(text.get_text() for text in labels) == sorted(
+        f"GENE{j:03d}" for j in best
+    )
+    figure.canvas.draw()
+    renderer = figure.canvas.get_renderer()
+    # The extent of each name, without the line that joins a moved name to its gene.
+    boxes = [Text.get_window_extent(text, renderer) for text in labels]
+    for i, first in enumerate(boxes):
+        for second in boxes[i + 1 :]:
+            assert not first.overlaps(second)
+    # Labels moved above others point at their genes; all are inside the frame.
+    frame = ax.get_window_extent()
+    assert all(box.y1 <= frame.y1 for box in boxes)
+    moved = [text for text in labels if text.xyann[1] > labels[0].xyann[1]]
+    assert moved and all(text.arrow_patch is not None for text in moved)
+    assert labels[0].arrow_patch is None
+
+
+def test_labels_and_legends_stay_inside_two_panels_after_the_final_draw() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from matplotlib.text import Text
+
+    from cytepool.plotting import plot_sumrank
+
+    # The genes with the smallest p-values are the first and last in alphabetical
+    # order, where a label centred on its gene would cross the frame.
+    n = 400
+    rng = np.random.default_rng(4)
+    p = rng.uniform(0.2, 1.0, n)
+    ends = np.array([0, 1, n - 2, n - 1])
+    p[ends] = [1e-9, 2e-9, 3e-9, 4e-9]
+    adjusted = np.where(np.isin(np.arange(n), ends), 1e-6, 0.9)
+    table = Table(
+        {
+            "feature_id": [f"gene_with_a_long_name_{j:04d}" for j in range(n)],
+            "up_statistic": np.arange(n, dtype=np.float64),
+            "up_p_value": p,
+            "up_adjusted_p_value": adjusted,
+            "down_statistic": np.arange(n, dtype=np.float64),
+            "down_p_value": p,
+            "down_adjusted_p_value": adjusted,
+        }
+    )
+    settings = {
+        "group": "T",
+        "contrast": CONTRAST,
+        "n_studies": 3,
+        "n_studies_summed": 3,
+        "p_values": "irwin_hall",
+    }
+    result = SumRankResult(
+        table, Table({"study": ["a", "b", "c"]}), {"settings": settings}
+    )
+    # As the replication guide draws genes up and down: two panels, constrained.
+    figure = Figure(figsize=(8, 6.5), layout="constrained")
+    FigureCanvasAgg(figure)
+    upper, lower = figure.subplots(2, 1)
+    plot_sumrank(result, n_labels=4, ax=upper)
+    plot_sumrank(result, direction="down", n_labels=4, ax=lower)
+    figure.savefig(io.BytesIO(), format="png")
+    renderer = figure.canvas.get_renderer()
+    for ax in (upper, lower):
+        frame = ax.get_window_extent()
+        labels = [text for text in ax.texts if text.get_gid() == "labels"]
+        assert len(labels) == 4
+        for text in labels:
+            box = Text.get_window_extent(text, renderer)  # the name, without its line
+            assert frame.x0 <= box.x0 and box.x1 <= frame.x1, text.get_text()
+            assert box.y1 <= frame.y1, text.get_text()
+        # The legend lies beside the plot, clear of the labels along its top.
+        legend = ax.get_legend().get_window_extent(renderer)
+        assert legend.x0 >= frame.x1
 
 
 def test_a_result_is_built_from_tables_and_a_record() -> None:

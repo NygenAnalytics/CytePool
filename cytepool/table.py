@@ -31,7 +31,7 @@ from typing import Any
 
 import numpy as np
 
-from ._columns import is_data_frame, values_equal
+from ._columns import is_data_frame, missing_mask, values_equal
 from ._masked_arrays import reject_masked, unmasked_array
 
 _REPR_ROWS = 5  # rows shown at each end of a long table
@@ -179,31 +179,79 @@ class Table:
             n_rows=positions.size,
         )
 
-    def filter(self, mask: Any) -> "Table":
-        """Return the rows where ``mask`` is true.
+    def filter(self, mask: Any = None, /, **values: Any) -> "Table":
+        """Return the rows where ``mask`` is true and each named column has its value.
+
+        ``table.filter(group_id="B cells", used=True)`` keeps the rows of one group's
+        samples that were used. A missing value (None in text, NaN in numbers) keeps
+        the rows where the column is missing.
 
         Args:
-            mask: A boolean array with one value per row.
+            mask: A boolean array with one value per row; None keeps every row.
+            **values: Column name to one value: a string for a text column, a number
+                for a numeric column, True or False for a boolean column, or a
+                ``numpy.datetime64`` or ``numpy.timedelta64``. A column whose name is
+                not a valid Python identifier can be filtered with a mask, as
+                ``table.filter(table["my column"] == value)``.
 
         Raises:
-            TypeError: If ``mask`` is not boolean, or is a numpy masked array.
+            TypeError: If ``mask`` is not boolean or is a numpy masked array, or a
+                value is not a single value of its column's kind.
             ValueError: If ``mask`` does not have one value per row.
+            KeyError: If a column named is not in the table.
         """
-        keep = unmasked_array(mask, "mask")
-        if keep.dtype != np.bool_:
-            raise TypeError(
-                f"filter() needs a boolean mask, got dtype {keep.dtype}; use take() for "
-                "positions"
-            )
-        if keep.shape != (self._n_rows,):
-            raise ValueError(
-                f"mask must have one value per row ({self._n_rows}), got shape "
-                f"{keep.shape}"
-            )
+        if "mask" in values and "mask" not in self._columns and mask is None:
+            mask = values.pop("mask")  # the keyword of calls written before **values
+        keep = np.ones(self._n_rows, dtype=bool)
+        if mask is not None:
+            keep = unmasked_array(mask, "mask")
+            if keep.dtype != np.bool_:
+                raise TypeError(
+                    f"filter() needs a boolean mask, got dtype {keep.dtype}; use take() "
+                    "for positions"
+                )
+            if keep.shape != (self._n_rows,):
+                raise ValueError(
+                    f"mask must have one value per row ({self._n_rows}), got shape "
+                    f"{keep.shape}"
+                )
+        for name, value in values.items():
+            keep = keep & _equal_to(name, self[name], value)
         return self._with_new_arrays(
             {name: column[keep] for name, column in self._columns.items()},
             n_rows=int(np.count_nonzero(keep)),
         )
+
+    def sort(self, by: str, *, descending: bool = False) -> "Table":
+        """Return the rows ordered by the values of one column.
+
+        The order is stable: rows with equal values keep their order. Missing values
+        (None, NaN, NaT) come last, in their order, whichever the direction.
+
+        Args:
+            by: A column name.
+            descending: Whether the largest value comes first.
+
+        Raises:
+            KeyError: If there is no such column.
+            TypeError: If ``by`` is not a string or ``descending`` not True or False.
+        """
+        column = self[by]
+        if not isinstance(descending, bool | np.bool_):
+            raise TypeError(
+                f"descending must be True or False, got {type(descending).__name__}"
+            )
+        missing = missing_mask(column)
+        present = np.flatnonzero(~missing)
+        values = column[present]
+        if descending:
+            # Sorting the values in reverse gives equal values in reverse order;
+            # reading that order backwards restores theirs.
+            reverse = np.argsort(values[::-1], kind="stable")
+            order = (values.size - 1 - reverse)[::-1]
+        else:
+            order = np.argsort(values, kind="stable")
+        return self.take(np.concatenate([present[order], np.flatnonzero(missing)]))
 
     def select(self, names: Any) -> "Table":
         """Return a table with the given columns, in the given order.
@@ -550,6 +598,46 @@ def _columns_from_data_frame(frame: Any) -> dict[str, np.ndarray]:
         missing = series.isna().to_numpy() if values.dtype == object else None
         columns[name] = _as_column(name, values, missing)
     return columns
+
+
+def _equal_to(name: str, column: np.ndarray, value: Any) -> np.ndarray:
+    """Where a column equals one value; a missing value equals a missing one."""
+    reject_masked(value, name)
+    kind = column.dtype.kind
+    if value is None or (isinstance(value, float | np.floating) and math.isnan(value)):
+        if kind == "O" or (kind in "fc" and value is not None):
+            return missing_mask(column)
+        if kind in "iu" and value is not None:
+            return np.zeros(column.shape, dtype=bool)  # integers are never missing
+    elif kind == "O" and isinstance(value, str):
+        return np.asarray(column == value, dtype=bool)
+    elif kind == "b" and isinstance(value, bool | np.bool_):
+        return np.asarray(column == bool(value), dtype=bool)
+    elif (
+        kind in "iufc"
+        and isinstance(value, numbers.Number)
+        and not isinstance(value, bool | np.bool_)
+    ):
+        return np.asarray(column == value, dtype=bool)
+    elif kind in "mM" and isinstance(value, np.datetime64 | np.timedelta64):
+        if np.isnat(value):
+            return missing_mask(column)
+        try:
+            return np.asarray(column == value, dtype=bool)
+        except TypeError:
+            pass  # a datetime compared with a timedelta, refused below
+    kinds = {
+        "O": "text, a string",
+        "b": "booleans, True or False",
+        "M": "datetimes, a numpy.datetime64",
+        "m": "timedeltas, a numpy.timedelta64",
+    }
+    expected = kinds.get(kind, "numbers, a number")
+    raise TypeError(
+        f"filter() compares the column {name!r} with one value; the column holds "
+        f"{expected}, got {type(value).__name__} {value!r}. For several values, give "
+        f"a mask such as numpy.isin(table[{name!r}], values)"
+    )
 
 
 def _repeated(names: list[Any]) -> list[Any]:

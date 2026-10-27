@@ -20,6 +20,7 @@ Errors are checked for their messages, and drawing changes no setting of matplot
 """
 
 import ast
+import io
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
@@ -33,7 +34,7 @@ from cytepool import plotting
 from cytepool.composition import propeller
 from cytepool.cube import Cube, from_bulk
 from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
+from cytepool.differential_expression import DifferentialExpressionResult, limma_voom
 from cytepool.meta_analysis import differential_expression_meta_analysis
 from cytepool.normalization import log_cpm
 from cytepool.stats.deseq2 import deseq2_wald_test, fit_deseq2
@@ -110,6 +111,10 @@ def design() -> Design:
 @cache
 def counts() -> np.ndarray:
     return fixture("limma")["counts"]
+
+
+def counts_fixture() -> np.ndarray:
+    return counts()
 
 
 @cache
@@ -464,6 +469,143 @@ def test_mds_colours_and_markers_follow_the_sample_variables() -> None:
         assert np.min(np.hypot(*(drawn - position).T)) == 0.0
 
 
+def legend_place(ax: Any) -> str:
+    """Where the legend is drawn: "inside" the plot, "right" of it, or "across"."""
+    backend = pytest.importorskip("matplotlib.backends.backend_agg")
+    backend.FigureCanvasAgg(ax.figure).draw()
+    frame = ax.get_window_extent()
+    box = ax.get_legend().get_window_extent()
+    if frame.x0 <= box.x0 and box.x1 <= frame.x1 and frame.y0 <= box.y0:
+        return "inside" if box.y1 <= frame.y1 else "across"
+    return "right" if box.x0 >= frame.x1 else "across"
+
+
+def covered(ax: Any) -> list[str]:
+    """What a legend inside a plot covers: the points, line vertices and labels of
+    the plot that lie within it, once the figure is drawn."""
+    backend = pytest.importorskip("matplotlib.backends.backend_agg")
+    canvas = backend.FigureCanvasAgg(ax.figure)
+    canvas.draw()
+    box = ax.get_legend().get_window_extent()
+    found = []
+    for collection in ax.collections:
+        xy = collection.get_offset_transform().transform(collection.get_offsets())
+        if any(box.contains(x, y) for x, y in xy):
+            found.append(f"a point of {collection.get_gid()}")
+    for line in ax.lines:
+        xy = line.get_transform().transform(line.get_xydata())
+        if any(box.contains(x, y) for x, y in xy):
+            found.append(f"the line {line.get_gid()}")
+    renderer = canvas.get_renderer()
+    for text in ax.texts:
+        if text.get_text() and text.get_window_extent(renderer).overlaps(box):
+            found.append(f"the label {text.get_text()}")
+    return found
+
+
+def test_a_legend_inside_a_plot_covers_nothing_and_a_long_one_goes_beside() -> None:
+    cube = Cube(
+        {"counts": counts()[np.newaxis].astype(np.uint32)},
+        samples={**SAMPLES, "donor": ["D1", "D2", "D3", "D4"] * 2},
+        groups={"group_id": ["bulk"]},
+        features={"feature_id": GENES},
+    )
+    values = log_cpm(counts())
+    scatter = {
+        "md": plotting.plot_md(table(), ax=axes()),
+        "volcano": plotting.plot_volcano(table(), ax=axes()),
+        "mean-variance": plotting.plot_mean_variance(
+            voom(counts(), design()), ax=axes()
+        ),
+        "residual variances": plotting.plot_residual_variances(
+            moderated_statistics(fit_linear_model(values, design())), ax=axes()
+        ),
+        "dispersions": plotting.plot_dispersions(
+            fit_deseq2(counts(), design()).dispersion_estimates, ax=axes()
+        ),
+        "quasi-dispersions": plotting.plot_quasi_dispersions(
+            fit_quasi_likelihood(counts(), design()), ax=axes()
+        ),
+        "mds": plotting.plot_mds(cube, color_by="condition", ax=axes()),
+        "pca": plotting.plot_pca(cube, color_by="condition", labels=True, ax=axes()),
+    }
+    for name, ax in scatter.items():
+        place = legend_place(ax)
+        # A legend of a few entries goes inside where it covers nothing, else beside.
+        assert place in ("inside", "right"), name
+        if place == "inside":
+            assert covered(ax) == [], name
+    assert legend_place(scatter["md"]) == "inside"
+    # Condition and donor make a legend of 7 entries, too long to sit inside.
+    styled = plotting.plot_mds(cube, color_by="condition", marker_by="donor", ax=axes())
+    assert legend_place(styled) == "right"
+    result = limma_voom(bulk_cube(np.full((8, 1), 50)), design())
+    bars = plotting.plot_significant_genes(result, ax=axes())
+    assert legend_place(bars) == "right"
+
+
+def test_a_legend_goes_inside_only_where_a_place_covers_nothing() -> None:
+    handles = [plotting._key("one", color="C0"), plotting._key("two", color="C1")]
+    # Points over the whole plot: every place inside would cover some.
+    ax = axes()
+    a, b = np.meshgrid(np.linspace(0.0, 1.0, 30), np.linspace(0.0, 1.0, 30))
+    ax.scatter(a.ravel(), b.ravel(), s=8)
+    plotting._legend(ax, handles, inside=True)
+    assert legend_place(ax) == "right"
+    # The same points but for the upper left corner, where the legend goes.
+    ax = axes()
+    keep = (a.ravel() > 0.45) | (b.ravel() < 0.55)
+    ax.scatter(a.ravel()[keep], b.ravel()[keep], s=8)
+    plotting._legend(ax, handles, inside=True)
+    assert legend_place(ax) == "inside" and covered(ax) == []
+    # A label in that corner, or a line across it, takes it away again.
+    ax = axes()
+    ax.scatter(a.ravel()[keep], b.ravel()[keep], s=8)
+    ax.text(0.02, 0.95, "a label in the corner")
+    plotting._legend(ax, handles, inside=True)
+    assert legend_place(ax) == "right"
+    ax = axes()
+    ax.scatter(a.ravel()[keep], b.ravel()[keep], s=8)
+    ax.plot([0.0, 0.4], [0.97, 0.97])
+    plotting._legend(ax, handles, inside=True)
+    assert legend_place(ax) == "right"
+    # More than four entries go beside, wherever there is room.
+    ax = axes()
+    ax.scatter([0.0, 1.0], [0.0, 1.0])
+    many = [plotting._key(f"entry {i}", color="C0") for i in range(5)]
+    plotting._legend(ax, many, inside=True)
+    assert legend_place(ax) == "right"
+
+
+def test_mds_and_pca_draw_their_samples_alike() -> None:
+    cube = Cube(
+        {"counts": counts()[np.newaxis].astype(np.uint32)},
+        samples={**SAMPLES, "donor": ["D1", "D2", "D3", "D4"] * 2},
+        groups={"group_id": ["bulk"]},
+        features={"feature_id": GENES},
+    )
+    options = {"color_by": "condition", "marker_by": "donor", "labels": True}
+    mds = plotting.plot_mds(cube, ax=axes(), **options)
+    pca = plotting.plot_pca(cube, ax=axes(), **options)
+    for ax in (mds, pca):
+        assert len(artists(ax, "samples")) == 4  # a collection per donor's marker
+    # The same colours, markers, sizes, legend and labels; only positions differ.
+    for first, second in zip(
+        artists(mds, "samples"), artists(pca, "samples"), strict=True
+    ):
+        assert_array_equal(first.get_facecolors(), second.get_facecolors())
+        assert_array_equal(first.get_sizes(), second.get_sizes())
+        assert_array_equal(  # the marker
+            first.get_paths()[0].vertices, second.get_paths()[0].vertices
+        )
+    texts = [[t.get_text() for t in ax.get_legend().get_texts()] for ax in (mds, pca)]
+    assert texts[0] == texts[1] == [
+        "condition", "ctrl", "stim", "donor", "D1", "D2", "D3", "D4"
+    ]  # fmt: skip
+    labels = [[t.get_text() for t in artists(ax, "sample labels")] for ax in (mds, pca)]
+    assert labels[0] == labels[1] == SAMPLES["sample_id"]
+
+
 @pytest.mark.parametrize(
     ("arguments", "error", "message"),
     [
@@ -731,6 +873,91 @@ def test_significant_genes_are_counted_in_each_group() -> None:
         plotting.plot_significant_genes(result, contrast="other")
     with pytest.raises(TypeError, match="DifferentialExpressionResult"):
         plotting.plot_significant_genes(table)  # type: ignore[arg-type]
+
+
+def counted_result(counts: dict[str, tuple[int, int]]) -> DifferentialExpressionResult:
+    """A result of the groups named, whose tables hold the genes up and down given,
+    each at an adjusted p-value of 1e-4."""
+    groups = list(counts)
+    cube = Cube(
+        {"counts": np.stack([counts_fixture()] * len(groups)).astype(np.uint32)},
+        samples=SAMPLES,
+        groups={"group_id": groups},
+        features={"feature_id": GENES},
+        n_cells=np.full((8, len(groups)), 50),
+    )
+    result = limma_voom(cube, design())
+    tables = {}
+    for group, (up, down) in counts.items():
+        n = up + down
+        tables[(group, "stim")] = Table(
+            {
+                "feature_id": [f"x{j}" for j in range(n)],
+                "log2_fold_change": np.where(np.arange(n) < down, -1.0, 1.0),
+                "adjusted_p_value": np.full(n, 1e-4),
+            }
+        )
+    return DifferentialExpressionResult(
+        result.method,
+        result.contrasts,
+        result.summary,
+        result.samples,
+        tables,
+        result.provenance,
+    )
+
+
+def counts_inside(ax: Any) -> list[str]:
+    """The counts of a plot of significant genes that cross its frame."""
+    frame = ax.get_window_extent()
+    return [
+        text.get_text()
+        for text in artists(ax, "numbers")
+        if not (frame.x0 <= text.get_window_extent().x0)
+        or not (text.get_window_extent().x1 <= frame.x1)
+    ]
+
+
+def test_the_numbers_of_the_longest_bars_stay_inside_the_frame() -> None:
+    # 12,000 genes down and 345 up: the number of the longest bar is wide.
+    built = counted_result({"T": (345, 12_000), "B": (49, 1_715)})
+    ax = plotting.plot_significant_genes(built, ax=axes())
+    canvas = pytest.importorskip("matplotlib.backends.backend_agg")
+    canvas.FigureCanvasAgg(ax.figure).draw()
+    numbers = artists(ax, "numbers")
+    assert [text.get_text() for text in numbers] == ["345", "12,000", "49", "1,715"]
+    assert counts_inside(ax) == []
+    low, high = ax.get_xlim()
+    assert low == -high and high > 1.2 * 12_000  # widened from 1.2 times the bar
+
+
+# Genes up and down in the eight cell types of Kang et al. (2018), by limma-voom and
+# limma-trend, as "Changed genes per cell type" draws them side by side.
+KANG_COUNTS = {
+    "B cells": ((498, 399), (408, 264)),
+    "CD14+ Monocytes": ((1619, 1549), (1550, 1553)),
+    "CD4 T cells": ((991, 826), (757, 497)),
+    "CD8 T cells": ((233, 147), (166, 76)),
+    "Dendritic cells": ((454, 285), (410, 273)),
+    "FCGR3A+ Monocytes": ((814, 663), (750, 549)),
+    "Megakaryocytes": ((63, 16), (56, 5)),
+    "NK cells": ((374, 300), (313, 170)),
+}
+
+
+def test_the_numbers_stay_inside_panels_side_by_side_after_the_final_draw() -> None:
+    # Constrained layout, shared groups and a legend beside each panel, which
+    # narrows the panels as it is added; checked once the figure is drawn in full.
+    left = counted_result({group: pair[0] for group, pair in KANG_COUNTS.items()})
+    right = counted_result({group: pair[1] for group, pair in KANG_COUNTS.items()})
+    figure = FIGURE.Figure(figsize=(11, 4.5), layout="constrained")
+    panels = figure.subplots(1, 2, sharey=True)
+    for ax, result in zip(panels, (left, right), strict=True):
+        plotting.plot_significant_genes(result, ax=ax)
+    figure.savefig(io.BytesIO(), format="png")
+    for ax in panels:
+        assert counts_inside(ax) == []
+        assert ax.get_legend() is not None
 
 
 def test_volcano_labels_the_genes_with_the_smallest_p_values() -> None:

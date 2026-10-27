@@ -49,7 +49,7 @@ from cytepool.activity import ulm
 from cytepool.composition import propeller
 from cytepool.cube import Cube, CubeCollection, from_bulk, from_cells
 from cytepool.design import Design, make_contrasts
-from cytepool.differential_expression import limma_voom
+from cytepool.differential_expression import dream_voom, limma_voom
 from cytepool.gene_sets import GeneSets
 from cytepool.gsea import gsea
 from cytepool.held_out_prediction import held_out_prediction
@@ -62,7 +62,7 @@ from cytepool.over_representation import over_representation
 from cytepool.pathway_scores import gsva
 from cytepool.replication import differential_expression_replication
 from cytepool.stats import distributions, special
-from cytepool.stats.deseq2 import deseq2_dispersions, fit_deseq2
+from cytepool.stats.deseq2 import deseq2_dispersions, deseq2_wald_test, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
 from cytepool.stats.gene_set_tests import camera
@@ -71,6 +71,7 @@ from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import lowess
+from cytepool.stats.quasi_likelihood import quasi_likelihood_f_test
 from cytepool.stats.voom import voom, voom_with_quality_weights
 from cytepool.sumrank import differential_expression_sumrank
 from cytepool.table import Table
@@ -242,6 +243,7 @@ def _collection_arguments(context: Context) -> dict[str, Any]:
         "cubes": {"A": cube, "B": cube},
         "align_groups_by": "group_id",
         "group_mapping": {"B": {"T": "T"}},
+        "group_names": {"T": "T cells"},
         "within_study": ["donor"],
     }
 
@@ -626,8 +628,11 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.table.Table.take": Entry(
         lambda c: {"indices": [1, 0]}, {"indices": None}, instance=lambda c: TABLE
     ),
+    # A column named by its keyword takes one value, which a masked array is not.
     "cytepool.table.Table.filter": Entry(
-        lambda c: {"mask": [True, False]}, {"mask": None}, instance=lambda c: TABLE
+        lambda c: {"mask": [True, False], "x": 1.0},
+        {"mask": None, "x": None},
+        instance=lambda c: TABLE,
     ),
     "cytepool.table.Table.select": Entry(
         lambda c: {"names": ["s", "x"]}, {"names": None}, instance=lambda c: TABLE
@@ -687,6 +692,20 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"samples": None, "groups": None, "features": None},
         instance=lambda c: c.cube,
     ),
+    # The mapping of each axis is read column by column, as a table reads it.
+    "cytepool.cube.cube.Cube.with_columns": Entry(
+        lambda c: {
+            "samples": {"pool": ["a", "a"]},
+            "groups": {"kind": ["x", None]},
+            "features": {"length": [1.0, 2.0, np.nan]},
+        },
+        {"samples": "None or NaN", "groups": "None or NaN", "features": "None or NaN"},
+        instance=lambda c: c.cube,
+        keys={"samples": "pool", "groups": "kind", "features": "length"},
+    ),
+    "cytepool.cube.cube.Cube.collapse_samples": Entry(
+        lambda c: {"by": ["sample_id"]}, {"by": None}, instance=lambda c: c.cube
+    ),
     "cytepool.cube.cube.Cube.regroup": Entry(
         lambda c: {"mapping": {"all": ["B", "T"]}},
         {"mapping": None},
@@ -697,10 +716,10 @@ ENTRY_POINTS: dict[str, Entry] = {
     # groups and the column names are read value by value.
     "cytepool.cube.collection.CubeCollection": Entry(
         _collection_arguments,
-        {"group_mapping": None, "within_study": None},
+        {"group_mapping": None, "group_names": None, "within_study": None},
         options=("align_groups_by",),
         objects=("cubes",),
-        keys={"group_mapping": "B"},
+        keys={"group_mapping": "B", "group_names": "T"},
     ),
     "cytepool.cube.collection.CubeCollection.select": Entry(
         lambda c: {"studies": ["B"], "groups": [True, False], "features": [2, 0]},
@@ -1327,6 +1346,25 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.stats.quasi_likelihood.negative_binomial_unit_deviance_moments": Entry(
         lambda c: {"means": COUNTS + 1.0, "dispersion": 0.1},
         {"means": None, "dispersion": None},
+    ),
+    # Tables of the tests of fits on arrays: one id per gene.
+    "cytepool.stats.empirical_bayes.ModeratedFit.table": Entry(
+        lambda c: {"coefficient": "second", "feature_ids": [f"g{j}" for j in range(8)]},
+        {"feature_ids": None},
+        options=("coefficient",),
+        instance=lambda c: moderated_statistics(c.contrast_fit),
+    ),
+    "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest.table": Entry(
+        lambda c: {"feature_ids": [f"g{j}" for j in range(8)]},
+        {"feature_ids": None},
+        instance=lambda c: quasi_likelihood_f_test(
+            fit_quasi_likelihood(COUNTS, DESIGN, dispersion=0.1), coefficients=[1]
+        ),
+    ),
+    "cytepool.stats.deseq2.DESeq2Results.table": Entry(
+        lambda c: {"feature_ids": [f"g{j}" for j in range(8)]},
+        {"feature_ids": None},
+        instance=lambda c: deseq2_wald_test(_deseq2_fit(), [0.0, 1.0]),
     ),
     "cytepool.stats.quasi_likelihood.quasi_likelihood_f_test": Entry(
         lambda c: {
@@ -2147,10 +2185,12 @@ ENTRY_POINTS: dict[str, Entry] = {
             "samples": ["S1", "S2"],
             "standard_scale": "gene",
             "mean_only_expressed": True,
+            "vmin": 0.0,
+            "vmax": 2.0,
             "ax": _axes(),
         },
         {"genes": None, "groups": None, "samples": None},
-        options=("standard_scale", "mean_only_expressed"),
+        options=("standard_scale", "mean_only_expressed", "vmin", "vmax"),
         objects=("cube", "ax"),
     ),
     "cytepool.plotting.plot_cell_numbers": Entry(
@@ -2190,10 +2230,21 @@ ENTRY_POINTS: dict[str, Entry] = {
         {},
         objects=("result", "ax"),
     ),
+    # A group of a differential-expression result, by id.
+    "cytepool.plotting.plot_mean_variance[result]": Entry(
+        lambda c: {"result": _tested(c), "group": "bulk", "ax": _axes()},
+        {},
+        options=("group",),
+    ),
     "cytepool.plotting.plot_residual_variances": Entry(
         lambda c: {"fit": moderated_statistics(c.fit), "ax": _axes()},
         {},
         objects=("fit", "ax"),
+    ),
+    "cytepool.plotting.plot_residual_variances[result]": Entry(
+        lambda c: {"fit": _tested(c), "group": "bulk", "ax": _axes()},
+        {},
+        options=("group",),
     ),
     "cytepool.plotting.plot_sample_weights": Entry(
         lambda c: {
@@ -2511,6 +2562,51 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("group", "sort"),
         objects=("data", "ax"),
     ),
+    # Scores of samples tested with a design: an array of values, with one id per
+    # column and per row, weights per sample and a covariate of the trend.
+    "cytepool.score_tests.limma": Entry(
+        lambda c: {
+            "data": log_cpm(COUNTS),
+            "design": Design(
+                SAMPLE_TABLE,
+                "~ condition",
+                levels=LEVELS,
+                contrasts={"stim": [0.0, 1.0]},
+            ),
+            "contrast": "stim",
+            "feature_ids": [f"g{j}" for j in range(COUNTS.shape[1])],
+            "sample_ids": SAMPLE_TABLE["sample_id"],
+            "weights": [1.0, 2.0, 1.0, 2.0],
+            "trend": np.arange(COUNTS.shape[1], dtype=float),
+            "robust": False,
+        },
+        {
+            "data": "NaN",
+            "feature_ids": None,
+            "sample_ids": None,
+            "weights": None,
+            "trend": "NaN",
+        },
+        options=("contrast", "robust"),
+        objects=("design",),
+    ),
+    # Every study of a collection analysed alike: the design's parts, as Design reads
+    # them, and the analysis's options, as dream_voom reads them.
+    "cytepool.study_results.analyse_each_study": Entry(
+        lambda c: {
+            "collection": _studies()[0],
+            "formula": "~ condition",
+            "analysis": dream_voom,
+            "random": ["(1 | donor)"],
+            "levels": LEVELS,
+            "contrasts": {"stim": [0.0, 1.0]},
+            "groups": ["bulk"],
+        },
+        {"random": None, "levels": None, "contrasts": None, "groups": None},
+        options=("formula",),
+        objects=("collection", "analysis"),
+        keys={"levels": "condition", "contrasts": "stim"},
+    ),
     # Variance partitioning: a mixed model, a linear model, and every group of a cube.
     "cytepool.variance_partitioning.variance_fractions": Entry(
         lambda c: {
@@ -2564,7 +2660,6 @@ NO_ARRAY_INPUT = {
     "cytepool.table.Table.__contains__": (("name",), "a column name, looked up"),
     "cytepool.table.Table.equals": (("other",), "a table, compared as it is"),
     "cytepool.table.Table.rename": (("mapping",), "column names, which are str"),
-    "cytepool.cube.cube.Cube.collapse_samples": (("by",), "a column name, a str"),
     "cytepool.cube.collection.CubeCollection.aligned_cube": (
         ("study",),
         "a study name, looked up",
@@ -2584,8 +2679,8 @@ NO_ARRAY_INPUT = {
         "a Cube, whose arrays were checked when it was built, a path and options",
     ),
     "cytepool.io.anndata.to_anndata": (
-        ("cube",),
-        "a Cube, whose arrays were checked when it was built",
+        ("cube", "x_layer"),
+        "a Cube, whose arrays were checked when it was built, and a layer name",
     ),
     "cytepool.io.anndata.to_mudata": (
         ("cube",),
@@ -2607,9 +2702,42 @@ NO_ARRAY_INPUT = {
         "a path, and attributes written as JSON, which cannot hold an array",
     ),
     "cytepool.differential_expression.DifferentialExpressionResult": (
-        ("method", "contrasts", "summary", "samples", "tables", "provenance"),
-        "a method name, Contrasts and Tables, which were checked when they were "
-        "built, and a record kept as JSON, which cannot hold an array",
+        (
+            "method",
+            "contrasts",
+            "summary",
+            "samples",
+            "tables",
+            "provenance",
+            "cube",
+            "design",
+        ),
+        "a method name, Contrasts, Tables, a Cube and a Design, which were checked "
+        "when they were built, and a record kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.differential_expression.DifferentialExpressionResult.fit": (
+        ("group",),
+        "a group id, looked up",
+    ),
+    "cytepool.table.Table.sort": (
+        ("by", "descending"),
+        "a column name, looked up, and a flag",
+    ),
+    "cytepool.study_results.StudyResults": (
+        ("collection", "results"),
+        "a CubeCollection and results, which were checked when they were built",
+    ),
+    "cytepool.study_results.StudyResults.__getitem__": (
+        ("study",),
+        "a study name, looked up",
+    ),
+    "cytepool.study_results.StudyResults.table": (
+        ("group", "contrast"),
+        "a group id and a contrast name, looked up",
+    ),
+    "cytepool.study_results.StudyResults.matrix": (
+        ("column", "group", "contrast"),
+        "a column name, a group id and a contrast name, looked up",
     ),
     "cytepool.differential_expression.DifferentialExpressionResult.table": (
         ("group", "contrast"),
@@ -2718,6 +2846,7 @@ RECORDS = {
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",
     "cytepool.stats.quasi_likelihood.UnitDevianceMoments",
     "cytepool.variance_partitioning.VarianceFractions",
+    "cytepool.differential_expression.GroupFit",
     "cytepool.pathway_scores.PathwayScores",
     "cytepool.activity.Activities",
 }

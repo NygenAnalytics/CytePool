@@ -50,6 +50,14 @@ Warnings:
     numeric_codes: a numeric covariate whose values are a few consecutive whole
         numbers, each shared by several samples, which is how codes for batches or
         plates look; as a number it enters the model as one slope.
+    numeric_ids: a numeric covariate whose name says ids and whose values are at
+        least three whole numbers that are not consecutive, each shared by several
+        samples, as donor ids such as 101, 107 and 1015 are; as a number it enters
+        the model as one slope, where ids need a group each. A name says ids when
+        its last word is donor, patient, subject, individual, participant, sample,
+        batch, plate, lane, run or id (or their plurals), as in donor_id or
+        subjectID, or is number, no, nr or code after one of them, as in
+        run_number; donor_age names an age, and n_donors a count.
     missing_label: a factor level such as "" or "NA" that looks like a missing
         value, which then forms a group of its own.
     similar_levels: factor levels that differ only in case or surrounding spaces,
@@ -65,6 +73,7 @@ References:
     using lme4. Journal of Statistical Software 67(1), 1-48. doi:10.18637/jss.v067.i01
 """
 
+import re
 import textwrap
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -73,6 +82,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._linear_algebra import RANK_TOLERANCE, column_space
+from .._messages import WIDTH, fitted_lines
 from ..table import Table
 from .contrasts import Contrasts
 from .formula import RandomEffect
@@ -105,6 +115,27 @@ _ROUNDING = (
 )
 _LISTED = 6  # items listed in a message before "and n more"
 _MISSING_LABELS = frozenset({"", "na", "n/a", "nan", "null", "<na>", "nat", "?"})
+# Words that name a column of ids, words that do after one of them (run_number),
+# and the words of a name: runs of letters, split where a capital starts a word
+# (donorID is donor and ID), and runs of digits.
+_ID_WORDS = frozenset(
+    {
+        "donor",
+        "patient",
+        "subject",
+        "individual",
+        "participant",
+        "sample",
+        "batch",
+        "plate",
+        "lane",
+        "run",
+        "id",
+    }
+)
+_ID_NUMBERS = frozenset({"number", "num", "no", "nr", "code"})
+_COUNT_WORDS = frozenset({"n", "num", "number", "count"})
+_WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
 
 
 @dataclass(frozen=True)
@@ -171,8 +202,8 @@ class DesignReport:
             f"{_count(self.residual_df, 'residual degree')} of freedom"
         )
         if not self.errors and not self.warnings:
-            return summary + "; no problems found."
-        lines = [summary + "."]
+            return fitted_lines(summary + "; no problems found.")
+        lines = [fitted_lines(summary + ".")]
         for title, issues in (("error", self.errors), ("warning", self.warnings)):
             if not issues:
                 continue
@@ -181,7 +212,7 @@ class DesignReport:
                 lines.append(
                     textwrap.fill(
                         f"{number}. [{issue.kind}] {issue.message}",
-                        width=88,
+                        width=WIDTH,
                         initial_indent="  ",
                         subsequent_indent="     ",
                         break_on_hyphens=False,
@@ -409,6 +440,7 @@ def _variable_checks(
                     )
             else:
                 _numeric_codes_check(name, variable.values, distinct, warnings)
+                _numeric_ids_check(name, variable.values, distinct, warnings)
             continue
         counts = np.bincount(variable.codes, minlength=len(variable.levels))
         observed = [level for level, count in zip(variable.levels, counts) if count]
@@ -620,6 +652,53 @@ def _numeric_codes_check(
             "the model as one slope (a linear trend). If these numbers label groups, "
             "convert the column to text so that it becomes a factor",
         )
+    )
+
+
+def _numeric_ids_check(
+    name: str, values: np.ndarray, distinct: np.ndarray, warnings: list[DesignIssue]
+) -> None:
+    """Warn about whole numbers that are not consecutive in a column named as ids,
+    such as donor ids 101, 107 and 1015."""
+    if distinct.size < 3 or not np.all(distinct == np.round(distinct)):
+        return
+    if distinct[-1] - distinct[0] + 1 == distinct.size:
+        return  # consecutive: numeric_codes warns about them
+    counts = np.unique(values, return_counts=True)[1]
+    if np.any(counts < 2) or not _names_ids(name):
+        return
+    warnings.append(
+        DesignIssue(
+            "numeric_ids",
+            f"{name} holds whole numbers ({distinct.size:,} distinct values, from "
+            f"{int(distinct[0])} to {int(distinct[-1])}), each shared by several "
+            "samples, and its name says they are ids; as a number it enters the "
+            "model as one slope (a linear trend in the ids), not as a group for each "
+            "id. If the numbers label donors, batches or other groups, convert the "
+            "column to text so that it becomes a factor; a measurement, such as an "
+            "age, can ignore this warning",
+        )
+    )
+
+
+def _names_ids(name: str) -> bool:
+    """Whether a variable's name says that it holds ids: its last word, digits
+    aside, names ids (donor_id, subjectID, batches), or is a number or code after a
+    word that does (run_number). A name that starts by counting (n_donors) does
+    not, nor one whose last word names something else (donor_age)."""
+    words = [word.lower() for word in _WORDS.findall(name) if not word.isdigit()]
+    if not words or (len(words) > 1 and words[0] in _COUNT_WORDS):
+        return False
+    if _is_id_word(words[-1]):
+        return True
+    return words[-1] in _ID_NUMBERS and any(map(_is_id_word, words[:-1]))
+
+
+def _is_id_word(word: str) -> bool:
+    return (
+        word in _ID_WORDS
+        or (word.endswith("s") and word[:-1] in _ID_WORDS)
+        or (word.endswith("es") and word[:-2] in _ID_WORDS)
     )
 
 

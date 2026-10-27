@@ -246,13 +246,17 @@ def test_cubes_with_equal_values_have_the_same_fingerprint(tiny: Cube) -> None:
         rebuilt(tiny, samples={**samples, "score": score, "age": age}),
         rebuilt(tiny, layers=wide),  # integers are hashed as int64, whatever the width
         rebuilt(tiny, provenance={"source": "anything else"}),
-        tiny.regroup({"type 0": ["type 0"]}),  # renamed to itself: int64 layers
+        tiny.regroup({"type 0": ["type 0"]}),  # renamed to itself: same dtypes
         pickle.loads(pickle.dumps(tiny)),
     ]
 
     # Computed anew from the values, not from digests a cube was given.
     assert {cube.verify_fingerprint() for cube in equal} == {tiny.fingerprint()}
-    assert equal[3].layer("counts").dtype == np.int64
+    assert equal[3].layer("counts").dtype == tiny.layer("counts").dtype
+    # A merge sums in int64, which hashes alike.
+    merged = tiny.regroup({"both": ["type 0", "type 1"]})
+    assert merged.layer("counts").dtype == np.int64
+    assert merged.verify_fingerprint() == merged.fingerprint()
     assert equal[3].provenance != tiny.provenance
 
 
@@ -608,7 +612,10 @@ def test_a_lone_surrogate_is_hashed_in_its_three_byte_form() -> None:
 
 
 def test_the_record_and_the_history_name_the_fingerprint(tiny: Cube) -> None:
-    assert tiny.history().splitlines()[-1] == f"Fingerprint: {tiny.fingerprint()}"
+    assert tiny.history().splitlines()[-2:] == [
+        "Fingerprint:",
+        f"    {tiny.fingerprint()}",
+    ]
     assert tiny.fingerprint() == tiny.digests()["fingerprint"]
     assert all(
         re.fullmatch(DIGEST, digest)

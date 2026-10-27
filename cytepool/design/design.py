@@ -23,7 +23,7 @@ import numpy as np
 
 from .._columns import missing_mask
 from .._masked_arrays import reject_masked
-from .._messages import close_matches
+from .._messages import close_matches, fitted_lines
 from ..table import Table
 from .checks import DesignReport, check_design
 from .contrasts import Contrasts, make_contrasts
@@ -265,7 +265,7 @@ class Design:
     def __repr__(self) -> str:
         n, p = self._model.shape
         lines = [
-            f"Design: {n} sample{'' if n == 1 else 's'} x {p} "
+            f"Design: {n:,} sample{'' if n == 1 else 's'} x {p:,} "
             f"column{'' if p == 1 else 's'}, formula {self.formula!r}",
             "  columns: " + (", ".join(self.columns) if self.columns else "(none)"),
         ]
@@ -273,7 +273,7 @@ class Design:
             lines.append("  random: " + " + ".join(str(e) for e in self._random))
         if len(self._contrasts):
             lines.append("  contrasts: " + ", ".join(self._contrasts.names))
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
 
 def _restore(*state: Any) -> Design:

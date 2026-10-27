@@ -8,11 +8,14 @@ of a few genes; and with invariants that a wrong implementation would break. The
 plot is compared with decoupler's and the heatmap read back from what it draws.
 """
 
+import dataclasses
 import doctest
 import itertools
 import json
 import math
+import pickle
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -421,6 +424,54 @@ def test_a_cubes_group_is_scored_as_its_log_cpm() -> None:
     # The scores take a design built from the profiles, as pathway scores do.
     fit = fit_linear_model(result.scores, Design(result.profiles, "~ condition"))
     assert fit.coefficients.shape == (len(result.sources), 2)
+
+
+def assert_pickles(record: Any) -> None:
+    """A record comes back from pickle with equal fields, read-only arrays and
+    settings, and the same provenance, or none."""
+    copy = pickle.loads(pickle.dumps(record))
+    for field in dataclasses.fields(record):
+        mine, theirs = getattr(record, field.name), getattr(copy, field.name)
+        if isinstance(mine, np.ndarray):
+            assert_array_equal(theirs, mine)
+            assert theirs.dtype == mine.dtype and not theirs.flags.writeable
+        elif isinstance(mine, Table):
+            assert theirs.equals(mine)
+        elif field.name == "settings":
+            assert dict(theirs) == dict(mine)
+            with pytest.raises(TypeError):
+                theirs["x"] = 1  # type: ignore[index]
+        elif hasattr(mine, "edges"):  # a Network
+            assert theirs.edges.equals(mine.edges)
+        elif hasattr(mine, "items"):  # GeneSets
+            assert dict(theirs.items()) == dict(mine.items())
+        else:
+            assert theirs == mine, field.name
+    assert copy.provenance == record.provenance
+    if record.provenance is None:
+        assert "_provenance" not in vars(copy)
+
+
+def test_activities_of_a_cube_record_the_cube_they_read() -> None:
+    cube = _cube()
+    result = ulm(cube, NETWORK, group="B")
+    record = result.provenance
+    assert record is not None
+    assert record["method"] == "ulm" and record["layer"] == "counts"
+    assert record["cube"]["fingerprint"] == cube.fingerprint()
+    assert record["settings"] == result.settings
+    assert json.loads(json.dumps(record)) == record
+    assert mlm(cube, NETWORK, group="B").provenance["method"] == "mlm"
+    # Activities of values or of statistics name no cube.
+    of_values = ulm(VALUES, NETWORK, gene_ids=GENES)
+    assert of_values.provenance is None
+    tested = limma_voom(cube, Design(cube.samples, "~ condition"),
+                        contrasts={"stim": "conditionstim"}, min_cells=0)  # fmt: skip
+    assert ulm(tested, NETWORK, min_targets=3).provenance is None
+    # They pickle, the provenance with them.
+    assert_pickles(result)
+    assert_pickles(of_values)
+    assert_pickles(weighted_aggregate(cube, NETWORK, group="B", rng=1))
 
 
 def test_each_group_and_contrast_of_a_result_is_a_profile() -> None:

@@ -349,6 +349,44 @@ def test_tests_match_deseq2(case: str, index: int) -> None:
     )
 
 
+def test_the_table_holds_the_columns_of_deseq2s_results() -> None:
+    case = CASES[0]
+    kind, value = json.loads(str(fixture(case)["tests"]))[0]
+    assert kind == "wald"
+    result = deseq2_wald_test(fitted(case), np.array(value))
+    n_genes = result.p_value.size
+    ids = [f"gene{j}" for j in range(n_genes)]
+    table = result.table(feature_ids=ids)
+    assert table.columns == (
+        "feature_id",
+        "base_mean",
+        "log2_fold_change",
+        "standard_error",
+        "statistic",
+        "p_value",
+        "adjusted_p_value",
+    )
+    assert table["feature_id"].tolist() == ids
+    # Each column is DESeq2's, in the order of the genes, within its stopping error.
+    tight = {
+        k: reference(case, f"tight1_{k}")
+        for k in ("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+    }
+    assert_allclose(table["base_mean"], tight["baseMean"], rtol=1e-13)
+    assert relative(table["log2_fold_change"], tight["log2FoldChange"], 1.0) < 1e-5
+    assert relative(table["standard_error"], tight["lfcSE"]) < 1e-5
+    assert relative(table["statistic"], tight["stat"], 1.0) < 1e-5
+    assert log_relative(table["p_value"], tight["pvalue"]) < 1e-5
+    assert log_relative(table["adjusted_p_value"], tight["padj"]) < 1e-5
+    assert_array_equal(np.isnan(table["adjusted_p_value"]), np.isnan(tight["padj"]))
+    default = result.table()
+    assert default["feature_id"].tolist() == [f"feature_{j}" for j in range(n_genes)]
+    with pytest.raises(ValueError, match=rf"one id per feature \({n_genes}\), got"):
+        result.table(feature_ids=["a", "b"])
+    with pytest.raises(TypeError, match="feature_ids must hold text ids, got int 0"):
+        result.table(feature_ids=list(range(n_genes)))
+
+
 @pytest.mark.parametrize("case", CASES)
 def test_results_options_match_deseq2(case: str) -> None:
     fit, contrast = fitted(case), wald_contrast(case)

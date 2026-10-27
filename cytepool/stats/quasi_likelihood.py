@@ -214,6 +214,7 @@ from cytepool.stats._negative_binomial import (
     unit_deviances,
 )
 from cytepool.stats._optimize import brent_minimum
+from cytepool.stats._result_tables import feature_id_column
 from cytepool.stats._scalar_special_functions import stirling_error
 from cytepool.stats.distributions import f_sf
 from cytepool.stats.empirical_bayes import squeeze_variances
@@ -223,6 +224,7 @@ from cytepool.stats.negative_binomial_models import (
     fit_negative_binomial_model,
 )
 from cytepool.stats.smoothing import lowess
+from cytepool.table import Table
 
 __all__ = [
     "QuasiLikelihoodFit",
@@ -1681,6 +1683,42 @@ class QuasiLikelihoodTest:
     adjusted_p_value: FloatArray
     df_test: int
     df_total: FloatArray
+
+    def table(self, *, feature_ids: Any = None) -> Table:
+        """Return the tests as a table, one row per gene in the order of the counts.
+
+        edgeR's ``topTags(sort.by = "none")``, with the columns of the tables of
+        :func:`~cytepool.differential_expression.limma_voom`: ``feature_id``;
+        ``log2_fold_change`` (``logFC``), or, for several coefficients or contrasts
+        tested together, ``log2_fold_change_<name>`` for each, as the F-tests of
+        :func:`~cytepool.differential_expression.dream_voom` name them;
+        ``average_log2_cpm`` (``logCPM``); ``f_statistic`` (``F``); ``p_value``
+        (``PValue``); and ``adjusted_p_value`` (``FDR``).
+
+        Args:
+            feature_ids: One id per gene, as text, such as the gene ids of the
+                columns of the counts; by default ``feature_0``, ``feature_1``, ...
+
+        Raises:
+            ValueError: If ``feature_ids`` does not give one id per gene.
+            TypeError: If an id is not text, or ``feature_ids`` is or holds a numpy
+                masked array.
+        """
+        columns: dict[str, Any] = {
+            "feature_id": feature_id_column(feature_ids, self.f_statistic.size)
+        }
+        if len(self.names) == 1:
+            columns["log2_fold_change"] = self.log_fold_change[:, 0]
+        else:
+            for j, name in enumerate(self.names):
+                columns[f"log2_fold_change_{name}"] = self.log_fold_change[:, j]
+        columns |= {
+            "average_log2_cpm": self.average_log_cpm,
+            "f_statistic": self.f_statistic,
+            "p_value": self.p_value,
+            "adjusted_p_value": self.adjusted_p_value,
+        }
+        return Table(columns)
 
     def __repr__(self) -> str:
         n_significant = int(np.count_nonzero(self.adjusted_p_value < 0.05))

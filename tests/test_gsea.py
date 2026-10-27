@@ -495,6 +495,43 @@ def test_warnings_about_ties_positive_statistics_and_p_values() -> None:
     assert floored.any() and np.all(np.isnan(table["log2_error"][floored]))
 
 
+def test_more_permutations_are_suggested_only_where_they_can_help() -> None:
+    # Statistics of one sign but for the last three genes, the largest far above
+    # the others: random sets of 40 genes almost never score below zero, while
+    # some of those of 12 genes do.
+    rng = np.random.default_rng(5)
+    values = np.sort(np.exp(2.5 * rng.normal(size=500)))[::-1] + 0.01
+    values[-3:] = [-0.01, -0.02, -0.03]
+    genes = [f"g{j}" for j in range(500)]
+    statistics = dict(zip(genes, values, strict=True))
+    sets = {"twelve": genes[-12:], "forty": genes[-40:], "top": genes[:15]}
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        table = gsea(statistics, sets, rng=1)
+    messages = [" ".join(str(w.message).split()) for w in caught]
+    assert messages == [
+        "1 gene set(s) have fewer than 10 random scores of the sign of their "
+        "enrichment score among 1000 permutations, but some; their normalized "
+        "scores and p-values are NaN. More permutations (n_permutations=10000) may "
+        "give them enough",
+        "1 gene set(s) have no random score of the sign of their enrichment score "
+        "among 1000 permutations: random sets of their size almost always score "
+        "with the other sign, because most statistics share one sign, so more "
+        "permutations are unlikely to give them any; their normalized scores and "
+        "p-values are NaN",
+    ]
+    assert all(len(line) <= 80 for w in caught for line in str(w.message).split("\n"))
+    assert np.isnan(table["p_value"][:2]).all() and table["p_value"][2] < 1e-20
+    # Ten times the permutations give the set of 12 genes enough, and not the other.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        bottom = {name: sets[name] for name in ("twelve", "forty")}
+        more = gsea(statistics, bottom, rng=1, n_permutations=10_000)
+    assert np.isfinite(more["p_value"][0]) and np.isnan(more["p_value"][1])
+    assert any("have no random score" in str(w.message) for w in caught)
+    assert not any("fewer than 10 random" in str(w.message) for w in caught)
+
+
 # Messages.
 
 

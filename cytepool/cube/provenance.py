@@ -100,8 +100,13 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
     - ``regroup``: ``membership``, the id of each merged or renamed group with the
       ids of the groups it sums, in the input's order. The groups not listed are
       kept as they are.
-    - ``collapse_samples``: ``by``, the sample column, and ``membership``, the id of
-      each new sample with the ids of the samples it sums, in the input's order.
+    - ``collapse_samples``: ``by``, the sample column, a list of them, or null when
+      every sample was pooled into one, and ``membership``, the id of each new
+      sample with the ids of the samples it sums, in the input's order.
+    - ``with_columns``: ``samples``, ``groups`` and ``features``, each with the
+      names of the columns ``added`` and those ``replaced`` on that axis, or null
+      for an axis that was given as None. The values are those of the cube's
+      tables, which its fingerprint covers.
     - ``from_anndata`` and ``from_mudata``: the import of an AnnData or MuData that
       CytePool exported, whose provenance the cube continues. ``input`` is the
       fingerprint that the export stored, which the cube's own fingerprint equals
@@ -113,6 +118,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from .._messages import fitted_lines, quoted
 from ._provenance_records import provenance_as_texts, provenance_from_texts
 
 __all__ = ["describe_provenance"]
@@ -160,7 +166,8 @@ def describe_provenance(provenance: Mapping[str, Any]) -> str:
             a cube that a result keeps.
 
     Returns:
-        Text with one item per line, for printing.
+        Text with one item per line, for printing, in lines of at most 80
+        characters: a longer item continues on the next line, indented.
 
     Raises:
         TypeError: If ``provenance`` is not a mapping, holds a value JSON cannot
@@ -196,7 +203,7 @@ def describe_provenance(provenance: Mapping[str, Any]) -> str:
             lines.append(f"{key}: {_json(record[key])}")
     if references:
         lines.append(_REFERENCES)
-    return "\n".join(lines)
+    return fitted_lines("\n".join(lines))
 
 
 def _source_lines(source: Any) -> list[str]:
@@ -334,8 +341,15 @@ def _operation_lines(number: int, operation: Any) -> list[str]:
     fields = dict(operation)
     name = fields.pop("operation", None)
     header = f"{number}. {name if isinstance(name, str) else _json(name)}"
-    if name == "collapse_samples" and isinstance(fields.get("by"), str):
-        header += f" by {fields.pop('by')!r}"
+    if name == "collapse_samples" and "by" in fields:
+        by = fields["by"]
+        if isinstance(by, str):
+            header += f" by {fields.pop('by')!r}"
+        elif _is_text_list(by) and by:
+            header += f" by {quoted(fields.pop('by'))}"
+        elif by is None:
+            del fields["by"]
+            header += " of every sample into one"
     if "input" in fields:
         found = fields.pop("input")
         named = found if isinstance(found, str) else _json(found)
@@ -362,6 +376,19 @@ def _operation_lines(number: int, operation: Any) -> list[str]:
                 lines.append(f"  {axis}: {_listing(kept, ', ')}")
             else:
                 lines.append(f"  {axis}: {_json(kept)}")
+    if name == "with_columns":
+        for axis in ("samples", "groups", "features"):
+            change = fields.get(axis, False)
+            if change is None:
+                del fields[axis]
+            elif _is_column_change(change):
+                del fields[axis]
+                parts = [
+                    f"{kind} {', '.join(change[kind])}"
+                    for kind in ("added", "replaced")
+                    if change[kind]
+                ]
+                lines.append(f"  {axis}: {'; '.join(parts) or 'no column'}")
     if name in ("regroup", "collapse_samples") and _is_membership(
         fields.get("membership")
     ):
@@ -382,6 +409,14 @@ def _number(value: float) -> str:
 
 def _is_text_list(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_column_change(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"added", "replaced"}
+        and all(map(_is_text_list, value.values()))
+    )
 
 
 def _is_membership(value: Any) -> bool:

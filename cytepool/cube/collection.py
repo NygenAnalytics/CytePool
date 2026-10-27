@@ -29,7 +29,7 @@ import numpy as np
 from .. import __version__
 from .._columns import text_column, values_equal
 from .._masked_arrays import reject_masked
-from .._messages import close_matches, listing, quoted
+from .._messages import close_matches, fitted_lines, listing, quoted
 from ..table import Table
 from ._axes import INT64_MAX, selected_positions
 from .cube import LAYER_NAMES, Cube
@@ -100,13 +100,16 @@ class CubeCollection:
         (Diehl et al. 2016), when every study's group table has that column, and
         ``group_id`` otherwise. ``group_mapping`` gives the aligned id of some of a
         study's groups instead, or None to leave a group out. Each aligned group is
-        named by its aligned id, and groups of one study with the same aligned id are
-        merged: their layers and cell numbers are summed, exactly, as
-        ``Cube.regroup`` sums them. ``group_members`` lists the groups of each study
-        under their aligned ids. ``groups`` has ``group_id``, the aligned id, and
-        every other column of any study's group table: a group keeps a column's
-        value where the studies that have the column agree on it for every member,
-        and has a missing value otherwise.
+        named by its aligned id, or by the name ``group_names`` gives it, such as
+        ``{"CL:0001054": "CD14 monocytes"}`` for groups aligned by their Cell Ontology
+        ids, and groups of one study with the same aligned id are merged: their
+        layers and cell numbers are summed, exactly, as ``Cube.regroup`` sums them.
+        ``group_members`` lists the groups of each study under their aligned ids.
+        ``groups`` has ``group_id``, the aligned id or its name, and every other
+        column of any study's group table: a group keeps a column's value where the
+        studies that have the column agree on it for every member, and has a missing
+        value otherwise. With ``group_names``, the column ``align_groups_by`` holds
+        each group's aligned id, unless the groups are aligned by ``group_id``.
 
     Analyses of each study:
         ``aligned_cube(study)`` is the study's cube on the collection's axes: its
@@ -151,6 +154,10 @@ class CubeCollection:
             take the place of those groups' values of ``align_groups_by``; None
             leaves a group out. Groups of one study given the same aligned id are
             merged.
+        group_names: Aligned id to the name that becomes the group's id, such as a
+            cell type's name for its Cell Ontology id, for some or all of the
+            aligned groups; the others keep their aligned ids. Each name must differ
+            from every other group's id.
         within_study: Sample columns whose values mean something only inside their
             study, such as donor ids, written ``study::value`` as sample ids are.
 
@@ -158,13 +165,16 @@ class CubeCollection:
         TypeError: If an argument has the wrong type, a column of the sample or
             group tables holds different kinds of values in different studies, a
             column of ``within_study`` holds neither text nor integers, or
-            ``group_mapping`` or ``within_study`` is or holds a numpy masked array.
+            ``group_mapping``, ``group_names`` or ``within_study`` is or holds a
+            numpy masked array.
         ValueError: If there is no study, a study name is empty or holds ``::``, a
             group has no value of ``align_groups_by`` and no aligned id, a study has
-            no group or measured no feature, or a study shares no feature, or no
-            group, with any other study.
+            no group or measured no feature, a study shares no feature, or no
+            group, with any other study, or a name of ``group_names`` is empty or
+            the id of another group.
         KeyError: If ``group_mapping`` names a study or a group that is not there,
-            or ``within_study`` or ``align_groups_by`` a column that no study has.
+            ``group_names`` an aligned id that no study has, or ``within_study`` or
+            ``align_groups_by`` a column that no study has.
 
     Example:
         >>> import numpy as np
@@ -222,6 +232,7 @@ class CubeCollection:
         *,
         align_groups_by: str | None = None,
         group_mapping: Mapping[str, Mapping[str, str | None]] | None = None,
+        group_names: Mapping[str, str] | None = None,
         within_study: str | Sequence[str] = (),
     ) -> None:
         studies = _checked_cubes(cubes)
@@ -233,6 +244,14 @@ class CubeCollection:
             study: _aligned_groups(study, cube, by, mapping.get(study, {}))
             for study, cube in given.items()
         }
+        names = _checked_group_names(group_names, members)
+        if names:
+            members = {
+                study: {
+                    names.get(aligned, aligned): ids for aligned, ids in groups.items()
+                }
+                for study, groups in members.items()
+            }
         group_ids = list(
             dict.fromkeys(group for study in studies for group in members[study])
         )
@@ -252,11 +271,15 @@ class CubeCollection:
         if len(studies) > 1:
             _check_shared_features(studies, feature_ids, measured)
             _check_shared_groups(studies, members, by)
-        settings = {
+        settings: dict[str, Any] = {
             "cytepool_version": __version__,
             "align_groups_by": by,
             "group_mapping": {study: dict(groups) for study, groups in mapping.items()}
             or None,
+        }
+        if names:
+            settings["group_names"] = names
+        settings |= {
             "within_study": within,
             "groups": {
                 study: {aligned: list(ids) for aligned, ids in members[study].items()}
@@ -391,8 +414,9 @@ class CubeCollection:
         It holds ``studies``: each study's cube, by study name in order, with its
         ``fingerprint`` and its own ``provenance``; ``alignment``: the version of
         CytePool that aligned them, ``align_groups_by``, ``group_mapping``,
-        ``within_study`` and ``groups``, each study's groups under their aligned
-        ids when the collection was made; and ``operations``: each selection since,
+        ``group_names`` (when given), ``within_study`` and ``groups``, each study's
+        groups under their aligned ids when the collection was made; and
+        ``operations``: each selection since,
         with the studies, groups and features it kept (null for an axis given as
         None). The fingerprints cost what ``Cube.fingerprint`` costs: nothing for a
         cube file, which stores them, and a pass over the values of a cube in memory
@@ -439,7 +463,7 @@ class CubeCollection:
                 f"  in every study: {shared_groups:,} groups, {shared_features:,} "
                 "features"
             )
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
     # Each study on the collection's axes.
 
@@ -451,7 +475,9 @@ class CubeCollection:
         the study's own samples with their own ids. It is derived from the cube as
         given with ``Cube.select`` and ``Cube.regroup``, whose records its provenance
         holds; a cube that needs neither is returned as it is. A lazy cube, such as
-        one read with ``read_cube``, stays lazy; a cube in memory is copied.
+        one read with ``read_cube``, stays lazy; a cube in memory is copied. Integer
+        layers keep their dtype, such as uint32 counts, unless groups of the study are
+        merged, which sums them in int64.
 
         Args:
             study: A study name.
@@ -684,6 +710,11 @@ class CubeCollection:
                 for study in self._studies
             },
             "align_groups_by": settings["align_groups_by"],
+            **(
+                {"group_names": settings["group_names"]}
+                if "group_names" in settings
+                else {}
+            ),
             "within_study": settings["within_study"],
             "layers": names,
         }
@@ -736,7 +767,8 @@ def _assemble(
     operations: tuple[str, ...],
 ) -> None:
     """Build a collection's tables from its aligned parts and set its state."""
-    within = json.loads(settings)["within_study"]
+    alignment = json.loads(settings)
+    within = alignment["within_study"]
     measured = np.array(measured, dtype=bool)  # a copy the collection owns
     measured.flags.writeable = False
     # Each study's aligned groups in the collection's order.
@@ -755,7 +787,11 @@ def _assemble(
         members,
         measured,
         _sample_table(studies, cubes, within),
-        _group_table(studies, cubes, members, group_ids),
+        _named_groups(
+            _group_table(studies, cubes, members, group_ids),
+            alignment["align_groups_by"],
+            alignment.get("group_names"),
+        ),
         _feature_table(cubes, feature_ids),
         settings,
         operations,
@@ -956,6 +992,61 @@ def _checked_group_mapping(
                 )
             checked[study][group] = aligned
     return checked
+
+
+def _checked_group_names(
+    value: Any, members: dict[str, dict[str, list[str]]]
+) -> dict[str, str]:
+    """The names of the aligned groups, by aligned id; empty for None."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError(
+            "group_names must map aligned group ids to names, such as "
+            f"{{'CL:0001054': 'CD14 monocytes'}}, got {type(value).__name__}"
+        )
+    reject_masked(value, "group_names")
+    aligned = list(dict.fromkeys(a for groups in members.values() for a in groups))
+    names: dict[str, str] = {}
+    for key, name in value.items():
+        if not isinstance(key, str):
+            raise TypeError(
+                f"group_names must be keyed by aligned group ids (str), got "
+                f"{type(key).__name__} {key!r}"
+            )
+        if key not in aligned:
+            raise KeyError(
+                f"group_names names the aligned group {key!r}, which no study has; the "
+                f"aligned groups are: {quoted(aligned)}" + close_matches(key, aligned)
+            )
+        if not isinstance(name, str):
+            raise TypeError(
+                f"group_names[{key!r}] must be a name (str), got {type(name).__name__}"
+            )
+        if not name:
+            raise ValueError(f"group_names[{key!r}] is empty; names are non-empty")
+        names[key] = name
+    taken: dict[str, str] = {}
+    for key in aligned:
+        name = names.get(key, key)
+        if name in taken:
+            raise ValueError(
+                f"the aligned groups {taken[name]!r} and {key!r} would both be named "
+                f"{name!r}; give each group a name of its own, and none the id of "
+                "another group"
+            )
+        taken[name] = key
+    return names
+
+
+def _named_groups(table: Table, by: str, names: dict[str, str] | None) -> Table:
+    """A collection's groups table whose aligned column holds each group's aligned
+    id, when its groups are named; else the table as it is."""
+    if not names or by == "group_id":
+        return table
+    aligned = {name: key for key, name in names.items()}
+    ids = [aligned.get(group, group) for group in table["group_id"].tolist()]
+    return table.with_columns({by: text_column(ids)})
 
 
 def _alignment_column(value: Any, cubes: dict[str, Cube]) -> str:

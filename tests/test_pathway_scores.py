@@ -7,15 +7,19 @@ invariants that a wrong implementation would break. The heatmap is read back fro
 artists it draws.
 """
 
+import dataclasses
 import doctest
 import json
 import math
+import pickle
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
+import cytepool
 from cytepool import pathway_scores
 from cytepool.cube import Cube
 from cytepool.design import Design
@@ -31,6 +35,7 @@ from cytepool.pathway_scores import (
 from cytepool.plotting import plot_pathway_scores
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import fit_linear_model
+from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "pathway_scores"
 FIXTURE = json.loads((DATA / "gsva.json").read_text())
@@ -477,6 +482,25 @@ def test_a_cube_group_is_scored_as_its_log_cpm() -> None:
     assert as_counts.settings["kernel"] == "poisson"
 
 
+def test_a_cube_group_filtered_by_sample_groups_keeps_the_genes_of_each_group() -> None:
+    cube, counts = _cube()
+    sets = {
+        "treated": [f"G{j}" for j in range(30)],
+        "other": [f"G{j}" for j in range(50, 90)],
+    }
+    by_condition = {"sample_groups": "condition"}
+    result = gsva(cube, sets, gene_ids="symbol", expression_filter=by_condition)
+    used = np.flatnonzero(np.arange(12) != 3)
+    kept = counts[used]
+    keep = filter_by_expression(kept, group=cube.samples["condition"][used])
+    values = log_cpm(kept[:, keep], norm_factors=tmm_factors(kept[:, keep]))
+    symbols = [f"G{j}" for j in np.flatnonzero(keep)]
+    assert_array_equal(result.scores, gsva(values, sets, gene_ids=symbols).scores)
+    assert result.settings["expression_filter"]["sample_groups"] == "condition"
+    with pytest.raises(KeyError, match="names 'site', which is not a column"):
+        gsva(cube, sets, gene_ids="symbol", expression_filter={"sample_groups": "site"})
+
+
 def test_scores_of_a_cube_go_into_a_linear_model() -> None:
     cube, _ = _cube()
     sets = {
@@ -489,6 +513,61 @@ def test_scores_of_a_cube_go_into_a_linear_model() -> None:
     # The set of the genes that the treatment triples is higher in treated samples.
     assert moderated.t[0, 1] > 5.0 and moderated.p_value[0, 1] < 1e-4
     assert abs(moderated.t[1, 1]) < 3.0
+
+
+def assert_pickles(record: Any) -> None:
+    """A record comes back from pickle with equal fields, read-only arrays and
+    settings, and the same provenance, or none."""
+    copy = pickle.loads(pickle.dumps(record))
+    for field in dataclasses.fields(record):
+        mine, theirs = getattr(record, field.name), getattr(copy, field.name)
+        if isinstance(mine, np.ndarray):
+            assert_array_equal(theirs, mine)
+            assert theirs.dtype == mine.dtype and not theirs.flags.writeable
+        elif isinstance(mine, Table):
+            assert theirs.equals(mine)
+        elif field.name == "settings":
+            assert dict(theirs) == dict(mine)
+            with pytest.raises(TypeError):
+                theirs["x"] = 1  # type: ignore[index]
+        elif hasattr(mine, "edges"):  # a Network
+            assert theirs.edges.equals(mine.edges)
+        elif hasattr(mine, "items"):  # GeneSets
+            assert dict(theirs.items()) == dict(mine.items())
+        else:
+            assert theirs == mine, field.name
+    assert copy.provenance == record.provenance
+    if record.provenance is None:
+        assert "_provenance" not in vars(copy)
+
+
+def test_scores_of_a_cube_record_the_cube_they_read() -> None:
+    cube, counts = _cube()
+    sets = {
+        "treated": [f"G{j}" for j in range(30)],
+        "other": [f"G{j}" for j in range(50, 90)],
+    }
+    result = gsva(cube, sets, gene_ids="symbol")
+    record = result.provenance
+    assert record is not None
+    assert list(record) == ["method", "versions", "cube", "layer", "settings"]
+    assert record["method"] == "gsva" and record["layer"] == "counts"
+    assert record["cube"]["fingerprint"] == cube.fingerprint()
+    assert record["cube"]["provenance"] == cube.provenance
+    assert record["settings"] == result.settings
+    assert record["versions"]["cytepool"] == cytepool.__version__
+    assert json.loads(json.dumps(record)) == record
+    record["method"] = "changed"  # a new dict each time
+    assert result.provenance["method"] == "gsva"
+    assert repr(result) == "PathwayScores(method='gsva', n_samples=11, n_sets=2)"
+    # Scores of values given as an array name no cube.
+    values = log_cpm(counts[:4], norm_factors=tmm_factors(counts[:4]))
+    symbols = [f"G{j}" for j in range(counts.shape[1])]
+    of_values = gsva(values, sets, gene_ids=symbols)
+    assert of_values.provenance is None
+    # Both pickle, the provenance with them.
+    assert_pickles(result)
+    assert_pickles(of_values)
 
 
 # Messages.

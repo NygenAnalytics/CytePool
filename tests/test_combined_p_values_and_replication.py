@@ -694,6 +694,43 @@ def test_replication_combines_the_aligned_results_as_the_array_functions_do() ->
         assert count == np.count_nonzero(result.genes["n_found"] >= k_studies)
 
 
+def test_pi1_is_at_lambda_one_half_by_default_and_qvalues_with_no_options() -> None:
+    collection, results = cohorts()
+
+    def run(**options: Any) -> ReplicationResult:
+        return differential_expression_replication(
+            collection, results, "T", "stim_vs_ctrl", **options
+        )
+
+    default, half, smoother = (
+        run(),
+        run(null_proportion={"lambdas": 0.5}),
+        run(null_proportion={}),
+    )
+    assert default.study_pairs.equals(half.study_pairs)
+    assert default.settings == half.settings
+    assert default.settings["null_proportion"] == {"lambdas": 0.5}
+    assert smoother.settings["null_proportion"] == {}
+    # Only pi1 changes: every other number is the same.
+    assert default.genes.equals(smoother.genes)
+    assert default.study_pairs.select(["discovery", "replication", "n_found"]).equals(
+        smoother.study_pairs.select(["discovery", "replication", "n_found"])
+    )
+    # pi1 of the first pair from its definition: 1 - pi0, pi0 the share of the
+    # p-values above 0.5 over 0.5, at most 1 (Storey and Tibshirani 2003); and from
+    # qvalue's smoother with {}.
+    aligned = align_study_results(collection, results, "T", "stim_vs_ctrl")
+    k, n = collection.n_studies, collection.n_features
+    tested = np.array(aligned["status"].tolist()).reshape(k, n) == "tested"
+    p = np.where(tested, np.asarray(aligned["p_value"]).reshape(k, n), np.nan)
+    adjusted = np.asarray(aligned["adjusted_p_value"]).reshape(k, n)
+    found = tested[0] & (adjusted[0] < 0.05) & tested[1]
+    replicated = p[1, found]
+    by_hand = 1.0 - min(1.0, np.mean(replicated > 0.5) / 0.5)
+    assert default.study_pairs["pi1"][0] == pytest.approx(by_hand, rel=1e-15)
+    assert smoother.study_pairs["pi1"][0] == proportion_of_true_nulls(replicated).pi1
+
+
 def test_replication_records_its_settings_studies_and_provenance() -> None:
     result = replication("T1")
     settings = result.settings
@@ -709,6 +746,7 @@ def test_replication_records_its_settings_studies_and_provenance() -> None:
     with pytest.raises(AttributeError, match="immutable"):
         result._genes = None  # type: ignore[misc]
     assert "ReplicationResult of group 'T'" in repr(result)
+    assert max(map(len, repr(result).splitlines())) <= 80
 
 
 def test_replication_refuses_invalid_settings() -> None:

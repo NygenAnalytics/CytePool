@@ -431,6 +431,209 @@ def test_collapse_samples_by_integer_column_and_invalid_columns(
         make_cube(layers, samples=missing).collapse_samples("donor")
 
 
+def test_collapse_samples_by_several_columns_joins_their_values(
+    cells: dict[str, np.ndarray], cube: Cube
+) -> None:
+    # Donor and batch: S1 and S4 are D1 in batch 1, S2 is D2 in batch 2, S3 is D1 in
+    # batch 2.
+    pooled = cube.collapse_samples(["donor", "batch"])
+    key_of = {"S1": "D1_1", "S2": "D2_2", "S3": "D1_2", "S4": "D1_1"}
+    keys = np.array([key_of[sample] for sample in cells["sample"]])
+    new_ids = ["D1_1", "D2_2", "D1_2"]
+    expected, n_cells = aggregate(cells, keys, cells["group"], new_ids, GROUPS)
+    assert pooled.samples["sample_id"].tolist() == new_ids
+    assert_array_equal(pooled.n_cells, n_cells)
+    assert_layers_equal(pooled, expected)
+    # The tissue varies within D1_1 and is dropped; the other columns are constant.
+    assert pooled.samples.columns == (
+        "sample_id",
+        "donor",
+        "condition",
+        "age",
+        "batch",
+        "n_pooled_samples",
+    )
+    assert pooled.samples["n_pooled_samples"].tolist() == [2, 1, 1]
+    assert pooled.provenance["operations"][-1] == {
+        "operation": "collapse_samples",
+        "input": cube.fingerprint(),
+        "by": ["donor", "batch"],
+        "membership": {"D1_1": ["S1", "S4"], "D2_2": ["S2"], "D1_2": ["S3"]},
+    }
+    as_tuple = cube.collapse_samples(("donor", "batch"))
+    assert as_tuple.fingerprint() == pooled.fingerprint()
+    assert as_tuple.provenance == pooled.provenance
+    one = cube.collapse_samples(["donor"])
+    assert one.fingerprint() == cube.collapse_samples("donor").fingerprint()
+    assert one.provenance["operations"][-1]["by"] == ["donor"]
+
+
+def test_collapse_samples_without_columns_pools_every_sample(
+    cells: dict[str, np.ndarray], cube: Cube
+) -> None:
+    pooled = cube.collapse_samples()
+    everyone = np.full(cells["sample"].size, "all")
+    expected, n_cells = aggregate(cells, everyone, cells["group"], ["all"], GROUPS)
+    assert pooled.samples["sample_id"].tolist() == ["all"]
+    # Every sample column varies across the samples, so only the count is left.
+    assert pooled.samples.columns == ("sample_id", "n_pooled_samples")
+    assert pooled.samples["n_pooled_samples"].tolist() == [4]
+    assert_array_equal(pooled.n_cells, n_cells)
+    assert_layers_equal(pooled, expected)
+    for g, group in enumerate(GROUPS):
+        rows = cells["group"] == group
+        assert_allclose(
+            pooled.mean()[g, 0], cells["log"][rows].mean(axis=0), rtol=1e-12
+        )
+    assert pooled.provenance["operations"][-1] == {
+        "operation": "collapse_samples",
+        "input": cube.fingerprint(),
+        "by": None,
+        "membership": {"all": SAMPLES},
+    }
+    assert cube.collapse_samples(None).fingerprint() == pooled.fingerprint()
+
+
+@pytest.mark.parametrize(
+    ("by", "error", "message"),
+    [
+        ([], ValueError, "by names no sample column; give one or more, or None"),
+        (["donor", 3], TypeError, "by must name sample columns (str), got int 3"),
+        (["donor", "donor"], ValueError, "by names the sample column 'donor' twice"),
+        (["donor", "site"], KeyError, "no sample column named 'site'"),
+        (["donor", "age"], TypeError, "'age' has dtype float64"),
+        (3, TypeError, "by must be a sample column name, a list of them, or None"),
+        (b"donor", TypeError, "got bytes"),
+    ],
+)
+def test_collapse_samples_rejects_invalid_columns(
+    cube: Cube, by: Any, error: type, message: str
+) -> None:
+    with pytest.raises(error, match=re.escape(message)):
+        cube.collapse_samples(by)
+
+
+def test_collapse_samples_refuses_values_that_join_to_the_same_id(
+    layers: dict[str, np.ndarray],
+) -> None:
+    # "x_y" with "z" and "x" with "y_z" both join to "x_y_z".
+    samples = dict(SAMPLE_TABLE, a=["x_y", "x", "x_y", "x"], b=["z", "y_z", "z", "y_z"])
+    message = (
+        "the values ('x_y', 'z') and ('x', 'y_z') of the sample columns 'a' and 'b' "
+        "both join to the id 'x_y_z'"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        make_cube(layers, samples=samples).collapse_samples(["a", "b"])
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int32])
+def test_collapse_samples_that_pools_nothing_keeps_the_integer_dtype(
+    layers: dict[str, np.ndarray], dtype: type
+) -> None:
+    small = {name: layers[name].astype(dtype) for name in INTEGER_LAYERS}
+    cube = make_cube(dict(layers, **small))
+    # Each donor and condition is one sample after selecting S1 and S2: nothing is
+    # summed, so the values and their dtype are kept.
+    two = cube.select(samples=["S1", "S2"])
+    alone = two.collapse_samples("donor")
+    pooled = cube.collapse_samples("donor")
+    for name in INTEGER_LAYERS:
+        assert alone.layer(name).dtype == dtype
+        assert_array_equal(alone.layer(name), two.layer(name))
+        assert pooled.layer(name).dtype == np.int64
+    assert alone.samples["sample_id"].tolist() == ["D1", "D2"]
+
+
+def test_with_columns_adds_and_replaces_columns_and_keeps_the_layers(
+    cube: Cube,
+) -> None:
+    pools = ["P1", "P2", "P1", "P2"]
+    changed = cube.with_columns(
+        samples={"pool": pools, "condition": ["a", "b", "c", "d"]},
+        groups={"marker": ["MS4A1", "CD4", "CD8A", "NCAM1"]},
+    )
+    # A replaced column keeps its place and new columns come last.
+    assert changed.samples.columns == (*SAMPLE_TABLE, "pool")
+    assert changed.samples["condition"].tolist() == ["a", "b", "c", "d"]
+    assert changed.samples["pool"].tolist() == pools
+    assert changed.groups.columns == (*GROUP_TABLE, "marker")
+    assert changed.features.equals(cube.features)
+    for name in cube.layer_names:
+        assert np.shares_memory(changed.layer(name), cube.layer(name))
+    assert_array_equal(changed.n_cells, cube.n_cells)
+    assert changed.normalization == cube.normalization
+    assert changed.fingerprint() != cube.fingerprint()
+    assert changed.provenance == {
+        "source": "simulated cells",
+        "operations": [
+            {
+                "operation": "with_columns",
+                "input": cube.fingerprint(),
+                "samples": {"added": ["pool"], "replaced": ["condition"]},
+                "groups": {"added": ["marker"], "replaced": []},
+                "features": None,
+            }
+        ],
+    }
+    # A Table gives the same cube as a mapping; nothing to add returns the cube.
+    from_table = cube.with_columns(
+        samples=changed.samples.select(["pool", "condition"]),
+        groups={"marker": ["MS4A1", "CD4", "CD8A", "NCAM1"]},
+    )
+    assert from_table.fingerprint() == changed.fingerprint()
+    assert cube.with_columns() is cube
+    assert cube.with_columns(samples={}) is cube
+
+
+def test_with_columns_lets_any_set_of_samples_be_pooled(
+    cells: dict[str, np.ndarray], cube: Cube
+) -> None:
+    pooled = cube.with_columns(samples={"pool": ["P1", "P2", "P1", "P2"]})
+    pooled = pooled.collapse_samples("pool")
+    pool_of = {"S1": "P1", "S2": "P2", "S3": "P1", "S4": "P2"}
+    keys = np.array([pool_of[sample] for sample in cells["sample"]])
+    expected, n_cells = aggregate(cells, keys, cells["group"], ["P1", "P2"], GROUPS)
+    assert pooled.samples["sample_id"].tolist() == ["P1", "P2"]
+    assert_array_equal(pooled.n_cells, n_cells)
+    assert_layers_equal(pooled, expected)
+    operations = pooled.provenance["operations"]
+    assert [record["operation"] for record in operations] == [
+        "with_columns",
+        "collapse_samples",
+    ]
+
+
+def test_with_columns_on_a_lazy_cube_reads_nothing(
+    cube: Cube, layers: dict[str, np.ndarray]
+) -> None:
+    lazy = {name: LazyArray(array) for name, array in layers.items()}
+    lazy_cube = make_cube(lazy)
+    changed = lazy_cube.with_columns(features={"length": np.arange(N_FEATURES)})
+    assert all(not array.reads for array in lazy.values())
+    assert "lazy" in repr(changed)
+    expected = cube.with_columns(features={"length": np.arange(N_FEATURES)})
+    assert changed.fingerprint() == expected.fingerprint()
+    assert_array_equal(changed.layer("counts", "B"), layers["counts"][0])
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error", "message"),
+    [
+        ({"samples": [1, 2, 3, 4]}, TypeError, "samples must be a mapping"),
+        ({"samples": {"sample_id": SAMPLES}}, ValueError, "names 'sample_id'"),
+        ({"groups": {"group_id": GROUPS}}, ValueError, "names 'group_id'"),
+        ({"features": {"feature_id": ["a"] * 20}}, ValueError, "names 'feature_id'"),
+        ({"samples": {"pool": ["P1", "P2"]}}, ValueError, "the samples table"),
+        ({"groups": {"size": [object()] * 4}}, TypeError, "the groups table"),
+    ],
+)
+def test_with_columns_rejects_invalid_columns(
+    cube: Cube, arguments: dict[str, Any], error: type, message: str
+) -> None:
+    with pytest.raises(error, match=re.escape(message)):
+        cube.with_columns(**arguments)
+
+
 def test_statistics_regrouping_and_pooling_match_scanpy() -> None:
     # scanpy.get.aggregate on cells that scanpy normalized itself, written by
     # validation/cube.py --write-fixtures.
@@ -1083,10 +1286,15 @@ def tiny_cube(
 def test_integer_layers_hold_values_up_to_the_largest_int64(lazy: bool) -> None:
     cube = tiny_cube(np.array([[[LARGEST, 0]]], dtype=np.uint64), lazy=lazy)
     assert cube.layer("counts", 0).tolist() == [[LARGEST, 0]]
-    # A rename converts to int64, where 2**63 - 1 is the largest value.
+    # A rename sums nothing and keeps the dtype; a merge sums in int64, where
+    # 2**63 - 1 is the largest value.
     renamed = cube.regroup({"h": ["g0"]})
-    assert renamed.layer("counts", "h").dtype == np.int64
+    assert renamed.layer("counts", "h").dtype == np.uint64
     assert renamed.layer("counts", "h").tolist() == [[LARGEST, 0]]
+    two = tiny_cube(np.array([[[LARGEST, 0]], [[0, 1]]], dtype=np.uint64), lazy=lazy)
+    merged = two.regroup({"h": ["g0", "g1"]})
+    assert merged.layer("counts", "h").dtype == np.int64
+    assert merged.layer("counts", "h").tolist() == [[LARGEST, 1]]
     too_large = np.array([[[0, LARGEST + 1]]], dtype=np.uint64)
     message = re.escape(
         "layer 'counts' has a value above 2**63 - 1 (9223372036854775808) at group "
@@ -1763,12 +1971,14 @@ def test_numpy_values_in_provenance_become_plain_json(
 def test_repr_reports_sizes_layers_and_filled_entries(cube: Cube) -> None:
     lines = repr(cube).splitlines()
     assert lines[0] == "Cube with 4 samples x 4 groups x 20 features"
-    assert lines[1] == (
-        "  layers: counts (int64), detected (int64), log_sum (float64), "
-        "log_sum_sq (float64), linear_sum (float64)"
-    )
-    assert lines[2] == "  filled: 15 of 16 sample x group entries have cells (93.8%)"
-    assert lines[3] == "  samples: sample_id, donor, condition, age, tissue, batch"
+    # The layers continue on a second line, each with its dtype, under the first.
+    assert lines[1:3] == [
+        "  layers: counts (int64), detected (int64), log_sum (float64),",
+        "          log_sum_sq (float64), linear_sum (float64)",
+    ]
+    assert lines[3] == "  filled: 15 of 16 sample x group entries have cells (93.8%)"
+    assert lines[4] == "  samples: sample_id, donor, condition, age, tissue, batch"
+    assert max(map(len, lines)) <= 80
 
 
 def test_pickle_round_trip(cube: Cube) -> None:

@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: The CytePool Python API for pseudobulk cubes, their conversion to and from AnnData and MuData, designs, normalization, linear models, mixed models, voom, dream, sample quality weights, negative binomial models, quasi-likelihood F-tests, DESeq2's dispersions and tests, empirical Bayes moderation, gene-set tests (including rotation tests), pathway scores, networks of regulators and pathways and their activities, multiple testing, differential expression, principal components of samples, cell-type composition, meta-analysis, combined p-values and replication across studies, SumRank and held-out prediction, and distributions.
+    description: The CytePool Python API for pseudobulk cubes, their conversion to and from AnnData and MuData, designs, normalization, linear models, mixed models, voom, dream, sample quality weights, negative binomial models, quasi-likelihood F-tests, DESeq2's dispersions and tests, empirical Bayes moderation, gene-set tests (including rotation tests), pathway scores, networks of regulators and pathways and their activities, tests of scores and activities with a design, multiple testing, differential expression, principal components of samples, cell-type composition, the results of several studies, meta-analysis, combined p-values and replication across studies, SumRank and held-out prediction, and distributions.
 ---
 
 # CytePool API reference
@@ -42,6 +42,7 @@ gsea
 pathway_scores
 networks
 activity
+score_tests
 multiple_testing
 combined_p_values
 differential_expression
@@ -49,6 +50,7 @@ variance_partitioning
 principal_components
 composition
 meta_analysis
+study_results
 replication
 sumrank
 held_out_prediction

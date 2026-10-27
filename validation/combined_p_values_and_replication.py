@@ -29,8 +29,10 @@ roots of sample sizes). Then three cohorts of 6, 4 and 8 donors, before and afte
 stimulation that changes 15% of 700 genes in two cell types alike in every cohort, up
 to 50% more or less, each measuring part of the genes, are aligned in a
 ``CubeCollection``, tested by ``limma_voom`` and passed to
-``differential_expression_replication`` with three settings; R computes every column
-from the cohorts' tables, and the figures are compared with what R computes for them.
+``differential_expression_replication`` with four settings, among them pi1 with
+qvalue's defaults (``null_proportion={}``) and pi1 by default (``null_proportion`` left
+out), which is ``pi0est(lambda = 0.5)``; R computes every column from the cohorts'
+tables, and the figures are compared with what R computes for them.
 
 Tolerances: exact (1e-10) for every closed form, the smoother of pi0 included (R's
 search for its smoothing parameter is followed step by step); close (1e-6) for REML.
@@ -90,12 +92,15 @@ PI0_OPTIONS = {
 NAMES = {"smooth.df": "smooth_df", "smooth.log.pi0": "smooth_log"}
 NAMES |= {"pi0.method": "method", "lambda": "lambdas"}
 # The replications: method, conjunction method, at_least, alpha, meta_method, and
-# pi0est's options.
+# pi0est's options; None leaves null_proportion out, for pi1 by default, which is
+# pi0est at DEFAULT_PI0.
 SETTINGS = (
     ("stouffer", "simes", 2, 0.05, "reml", {}),
     ("fisher", "fisher", 3, 0.25, "dl", {"pi0.method": "bootstrap"}),
     ("tippett", "stouffer", 2, 0.1, "reml", {"lambda": 0.5}),
+    ("stouffer", "simes", 2, 0.05, "dl", None),
 )
+DEFAULT_PI0 = {"lambda": 0.5}
 
 
 def reference_main(directory):
@@ -443,10 +448,13 @@ def replications(collection, results, settings=SETTINGS):
     out = []
     for group in collection.groups["group_id"].tolist():
         for s, (method, conjunction, u, alpha, meta, pi0) in enumerate(settings):
+            options = {} if pi0 is None else {
+                "null_proportion": {NAMES[key]: value for key, value in pi0.items()}
+            }  # fmt: skip
             result = differential_expression_replication(
                 collection, results, group, "stim_vs_ctrl", alpha=alpha, method=method,
                 at_least=u, conjunction_method=conjunction, meta_method=meta,
-                null_proportion={NAMES[key]: value for key, value in pi0.items()},
+                **options,
             )  # fmt: skip
             out.append((f"{group}{s}", s, result))
     return out
@@ -509,6 +517,7 @@ def run_references(directory, cases, extreme, pi0, analyses, collection, results
             write_binary(folder / f"{file}.bin", values[:, keep].T)
         write_binary(folder / "n_samples.bin", result.studies["n_samples"])
         method, conjunction, u, alpha, meta, options = SETTINGS[s]
+        options = DEFAULT_PI0 if options is None else options
         spec = {"name": name, "method": method, "conjunction": conjunction}
         spec |= {"at_least": u, "alpha": alpha, "meta": meta, "pi0": options}
         lines.append(json.dumps(spec))
@@ -743,13 +752,14 @@ def check_pi0(pi0, reference):
 
 def check_replication(analyses, reference):
     worst = dict.fromkeys(("genes", "reml", "dl", "pairs", "found_in"), 0.0)
-    compared = stops = 0
+    worst["default"] = 0.0
+    compared = stops = by_default = 0
     counts = ("n_studies", "n_up", "n_down", "n_found", "n_found_up", "n_found_down")
     counts += ("direction",)
     values = ("sign_agreement", "p_value", "replication_p_value", "adjusted_p_value")
     values += ("replication_adjusted_p_value",)
     heterogeneity = ("q_statistic", "q_p_value", "i_squared", "tau_squared")
-    for name, _, result in analyses:
+    for name, s, result in analyses:
         theirs = reference["replication"][name]
         genes, g = result.genes, theirs["genes"]
         if any(not np.array_equal(genes[c], g[i]) for i, c in enumerate(counts)):
@@ -769,6 +779,11 @@ def check_replication(analyses, reference):
         worst["pairs"] = max(
             worst["pairs"], difference(pairs["pi1"][known], r[5][known])
         )
+        if SETTINGS[s][-1] is None:  # pi1 by default, against pi0est(lambda = 0.5)
+            worst["default"] = max(
+                worst["default"], difference(pairs["pi1"][known], r[5][known])
+            )
+            by_default += int(known.sum())
         compared += int(known.sum())
         stops += int(np.count_nonzero(~known & ~np.isnan(pairs["pi1"])))
         f, found_in = theirs["found_in"], result.found_in
@@ -782,6 +797,7 @@ def check_replication(analyses, reference):
         report(f"{reml} replications with REML: Q, its p-value, I^2 and tau^2", "rma.uni", worst["reml"], CLOSE),
         report(f"{n - reml} replications with DerSimonian-Laird: the same", "rma.uni", worst["dl"], EXACT),
         report(f"{n} replications, pairs of studies: genes found, sign agreement, {compared} values of pi1", "pi0est", worst["pairs"], EXACT),
+        report(f"pi1 by default (null_proportion left out), {by_default} values: pi0 at lambda = 0.5", "pi0est(lambda = 0.5)", worst["default"], EXACT),
         report(f"{n} replications: genes found in at least k studies, and in one direction", "R", worst["found_in"], 0.0, "mismatches"),
         behaviour(f"pi1 of {stops} pairs where qvalue stops: no p-value at its largest lambda, or an estimate of 0", "pi0est", "qvalue: an error; CytePool: an estimate"),
     ]  # fmt: skip

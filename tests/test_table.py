@@ -161,6 +161,82 @@ def test_filter_keeps_rows_where_the_mask_is_true(table: Table) -> None:
         table.filter([True, False])
 
 
+def test_filter_by_values_keeps_the_rows_a_mask_of_equalities_keeps(
+    table: Table,
+) -> None:
+    # Each value against the mask built by hand; missing values match missing ones.
+    cases = [
+        ({"sample_id": "S2"}, table["sample_id"] == "S2"),
+        ({"donor": None}, np.array([v is None for v in table["donor"]])),
+        ({"donor": ""}, np.array([v == "" for v in table["donor"]])),
+        ({"cells": 85}, table["cells"] == 85),
+        ({"age": 61.0}, table["age"] == 61.0),
+        ({"age": np.nan}, np.isnan(table["age"])),
+        ({"cells": np.nan}, np.zeros(3, dtype=bool)),  # integers are never missing
+        ({"treated": True}, table["treated"]),
+        ({"collected": np.datetime64("2024-03-04")}, np.array([False, False, True])),
+        ({"collected": np.datetime64("NaT", "s")}, np.array([False, True, False])),
+        ({"treated": True, "cells": 3}, table["treated"] & (table["cells"] == 3)),
+    ]
+    for values, mask in cases:
+        assert table.filter(**values).equals(table.filter(mask)), values
+    # A mask and values together; the mask's keyword, as before values existed.
+    both = table.filter(np.array([True, True, False]), treated=True)
+    assert both["sample_id"].tolist() == ["S1"]
+    assert table.filter(mask=np.array([False, True, True])).equals(
+        table.filter(np.array([False, True, True]))
+    )
+    assert table.filter().equals(table)
+    # A column named mask is filtered by its value.
+    named = Table({"mask": [1.0, 2.0]})
+    assert named.filter(mask=2.0)["mask"].tolist() == [2.0]
+
+
+def test_filter_refuses_values_of_another_kind(table: Table) -> None:
+    with pytest.raises(TypeError, match="the column holds numbers, a number, got str"):
+        table.filter(cells="85")
+    with pytest.raises(TypeError, match="holds numbers, a number, got NoneType None"):
+        table.filter(age=None)  # NaN marks a missing number
+    with pytest.raises(TypeError, match="the column holds text, a string, got int 1"):
+        table.filter(donor=1)
+    with pytest.raises(TypeError, match=r"numpy.isin\(table\['donor'\], values\)"):
+        table.filter(donor=["D1", None])
+    with pytest.raises(TypeError, match="booleans, True or False, got int"):
+        table.filter(treated=1)
+    with pytest.raises(TypeError, match="datetimes, a numpy.datetime64"):
+        table.filter(collected="2024-03-04")
+    with pytest.raises(KeyError, match="no column named 'tissue'"):
+        table.filter(tissue="lung")
+
+
+def test_sort_is_stable_and_puts_missing_values_last() -> None:
+    rng = np.random.default_rng(3)
+    values = rng.integers(0, 4, 40).astype(float)
+    values[[3, 17, 30]] = np.nan
+    text = np.array([f"t{v}" for v in rng.integers(0, 3, 40)], dtype=object)
+    text[[5, 9]] = None
+    table = Table({"row": np.arange(40), "value": values, "text": text})
+    present = np.flatnonzero(~np.isnan(values))
+    order = present[np.argsort(values[present], kind="stable")]
+    expected = np.concatenate([order, np.flatnonzero(np.isnan(values))])
+    assert_array_equal(table.sort("value")["row"], expected)
+    # Descending: the largest first, equal values in their order, missing last.
+    order = present[np.argsort(-values[present], kind="stable")]
+    expected = np.concatenate([order, np.flatnonzero(np.isnan(values))])
+    assert_array_equal(table.sort("value", descending=True)["row"], expected)
+    named = [i for i in range(40) if text[i] is not None]
+    by_text = sorted(named, key=lambda i: text[i]) + [5, 9]
+    assert table.sort("text")["row"].tolist() == by_text
+    by_text = sorted(named, key=lambda i: text[i], reverse=True) + [5, 9]
+    assert table.sort("text", descending=True)["row"].tolist() == by_text
+    assert table.sort("row", descending=True)["row"].tolist() == list(range(39, -1, -1))
+    with pytest.raises(KeyError, match="no column named 'x'"):
+        table.sort("x")
+    with pytest.raises(TypeError, match="descending must be True or False"):
+        table.sort("row", descending="yes")  # type: ignore[arg-type]
+    assert Table({"a": []}).sort("a").equals(Table({"a": []}))
+
+
 def test_select_chooses_and_orders_columns(table: Table) -> None:
     assert table.select(["age", "sample_id"]).columns == ("age", "sample_id")
     assert table.select("donor").columns == ("donor",)

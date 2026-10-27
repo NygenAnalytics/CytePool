@@ -53,6 +53,12 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from ._analysis_records import (
+    keep_provenance,
+    provenance_of,
+    provenance_text,
+    restore_provenance,
+)
 from ._columns import text_column
 from ._masked_arrays import read_only, real_array, reject_masked, unmasked_array
 from ._messages import quoted
@@ -112,10 +118,37 @@ class PrincipalComponents:
     samples: Table
     settings: Mapping[str, Any]
 
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        # The settings are a read-only view, which pickle cannot write: a dict
+        # travels in their place, and the provenance kept outside the fields with it.
+        return (
+            _restored_components,
+            (
+                self.coordinates,
+                self.variance_explained,
+                self.loadings,
+                self.genes,
+                self.samples,
+                dict(self.settings),
+                provenance_text(self),
+            ),
+        )
+
     @property
     def n_components(self) -> int:
         """The number of components."""
         return int(self.coordinates.shape[1])
+
+    @property
+    def provenance(self) -> dict[str, Any] | None:
+        """A JSON-serialisable record of what produced the components of a cube's
+        group, as a new dict: the method, the CytePool, numpy, numba and Python
+        versions, the cube's fingerprint, the digests it is built from and its
+        provenance (``"cube"``), the layer read and the settings; None for
+        components of values given as an array or a VoomResult. The cube's record
+        costs what it costs for
+        :func:`~cytepool.differential_expression.limma_voom` ("Provenance")."""
+        return provenance_of(self)
 
     def __repr__(self) -> str:
         n_samples, n_components = self.coordinates.shape
@@ -125,6 +158,27 @@ class PrincipalComponents:
             f"n_components={n_components}, variance_explained=[{shares}"
             f"{', ...' if n_components > 3 else ''}])"
         )
+
+
+def _restored_components(
+    coordinates: FloatArray,
+    variance_explained: FloatArray,
+    loadings: FloatArray,
+    genes: IntArray,
+    samples: Table,
+    settings: dict[str, Any],
+    provenance: str | None,
+) -> PrincipalComponents:
+    """Principal components unpickled: read-only again, with their provenance."""
+    restored = PrincipalComponents(
+        coordinates=read_only(np.asarray(coordinates)),
+        variance_explained=read_only(np.asarray(variance_explained)),
+        loadings=read_only(np.asarray(loadings)),
+        genes=read_only(np.asarray(genes)),
+        samples=samples,
+        settings=MappingProxyType(settings),
+    )
+    return restore_provenance(restored, provenance)
 
 
 def principal_components(
@@ -197,7 +251,7 @@ def principal_components(
     coordinates *= signs
     loadings *= signs
     settings["top"] = count
-    return PrincipalComponents(
+    result = PrincipalComponents(
         coordinates=read_only(np.ascontiguousarray(coordinates)),
         variance_explained=read_only(singular**2 / total),
         loadings=read_only(np.ascontiguousarray(loadings)),
@@ -205,6 +259,9 @@ def principal_components(
         samples=samples,
         settings=MappingProxyType(settings),
     )
+    if isinstance(data, Cube):
+        keep_provenance(result, "principal_components", data, settings)
+    return result
 
 
 def _signs(coordinates: FloatArray) -> FloatArray:

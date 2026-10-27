@@ -2108,11 +2108,12 @@ lambda, with its defaults, `smooth.df = 5`, `smooth.log.pi0`, `pi0.method =
 before and after a stimulation that changes 15% of 700 genes in two cell types, alike in
 every cohort up to 50% more or less, each measuring part of the genes, are aligned in a
 `CubeCollection` and tested by `limma_voom`; `differential_expression_replication` runs
-on both cell types with three settings, and R computes every column from the cohorts'
-tables with metap, qvalue, `p.adjust` and metafor's `rma.uni` (REML with `control =
-list(threshold = 1e-13, maxiter = 10000)`, or DerSimonian-Laird). The figures are
-compared with what R computes for them. Reference: scipy 1.18.1, mpmath 1.3.0; R 4.4.3,
-metap 1.1, qvalue 2.38.0, jsonlite 2.0.0; metafor 5.0.1.
+on both cell types with four settings, among them qvalue's defaults for pi1
+(`null_proportion={}`) and pi1 by default (lambda = 0.5), and R computes every column
+from the cohorts' tables with metap, qvalue, `p.adjust` and metafor's `rma.uni` (REML
+with `control = list(threshold = 1e-13, maxiter = 10000)`, or DerSimonian-Laird). The
+figures are compared with what R computes for them. Reference: scipy 1.18.1, mpmath
+1.3.0; R 4.4.3, metap 1.1, qvalue 2.38.0, jsonlite 2.0.0; metafor 5.0.1.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
@@ -2125,8 +2126,9 @@ metap 1.1, qvalue 2.38.0, jsonlite 2.0.0; metafor 5.0.1.
 | Replications, genes: counts, directions, sign agreement, combined and partial conjunction p-values, adjusted | metap, `p.adjust` | 3.1e-15 | 1e-10 | 1 pass |
 | Replications, heterogeneity: Q, its p-value, I² and tau², by REML and DerSimonian-Laird | `rma.uni` | 2.0e-12 | 1e-6 (REML), 1e-10 | 2 pass |
 | Replications, pairs of studies: genes found, sign agreement, pi1 where qvalue gives it; genes found in at least k studies | `pi0est`, R | 0 | 1e-10, 0 mismatches | 2 pass |
+| pi1 by default (`null_proportion` left out): pi0 at lambda = 0.5, 9 values where qvalue gives one | `pi0est(lambda = 0.5)` | 0 | 1e-10 | 1 pass |
 | `plot_study_agreement` and `plot_replicated_genes`: the values and bars drawn | `pi0est`, R | 0 | 1e-10, 0 mismatches | 2 pass |
-| metap at a p-value of 0 and for one study; pi0est where no p-value reaches the largest lambda (smoother, bootstrap), where its estimate is at most 0, for pi1 of 20 pairs of studies, and for 96 values of lambda | metap, `pi0est` | listed below | n/a | 7 deliberate differences |
+| metap at a p-value of 0 and for one study; pi0est where no p-value reaches the largest lambda (smoother, bootstrap), where its estimate is at most 0, for pi1 of 23 pairs of studies, and for 96 values of lambda | metap, `pi0est` | listed below | n/a | 7 deliberate differences |
 
 Differences are scaled by max(\|reference\|, 1), and p-values by
 max(p, 1e-300) max(1, \|log p\|); counts and directions must be equal. qvalue's
@@ -2139,9 +2141,9 @@ the smoothing parameter: the estimates agree to about 1e-12. Deliberate differen
 - qvalue stops with an error where no p-value reaches the largest lambda, with the
   smoother ("missing or infinite values in inputs are not allowed") and the bootstrap
   alike; CytePool smooths the zero, and gives the count no variance in the bootstrap.
-  This is common for pi1 between studies, whose genes have small p-values: of the 36
+  This is common for pi1 between studies, whose genes have small p-values: of the 48
   pairs of the replications, qvalue stopped for all 12 with its defaults, 7 of 12 with
-  the bootstrap and 1 of 12 with lambda = 0.5, where its estimate was 0.
+  the bootstrap and 4 of 24 with lambda = 0.5, where its estimate was 0.
 - qvalue stops where its estimate is at most 0; CytePool gives 0.
 - With more than 49 values of lambda, R's `smooth.spline` keeps a knot at some of them
   only; CytePool keeps one at every lambda. For 96 values (0, 0.01, ..., 0.95) the

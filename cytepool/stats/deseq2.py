@@ -224,12 +224,14 @@ from cytepool.design.contrasts import make_contrasts
 from cytepool.design.design import Design
 from cytepool.normalization import median_ratio_size_factors
 from cytepool.stats._negative_binomial import linear_predictors, log1p_ratio
+from cytepool.stats._result_tables import feature_id_column
 from cytepool.stats._scalar_special_functions import log_gamma_increment, stirling_error
 from cytepool.stats.distributions import chi2_sf, f_ppf, norm_sf
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.negative_binomial_models import negative_binomial_deviance
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.special import digamma_scalar, lgamma_scalar, trigamma
+from cytepool.table import Table
 
 __all__ = [
     "DESeq2Dispersions",
@@ -534,6 +536,36 @@ class DESeq2Results:
     filter_quantiles: FloatArray
     rejections: FloatArray
     rejections_fit: FloatArray
+
+    def table(self, *, feature_ids: Any = None) -> Table:
+        """Return the test as a table, one row per gene in the order of the counts.
+
+        DESeq2's ``results()``, with the columns of the tables of
+        :func:`~cytepool.differential_expression.limma_voom`: ``feature_id``;
+        ``base_mean`` (``baseMean``); ``log2_fold_change`` (``log2FoldChange``);
+        ``standard_error`` (``lfcSE``); ``statistic`` (``stat``); ``p_value``
+        (``pvalue``); and ``adjusted_p_value`` (``padj``).
+
+        Args:
+            feature_ids: One id per gene, as text, such as the gene ids of the
+                columns of the counts; by default ``feature_0``, ``feature_1``, ...
+
+        Raises:
+            ValueError: If ``feature_ids`` does not give one id per gene.
+            TypeError: If an id is not text, or ``feature_ids`` is or holds a numpy
+                masked array.
+        """
+        return Table(
+            {
+                "feature_id": feature_id_column(feature_ids, self.p_value.size),
+                "base_mean": self.base_mean,
+                "log2_fold_change": self.log2_fold_change,
+                "standard_error": self.standard_error,
+                "statistic": self.statistic,
+                "p_value": self.p_value,
+                "adjusted_p_value": self.adjusted_p_value,
+            }
+        )
 
     def __repr__(self) -> str:
         significant = int(np.count_nonzero(self.adjusted_p_value < self.alpha))

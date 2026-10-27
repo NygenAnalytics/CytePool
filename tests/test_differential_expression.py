@@ -15,6 +15,7 @@ follow the cube; and the statuses of groups that cannot be fitted.
 
 import json
 import pickle
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -24,14 +25,16 @@ import numpy as np
 import pytest
 
 from cytepool.cube import Cube, from_bulk, from_cells
-from cytepool.design import Design
+from cytepool.design import Contrasts, Design
 from cytepool.differential_expression import (
     DifferentialExpressionResult,
+    dream_voom,
     limma_trend,
     limma_voom,
 )
 from cytepool.io import read_cube, write_cube
 from cytepool.io.zarr import ZarrArray
+from cytepool.normalization import filter_by_expression
 from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "differential_expression"
@@ -536,6 +539,81 @@ def test_a_filter_that_keeps_everything_equals_no_filter() -> None:
     assert unfiltered.settings["expression_filter"] is None
 
 
+def genes_tested(result: DifferentialExpressionResult) -> dict[str, list[str]]:
+    """The features each fitted group tested."""
+    fitted = result.summary.filter(status="fitted")["group_id"].tolist()
+    name = result.contrasts.names[0]
+    return {group: result.table(group, name)["feature_id"].tolist() for group in fitted}
+
+
+def test_a_filter_by_sample_groups_is_filter_by_expression_with_their_labels() -> None:
+    cube = cells_cube()
+    design = paired_design(cube.samples)
+    by_condition = {"sample_groups": "condition", "min_count": 5}
+    result = limma_voom(cube, design, expression_filter=by_condition)
+    assert result.settings["expression_filter"] == {
+        "min_count": 5.0,
+        "min_total_count": 15.0,
+        "large_n": 10.0,
+        "min_prop": 0.7,
+        "sample_groups": "condition",
+    }
+    features = cube.features["feature_id"]
+    sample_ids = cube.samples["sample_id"].tolist()
+    found = genes_tested(result)
+    assert found
+    for group, genes in found.items():
+        used = result.samples.filter(group_id=group, used=True)["sample_id"].tolist()
+        rows = [sample_ids.index(sample) for sample in used]
+        keep = filter_by_expression(
+            cube.layer("counts", group)[rows],
+            group=cube.samples["condition"][rows],
+            min_count=5,
+        )
+        assert genes == features[keep].tolist(), group
+    # dream with the donors as a random effect tests the same genes, which the
+    # filter by its design (the conditions alone) would not.
+    random = Design(
+        cube.samples,
+        "~ condition",
+        random="(1 | donor)",
+        levels={"condition": ["ctrl", "stim"]},
+        contrasts={"stim_vs_ctrl": "conditionstim"},
+    )
+    dream = dream_voom(cube, random, expression_filter=by_condition)
+    assert genes_tested(dream) == found
+    trend = limma_trend(cube, design, expression_filter=by_condition)
+    assert genes_tested(trend) == found
+
+
+@pytest.mark.parametrize(
+    ("setting", "error", "message"),
+    [
+        ({"sample_groups": "site"}, KeyError, "names 'site', which is not a column"),
+        ({"sample_groups": 3}, TypeError, "must name a column of the samples (str)"),
+        ({"groups": "condition"}, ValueError, "the settings are min_count"),
+    ],
+)
+def test_invalid_sample_groups_are_refused(
+    setting: dict[str, Any], error: type, message: str
+) -> None:
+    cube = cells_cube()
+    with pytest.raises(error, match=re.escape(message)):
+        limma_voom(cube, paired_design(cube.samples), expression_filter=setting)
+
+
+def test_sample_groups_must_name_a_group_for_every_sample() -> None:
+    cube = cells_cube()
+    labels = cube.samples["condition"].tolist()
+    labels[1] = None
+    samples = cube.samples.with_columns({"batch": labels})
+    design = paired_design(samples)
+    with pytest.raises(
+        ValueError, match="which is missing for sample 'D1_stim'; every"
+    ):
+        limma_voom(cube, design, expression_filter={"sample_groups": "batch"})
+
+
 def test_without_normalization_factors_they_are_one() -> None:
     cube = cells_cube()
     result = limma_trend(cube, paired_design(cube.samples), normalization=None)
@@ -677,6 +755,40 @@ def test_the_result_is_immutable_and_survives_pickling() -> None:
         assert restored.tables[key].equals(table)
     assert "NK: 6 samples" in repr(result)
     assert "not estimable: D2_vs_D1" in repr(result)
+
+
+def test_the_repr_fits_80_characters_and_separates_thousands() -> None:
+    result = voom_result()
+    groups = len(result.summary)
+    # A summary of large groups, and contrasts whose names run past one line.
+    summary = result.summary.with_columns(
+        {
+            "n_samples_used": np.full(groups, 1_204),
+            "n_features_tested": np.full(groups, 15_031),
+        }
+    )
+    names = [f"stimulated_{k}_versus_the_controls_of_donor_{k}" for k in range(4)]
+    contrasts = Contrasts(
+        np.tile(result.contrasts.matrix[:, :1], (1, 4)),
+        tuple(names),
+        result.contrasts.columns,
+    )
+    large = DifferentialExpressionResult(
+        result.method,
+        contrasts,
+        summary,
+        result.samples,
+        {},
+        result.provenance,
+    )
+    lines = repr(large).splitlines()
+    assert max(map(len, lines)) <= 80
+    text = " ".join(" ".join(lines).split())
+    assert f"{groups} groups" in text and ", ".join(names) in text
+    assert "1,204 samples, 15,031 features" in text
+    # The first line continues four spaces in, deeper than the lines of the groups.
+    assert lines[1] == "    stimulated_0_versus_the_controls_of_donor_0,"
+    assert lines[-1] == "  T: 1,204 samples, 15,031 features"
 
 
 def test_a_result_holds_checked_objects_and_a_json_record() -> None:

@@ -127,6 +127,12 @@ import numpy as np
 import numpy.typing as npt
 from numba import prange
 
+from ._analysis_records import (
+    keep_provenance,
+    provenance_of,
+    provenance_text,
+    restore_provenance,
+)
 from ._columns import is_data_frame, text_column
 from ._expression_values import MIN_CELLS, expression_values
 from ._jit import by_chunks, jit, thread_limit
@@ -140,6 +146,7 @@ from ._options import (
     random_generator,
 )
 from ._ranked_genes import ranked_genes
+from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
 from .networks import Network
 from .stats.distributions import t_sf
@@ -199,10 +206,40 @@ class Activities:
     method: str
     settings: Mapping[str, Any]
 
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        # The settings are a read-only view, which pickle cannot write: a dict
+        # travels in their place, and the provenance kept outside the fields with it.
+        return (
+            _restored_activities,
+            (
+                self.scores,
+                self.estimates,
+                self.p_values,
+                self.adjusted_p_values,
+                self.n_targets,
+                self.profiles,
+                self.network,
+                self.method,
+                dict(self.settings),
+                provenance_text(self),
+            ),
+        )
+
     @property
     def sources(self) -> tuple[str, ...]:
         """The sources scored, in the order of the columns."""
         return self.network.sources
+
+    @property
+    def provenance(self) -> dict[str, Any] | None:
+        """A JSON-serialisable record of what produced the activities of a cube's
+        group, as a new dict: the method, the CytePool, numpy, numba and Python
+        versions, the cube's fingerprint, the digests it is built from and its
+        provenance (``"cube"``), the layer read and the settings; None for
+        activities of values given as an array, or of statistics, whose result
+        keeps its own record. The cube's record costs what it costs for
+        :func:`~cytepool.differential_expression.limma_voom` ("Provenance")."""
+        return provenance_of(self)
 
     def table(self) -> Table:
         """Return the activities as a table with one row per source and profile.
@@ -235,6 +272,33 @@ class Activities:
         )
 
 
+def _restored_activities(
+    scores: FloatArray,
+    estimates: FloatArray,
+    p_values: FloatArray,
+    adjusted_p_values: FloatArray,
+    n_targets: IntArray,
+    profiles: Table,
+    network: Network,
+    method: str,
+    settings: dict[str, Any],
+    provenance: str | None,
+) -> Activities:
+    """Activities unpickled: read-only again, with their provenance."""
+    restored = Activities(
+        read_only(np.asarray(scores)),
+        read_only(np.asarray(estimates)),
+        read_only(np.asarray(p_values)),
+        read_only(np.asarray(adjusted_p_values)),
+        read_only(np.asarray(n_targets)),
+        profiles,
+        network,
+        method,
+        MappingProxyType(settings),
+    )
+    return restore_provenance(restored, provenance)
+
+
 class _Profiles(NamedTuple):
     """The values scored, profiles x genes, with their genes and profiles."""
 
@@ -242,6 +306,7 @@ class _Profiles(NamedTuple):
     gene_ids: list[str | None]
     profiles: Table
     settings: dict[str, Any]
+    cube: Cube | None = None  # the cube whose group was read
 
 
 class _Edges(NamedTuple):
@@ -263,7 +328,7 @@ def ulm(
     group: str | None = None,
     contrast: str | None = None,
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     id_column: str = "feature_id",
     statistic_column: str = "t",
     min_targets: int = _MIN_TARGETS,
@@ -307,7 +372,11 @@ def ulm(
             scored, at least 0, as for
             :func:`~cytepool.differential_expression.limma_voom`.
         expression_filter: For a cube, whether to score only the genes that
-            :func:`~cytepool.normalization.filter_by_expression` keeps.
+            :func:`~cytepool.normalization.filter_by_expression` keeps, with the
+            samples as one group; or a mapping of its settings, which may name a
+            column of the cube's samples whose values group them, such as
+            ``{"sample_groups": "condition"}``, as
+            :func:`~cytepool.differential_expression.limma_voom` takes it.
         id_column: For a differential-expression result or a table, the column of
             gene ids, such as ``"feature_id"`` or ``"symbol"``.
         statistic_column: For a differential-expression result or a table, the
@@ -392,7 +461,7 @@ def mlm(
     group: str | None = None,
     contrast: str | None = None,
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     id_column: str = "feature_id",
     statistic_column: str = "t",
     min_targets: int = _MIN_TARGETS,
@@ -494,7 +563,7 @@ def weighted_aggregate(
     group: str | None = None,
     contrast: str | None = None,
     min_cells: int = MIN_CELLS,
-    expression_filter: bool = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     id_column: str = "feature_id",
     statistic_column: str = "t",
     min_targets: int = _MIN_TARGETS,
@@ -647,6 +716,7 @@ def _prepared(
         list(ids),
         profiles.profiles,
         profiles.settings,
+        profiles.cube,
     )
     return kept_profiles, graph, edges, smallest
 
@@ -770,7 +840,11 @@ def _profiles(
     ids = samples["sample_id"]
     table = Table({_PROFILE_ID: ids, **samples.to_dict()})
     return _Profiles(
-        expression.values, expression.gene_ids, table, dict(expression.settings)
+        expression.values,
+        expression.gene_ids,
+        table,
+        dict(expression.settings),
+        expression.cube,
     )
 
 
@@ -933,7 +1007,7 @@ def _activities(
     p = p_values[:, scored]
     adjusted = adjust_p_values(p, axis=1) if p.size else p.copy()
     settings = {**options, **profiles.settings}
-    return Activities(
+    result = Activities(
         read_only(np.ascontiguousarray(scores[:, scored])),
         read_only(np.ascontiguousarray(estimates[:, scored])),
         read_only(np.ascontiguousarray(p)),
@@ -944,6 +1018,9 @@ def _activities(
         method,
         MappingProxyType(settings),
     )
+    if profiles.cube is not None:
+        keep_provenance(result, method, profiles.cube, settings)
+    return result
 
 
 def _two_sided(t_values: FloatArray, df: FloatArray) -> FloatArray:

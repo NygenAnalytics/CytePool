@@ -60,7 +60,7 @@ import numpy as np
 
 from .._columns import is_data_frame, missing_mask
 from .._masked_arrays import reject_masked
-from .._messages import close_matches
+from .._messages import close_matches, fitted_lines
 from ..table import Table
 from .formula import FormulaTerms, parse_formula, quote_name
 
@@ -168,8 +168,8 @@ class ModelMatrix:
     def __repr__(self) -> str:
         n, p = self.shape
         names = ", ".join(self.columns) if self.columns else "(none)"
-        return (
-            f"ModelMatrix: {n} sample{'' if n == 1 else 's'} x {p} "
+        return fitted_lines(
+            f"ModelMatrix: {n:,} sample{'' if n == 1 else 's'} x {p:,} "
             f"column{'' if p == 1 else 's'} from {self.formula!r}\n  columns: {names}"
         )
 
