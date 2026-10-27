@@ -125,11 +125,12 @@ from ._analysis_records import (
     cube_record,
     design_record,
     matched_samples,
+    only_key,
     software_versions,
 )
 from ._columns import is_data_frame, text_column
 from ._masked_arrays import reject_masked, unmasked_array
-from ._messages import listing, quoted
+from ._messages import fitted_lines, listing, quoted
 from ._options import checked_choice, checked_flag
 from ._summation import accurate_mean
 from .cube import Cube
@@ -358,16 +359,21 @@ class CompositionResult:
         record: dict[str, Any] = json.loads(self._record)
         return record
 
-    def table(self, contrast: str) -> Table:
+    def table(self, contrast: str | None = None) -> Table:
         """Return the table of one contrast.
 
         Args:
-            contrast: A contrast name.
+            contrast: A contrast name; it may be left out when the result tests one.
 
         Raises:
+            ValueError: If ``contrast`` is left out and the result tests several, or
+                none (an F-test alone, which ``f_test`` holds).
             KeyError: If the contrast was not tested; the message lists those that
                 were.
         """
+        contrast = only_key(
+            contrast, list(self._contrasts.names), "contrast", "contrasts"
+        )
         found = self._tables.get(contrast)
         if found is None:
             raise KeyError(
@@ -382,16 +388,16 @@ class CompositionResult:
         used = len(record["samples"])
         lines = [
             f"CompositionResult (propeller, {record['settings']['transform']}): "
-            f"{tested} of {len(self._summary)} groups tested, {used} of "
-            f"{len(self._samples)} samples used"
+            f"{tested:,} of {len(self._summary):,} groups tested, {used:,} of "
+            f"{len(self._samples):,} samples used"
         ]
         if len(self._contrasts):
             lines.append("  t-tests: " + ", ".join(self._contrasts.names))
         if record["f_test"] is not None:
             factor = record["f_test"]["factor"]
             levels = record["f_test"]["levels"]
-            lines.append(f"  F-test across the {len(levels)} levels of {factor}")
-        return "\n".join(lines)
+            lines.append(f"  F-test across the {len(levels):,} levels of {factor}")
+        return fitted_lines("\n".join(lines))
 
 
 def propeller(

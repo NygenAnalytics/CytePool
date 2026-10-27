@@ -114,8 +114,9 @@ from . import __version__
 from ._columns import is_data_frame, text_column
 from ._gene_ids import is_missing, listed_values
 from ._masked_arrays import real_array, reject_masked
-from ._messages import close_matches, quoted
+from ._messages import KEEP_TOGETHER, close_matches, fitted_lines, quoted
 from ._options import checked_choice, positive_integer, real_number
+from .gene_sets import GeneSets
 from .table import Table
 
 __all__ = ["Network", "collectri", "progeny"]
@@ -415,6 +416,30 @@ class Network(Mapping[str, Mapping[str, float]]):
         taken = [row for source in chosen for row in rows[source]]
         return self._derived(np.array(taken, dtype=np.intp))
 
+    def to_gene_sets(self) -> GeneSets:
+        """Return the targets of each source as a gene set, without their weights.
+
+        The gene-set tests and per-sample scores take gene sets, such as the
+        regulons of CollecTRI to test with :func:`~cytepool.gsea.gsea` or score with
+        :func:`~cytepool.pathway_scores.gsva`. Each source becomes a set of its
+        targets, in the order of the edges, named by the source. The weights, and
+        so the signs that tell activated targets from repressed ones, are left out:
+        :func:`~cytepool.activity.ulm` and the other activity methods use them. The
+        sets keep the network's name, as their ``source``, version, licence, file
+        and digest.
+
+        Returns:
+            A :class:`~cytepool.gene_sets.GeneSets` with one set per source.
+        """
+        return GeneSets(
+            {source: list(self._targets[source]) for source in self._sources},
+            source=self._name,
+            version=self._version,
+            licence=self._licence,
+            file=self._file,
+            sha256=self._sha256,
+        )
+
     def __repr__(self) -> str:
         n_edges = len(self._edges)
         n_targets = len(set(self._edges["target"].tolist()))
@@ -437,14 +462,14 @@ class Network(Mapping[str, Mapping[str, float]]):
             digest = f", SHA-256 {self._sha256}" if self._sha256 else ""
             lines.append(f"  read from {self._file}{digest}")
         shown = [
-            f"{source} ({len(self._targets[source]):,})"
+            f"{source} ({len(self._targets[source]):,})".replace(" ", KEEP_TOGETHER)
             for source in self._sources[:_SOURCES_SHOWN]
         ]
         more = len(self._sources) - len(shown)
         lines.append(
             "  sources: " + ", ".join(shown) + (f" and {more:,} more" if more else "")
         )
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
     def _record(self) -> dict[str, str | None]:
         return {

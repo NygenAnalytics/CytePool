@@ -153,7 +153,7 @@ from numba import prange
 from ._columns import text_column
 from ._jit import by_chunks, jit, thread_limit
 from ._masked_arrays import reject_masked
-from ._messages import PACKAGE_DIRECTORY, quoted
+from ._messages import PACKAGE_DIRECTORY, fitted_message, quoted
 from ._options import (
     checked_choice,
     number_at_least,
@@ -422,13 +422,28 @@ def _gene_set_enrichment(
         log2_error[tested] = _permutation_error(beyond[tested], n_perm)
     else:
         unbalanced = of_sign < _FEWEST_OF_SIGN
-        if unbalanced.any():
+        none = of_sign == 0
+        few = unbalanced & ~none
+        if few.any():
             _warn(
-                f"{int(np.count_nonzero(unbalanced))} gene set(s) have fewer than "
-                f"{_FEWEST_OF_SIGN} random scores of the sign of their enrichment "
-                f"score among {n_perm} permutations, as statistics mostly of one sign "
-                "give; their normalized scores and p-values are NaN. More permutations "
-                f"(n_permutations={10 * n_perm}) may give them some"
+                fitted_message(
+                    f"{int(np.count_nonzero(few))} gene set(s) have fewer than "
+                    f"{_FEWEST_OF_SIGN} random scores of the sign of their enrichment "
+                    f"score among {n_perm} permutations, but some; their normalized "
+                    "scores and p-values are NaN. More permutations "
+                    f"(n_permutations={10 * n_perm}) may give them enough"
+                )
+            )
+        if none.any():
+            _warn(
+                fitted_message(
+                    f"{int(np.count_nonzero(none))} gene set(s) have no random score of "
+                    f"the sign of their enrichment score among {n_perm} permutations: "
+                    "random sets of their size almost always score with the other "
+                    "sign, because most statistics share one sign, so more "
+                    "permutations are unlikely to give them any; their normalized "
+                    "scores and p-values are NaN"
+                )
             )
         normalized[unbalanced] = np.nan
         p_value[unbalanced] = np.nan

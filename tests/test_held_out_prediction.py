@@ -273,6 +273,7 @@ def test_the_result_is_a_record_that_cannot_change() -> None:
     copy = pickle.loads(pickle.dumps(found))
     assert copy.auc.equals(found.auc) and copy.genes.equals(found.genes)
     assert "sumrank: mean AUC" in repr(found)
+    assert max(map(len, repr(found).splitlines())) <= 80
     with pytest.raises(TypeError, match="genes must be a Table"):
         HeldOutPrediction(found.auc, found.scores, {}, {})  # type: ignore[arg-type]
 

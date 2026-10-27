@@ -652,6 +652,10 @@ NO_PUBLISHED_WORK = {
     "cytepool.io._files": "names local files and notices their changes with the "
     "standard library",
     "cytepool.stats": "the package's namespace; its modules cite their sources",
+    "cytepool.stats._result_tables": "lays out the tests of fits in the columns of "
+    "CytePool's own result tables",
+    "cytepool.study_results": "runs CytePool's analyses of a cube on every study of "
+    "a collection and keeps their results together",
     "cytepool.table": "CytePool's own table of named, equal-length columns",
 }
 # An entry: "Authors (year). Title. Journal Volume, pages. doi:10....".

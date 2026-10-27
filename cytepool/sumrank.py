@@ -186,7 +186,13 @@ from ._analysis_records import software_versions
 from ._columns import text_column
 from ._jit import jit
 from ._masked_arrays import read_only, reject_masked, unmasked_array
-from ._messages import PACKAGE_DIRECTORY, listing, quoted
+from ._messages import (
+    PACKAGE_DIRECTORY,
+    fitted_lines,
+    fitted_message,
+    listing,
+    quoted,
+)
 from ._options import index_integer, random_generator
 from ._ranks import average_ranks
 from ._study_statistics import signed_statistics, study_statistics, studies_summed
@@ -662,8 +668,8 @@ class SumRankResult:
         table = self._table
         lines = [
             f"SumRankResult for group {settings['group']!r} and contrast "
-            f"{settings['contrast']!r}: {settings['n_studies']} studies, the best "
-            f"{settings['n_studies_summed']} summed; {len(table):,} genes"
+            f"{settings['contrast']!r}: {settings['n_studies']:,} studies, the best "
+            f"{settings['n_studies_summed']:,} summed; {len(table):,} genes"
         ]
         if settings["p_values"] == "permutation":
             lines.append(
@@ -679,7 +685,7 @@ class SumRankResult:
         lines.append(
             f"  adjusted p-value below 0.05: {counts[0]:,} up, {counts[1]:,} down"
         )
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
 
 def differential_expression_sumrank(
@@ -792,10 +798,13 @@ def differential_expression_sumrank(
     summed = studies_summed(proportion_of_studies, len(studies))
     if summed < len(studies) and not permutations:
         warnings.warn(
-            f"the Irwin-Hall p-values of a sum of the best {summed} of "
-            f"{len(studies)} studies' ranks are too small, as the sum of the best "
-            "ranks is smaller than a sum of uniform ranks; the p_value columns hold "
-            "them, so take p-values from permutations (n_permutations and permute)",
+            fitted_message(
+                f"the Irwin-Hall p-values of a sum of the best {summed} of "
+                f"{len(studies)} studies' ranks are too small, as the sum of the best "
+                "ranks is smaller than a sum of uniform ranks; the p_value columns "
+                "hold them, so take p-values from permutations (n_permutations and "
+                "permute)"
+            ),
             RuntimeWarning,
             skip_file_prefixes=(PACKAGE_DIRECTORY,),
         )

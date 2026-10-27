@@ -3,9 +3,11 @@ array with its gene and sample ids, or a group of a cube as log-CPM or counts.
 
 A cube's group is read as limma_voom reads it: the samples with at least ``min_cells``
 cells and some counts, over the genes that edgeR's ``filterByExpr`` keeps
-(:func:`~cytepool.normalization.filter_by_expression`), as log2 counts per million
-after TMM normalization with a prior count of 2, edgeR's ``cpm(log = TRUE)`` (Robinson
-and Oshlack 2010; Chen, Lun and Smyth 2016), or as counts.
+(:func:`~cytepool.normalization.filter_by_expression`), with the samples as one group
+or grouped by a column of the cube's samples (``{"sample_groups": "condition"}``), as
+log2 counts per million after TMM normalization with a prior count of 2, edgeR's
+``cpm(log = TRUE)`` (Robinson and Oshlack 2010; Chen, Lun and Smyth 2016), or as
+counts.
 
 References:
     Robinson MD, Oshlack A (2010). A scaling normalization method for differential
@@ -17,6 +19,7 @@ References:
     quasi-likelihood pipeline. F1000Research 5, 1438. doi:10.12688/f1000research.8987.2
 """
 
+from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -24,6 +27,12 @@ import numpy.typing as npt
 
 from ._columns import text_column
 from ._gene_ids import is_missing
+from ._group_fits import (
+    FILTER_DEFAULTS,
+    SAMPLE_GROUPS,
+    check_sample_groups,
+    filter_setting,
+)
 from ._masked_arrays import Missing, real_array, reject_masked, unmasked_array
 from ._messages import quoted
 from ._options import checked_choice, checked_flag, integral_number
@@ -47,6 +56,7 @@ class ExpressionValues(NamedTuple):
     samples: Table
     gene_ids: list[str | None]  # one per column; None for a gene without an id
     settings: dict[str, Any]  # how a cube's values were taken
+    cube: Cube | None = None  # the cube whose group was read
 
 
 def expression_values(
@@ -73,7 +83,8 @@ def expression_values(
         values: For a cube, ``"log_cpm"`` or ``"counts"``.
         min_cells: For a cube, the fewest cells a sample needs in the group.
         expression_filter: For a cube, whether to keep only the genes that
-            filter_by_expression keeps.
+            filter_by_expression keeps: True or False, or a mapping of its settings,
+            which may name a column of the cube's samples as ``sample_groups``.
         missing: How the values mark missing ones, for messages.
         matched_to: What the gene ids are matched to, for messages, such as "the
             gene sets".
@@ -200,7 +211,13 @@ def _cube_values(
     fewest = integral_number(min_cells, "min_cells")
     if fewest < 0:
         raise ValueError(f"min_cells must be at least 0, got {fewest}")
-    filtered = checked_flag(expression_filter, "expression_filter")
+    if isinstance(expression_filter, Mapping):
+        filter_settings = filter_setting(expression_filter)
+        check_sample_groups({"expression_filter": filter_settings}, cube.samples)
+        filtered: Any = dict(filter_settings or {})
+    else:
+        filtered = checked_flag(expression_filter, "expression_filter")
+        filter_settings = dict(FILTER_DEFAULTS) if filtered else None
     if group is None:
         if cube.n_groups != 1:
             raise ValueError(
@@ -223,8 +240,17 @@ def _cube_values(
         )
     kept = counts[rows]
     genes = np.ones(kept.shape[1], dtype=bool)
-    if filtered:
-        genes = filter_by_expression(kept, group=np.zeros(rows.size))
+    if filter_settings is not None:
+        numbers = {
+            name: value
+            for name, value in filter_settings.items()
+            if name != SAMPLE_GROUPS
+        }
+        if SAMPLE_GROUPS in filter_settings:
+            labels = cube.samples[filter_settings[SAMPLE_GROUPS]][rows]
+        else:
+            labels = np.zeros(rows.size)
+        genes = filter_by_expression(kept, group=labels, **numbers)
         if not genes.any():
             raise ValueError(
                 f"no gene of group {group!r} passes filter_by_expression; pass "
@@ -265,6 +291,7 @@ def _cube_values(
         cube.samples.take(rows),
         ids,
         settings,
+        cube,
     )
 
 

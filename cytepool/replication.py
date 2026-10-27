@@ -33,11 +33,17 @@ Agreement between studies:
     For an ordered pair of studies, the discovery and the replication, the genes the
     discovery finds that the replication tested are compared: pi1 = 1 - pi0 of their
     p-values in the replication study, Storey's estimate of the proportion of them
-    with an effect there (:func:`~cytepool.stats.multiple_testing.proportion_of_true_nulls`,
-    with qvalue's defaults unless ``null_proportion`` says otherwise), which counts
-    effects that the replication study is too small to find on its own; the share of
-    them whose log2 fold changes have the same sign; and how many it finds too. pi1
-    measures replication in the replication study's p-values, so it is not symmetric.
+    with an effect there (:func:`~cytepool.stats.multiple_testing.proportion_of_true_nulls`),
+    which counts effects that the replication study is too small to find on its
+    own; the share of them whose log2 fold changes have the same sign; and how many
+    it finds too. pi1 measures replication in the replication study's p-values, so it
+    is not symmetric.
+
+    pi0 is estimated at lambda = 0.5 by default: the share of p-values above 0.5,
+    over 0.5 (Storey and Tibshirani 2003). qvalue's default, a smoother of the
+    estimates at lambda = 0.05, ..., 0.95 (``null_proportion={}``), reads the
+    largest lambdas, where the few dozen p-values of the genes one study finds
+    leave too few values, so that it often gives pi1 of 0 or 1 there.
 
 Heterogeneity:
     Cochran's Q, its p-value, I^2 and tau^2 of the log2 fold changes and their
@@ -87,7 +93,7 @@ import numpy.typing as npt
 from ._analysis_records import software_versions
 from ._columns import text_column
 from ._masked_arrays import reject_masked
-from ._messages import quoted
+from ._messages import fitted_lines, quoted
 from ._options import checked_choice, integral_number, real_number
 from .cube import CubeCollection
 from .differential_expression import DifferentialExpressionResult
@@ -106,6 +112,9 @@ _META_METHODS = ("reml", "dl", "pm", "fixed")
 # The columns of the studies' tables that the analysis reads.
 _COLUMNS = ("log2_fold_change", "standard_error", "p_value", "adjusted_p_value")
 _NULL_PROPORTION_OPTIONS = ("lambdas", "method", "smooth_df", "smooth_log")
+# pi0 of pi1 by default: at one lambda, steady on the few dozen p-values of the genes
+# a study finds, where qvalue's smoother often gives 0 or 1.
+_NULL_PROPORTION_DEFAULT = {"lambdas": 0.5}
 
 
 class ReplicationResult:
@@ -253,11 +262,11 @@ class ReplicationResult:
         replicated = self._genes["replication_adjusted_p_value"]
         with np.errstate(invalid="ignore"):
             n_replicated = int(np.count_nonzero(replicated < settings["alpha"]))
-        return (
+        return fitted_lines(
             f"ReplicationResult of group {settings['group']!r}, contrast "
-            f"{settings['contrast']!r}: {analysed} of {len(self._studies)} studies, "
-            f"{len(self._genes):,} genes; {n_replicated:,} found in at least "
-            f"{settings['at_least']} studies in one direction at adjusted p < "
+            f"{settings['contrast']!r}: {analysed:,} of {len(self._studies):,} "
+            f"studies, {len(self._genes):,} genes; {n_replicated:,} found in at least "
+            f"{settings['at_least']:,} studies in one direction at adjusted p < "
             f"{settings['alpha']:g} ({settings['conjunction_method']})"
         )
 
@@ -316,8 +325,9 @@ def differential_expression_replication(
             (:func:`~cytepool.meta_analysis.meta_analysis`).
         null_proportion: Options of
             :func:`~cytepool.stats.multiple_testing.proportion_of_true_nulls` for pi1:
-            ``lambdas``, ``method``, ``smooth_df`` and ``smooth_log``; qvalue's
-            defaults by default.
+            ``lambdas``, ``method``, ``smooth_df`` and ``smooth_log``. None, the
+            default, is ``{"lambdas": 0.5}``; ``{}`` takes qvalue's defaults (see
+            the module description).
 
     Returns:
         The tables of genes, pairs of studies, counts by number of studies and
@@ -516,7 +526,7 @@ def differential_expression_replication(
 
 def _null_proportion_options(value: Any) -> dict[str, Any]:
     if value is None:
-        return {}
+        return dict(_NULL_PROPORTION_DEFAULT)
     if not isinstance(value, Mapping):
         raise TypeError(
             "null_proportion must be a mapping of options of proportion_of_true_nulls, "

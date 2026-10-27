@@ -9,6 +9,7 @@ import numpy as np
 
 from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
+from .._messages import KEEP_TOGETHER, fitted_lines, quoted
 from ..table import Table
 from ._axes import (
     INT64_MAX,
@@ -368,7 +369,7 @@ class Cube:
         described = []
         for name, stored in self._layers.items():
             lazy = "" if isinstance(stored, np.ndarray) else ", lazy"
-            described.append(f"{name} ({stored.dtype}{lazy})")
+            described.append(f"{name}{KEEP_TOGETHER}({stored.dtype}{lazy})")
         lines.append(f"  layers: {', '.join(described)}")
         if self._n_cells is None:
             lines.append("  cells per entry: not recorded")
@@ -386,7 +387,7 @@ class Cube:
             ("features", self._features),
         ):
             lines.append(f"  {label}: {', '.join(table.columns)}")
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
     # Layers and derived statistics.
 
@@ -681,7 +682,8 @@ class Cube:
         ``cytepool.cube.provenance``): the caller's source record, how the cube was
         built, and each operation in order, with the fingerprint of the cube it was
         applied to. A last line gives the cube's own fingerprint when it is known
-        without reading lazy layers (see ``fingerprint()``).
+        without reading lazy layers (see ``fingerprint()``). Lines are at most 80
+        characters, a longer item continuing on the next line.
         """
         lines = [describe_provenance(self.provenance)]
         fingerprint = self._known_fingerprint()
@@ -692,7 +694,7 @@ class Cube:
             )
         else:
             lines.append(f"Fingerprint: {fingerprint}")
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
     # Deriving cubes.
 
@@ -776,7 +778,8 @@ class Cube:
         position of its member that comes first in the current group order. In the
         group table, a merged row keeps a column's value where all members agree
         and is missing otherwise; an integer or boolean column that needs a missing
-        value becomes float64 with NaN. Integer layers of the result are int64. The
+        value becomes float64 with NaN. Integer layers of the result are int64 when
+        groups are merged, and keep their dtype when groups are only renamed. The
         provenance record gives each merged or renamed group with its members, in
         the current group order, and names this cube by its fingerprint (see
         "Fingerprint and provenance" in ``Cube``).
@@ -896,57 +899,174 @@ class Cube:
             sums=True,
         )
 
-    def collapse_samples(self, by: str) -> "Cube":
+    def with_columns(
+        self, *, samples: Any = None, groups: Any = None, features: Any = None
+    ) -> "Cube":
+        """Return a cube with columns added to, or replaced in, its tables.
+
+        Use it to give the samples a variable of a design, or a set of samples to
+        pool with :meth:`collapse_samples`:
+        ``cube.with_columns(samples={"pool": labels}).collapse_samples("pool")``. A
+        replaced column keeps its place, and new columns come last. The layers are
+        kept as they are: a lazy cube stays lazy and reads nothing, and the digests
+        of its groups are kept, while the fingerprint changes with the tables. The
+        provenance record lists the columns added and those replaced on each axis,
+        null for an axis given as None, and names this cube by its fingerprint (see
+        "Fingerprint and provenance" in ``Cube``); the values are those of the new
+        tables, which the new cube's fingerprint covers.
+
+        Args:
+            samples: Column name to one value per sample, as a mapping or a Table,
+                in the cube's order of the samples; None changes nothing.
+            groups: Column name to one value per group, likewise.
+            features: Column name to one value per feature, likewise.
+
+        Raises:
+            TypeError: If an argument is neither a mapping nor a Table, a column
+                holds values of a type that cube tables do not take, or is or holds
+                a numpy masked array.
+            ValueError: If a column has the wrong length, or names the axis's id
+                column (``sample_id``, ``group_id`` or ``feature_id``), which ids
+                select and ``regroup`` and ``collapse_samples`` derive.
+        """
+        tables = {
+            "samples": self._samples,
+            "groups": self._groups,
+            "features": self._features,
+        }
+        changed: dict[str, dict[str, list[str]]] = {}
+        for axis, given, id_column in (
+            ("samples", samples, "sample_id"),
+            ("groups", groups, "group_id"),
+            ("features", features, "feature_id"),
+        ):
+            if given is None:
+                continue
+            if isinstance(given, Table):
+                columns = given.to_dict()
+            elif isinstance(given, Mapping):
+                reject_masked(given, axis, missing="None or NaN")
+                columns = dict(given)
+            else:
+                raise TypeError(
+                    f"{axis} must be a mapping of column names to values, or a Table, "
+                    f"got {type(given).__name__}"
+                )
+            if not columns:
+                continue
+            if id_column in columns:
+                raise ValueError(
+                    f"with_columns() adds or replaces columns, not the ids: {axis} "
+                    f"names {id_column!r}; select() chooses {axis} by id"
+                )
+            current = tables[axis]
+            try:
+                updated = current.with_columns(columns)
+            except (TypeError, ValueError) as error:
+                error.add_note(f"(while adding columns to the {axis} table)")
+                raise
+            tables[axis] = checked_axis_table(updated, axis, id_column)[0]
+            changed[axis] = {
+                "added": [name for name in columns if name not in current],
+                "replaced": [name for name in columns if name in current],
+            }
+        if not changed:
+            return self
+        operation: dict[str, Any] = {
+            "operation": "with_columns",
+            "input": self._known_fingerprint(),
+        }
+        operation |= {axis: changed.get(axis) for axis in tables}
+        digests = _Digests(
+            {
+                part: digest
+                for part, digest in self._digests.parts.items()
+                if part not in changed
+            },
+            {name: list(kept) for name, kept in self._digests.layers.items()},
+        )
+        return _assemble(
+            dict(self._layers),
+            tables["samples"],
+            tables["groups"],
+            tables["features"],
+            self._n_cells,
+            self._normalization,
+            add_record(self._provenance, operation),
+            digests,
+        )
+
+    def collapse_samples(self, by: str | Sequence[str] | None = None) -> "Cube":
         """Return a cube with the samples that share a value of a column summed.
 
         Use it to pool, for example, the tissues of one donor. The new ``sample_id``
-        is the shared value, in the order the values first appear. Sample columns
-        that are constant within every pooled set are kept and the others are
-        dropped. The column ``n_pooled_samples`` holds the number of original
-        samples behind each new sample and comes last; if it already exists, it
-        keeps its place and is summed, so collapsing twice counts the original
-        samples. Integer layers of the result are int64. The provenance record gives
-        each new sample with the ids of the samples it sums, in the current order,
-        and names this cube by its fingerprint (see "Fingerprint and provenance" in
-        ``Cube``).
+        is the shared value, in the order the values first appear; with several
+        columns, the values joined by ``_``, such as ``D1_stim``; without columns,
+        ``all``, a single sample that pools every sample, whose values are those of
+        each group's cells together, as :func:`~cytepool.plotting.plot_dotplot`
+        pools them. Sample columns that are constant within every pooled set are
+        kept and the others are dropped. The column ``n_pooled_samples`` holds the
+        number of original samples behind each new sample and comes last; if it
+        already exists, it keeps its place and is summed, so collapsing twice counts
+        the original samples. Integer layers of the result are int64 when samples
+        are pooled, and keep their dtype when every new sample is one sample. The
+        provenance record gives the columns (``by``), each new sample with the ids of
+        the samples it sums, in the current order, and names this cube by its
+        fingerprint (see "Fingerprint and provenance" in ``Cube``).
 
         Args:
-            by: A text or integer sample column without missing values.
+            by: A text or integer sample column without missing values, a list of
+                them, or None to pool every sample.
 
         Raises:
             KeyError: If there is no such sample column.
-            TypeError: If the column is not text or integer.
-            ValueError: If the column has a missing or empty value, or an existing
-                ``n_pooled_samples`` column does not hold non-negative integers.
+            TypeError: If ``by`` is none of these, or a column is not text or
+                integer.
+            ValueError: If a column has a missing or empty value, ``by`` is an empty
+                list or names a column twice, two combinations of values join to
+                the same id, or an existing ``n_pooled_samples`` column does not
+                hold non-negative integers.
             OverflowError: If a pooled ``n_cells``, ``n_pooled_samples`` or value
                 of an in-memory layer does not fit (see "Sums" in ``Cube``). A lazy
                 layer raises it when the group is read.
         """
-        if not isinstance(by, str):
-            raise TypeError(f"by must be a sample column name, got {type(by).__name__}")
-        if by not in self._samples:
-            raise KeyError(
-                f"no sample column named {by!r}; columns are: "
-                f"{', '.join(self._samples.columns)}"
-            )
-        column = self._samples[by]
-        if column.size == 0:  # no samples: any dtype will do, as for [] (float64)
-            keys: list[str] = []
-        elif column.dtype.kind == "O":
-            keys = column.tolist()
-            sample_ids = self._samples["sample_id"]
-            for position, key in enumerate(keys):
-                if key is None or key == "":
-                    raise ValueError(
-                        f"sample column {by!r} is missing or empty for sample "
-                        f"{sample_ids[position]!r}; every sample needs a value"
+        if not isinstance(by, str) and by is not None:
+            reject_masked(by, "by")
+        if isinstance(by, str):
+            keys = self._pooling_keys(by)
+        elif by is None:
+            keys = ["all"] * self.n_samples
+        elif isinstance(by, Sequence | np.ndarray) and not isinstance(by, bytes):
+            names = list(by)
+            if not names:
+                raise ValueError(
+                    "by names no sample column; give one or more, or None to pool "
+                    "every sample"
+                )
+            for name in names:
+                if not isinstance(name, str):
+                    raise TypeError(
+                        f"by must name sample columns (str), got {type(name).__name__} "
+                        f"{name!r}"
                     )
-        elif column.dtype.kind in "iu":
-            keys = [str(key) for key in column.tolist()]
+                if names.count(name) > 1:
+                    raise ValueError(f"by names the sample column {name!r} twice")
+            parts = [self._pooling_keys(name) for name in names]
+            combinations = list(zip(*parts, strict=True))
+            keys = ["_".join(combination) for combination in combinations]
+            first: dict[str, tuple[str, ...]] = {}
+            for key, combination in zip(keys, combinations, strict=True):
+                if first.setdefault(key, combination) != combination:
+                    raise ValueError(
+                        f"the values {first[key]!r} and {combination!r} of the sample "
+                        f"columns {quoted(names)} both join to the id {key!r}; give "
+                        "the samples a column of their own pooled ids with "
+                        "with_columns(samples=...), and pool by it"
+                    )
         else:
             raise TypeError(
-                "collapse_samples() pools by a text or integer sample column; "
-                f"{by!r} has dtype {column.dtype}"
+                "by must be a sample column name, a list of them, or None to pool "
+                f"every sample, got {type(by).__name__}"
             )
         members: dict[str, list[int]] = {}
         for position, key in enumerate(keys):
@@ -1018,7 +1138,7 @@ class Cube:
         original_ids = self._samples["sample_id"]
         record = {
             "operation": "collapse_samples",
-            "by": by,
+            "by": by if by is None or isinstance(by, str) else list(by),
             "membership": {
                 new_id: [original_ids[position] for position in positions]
                 for new_id, positions in members.items()
@@ -1037,6 +1157,33 @@ class Cube:
         )
 
     # Internals.
+
+    def _pooling_keys(self, by: str) -> list[str]:
+        """The value of a sample column for every sample, as text, for pooling."""
+        if by not in self._samples:
+            raise KeyError(
+                f"no sample column named {by!r}; columns are: "
+                f"{', '.join(self._samples.columns)}"
+            )
+        column = self._samples[by]
+        if column.size == 0:  # no samples: any dtype will do, as for [] (float64)
+            return []
+        if column.dtype.kind == "O":
+            keys: list[str] = column.tolist()
+            sample_ids = self._samples["sample_id"]
+            for position, key in enumerate(keys):
+                if key is None or key == "":
+                    raise ValueError(
+                        f"sample column {by!r} is missing or empty for sample "
+                        f"{sample_ids[position]!r}; every sample needs a value"
+                    )
+            return keys
+        if column.dtype.kind in "iu":
+            return [str(key) for key in column.tolist()]
+        raise TypeError(
+            "collapse_samples() pools by a text or integer sample column; "
+            f"{by!r} has dtype {column.dtype}"
+        )
 
     def _derive(
         self,
@@ -1070,11 +1217,21 @@ class Cube:
             target=(groups["group_id"], samples["sample_id"], features["feature_id"]),
         )
         shape = (len(groups), len(samples), len(features))
+        # Integer sums are exact in int64; an operation that sums no two entries,
+        # such as a regroup that only renames groups, keeps the integer dtype.
+        summed = sums and (
+            any(members.size > 1 for members in group_sets)
+            or (
+                sample_starts is not None
+                and sample_order is not None
+                and sample_starts.size < sample_order.size
+            )
+        )
         layers: dict[str, np.ndarray | _LazyLayer] = {}
         digests = _Digests()
         for name, stored in self._layers.items():
             dtype = stored.dtype
-            if sums and dtype.kind in "iu":
+            if summed and dtype.kind in "iu":
                 dtype = np.dtype(np.int64)
             if isinstance(stored, np.ndarray):
                 layers[name] = plan.apply(name, stored, shape, dtype)

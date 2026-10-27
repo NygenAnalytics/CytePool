@@ -18,6 +18,7 @@ artists that carry their gid.
 
 import importlib
 import json
+import pickle
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -155,6 +156,29 @@ def test_a_cube_group_is_prepared_as_edgeR_prepares_it_for_plotPCA() -> None:
     assert result.samples["condition"].tolist() == CONDITIONS[:10]
     assert up_to_sign(result.coordinates[:, :2], data["cube coordinates"]) <= EXACT
     assert result.settings == {"group": "T", "min_cells": 10, "top": 500}
+
+
+def test_components_of_a_cube_record_the_cube_they_read() -> None:
+    cube = pca_cube()
+    result = principal_components(cube)
+    record = result.provenance
+    assert record is not None
+    assert record["method"] == "principal_components"
+    assert record["cube"]["fingerprint"] == cube.fingerprint()
+    assert record["settings"] == result.settings
+    assert json.loads(json.dumps(record)) == record
+    of_values = principal_components(fixture("pca")["values"])
+    assert of_values.provenance is None
+    # Both pickle, the provenance with them; the copy keeps none it did not have.
+    for found in (result, of_values):
+        copy = pickle.loads(pickle.dumps(found))
+        for name in ("coordinates", "variance_explained", "loadings", "genes"):
+            assert_array_equal(getattr(copy, name), getattr(found, name))
+            assert not getattr(copy, name).flags.writeable
+        assert copy.samples.equals(found.samples)
+        assert dict(copy.settings) == dict(found.settings)
+        assert copy.provenance == found.provenance
+    assert "_provenance" not in vars(pickle.loads(pickle.dumps(of_values)))
 
 
 def test_the_figure_draws_the_points_and_labels_of_plotPCA() -> None:
@@ -487,6 +511,36 @@ def test_scaled_means_run_from_zero_to_one() -> None:
     assert_array_equal(artists(ax, "dots")[0].get_array(), [0.0, 0.0])
 
 
+def test_colour_limits_put_dot_plots_on_one_scale() -> None:
+    cube = from_cells(**cells())
+    genes = ["x0", "x3", "x7", "x11"]
+    plain = artists(plotting.plot_dotplot(cube, genes, ax=axes()), "dots")[0]
+    values = np.asarray(plain.get_array())
+    # By default the colours run from the smallest value shown to the largest.
+    assert (plain.norm.vmin, plain.norm.vmax) == (values.min(), values.max())
+    ax = plotting.plot_dotplot(cube, genes, vmin=0.0, vmax=3.0, ax=axes())
+    dots = artists(ax, "dots")[0]
+    assert (dots.norm.vmin, dots.norm.vmax) == (0.0, 3.0)
+    assert_array_equal(dots.get_array(), values)  # the values are those drawn before
+    assert ax.figure.axes[-1].get_ylim() == (0.0, 3.0)  # the colour bar
+    # One limit given, the other is the value shown at that end.
+    upper = artists(plotting.plot_dotplot(cube, genes, vmax=3.0, ax=axes()), "dots")[0]
+    assert (upper.norm.vmin, upper.norm.vmax) == (values.min(), 3.0)
+    # Two plots of other groups: on one scale, a group's dots have the same colours.
+    shared, alone = [], []
+    for chosen in (["B", "T"], ["T", "NK"]):
+        position = chosen.index("T")
+        for limits, found in (({"vmin": 0.0, "vmax": 3.0}, shared), ({}, alone)):
+            drawn = artists(
+                plotting.plot_dotplot(cube, genes, groups=chosen, ax=axes(), **limits),
+                "dots",
+            )[0]
+            rows = np.asarray(drawn.get_array()).reshape(2, len(genes))
+            found.append(drawn.to_rgba(rows[position]))
+    assert_array_equal(shared[0], shared[1])
+    assert not np.array_equal(alone[0], alone[1])
+
+
 def test_dot_plots_refuse_what_they_cannot_draw() -> None:
     bulk = Cube(
         {"counts": np.ones((1, 2, 2), dtype=np.uint32)},
@@ -534,3 +588,11 @@ def test_dot_plots_refuse_what_they_cannot_draw() -> None:
     )
     with pytest.raises(ValueError, match="the symbol 'G' names 2 genes"):
         plotting.plot_dotplot(twice, ["G"], ax=axes())
+    with pytest.raises(ValueError, match=r"vmin \(3\) must be below vmax \(1\)"):
+        plotting.plot_dotplot(hand_cube(), ["a"], vmin=3, vmax=1, ax=axes())
+    with pytest.raises(ValueError, match=r"the values shown run from 0\.6 to 1"):
+        plotting.plot_dotplot(hand_cube(), ["a", "b"], vmax=0.5, ax=axes())
+    with pytest.raises(ValueError, match="vmin must be finite"):
+        plotting.plot_dotplot(hand_cube(), ["a"], vmin=np.nan, ax=axes())
+    with pytest.raises(TypeError, match="vmax must be a real number"):
+        plotting.plot_dotplot(hand_cube(), ["a"], vmax="high", ax=axes())

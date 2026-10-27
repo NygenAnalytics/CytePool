@@ -109,7 +109,7 @@ import numpy.typing as npt
 from ._analysis_records import software_versions
 from ._columns import text_column
 from ._masked_arrays import reject_masked
-from ._messages import listing, quoted
+from ._messages import fitted_lines, listing, quoted
 from ._options import index_integer
 from ._ranks import average_ranks
 from ._study_statistics import StudyStatistics, study_statistics, studies_summed
@@ -237,14 +237,14 @@ class HeldOutPrediction:
         lines = [
             f"HeldOutPrediction of {settings['case']!r} against {settings['control']!r}"
             f" ({settings['variable']}), contrast {settings['contrast']!r}: "
-            f"{len(set(table['study'].tolist()))} held-out studies, "
-            f"{settings['n_genes']} genes up and down per group"
+            f"{len(set(table['study'].tolist())):,} held-out studies, "
+            f"{settings['n_genes']:,} genes up and down per group"
         ]
         for method in settings["methods"]:
             values = table["auc"][(table["method"] == method) & ~np.isnan(table["auc"])]
             mean = f"mean AUC {values.mean():.3f}" if values.size else "no AUC"
-            lines.append(f"  {method}: {mean} over {values.size} studies")
-        return "\n".join(lines)
+            lines.append(f"  {method}: {mean} over {values.size:,} studies")
+        return fitted_lines("\n".join(lines))
 
 
 def held_out_prediction(

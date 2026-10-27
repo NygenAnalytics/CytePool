@@ -290,6 +290,15 @@ def test_baseline_and_mean_proportions_and_ratio_by_hand() -> None:
     )
 
 
+def test_the_table_of_the_only_contrast_needs_no_name() -> None:
+    result = propeller(CELLS, two_group_design())
+    assert result.table().equals(result.table("stim_vs_ctrl"))
+    several = propeller(fixture_cube("covariate"), covariate_design())
+    message = "the result has 4 contrasts; name one with contrast, one of 'B_vs_A'"
+    with pytest.raises(ValueError, match=message):
+        several.table()
+
+
 def test_a_weighted_contrast_has_the_weighted_geometric_ratio() -> None:
     contrasts = {"S_vs_C": "(conditionstim + conditionctrl)/2 - conditionctrl"}
     table = propeller(CELLS, two_group_design(contrasts=contrasts)).table("S_vs_C")
@@ -551,6 +560,7 @@ def test_the_result_records_the_cube_and_settings_and_pickles() -> None:
     ):
         result.table("C_vs_A")
     assert "F-test across the 3 levels of group" in repr(result)
+    assert max(map(len, repr(result).splitlines())) <= 80
     assert isinstance(result, CompositionResult)
 
 

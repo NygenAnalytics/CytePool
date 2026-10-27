@@ -161,7 +161,10 @@ a {api}`ReplicationResult` with four tables:
   studies whose effect has the combined direction; and Cochran's $Q$, $I^2$ and
   $\tau^2$ of its log2 fold changes, from {api}`meta_analysis`;
 - `study_pairs`: for every ordered pair of studies, $\pi_1$ and the sign agreement of
-  the genes the first finds in the second, and how many the second finds too;
+  the genes the first finds in the second, and how many the second finds too. $\pi_0$
+  is estimated at $\lambda = 0.5$ by default: on the few dozen p-values of the genes
+  one study finds, qvalue's smoother, which reads the largest $\lambda$, often gives
+  $\pi_1$ of 0 or 1 (`null_proportion={}` asks for it);
 - `found_in`: the genes that at least $k$ studies find, and in one direction;
 - `studies`: each study's samples, weight, and the genes it tested and finds.
 

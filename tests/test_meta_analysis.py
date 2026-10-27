@@ -603,6 +603,12 @@ def test_studies_left_out_and_features_tested_by_too_few() -> None:
     assert nk["reason"][0] == "1 of the 3 studies tested it, fewer than min_studies (2)"
     with pytest.raises(KeyError, match="were not meta-analysed: 1 of the 3 studies"):
         meta.table("NK", "stim_vs_ctrl")
+    # One contrast: only the group is needed; several groups must be named.
+    assert meta.table("T").equals(meta.table("T", "stim_vs_ctrl"))
+    with pytest.raises(
+        ValueError, match="the result has 3 groups; name one with group"
+    ):
+        meta.table()
     studies = meta.studies.filter(meta.studies["group_id"] == "NK")
     assert studies["study"].tolist() == ["A", "B", "C"]
     assert studies["tested"].tolist() == [True, False, False]
@@ -687,10 +693,11 @@ def test_the_result_records_its_studies_and_settings() -> None:
     copy = pickle.loads(pickle.dumps(meta))
     assert copy.provenance == record
     assert all(copy.tables[key].equals(table) for key, table in meta.tables.items())
-    assert repr(meta).splitlines()[0] == (
-        "MetaAnalysisResult (pm, test knapp_hartung): 3 studies; 3 group and contrast "
-        "pairs, 2 analysed"
-    )
+    # In lines of at most 80 characters.
+    assert repr(meta).splitlines()[:2] == [
+        "MetaAnalysisResult (pm, test knapp_hartung): 3 studies; 3 group and contrast",
+        "    pairs, 2 analysed",
+    ]
 
 
 def renamed(result: DifferentialExpressionResult, prefix: str, **changes: Any) -> Any:

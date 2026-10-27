@@ -240,6 +240,51 @@ def test_the_test_columns_are_edgers(fitted, name):
         assert_allclose(test.df_total, e["df.total"], rtol=PRIOR_DF)
 
 
+@pytest.mark.parametrize("name", CASES)
+def test_the_table_holds_the_columns_of_edgers_toptags(fitted, name):
+    case, fit, tests = fitted[name]
+    n_genes = case["counts"].shape[1]
+    genes = compared_genes(case)
+    estimated = "edger_top.proportion" in case
+    exact = one_way(case["design"]) and same_working_dispersion(case, fit)
+    for i, test in enumerate(tests, start=1):
+        e = {
+            key[len(f"edger_test{i}_") :]: value
+            for key, value in case.items()
+            if key.startswith(f"edger_test{i}_")
+        }
+        table = test.table()
+        lfc = e["logFC"].reshape(-1, n_genes).T
+        changes = (
+            ["log2_fold_change"]
+            if lfc.shape[1] == 1
+            else [f"log2_fold_change_{tested}" for tested in test.names]
+        )
+        assert table.columns == (
+            "feature_id",
+            *changes,
+            "average_log2_cpm",
+            "f_statistic",
+            "p_value",
+            "adjusted_p_value",
+        )
+        assert table["feature_id"].tolist() == [f"feature_{j}" for j in range(n_genes)]
+        for j, column in enumerate(changes):
+            assert_allclose(table[column], lfc[:, j], atol=1e-6 if exact else FITS)
+        assert_allclose(
+            table["average_log2_cpm"][genes],
+            e["logCPM"][genes],
+            atol=1e-6 if estimated else 1e-8,
+        )
+        assert scaled(table["f_statistic"][genes], e["F"][genes]) < MOMENTS
+        assert log10_ratio(table["p_value"][genes], e["PValue"][genes]) < PROBABILITY
+        assert log10_ratio(table["adjusted_p_value"][genes], e["FDR"][genes]) < (
+            PROBABILITY
+        )
+        ids = [f"g{j}" for j in range(n_genes)]
+        assert test.table(feature_ids=ids)["feature_id"].tolist() == ids
+
+
 # The fixtures where edgeR's average quasi-dispersion is 1.
 AVERAGE_ONE = [
     name for name in CASES if load(name)["edger_average.ql.dispersion"][0] == 1.0

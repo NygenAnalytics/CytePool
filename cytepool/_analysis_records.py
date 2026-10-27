@@ -6,8 +6,10 @@ the cube it read, identified by its fingerprint and the digests behind it; the d
 it fitted, with the contrasts it tested; and the versions of the software.
 """
 
+import json
 import platform
 from collections import Counter
+from collections.abc import Mapping
 from typing import Any
 
 import numba
@@ -69,6 +71,73 @@ def mixed_design_record(design: Design, contrasts: Contrasts) -> dict[str, Any]:
         for name in effect.grouping:
             record["samples"].setdefault(name, samples[name].tolist())
     return record
+
+
+def keep_provenance(
+    record: Any, method: str, cube: Cube, settings: Mapping[str, Any]
+) -> None:
+    """Give the record of scores of a cube's group, such as ``PathwayScores``, its
+    provenance: the method, the software, the cube's fingerprint, digests and
+    provenance, the layer read and the settings. ``provenance_of`` reads it back.
+
+    The record keeps it as JSON text in its own attributes, outside its fields, so
+    that a record built from fields alone, or copied with ``dataclasses.replace``,
+    has none.
+    """
+    text = json.dumps(
+        {
+            "method": method,
+            "versions": software_versions(),
+            "cube": cube_record(cube),
+            "layer": "counts",
+            "settings": dict(settings),
+        },
+        allow_nan=False,
+    )
+    object.__setattr__(record, "_provenance", text)
+
+
+def provenance_of(record: Any) -> dict[str, Any] | None:
+    """The provenance that ``keep_provenance`` gave a record, as a new dict, or
+    None."""
+    text = vars(record).get("_provenance")
+    if text is None:
+        return None
+    found: dict[str, Any] = json.loads(text)
+    return found
+
+
+def provenance_text(record: Any) -> str | None:
+    """The JSON text of the provenance that ``keep_provenance`` gave a record, or
+    None: what a pickled record carries, for ``restore_provenance``."""
+    text: str | None = vars(record).get("_provenance")
+    return text
+
+
+def restore_provenance[R](record: R, text: str | None) -> R:
+    """Give a record the provenance it was pickled with, if it had one."""
+    if text is not None:
+        object.__setattr__(record, "_provenance", text)
+    return record
+
+
+def only_key(value: Any, available: list[str], argument: str, what: str) -> Any:
+    """The key of a result's table: ``value`` when given, else the only one.
+
+    Results that keep one table per group, contrast or both let a key be left out
+    when they have one. ``what`` names the keys in the message, such as "groups".
+
+    Raises:
+        ValueError: If ``value`` is None and there is not exactly one key.
+    """
+    if value is not None:
+        return value
+    if len(available) == 1:
+        return available[0]
+    raise ValueError(
+        f"the result has {len(available)} {what}; name one with {argument}"
+        + (f", one of {quoted(available)}" if available else "")
+    )
 
 
 def software_versions() -> dict[str, str]:

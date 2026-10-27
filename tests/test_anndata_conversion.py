@@ -8,6 +8,7 @@ covers every value, table and column type. Tests that need anndata or mudata are
 skipped without them.
 """
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -275,6 +276,32 @@ def test_to_anndata_of_a_bulk_cube_writes_every_entry(ad: Any) -> None:
 
     assert list(adata.obs.columns) == ["sample_id", "group_id"]
     assert_array_equal(adata.layers["counts"], cube.layer("counts", "bulk"))
+
+
+def test_x_layer_copies_a_layer_into_x_and_reads_back_as_the_cube(ad: Any) -> None:
+    cube = varied_cube()
+    plain = to_anndata(cube)
+    adata = to_anndata(cube, x_layer="counts")
+    assert plain.X is None
+    # X is a copy of the layer; the rest is the export without it.
+    assert_array_equal(adata.X, adata.layers["counts"])
+    assert adata.X.dtype == adata.layers["counts"].dtype
+    assert not np.shares_memory(adata.X, adata.layers["counts"])
+    assert adata.obs.equals(plain.obs) and adata.var.equals(plain.var)
+    # anndata 0.13 also lists X among the layers, under the key None.
+    assert [name for name in adata.layers if name is not None] == list(plain.layers)
+    for name in cube.layer_names:
+        assert_array_equal(adata.layers[name], plain.layers[name])
+    assert json.dumps(adata.uns["cytepool"], sort_keys=True) == json.dumps(
+        plain.uns["cytepool"], sort_keys=True
+    )
+    assert from_anndata(adata).fingerprint() == cube.fingerprint()
+    detected = to_anndata(cube, x_layer="detected")
+    assert_array_equal(detected.X, plain.layers["detected"])
+    with pytest.raises(KeyError, match="the cube has no layer 'raw' to copy into X"):
+        to_anndata(cube, x_layer="raw")
+    with pytest.raises(TypeError, match="x_layer must be a layer name"):
+        to_anndata(cube, x_layer=1)  # type: ignore[arg-type]
 
 
 def test_to_mudata_writes_a_modality_for_each_group(md: Any, pd: Any) -> None:
@@ -1283,12 +1310,14 @@ def test_the_history_describes_imports_in_plain_terms() -> None:
 
     text = describe_provenance({"construction": construction, "operations": [imported]})
 
+    # Lines of at most 80 characters; a longer item continues below its value.
     assert text.splitlines() == [
-        "Built by from_anndata (CytePool 1.0) from 12 profiles of an AnnData, in the "
-        "layout of decoupler.pp.pseudobulk:",
+        "Built by from_anndata (CytePool 1.0) from 12 profiles of an AnnData, in the",
+        "    layout of decoupler.pp.pseudobulk:",
         "  samples: the sorted distinct labels",
         "  groups: the rows of group_table; the labels were integers, written as "
-        "decimal text",
+        "decimal",
+        "          text",
         "  layers: counts from 'X', detected from 'psbulk_props'",
         '  sample_column: "sample"',
         '  group_column: "group"',
@@ -1296,8 +1325,8 @@ def test_the_history_describes_imports_in_plain_terms() -> None:
         "  obs_columns: null",
         "1. from_mudata, reading a MuData that CytePool exported from the cube "
         "sha256:ab",
-        "References: CytePool resolves none on its own. The source record's "
-        "references need the tool that wrote them. A fingerprint names a cube "
-        "without saying where it is: Cube.fingerprint() of a cube at hand says "
-        "whether it is that cube.",
+        "References: CytePool resolves none on its own. The source record's references",
+        "            need the tool that wrote them. A fingerprint names a cube without",
+        "            saying where it is: Cube.fingerprint() of a cube at hand says",
+        "            whether it is that cube.",
     ]

@@ -27,15 +27,17 @@ SOURCE = {
     "artifacts": {"membership": "membership.parquet#sha256:5e1f"},
     "exporter": {"name": "a cell store", "version": "2.1", "min_genes": 200},
 }
-UNRESOLVED = (
-    "Source, as the caller recorded it (unresolved: CytePool does not follow its "
-    "references):"
-)
-REFERENCES = (
-    "References: CytePool resolves none on its own. The source record's references "
-    "need the tool that wrote them. A fingerprint names a cube without saying where "
-    "it is: Cube.fingerprint() of a cube at hand says whether it is that cube."
-)
+# The texts of a history, in lines of at most 80 characters.
+UNRESOLVED = [
+    "Source, as the caller recorded it (unresolved: CytePool does not follow its",
+    "    references):",
+]
+REFERENCES = [
+    "References: CytePool resolves none on its own. The source record's references",
+    "            need the tool that wrote them. A fingerprint names a cube without",
+    "            saying where it is: Cube.fingerprint() of a cube at hand says",
+    "            whether it is that cube.",
+]
 
 
 @pytest.fixture(scope="module")
@@ -397,8 +399,9 @@ def test_history_reads_the_chain_in_plain_terms(cube: Cube) -> None:
     collapsed = regrouped.collapse_samples("donor")
     selected = collapsed.select(groups=["T", "B"], features=FEATURES[::-1])
 
-    assert selected.history().splitlines() == [
-        UNRESOLVED,
+    history = selected.history().splitlines()
+    assert history == [
+        *UNRESOLVED,
         '  dataset: "simulated PBMC"',
         '  artifacts: {"membership": "membership.parquet#sha256:5e1f"}',
         '  exporter: {"name": "a cell store", "version": "2.1", "min_genes": 200}',
@@ -408,20 +411,26 @@ def test_history_reads_the_chain_in_plain_terms(cube: Cube) -> None:
         "  features: ids given as a sequence",
         "  layers: counts, detected, log_sum, log_sum_sq, linear_sum",
         "  normalized values: each cell scaled to a total of 10,000, with library "
-        "sizes the total count of each cell",
-        f"1. regroup, applied to the cube {cube.fingerprint()}",
+        "sizes",
+        "                     the total count of each cell",
+        "1. regroup, applied to the cube",
+        f"   {cube.fingerprint()}",
         "  T: T4 + T8",
-        f"2. collapse_samples by 'donor', applied to the cube {regrouped.fingerprint()}",
+        "2. collapse_samples by 'donor', applied to the cube",
+        f"   {regrouped.fingerprint()}",
         "  D1: S1 + S3",
         "  D2: S2 + S5",
         "  D3: S4",
-        f"3. select, applied to the cube {collapsed.fingerprint()}",
+        "3. select, applied to the cube",
+        f"   {collapsed.fingerprint()}",
         "  samples: every sample, as they were",
         "  groups: T, B",
         "  features: G11, G10, G09, G08, G07, G06, G05, G04, G03, G02, ... (12 in all)",
-        REFERENCES,
-        f"Fingerprint: {selected.fingerprint()}",
+        *REFERENCES,
+        "Fingerprint:",
+        f"    {selected.fingerprint()}",
     ]
+    assert max(map(len, history)) <= 80
 
 
 def test_a_lazy_history_says_what_was_not_computed(cube: Cube, tmp_path: Path) -> None:
@@ -429,10 +438,10 @@ def test_a_lazy_history_says_what_was_not_computed(cube: Cube, tmp_path: Path) -
     lazy = read_cube(tmp_path / "c").select(features=["G01"]).regroup({"T": "T4"})
     lines = lazy.history().splitlines()
     assert "2. regroup, applied to a cube whose fingerprint was not recorded" in lines
-    assert lines[-1] == (
-        "Fingerprint: not known without reading the lazy layers; fingerprint() "
-        "reads them."
-    )
+    assert lines[-2:] == [
+        "Fingerprint: not known without reading the lazy layers; fingerprint() reads",
+        "             them.",
+    ]
 
 
 def test_long_memberships_are_shortened() -> None:
@@ -440,10 +449,46 @@ def test_long_memberships_are_shortened() -> None:
     record = {"operation": "collapse_samples", "by": "pool", "membership": membership}
     lines = describe_provenance({"operations": [record]}).splitlines()
     assert lines[0] == "1. collapse_samples by 'pool'"
-    assert lines[1] == "  P0: " + " + ".join(f"S0-{j}" for j in range(10)) + (
-        " + ... (12 in all)"
+    # The first 10 of each pooled sample's 12 members, the line broken at 80.
+    assert lines[1:3] == [
+        "  P0: " + " + ".join(f"S0-{j}" for j in range(10)) + " + ...",
+        "      (12 in all)",
+    ]
+    assert len(lines) == 1 + 2 * 20 + 1 and lines[-1] == "  ... (25 in all)"
+
+
+def test_history_names_the_columns_added_and_each_way_of_pooling(cube: Cube) -> None:
+    changed = cube.with_columns(
+        samples={
+            "pool": ["P1", "P1", "P2", "P2", "P1"],
+            "sex": ["F", "M", "F", "F", "F"],
+        },
+        features={"length": np.arange(len(FEATURES))},
     )
-    assert len(lines) == 1 + 20 + 1 and lines[-1] == "  ... (25 in all)"
+    by_two = changed.collapse_samples(["pool", "sex"])
+    everything = by_two.collapse_samples()
+    lines = everything.history().splitlines()
+    start = lines.index("1. with_columns, applied to the cube")
+    assert lines[start : start + 12] == [
+        "1. with_columns, applied to the cube",
+        f"   {cube.fingerprint()}",
+        "  samples: added pool; replaced sex",
+        "  features: added length",
+        "2. collapse_samples by 'pool' and 'sex', applied to the cube",
+        f"   {changed.fingerprint()}",
+        "  P1_F: S1 + S5",
+        "  P1_M: S2",
+        "  P2_F: S3 + S4",
+        "3. collapse_samples of every sample into one, applied to the cube",
+        f"   {by_two.fingerprint()}",
+        "  all: P1_F + P1_M + P2_F",
+    ]
+    assert lines[start + 12 :] == [
+        *REFERENCES,
+        "Fingerprint:",
+        f"    {everything.fingerprint()}",
+    ]
+    assert max(map(len, lines)) <= 80
 
 
 def test_records_of_earlier_versions_and_other_entries_are_shown_as_json() -> None:

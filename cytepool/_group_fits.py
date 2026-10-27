@@ -14,8 +14,9 @@ The workflows that fit every group (cell type) of a cube one at a time, such as
    column must be estimable. With random effects, those of the design are checked
    on the samples used.
 3. Features. Features are filtered by expression with the group's design, by edgeR's
-   ``filterByExpr`` (Chen, Lun and Smyth 2016), and the library sizes are taken over
-   the features kept.
+   ``filterByExpr`` (Chen, Lun and Smyth 2016), or with the groups of samples that a
+   column of the design's samples gives (``filterByExpr(y, group = ...)``), and the
+   library sizes are taken over the features kept.
 4. Normalization. TMM normalization factors (Robinson and Oshlack 2010), when asked.
 
 This module also checks the options these workflows share, and builds the table of
@@ -62,6 +63,10 @@ FILTER_DEFAULTS = {
     "min_prop": 0.7,
 }
 """edgeR's ``filterByExpr`` defaults."""
+
+SAMPLE_GROUPS = "sample_groups"
+"""The setting of ``expression_filter`` that names a column of the samples whose
+values group them for ``filterByExpr``, in place of the design."""
 
 
 @dataclass
@@ -211,6 +216,14 @@ def prepare_group(
     filter_settings = settings["expression_filter"]
     if filter_settings is None:
         keep = np.ones(y.shape[1], dtype=bool)
+    elif SAMPLE_GROUPS in filter_settings:
+        numbers = {
+            name: value
+            for name, value in filter_settings.items()
+            if name != SAMPLE_GROUPS
+        }
+        labels = design.samples[filter_settings[SAMPLE_GROUPS]]
+        keep = filter_by_expression(y, group=labels[inputs.model_rows[used]], **numbers)
     else:
         keep = filter_by_expression(y, design=x_kept, **filter_settings)
     fit.tested = np.flatnonzero(keep)
@@ -361,22 +374,35 @@ def threads_setting(value: Any) -> int | None:
     return number
 
 
-def filter_setting(value: Any) -> dict[str, float] | None:
-    """The settings of ``filterByExpr``: its defaults, changed ones, or None."""
+def filter_setting(value: Any) -> dict[str, Any] | None:
+    """The settings of ``filterByExpr``: its defaults, changed ones, or None.
+
+    A mapping may also name, as ``sample_groups``, a column of the samples whose
+    values group them; ``check_sample_groups`` checks it against the samples.
+    """
     reject_masked(value, "expression_filter")
     if isinstance(value, bool | np.bool_):
         return dict(FILTER_DEFAULTS) if value else None
     if not isinstance(value, Mapping):
         raise TypeError(
             "expression_filter must be True, False or a mapping of filterByExpr "
-            f"settings such as {{'min_count': 5}}, got {type(value).__name__}"
+            f"settings such as {{'min_count': 5}} or {{'{SAMPLE_GROUPS}': "
+            f"'condition'}}, got {type(value).__name__}"
         )
-    settings = dict(FILTER_DEFAULTS)
+    settings: dict[str, Any] = dict(FILTER_DEFAULTS)
     for name, number in value.items():
+        if name == SAMPLE_GROUPS:
+            if not isinstance(number, str):
+                raise TypeError(
+                    f"expression_filter[{SAMPLE_GROUPS!r}] must name a column of the "
+                    f"samples (str), got {type(number).__name__}"
+                )
+            settings[name] = number
+            continue
         if name not in FILTER_DEFAULTS:
             raise ValueError(
                 f"expression_filter has the unknown setting {name!r}; the settings are "
-                f"{', '.join(FILTER_DEFAULTS)}"
+                f"{', '.join([*FILTER_DEFAULTS, SAMPLE_GROUPS])}"
             )
         settings[name] = non_negative_number(number, f"expression_filter[{name!r}]")
     if settings["min_prop"] > 1.0:
@@ -384,6 +410,41 @@ def filter_setting(value: Any) -> dict[str, float] | None:
             f"expression_filter['min_prop'] must be in [0, 1], got {settings['min_prop']}"
         )
     return settings
+
+
+def check_sample_groups(settings: Mapping[str, Any], samples: Table) -> None:
+    """Refuse a column of ``sample_groups`` that the samples do not have, or in which
+    a sample has no value.
+
+    Raises:
+        KeyError: If ``samples`` has no such column.
+        ValueError: If a value of the column is missing.
+    """
+    filter_settings = settings["expression_filter"]
+    if filter_settings is None or SAMPLE_GROUPS not in filter_settings:
+        return
+    name = filter_settings[SAMPLE_GROUPS]
+    if name not in samples:
+        raise KeyError(
+            f"expression_filter[{SAMPLE_GROUPS!r}] names {name!r}, which is not a "
+            f"column of the samples; their columns are: {listing(list(samples.columns))}"
+        )
+    values = samples[name].tolist()
+    missing = [
+        position
+        for position, value in enumerate(values)
+        if value is None or value != value
+    ]
+    if missing:
+        where = (
+            f"sample {samples['sample_id'][missing[0]]!r}"
+            if "sample_id" in samples
+            else f"the sample in row {missing[0]}"
+        )
+        raise ValueError(
+            f"expression_filter[{SAMPLE_GROUPS!r}] names {name!r}, which is missing for "
+            f"{where}; every sample needs a group for the filter"
+        )
 
 
 def normalization_setting(value: Any) -> str | None:

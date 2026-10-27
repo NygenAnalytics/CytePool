@@ -123,6 +123,7 @@ from ._analysis_records import (
     cube_record,
     matched_samples,
     mixed_design_record,
+    only_key,
     software_versions,
 )
 from ._columns import text_column
@@ -132,6 +133,7 @@ from ._group_fits import (
     FITTED,
     GroupInputs,
     GroupRecord,
+    check_sample_groups,
     filter_setting,
     group_positions,
     min_cells_setting,
@@ -145,7 +147,7 @@ from ._group_fits import (
 )
 from ._jit import thread_limit
 from ._masked_arrays import real_array, reject_masked, unmasked_array
-from ._messages import listing
+from ._messages import fitted_lines, listing
 from .cube import Cube
 from .design import Contrasts, Design
 from .design.checks import _aliasing, _relation
@@ -730,16 +732,18 @@ class VariancePartitioningResult:
         record: dict[str, Any] = json.loads(self._record)
         return record
 
-    def table(self, group: str) -> Table:
+    def table(self, group: str | None = None) -> Table:
         """Return the table of fractions of one group.
 
         Args:
-            group: A group id.
+            group: A group id; it may be left out when the result has one group.
 
         Raises:
+            ValueError: If ``group`` is left out and the result has several groups.
             KeyError: If the group was not analysed or not fitted; the message says
                 why.
         """
+        group = only_key(group, list(self.groups), "group", "groups")
         found = self._tables.get(group)
         if found is not None:
             return found
@@ -758,8 +762,8 @@ class VariancePartitioningResult:
         statuses = self._summary["status"].tolist()
         fitted = statuses.count(FITTED)
         lines = [
-            f"VariancePartitioningResult: {len(statuses)} group"
-            f"{'' if len(statuses) == 1 else 's'}, {fitted} fitted; variables: "
+            f"VariancePartitioningResult: {len(statuses):,} group"
+            f"{'' if len(statuses) == 1 else 's'}, {fitted:,} fitted; variables: "
             + ", ".join(self._variables),
         ]
         for row in range(len(statuses)):
@@ -769,8 +773,8 @@ class VariancePartitioningResult:
                 continue
             used = int(self._summary["n_samples_used"][row])
             features = int(self._summary["n_features"][row])
-            lines.append(f"  {group}: {used} samples, {features} features")
-        return "\n".join(lines)
+            lines.append(f"  {group}: {used:,} samples, {features:,} features")
+        return fitted_lines("\n".join(lines))
 
 
 @dataclass
@@ -787,7 +791,7 @@ def variance_partitioning(
     groups: str | Sequence[str] | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
-    expression_filter: bool | Mapping[str, float] = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     normalization: Literal["tmm"] | None = "tmm",
     span: float | None = None,
     prior_weights: Literal["n_cells"] | None = None,
@@ -829,7 +833,12 @@ def variance_partitioning(
         min_counts: The fewest counts a sample needs in a group, over every feature
             of the cube, to enter its fit; 0 by default.
         expression_filter: True for edgeR's ``filterByExpr`` defaults with the
-            group's fixed effects, a mapping of changed settings, or False.
+            group's fixed effects, a mapping of changed settings or of the column of
+            ``"sample_groups"``, as for
+            :func:`~cytepool.differential_expression.limma_voom`, or False. With a
+            random effect that separates groups whose expression may differ, such
+            as the tissues of each donor, ``{"sample_groups": "tissue"}`` keeps the
+            features expressed in any one of them.
         normalization: ``"tmm"`` for TMM normalization factors, or None.
         span: The LOWESS span of voom's trend, in (0, 1], for every group; None
             chooses it in each group from the number of features, as ``voom``
@@ -887,6 +896,7 @@ def variance_partitioning(
             "this cube does not record (a cube of bulk samples has none); leave "
             "prior_weights at None"
         )
+    check_sample_groups(settings, design.samples)
     cube_rows, order = matched_samples(
         cube,
         design,

@@ -201,7 +201,7 @@ import math
 import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -333,6 +333,12 @@ _DIVERGING = (
 _MARKERS = ("o", "s", "^", "D", "v", "P", "X", "<", ">", "p", "h", "*")
 _DENSE = 8.0  # area of the points of scatter plots of genes, in points squared
 _SPARSE = 48.0  # and of samples
+_FEW_ENTRIES = 4  # the most entries of a legend that may sit inside a plot
+_ROOM_ROUNDS = 4  # the times the room for the numbers beside bars is measured
+# The places inside a plot a legend may take, in the order they are tried.
+_INSIDE_PLACES: tuple[
+    Literal["best", "upper right", "upper left", "lower left", "lower right"], ...
+] = ("best", "upper right", "upper left", "lower left", "lower right")
 # limma's plotMDS takes the 500 largest log fold changes, and edgeR's plotMDS of
 # counts adds an average count of 2 before taking logs.
 _MDS_TOP = 500
@@ -431,9 +437,21 @@ def _patch(label: str, color: str, **properties: Any) -> Any:
     )
 
 
-def _legend(ax: "Axes", handles: list[Any]) -> None:
-    """A legend to the right of the plot; entries without a marker or line are
-    headers, set in bold."""
+def _legend(ax: "Axes", handles: list[Any], *, inside: bool = False) -> None:
+    """A legend to the right of the plot; with ``inside``, a legend of a few entries
+    inside the plot instead, where it covers no point, line, bar or label at the size
+    the figure is laid out at, so that panels side by side keep their width. Where
+    every place inside would cover something, or the legend has more entries, it goes
+    beside the plot. Entries without a marker or line are headers, set in bold."""
+    if inside and len(handles) <= _FEW_ENTRIES:
+        legend = ax.legend(handles=handles, loc="best", framealpha=0.85)
+        _bold_headers(handles, legend)
+        obstacles = _obstacles(ax)
+        for place in _INSIDE_PLACES:
+            legend.set_loc(place)
+            if not obstacles.covered_by(legend.get_window_extent()):
+                return
+        legend.remove()
     legend = ax.legend(
         handles=handles,
         loc="upper left",
@@ -441,10 +459,124 @@ def _legend(ax: "Axes", handles: list[Any]) -> None:
         borderaxespad=0.0,
         frameon=False,
     )
+    _bold_headers(handles, legend)
+
+
+def _bold_headers(handles: list[Any], legend: Any) -> None:
     for handle, text in zip(handles, legend.get_texts(), strict=True):
         header = getattr(handle, "get_marker", lambda: "o")() in ("", "None")
         if header and handle.get_linestyle() in ("None", "none", ""):
             text.set_fontweight("bold")
+
+
+@dataclass(frozen=True)
+class _Obstacles:
+    """What a legend inside a plot must not cover, in display coordinates: points
+    (x, y and the radius of their marker), line segments (two ends and half the
+    line's width) and the boxes of labels, bars and other shapes."""
+
+    points: FloatArray  # (n, 3)
+    segments: FloatArray  # (n, 5)
+    boxes: list[Any]
+
+    def covered_by(self, box: Any) -> bool:
+        """Whether a box, such as a legend's, covers any of them, with a pixel to
+        spare."""
+        x0, y0, x1, y1 = box.x0 - 1.0, box.y0 - 1.0, box.x1 + 1.0, box.y1 + 1.0
+        x, y, r = self.points.T
+        if np.any((x + r >= x0) & (x - r <= x1) & (y + r >= y0) & (y - r <= y1)):
+            return True
+        if _segments_cross(self.segments, (x0, y0, x1, y1)):
+            return True
+        return any(
+            other.x1 >= x0 and other.x0 <= x1 and other.y1 >= y0 and other.y0 <= y1
+            for other in self.boxes
+        )
+
+
+def _obstacles(ax: "Axes") -> _Obstacles:
+    """The points, lines, bars and labels of a plot, where the figure's layout puts
+    them."""
+    root = ax.figure.figure  # the Figure, also of Axes in a subfigure
+    if root is not None:
+        root.draw_without_rendering()
+    scale = ax.figure.dpi / 72.0  # pixels per point
+    collections = _module("matplotlib.collections")
+    points, segments, boxes = [np.empty((0, 3))], [np.empty((0, 5))], []
+    for collection in ax.collections:
+        offsets = np.asarray(collection.get_offsets(), dtype=np.float64)
+        if isinstance(collection, collections.PathCollection) and offsets.size:
+            xy = collection.get_offset_transform().transform(offsets)
+            sizes = np.asarray(collection.get_sizes(), dtype=np.float64)
+            radius = np.resize(
+                np.sqrt(sizes) / 2.0 * scale if sizes.size else 0.0, len(xy)
+            )
+            finite = np.isfinite(xy).all(axis=1)
+            points.append(np.column_stack([xy[finite], radius[finite]]))
+        elif isinstance(collection, collections.LineCollection):
+            width = np.max(collection.get_linewidths(), initial=1.0) / 2.0 * scale
+            transform = collection.get_transform()
+            for segment in collection.get_segments():
+                ends = transform.transform(np.asarray(segment, dtype=np.float64))
+                segments.append(_segment_rows(ends, width))
+        elif collection.get_visible():
+            boxes.append(collection.get_window_extent())
+    for line in ax.lines:
+        if not line.get_visible():
+            continue
+        ends = line.get_transform().transform(
+            np.asarray(line.get_xydata(), dtype=np.float64)
+        )
+        if line.get_marker() not in ("", " ", "None", "none", None):
+            finite = np.isfinite(ends).all(axis=1)
+            radius = np.full(int(finite.sum()), line.get_markersize() / 2.0 * scale)
+            points.append(np.column_stack([ends[finite], radius]))
+        if line.get_linestyle() not in ("", " ", "None", "none"):
+            segments.append(_segment_rows(ends, line.get_linewidth() / 2.0 * scale))
+    for text in ax.texts:
+        if text.get_visible() and text.get_text():
+            boxes.append(text.get_window_extent())
+    for patch in ax.patches:
+        if patch.get_visible():
+            boxes.append(patch.get_window_extent())
+    return _Obstacles(np.concatenate(points), np.concatenate(segments), boxes)
+
+
+def _segment_rows(ends: FloatArray, half_width: float) -> FloatArray:
+    """The segments between consecutive points, as rows (x0, y0, x1, y1, half the
+    line's width); segments with a missing end are left out."""
+    if len(ends) < 2:
+        return np.empty((0, 5))
+    rows = np.column_stack([ends[:-1], ends[1:], np.full(len(ends) - 1, half_width)])
+    return rows[np.isfinite(rows).all(axis=1)]
+
+
+def _segments_cross(
+    segments: FloatArray, box: tuple[float, float, float, float]
+) -> bool:
+    """Whether any segment, widened by half its line's width, crosses a box: the
+    clipping of each segment to the box (Liang and Barsky) leaves part of it."""
+    if not len(segments):
+        return False
+    x0, y0, x1, y1 = box
+    w = segments[:, 4]
+    start = segments[:, 0:2]
+    step = segments[:, 2:4] - start
+    low = np.zeros(len(segments))
+    high = np.ones(len(segments))
+    for axis, (lower, upper) in enumerate(((x0, x1), (y0, y1))):
+        origin, delta = start[:, axis], step[:, axis]
+        lo, hi = lower - w, upper + w
+        flat = delta == 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            first = (lo - origin) / delta
+            second = (hi - origin) / delta
+        enter = np.where(flat, -np.inf, np.minimum(first, second))
+        leave = np.where(flat, np.inf, np.maximum(first, second))
+        outside = flat & ((origin < lo) | (origin > hi))
+        low = np.where(outside, 2.0, np.maximum(low, enter))
+        high = np.minimum(high, leave)
+    return bool(np.any(low <= high))
 
 
 def _text_transform(ax: "Axes") -> Any:
@@ -670,73 +802,17 @@ def plot_mds(
             f"dimensions {first} and {second} need at least {max(first, second) + 1} "
             f"samples, got {n_samples}"
         )
-    colors = None if color_by is None else samples.labels(color_by, "color_by")
-    markers = None if marker_by is None else samples.labels(marker_by, "marker_by")
-    remedy = "give it as marker_by, or as labels"
-    hues = {} if colors is None else _hues(colors[1], "color_by", remedy)
-    # More levels than hues that scatter plots keep apart get a marker each, too.
-    shapes_follow_colors = (
-        markers is None and colors is not None and len(colors[1]) > _SCATTER_HUES
-    )
-    if markers is not None:
-        shapes, by_shape = _shapes(markers[1], "marker_by"), markers[0]
-    elif colors is not None and shapes_follow_colors:
-        shapes, by_shape = _shapes(colors[1], "color_by"), colors[0]
-    else:
-        shapes, by_shape = {}, None
-    if isinstance(labels, bool | np.bool_):
-        texts = list(samples.ids) if labels else None
-    else:
-        texts = samples.labels(labels, "labels")[0]
+    styles = _sample_styles(samples, color_by, marker_by, labels)
     pairwise = selection == "pairwise" and count < n_genes
     coordinates, eigenvalues = _mds(values, count, pairwise)
     share = np.maximum(eigenvalues / np.sum(eigenvalues), 0.0)
     x, y = coordinates[:, first - 1], coordinates[:, second - 1]
 
     ax = _axes(ax, (6.5, 4.5))
-    color_of = [hues[level] for level in colors[0]] if colors else [_BLUE] * n_samples
-    marker_of = [shapes[level] for level in by_shape] if by_shape else None
-    marker_of = marker_of or [_MARKERS[0]] * n_samples
-    for marker in dict.fromkeys(marker_of):
-        rows = [i for i in range(n_samples) if marker_of[i] == marker]
-        ax.scatter(
-            x[rows],
-            y[rows],
-            c=[color_of[i] for i in rows],
-            marker=marker,
-            s=_SPARSE,
-            edgecolors="white",
-            linewidths=0.6,
-            zorder=3,
-            gid="samples",
-        )
-    if texts is not None:
-        for i, text in enumerate(texts):
-            ax.annotate(
-                text,
-                (x[i], y[i]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=8,
-                gid="sample labels",
-            )
+    _draw_styled_samples(ax, x, y, styles)
     axis = "Leading log2 fold change, dimension" if pairwise else "Principal component"
     ax.set_xlabel(f"{axis} {first} ({100 * share[first - 1]:.0f}%)")
     ax.set_ylabel(f"{axis} {second} ({100 * share[second - 1]:.0f}%)")
-    handles: list[Any] = []
-    if colors is not None:
-        if isinstance(color_by, str):
-            handles.append(_key(color_by, marker=""))
-        for level in colors[1]:
-            shape = shapes[level] if shapes_follow_colors else _MARKERS[0]
-            handles.append(_key(level, marker=shape, color=hues[level]))
-    if markers is not None:
-        if isinstance(marker_by, str):
-            handles.append(_key(marker_by, marker=""))
-        for level in markers[1]:
-            handles.append(_key(level, marker=shapes[level], color=_GREY))
-    if handles:
-        _legend(ax, handles)
     return ax
 
 
@@ -1237,33 +1313,66 @@ def plot_proportions(
 # Mean-variance trends.
 
 
-def plot_mean_variance(result: VoomResult, *, ax: "Axes | None" = None) -> "Axes":
+def plot_mean_variance(
+    result: VoomResult | DifferentialExpressionResult,
+    *,
+    group: str | None = None,
+    ax: "Axes | None" = None,
+) -> "Axes":
     """Plot voom's mean-variance trend.
 
     voom's plot (Law et al. 2014), as limma's ``voom(plot = TRUE)`` draws it: the square
     root of every gene's residual standard deviation against its average log2 count
     (``VoomResult.sqrt_sd`` against ``mean_log_count``), with the LOWESS trend from
     which the precision weights are read (``sqrt_sd_trend``). Genes left out of the
-    trend, such as those without counts, are not drawn.
+    trend, such as those without counts, are not drawn. Of a differential-expression
+    result, the trend of one group, which
+    :meth:`~cytepool.differential_expression.DifferentialExpressionResult.fit`
+    computes again.
 
     Draws the genes (gid ``"points"``) and the trend (gid ``"trend"``).
 
     Args:
         result: The result of :func:`~cytepool.stats.voom.voom` or
-            :func:`~cytepool.stats.voom.voom_with_quality_weights`.
+            :func:`~cytepool.stats.voom.voom_with_quality_weights`, or of
+            :func:`~cytepool.differential_expression.limma_voom` or
+            :func:`~cytepool.differential_expression.dream_voom`.
+        group: The group of a differential-expression result; it may be left out
+            when the result has one group.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
         The Axes.
 
     Raises:
-        TypeError: If ``result`` is not a VoomResult.
+        TypeError: If ``result`` is neither a VoomResult nor a
+            DifferentialExpressionResult.
         ValueError: If no trend was fitted, because the design leaves no residual
-            degrees of freedom.
+            degrees of freedom; the result is of limma-trend, which fits no voom
+            trend; or ``group`` is given with a VoomResult or left out of a result of
+            several groups.
+        KeyError: If the group was not analysed or not fitted.
     """
     _check_axes(ax)
+    if isinstance(result, DifferentialExpressionResult):
+        if result.method == "limma_trend":
+            raise ValueError(
+                "limma-trend weights no observation, so it has no voom trend to draw; "
+                "plot_residual_variances(result) draws the trend of its residual "
+                "variances"
+            )
+        result = cast(VoomResult, result.fit(group).voom)
+    elif group is not None:
+        reject_masked(group, "group")
+        raise ValueError(
+            "group applies to a differential-expression result, and result is a "
+            f"{type(result).__name__}"
+        )
     if not isinstance(result, VoomResult):
-        raise TypeError(f"result must be a VoomResult, got {type(result).__name__}")
+        raise TypeError(
+            "result must be a VoomResult, or the DifferentialExpressionResult of "
+            f"limma_voom or dream_voom, got {type(result).__name__}"
+        )
     shown = np.isfinite(result.sqrt_sd)
     if not shown.any():
         raise ValueError(
@@ -1303,12 +1412,16 @@ def plot_mean_variance(result: VoomResult, *, ax: "Axes | None" = None) -> "Axes
                 linewidth=2,
             ),
         ],
+        inside=True,
     )
     return ax
 
 
 def plot_residual_variances(
-    fit: ModeratedFit | TreatFit, *, ax: "Axes | None" = None
+    fit: ModeratedFit | TreatFit | DifferentialExpressionResult,
+    *,
+    group: str | None = None,
+    ax: "Axes | None" = None,
 ) -> "Axes":
     """Plot the residual standard deviations of the genes and the prior they were
     moderated towards.
@@ -1320,27 +1433,55 @@ def plot_residual_variances(
     whose two-sided p-value as a variance of the prior, from the F distribution on the
     gene's residual and the prior's degrees of freedom (those of the genes that are not
     outliers), is below 0.5 once adjusted by Benjamini and Hochberg (1995), as limma
-    marks them (found by probing).
+    marks them (found by probing). Of a differential-expression result, the
+    moderation of one group, which
+    :meth:`~cytepool.differential_expression.DifferentialExpressionResult.fit`
+    computes again.
 
     Draws the genes (gid ``"points"``), the outliers (gid ``"outliers"``) and the prior
     (gid ``"prior"``).
 
     Args:
         fit: The result of :func:`~cytepool.stats.empirical_bayes.moderated_statistics`
-            or :func:`~cytepool.stats.empirical_bayes.treat`.
+            or :func:`~cytepool.stats.empirical_bayes.treat`, or of
+            :func:`~cytepool.differential_expression.limma_voom` or
+            :func:`~cytepool.differential_expression.limma_trend`.
+        group: The group of a differential-expression result; it may be left out
+            when the result has one group.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
         The Axes.
 
     Raises:
-        TypeError: If ``fit`` is neither a ModeratedFit nor a TreatFit.
-        ValueError: If no gene has a residual standard deviation.
+        TypeError: If ``fit`` is neither a ModeratedFit, a TreatFit nor a
+            DifferentialExpressionResult.
+        ValueError: If no gene has a residual standard deviation; the result is of
+            dream, whose moderated variances are those of mixed models; or
+            ``group`` is given with a fit or left out of a result of several
+            groups.
+        KeyError: If the group was not analysed or not fitted.
     """
     _check_axes(ax)
+    if isinstance(fit, DifferentialExpressionResult):
+        if fit.method == "dream_voom":
+            raise ValueError(
+                "plot_residual_variances draws limma's moderation of the residual "
+                "variances of linear models; dream moderates those of mixed models, "
+                "which limma's plotSA does not draw"
+            )
+        fit = cast(ModeratedFit, fit.fit(group).moderated)
+    elif group is not None:
+        reject_masked(group, "group")
+        raise ValueError(
+            "group applies to a differential-expression result, and fit is a "
+            f"{type(fit).__name__}"
+        )
     if not isinstance(fit, ModeratedFit | TreatFit):
         raise TypeError(
-            f"fit must be a ModeratedFit or a TreatFit, got {type(fit).__name__}"
+            "fit must be a ModeratedFit or a TreatFit, or the "
+            f"DifferentialExpressionResult of limma_voom or limma_trend, got "
+            f"{type(fit).__name__}"
         )
     linear = fit.fit
     sigma, x, df = linear.sigma, linear.mean_expression, linear.df_residual
@@ -1397,7 +1538,7 @@ def plot_residual_variances(
     handles.append(_key("Prior", marker="", linestyle="-", color=_ORANGE, linewidth=2))
     ax.set_xlabel("Average log-expression")
     ax.set_ylabel("Square root of residual standard deviation")
-    _legend(ax, handles)
+    _legend(ax, handles, inside=True)
     return ax
 
 
@@ -1744,7 +1885,11 @@ def plot_md(
         ax.set_xscale("log")
     ax.set_xlabel(tests.abundance_label)
     ax.set_ylabel("log2 fold change")
-    _legend(ax, _significance_keys(int(up.sum()), int(down.sum()), int(rest.sum())))
+    _legend(
+        ax,
+        _significance_keys(int(up.sum()), int(down.sum()), int(rest.sum())),
+        inside=True,
+    )
     return ax
 
 
@@ -1817,7 +1962,11 @@ def plot_volcano(
         _label_points(ax, x, y, names, chosen)
     ax.set_xlabel("log2 fold change")
     ax.set_ylabel("-log10 p-value")
-    _legend(ax, _significance_keys(int(up.sum()), int(down.sum()), int(rest.sum())))
+    _legend(
+        ax,
+        _significance_keys(int(up.sum()), int(down.sum()), int(rest.sum())),
+        inside=True,
+    )
     return ax
 
 
@@ -1966,11 +2115,12 @@ def plot_significant_genes(
     ax.axvline(0.0, color=_INK, linewidth=0.8)
     reach = max(int(up.max(initial=0)), int(down.max(initial=0)), 1)
     gap = 0.02 * reach
+    numbers = []
     for y, n_up, n_down in zip(
         positions[tested], up[tested], down[tested], strict=True
     ):
         for value, side in ((n_up, 1.0), (n_down, -1.0)):
-            ax.text(
+            text = ax.text(
                 side * (value + gap),
                 y,
                 f"{value:,}",
@@ -1979,6 +2129,7 @@ def plot_significant_genes(
                 fontsize=8,
                 gid="numbers",
             )
+            numbers.append((float(value), text))
     ax.set_yticks(positions, labels)
     ax.set_xlim(-1.2 * reach, 1.2 * reach)
     # Genes down are drawn to the left; the axis counts them as numbers of genes.
@@ -1988,7 +2139,36 @@ def plot_significant_genes(
     adjusted_over = "over every group" if across else "within each group"
     ax.set_xlabel(f"Genes at adjusted p < {level:g} ({adjusted_over})")
     _legend(ax, [_patch("Up", _UP), _patch("Down", _DOWN)])
+    # Last, once the legend beside the plot has narrowed it.
+    _make_room(ax, numbers, gap, 1.2 * reach)
     return ax
+
+
+def _make_room(
+    ax: "Axes", numbers: list[tuple[float, Any]], gap: float, limit: float
+) -> None:
+    """Widen the symmetric x limits of a plot of bars to the left and right of zero
+    so that the number written beyond each bar, ``gap`` from its end, fits inside
+    the frame, at the size the figure is laid out at."""
+    if not numbers:
+        return
+    root = ax.figure.figure  # the Figure, also of Axes in a subfigure
+    pad = 4.0  # pixels between a number and the frame
+    # New limits change the tick labels, which a layout engine may make room for by
+    # narrowing the plot: measure again until the numbers fit.
+    for _ in range(_ROOM_ROUNDS):
+        if root is not None:
+            root.draw_without_rendering()
+        width = ax.get_window_extent().width
+        needed = limit
+        for value, text in numbers:
+            share = 2.0 * (text.get_window_extent().width + pad) / width
+            if share < 0.9:  # a number wider than the plot cannot fit, however set
+                needed = max(needed, (value + gap) / (1.0 - share))
+        if needed <= ax.get_xlim()[1]:
+            return
+        limit = needed
+        ax.set_xlim(-needed, needed)
 
 
 def plot_p_values(
@@ -3292,7 +3472,7 @@ def plot_dispersions(
         handles.append(
             _key("Outlier, gene-wise", markerfacecolor="none", markeredgecolor=_BLUE)
         )
-    _legend(ax, handles)
+    _legend(ax, handles, inside=True)
     return ax
 
 
@@ -3385,6 +3565,7 @@ def plot_quasi_dispersions(
                 linewidth=2,
             ),
         ],
+        inside=True,
     )
     return ax
 
@@ -4277,20 +4458,11 @@ def plot_sumrank(
             linestyle=":",
             gid="threshold",
         )
+    statistic = np.asarray(table[f"{side}_statistic"], dtype=np.float64)[order]
     shown = np.flatnonzero(passed)
-    shown = shown[np.lexsort((shown, p[shown]))][:named]
-    for i in sorted(shown.tolist()):
-        ax.annotate(
-            names[order[i]],
-            (x[i], heights[i]),
-            xytext=(0.0, 3.0),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=7,
-            color=color,
-            gid="labels",
-        )
+    # The smallest p-values first; of equal ones, which permutations give, the
+    # smallest statistic, the best ranks.
+    shown = shown[np.lexsort((shown, statistic[shown], p[shown]))][:named]
     ax.set_xticks([])
     ax.set_xlim(-1.0, len(order))
     ax.set_ylim(0.0, max(1.0, float(heights.max(initial=0.0))) * 1.12)
@@ -4302,6 +4474,7 @@ def plot_sumrank(
     )
     ax.set_xlabel(f"Genes, in alphabetical order ({len(order):,})")
     ax.set_ylabel(f"-log10 p-value, genes {side} ({source})")
+    # Beside the plot: the labels run along its top, where a legend inside would go.
     _legend(
         ax,
         [
@@ -4309,7 +4482,103 @@ def plot_sumrank(
             _key("Other genes", color=_INK),
         ],
     )
+    # Last, at the size the legend leaves the plot.
+    _label_above(ax, x, heights, [names[i] for i in order], shown, color)
     return ax
+
+
+def _label_above(
+    ax: "Axes",
+    x: FloatArray,
+    y: FloatArray,
+    names: list[str],
+    chosen: Any,
+    color: str,
+) -> None:
+    """Label points from above, at the size the figure is laid out at. A label that
+    would cross the side of the frame moves in, one that would overlap a label placed
+    before it moves up, and a moved label has a line to its point; the top of the plot
+    is raised to show the highest label."""
+    textpath = _module("matplotlib.textpath")
+    root = ax.figure.figure  # the Figure, also of Axes in a subfigure
+    if root is not None:
+        root.draw_without_rendering()
+    fontsize = 7.0  # points
+    order = sorted(chosen, key=lambda i: (-y[i], x[i]))
+    widths = [
+        textpath.TextPath((0.0, 0.0), names[i], size=fontsize).get_extents().width
+        for i in order
+    ]
+    places = _label_places(ax, x, y, order, widths, fontsize)
+    # Raising the top of the plot changes the scale the labels were placed at: place
+    # them again until the top stays where it is.
+    for _ in range(_ROOM_ROUNDS):
+        bottom, top = ax.get_ylim()
+        highest = max(level for _, level, _ in places) + 1.25 * fontsize * (
+            (top - bottom) / (ax.bbox.height * 72.0 / ax.figure.dpi)
+        )
+        if highest <= top:
+            break
+        ax.set_ylim(bottom, highest)
+        places = _label_places(ax, x, y, order, widths, fontsize)
+    for i, (center, level, moved) in zip(order, places, strict=True):
+        ax.annotate(
+            names[i],
+            (x[i], y[i]),
+            xytext=(center, level),
+            textcoords="data",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize,
+            color=color,
+            arrowprops=(
+                {"arrowstyle": "-", "color": _GREY, "linewidth": 0.6} if moved else None
+            ),
+            gid="labels",
+        )
+
+
+def _label_places(
+    ax: "Axes",
+    x: FloatArray,
+    y: FloatArray,
+    order: list[int],
+    widths: list[float],
+    fontsize: float,
+) -> list[tuple[float, float, bool]]:
+    """Where each label goes, in data units: its centre, the height of its bottom,
+    and whether it moved from just above its point."""
+    offset, margin = 3.0, 2.0  # points above the point, and from the frame
+    low, high = ax.get_xlim()
+    bottom, top = ax.get_ylim()
+    per_point_x = (high - low) / (ax.bbox.width * 72.0 / ax.figure.dpi)
+    per_point_y = (top - bottom) / (ax.bbox.height * 72.0 / ax.figure.dpi)
+    line = 1.25 * fontsize * per_point_y
+    placed: list[tuple[float, float, float]] = []  # left, right and bottom of each
+    places = []
+    for i, width in zip(order, widths, strict=True):
+        half = width / 2.0 * per_point_x
+        inner = margin * per_point_x
+        lowest, greatest = low + inner + half, high - inner - half
+        # A label wider than the plot is centred on it; it cannot fit.
+        center = (
+            min(max(x[i], lowest), greatest) if lowest <= greatest else (low + high) / 2
+        )
+        left, right = center - half, center + half
+        level = start = y[i] + offset * per_point_y
+        clear = False
+        while not clear:
+            clear = True
+            for other_left, other_right, other_bottom in placed:
+                apart = right < other_left or left > other_right
+                # Each move takes the label to the top of another: it ends.
+                if not apart and other_bottom - line < level < other_bottom + line:
+                    level = other_bottom + line
+                    clear = False
+        placed.append((left, right, level))
+        shifted = abs(center - x[i]) > fontsize * per_point_x
+        places.append((center, level, shifted or level - start > 0.1 * line))
+    return places
 
 
 def plot_held_out_auc(
@@ -4491,8 +4760,9 @@ def plot_pca(
     samples = _component_samples(data, result)
     x = np.asarray(result.coordinates[:, first - 1], dtype=np.float64)
     y = np.asarray(result.coordinates[:, second - 1], dtype=np.float64)
+    styles = _sample_styles(samples, color_by, marker_by, labels)
     ax = _axes(ax, (6.5, 4.5))
-    _draw_samples(ax, x, y, samples, color_by, marker_by, labels)
+    _draw_styled_samples(ax, x, y, styles)
     share = result.variance_explained
     ax.set_xlabel(f"PC{first}: {100 * share[first - 1]:.0f}% variance")
     ax.set_ylabel(f"PC{second}: {100 * share[second - 1]:.0f}% variance")
@@ -4536,24 +4806,29 @@ def _component_samples(data: Any, result: PrincipalComponents) -> _Samples:
     )
 
 
-def _draw_samples(
-    ax: "Axes",
-    x: FloatArray,
-    y: FloatArray,
-    samples: _Samples,
-    color_by: Any,
-    marker_by: Any,
-    labels: Any,
-) -> None:
-    """Samples as points, coloured and marked by their variables, as plot_mds draws
-    them: a hue per level of color_by, a marker per level of marker_by, or of color_by
-    when it has more levels than scatter plots keep apart; labels when asked; and a
-    legend of the levels."""
-    n_samples = x.size
+@dataclass(frozen=True)
+class _SampleStyles:
+    """How each sample of a scatter plot is drawn: its colour, marker and label,
+    and the legend's entries."""
+
+    colors: list[str]
+    markers: list[str]
+    texts: list[str] | None
+    handles: list[Any]
+
+
+def _sample_styles(
+    samples: _Samples, color_by: Any, marker_by: Any, labels: Any
+) -> _SampleStyles:
+    """The colours, markers and labels of samples, by their variables, as plot_mds
+    draws them: a hue per level of color_by, a marker per level of marker_by, or of
+    color_by when it has more levels than scatter plots keep apart, and a legend of
+    the levels. Checks the variables before anything is computed or drawn."""
     colors = None if color_by is None else samples.labels(color_by, "color_by")
     markers = None if marker_by is None else samples.labels(marker_by, "marker_by")
     remedy = "give it as marker_by, or as labels"
     hues = {} if colors is None else _hues(colors[1], "color_by", remedy)
+    # More levels than hues that scatter plots keep apart get a marker each, too.
     shapes_follow_colors = (
         markers is None and colors is not None and len(colors[1]) > _SCATTER_HUES
     )
@@ -4567,32 +4842,10 @@ def _draw_samples(
         texts = list(samples.ids) if labels else None
     else:
         texts = samples.labels(labels, "labels")[0]
+    n_samples = len(samples.ids)
     color_of = [hues[level] for level in colors[0]] if colors else [_BLUE] * n_samples
     marker_of = [shapes[level] for level in by_shape] if by_shape else None
     marker_of = marker_of or [_MARKERS[0]] * n_samples
-    for marker in dict.fromkeys(marker_of):
-        rows = [i for i in range(n_samples) if marker_of[i] == marker]
-        ax.scatter(
-            x[rows],
-            y[rows],
-            c=[color_of[i] for i in rows],
-            marker=marker,
-            s=_SPARSE,
-            edgecolors="white",
-            linewidths=0.6,
-            zorder=3,
-            gid="samples",
-        )
-    if texts is not None:
-        for i, text in enumerate(texts):
-            ax.annotate(
-                text,
-                (x[i], y[i]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=8,
-                gid="sample labels",
-            )
     handles: list[Any] = []
     if colors is not None:
         if isinstance(color_by, str):
@@ -4605,8 +4858,41 @@ def _draw_samples(
             handles.append(_key(marker_by, marker=""))
         for level in markers[1]:
             handles.append(_key(level, marker=shapes[level], color=_GREY))
-    if handles:
-        _legend(ax, handles)
+    return _SampleStyles(color_of, marker_of, texts, handles)
+
+
+def _draw_styled_samples(
+    ax: "Axes", x: FloatArray, y: FloatArray, styles: _SampleStyles
+) -> None:
+    """Samples as points of their colours and markers, labelled when asked, with a
+    legend of their levels: inside the plot where a short one covers nothing, and
+    beside it otherwise."""
+    n_samples = x.size
+    for marker in dict.fromkeys(styles.markers):
+        rows = [i for i in range(n_samples) if styles.markers[i] == marker]
+        ax.scatter(
+            x[rows],
+            y[rows],
+            c=[styles.colors[i] for i in rows],
+            marker=marker,
+            s=_SPARSE,
+            edgecolors="white",
+            linewidths=0.6,
+            zorder=3,
+            gid="samples",
+        )
+    if styles.texts is not None:
+        for i, text in enumerate(styles.texts):
+            ax.annotate(
+                text,
+                (x[i], y[i]),
+                xytext=(4, 4),
+                textcoords="offset points",
+                fontsize=8,
+                gid="sample labels",
+            )
+    if styles.handles:
+        _legend(ax, styles.handles, inside=True)
 
 
 def plot_dotplot(
@@ -4617,6 +4903,8 @@ def plot_dotplot(
     samples: Any = None,
     standard_scale: str | None = None,
     mean_only_expressed: bool = False,
+    vmin: float | None = None,
+    vmax: float | None = None,
     ax: "Axes | None" = None,
 ) -> "Axes":
     """Plot how many cells of each group express each gene, and how much, as dots.
@@ -4632,7 +4920,8 @@ def plot_dotplot(
     A dot's area is 200 (f / f_max)^1.5 points squared, f its fraction and f_max the
     largest fraction shown rounded up to a tenth, as scanpy sizes its dots, and the
     key of the areas shows fractions in scanpy's steps. The colours run from the
-    smallest to the largest value shown.
+    smallest to the largest value shown, or from ``vmin`` to ``vmax``, scanpy's
+    names, which put several dot plots on one scale.
 
     ``standard_scale`` scales the means of each gene over the groups (``"gene"``,
     scanpy's ``"var"``), or of each group over the genes (``"group"``), to run from 0
@@ -4662,10 +4951,15 @@ def plot_dotplot(
         standard_scale: ``"gene"``, ``"group"`` or None.
         mean_only_expressed: Whether the mean is taken over the cells that express
             the gene only.
+        vmin: The value of the lightest colour; the smallest value shown by default.
+            Smaller values take that colour.
+        vmax: The value of the darkest colour; the largest value shown by default.
+            Larger values take that colour.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
-        The Axes.
+        The Axes of the dots. The colour bar and the key of the dot sizes are Axes
+        of their own, the figure's other Axes (``ax.figure.axes``).
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -4673,8 +4967,8 @@ def plot_dotplot(
         ValueError: If the cube lacks cell numbers, ``detected`` or ``log_sum``, a
             group has no cells in the samples pooled, ``genes``, ``groups`` or
             ``samples`` is empty or names one twice, a symbol names several genes,
-            ``mean_only_expressed`` is asked of a cube without a pseudocount of 1, or
-            an option is out of range.
+            ``mean_only_expressed`` is asked of a cube without a pseudocount of 1,
+            ``vmin`` is not below ``vmax``, or an option is out of range.
         KeyError: If a gene, group or sample is not in the cube.
     """
     _check_axes(ax)
@@ -4686,6 +4980,10 @@ def plot_dotplot(
         else checked_choice(standard_scale, "standard_scale", _DOT_SCALES)
     )
     expressed_only = checked_flag(mean_only_expressed, "mean_only_expressed")
+    for name, value in (("vmin", vmin), ("vmax", vmax)):
+        if value is not None:
+            reject_masked(value, name)
+            real_number(value, name, finite=True)
     lacking = [name for name in ("detected", "log_sum") if name not in cube.layer_names]
     if cube.n_cells is None or lacking:
         what = (
@@ -4720,7 +5018,17 @@ def plot_dotplot(
     colors = _module("matplotlib.colors")
     ramp = colors.LinearSegmentedColormap.from_list("cytepool_blues", _BLUES)
     low, high = float(shown.min()), float(shown.max())
-    norm = colors.Normalize(vmin=low, vmax=high if high > low else low + 1.0)
+    if vmin is None and vmax is None:
+        norm = colors.Normalize(vmin=low, vmax=high if high > low else low + 1.0)
+    else:
+        lightest = low if vmin is None else float(vmin)
+        darkest = high if vmax is None else float(vmax)
+        if not lightest < darkest:
+            raise ValueError(
+                f"vmin ({lightest:g}) must be below vmax ({darkest:g}); without one "
+                f"of them, the values shown run from {low:g} to {high:g}"
+            )
+        norm = colors.Normalize(vmin=lightest, vmax=darkest)
     width = min(14.0, 3.0 + 0.4 * n_genes)
     ax = _axes(ax, (width, min(12.0, max(4.0, 1.6 + 0.4 * n_groups))))
     y, x = np.indices((n_groups, n_genes))

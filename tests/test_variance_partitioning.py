@@ -27,7 +27,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 
 from cytepool.cube import Cube, from_bulk
 from cytepool.design import Design
-from cytepool.normalization import tmm_factors
+from cytepool.normalization import filter_by_expression, tmm_factors
 from cytepool.stats.dream import voom_with_dream_weights
 from cytepool.stats.voom import voom
 from cytepool.table import Table
@@ -444,6 +444,10 @@ def test_groups_that_cannot_be_partitioned_say_why_and_the_rest_are_fitted() -> 
         result.table("empty")
     with pytest.raises(KeyError, match="no group 'other'"):
         result.table("other")
+    with pytest.raises(
+        ValueError, match="the result has 4 groups; name one with group"
+    ):
+        result.table()
     table = result.table("fine")
     assert table.columns == ("feature_id", "donor", "condition", "age", "residuals")
     fractions = np.column_stack([table[name] for name in result.variables])
@@ -473,6 +477,7 @@ def test_a_design_without_random_effects_is_fitted_after_voom() -> None:
     direct = variance_fractions(weighted.log_cpm, design, weights=weighted.weights)
     table = result.table("fine")
 
+    assert result.table().equals(table)  # the only group needs no name
     assert result.variables == ("age", "condition", "residuals")
     assert_allclose(
         np.column_stack([table[name] for name in result.variables]),
@@ -480,6 +485,30 @@ def test_a_design_without_random_effects_is_fitted_after_voom() -> None:
         rtol=EXACT,
         atol=EXACT,
     )
+
+
+def test_a_filter_by_sample_groups_keeps_the_genes_of_any_one_group() -> None:
+    fine = small_cube(np.random.default_rng(14)).select(groups=["fine"])
+    counts = fine.layer("counts", "fine").copy()
+    counts[2:, 0] = 0  # g0: counted in the two samples of donor D0 only
+    counts[1:, 1] = 0  # g1: counted in one sample only
+    cube = Cube(
+        {"counts": counts[np.newaxis]},
+        samples=fine.samples,
+        groups=fine.groups,
+        features=fine.features,
+        n_cells=fine.n_cells,
+    )
+    design = Design(cube.samples, "~ age + condition")
+    by_donor = variance_partitioning(
+        cube, design, expression_filter={"sample_groups": "donor"}, normalization=None
+    )
+    keep = filter_by_expression(counts, group=cube.samples["donor"])
+    tested = by_donor.table()["feature_id"].tolist()
+    assert tested == cube.features["feature_id"][keep].tolist()
+    assert "g0" in tested and "g1" not in tested
+    by_design = variance_partitioning(cube, design, normalization=None)
+    assert "g0" not in by_design.table()["feature_id"].tolist()
 
 
 def test_the_result_records_its_samples_settings_and_provenance() -> None:
@@ -506,6 +535,7 @@ def test_the_result_records_its_samples_settings_and_provenance() -> None:
         result.summary = result.samples  # type: ignore[misc]
     assert "3 groups, 2 fitted" in repr(result)
     assert "rare: not fitted (random_effects_not_estimable)" in repr(result)
+    assert max(map(len, repr(result).splitlines())) <= 80
 
 
 def test_cube_options_and_names_are_checked() -> None:

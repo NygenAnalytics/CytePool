@@ -261,6 +261,7 @@ from ._analysis_records import (
     design_record,
     matched_samples,
     mixed_design_record,
+    only_key,
     software_versions,
 )
 from ._columns import text_column
@@ -270,6 +271,7 @@ from ._group_fits import (
     FITTED,
     GroupInputs,
     GroupRecord,
+    check_sample_groups,
     filter_setting,
     group_positions,
     min_cells_setting,
@@ -282,8 +284,8 @@ from ._group_fits import (
     threads_setting,
 )
 from ._jit import thread_limit
-from ._masked_arrays import reject_masked
-from ._messages import PACKAGE_DIRECTORY, listing, quoted
+from ._masked_arrays import read_only, reject_masked
+from ._messages import PACKAGE_DIRECTORY, fitted_lines, listing, quoted
 from ._options import (
     checked_choice,
     checked_flag,
@@ -320,7 +322,13 @@ from .stats.sample_weights import (
 from .stats.voom import VoomResult, _quality_weighted_voom, voom
 from .table import Table
 
-__all__ = ["DifferentialExpressionResult", "dream_voom", "limma_trend", "limma_voom"]
+__all__ = [
+    "DifferentialExpressionResult",
+    "GroupFit",
+    "dream_voom",
+    "limma_trend",
+    "limma_voom",
+]
 
 _ACROSS_GROUPS = "adjusted_p_value_across_groups"
 # The settings of sample quality weights: limma's defaults (arrayWeights and
@@ -350,6 +358,58 @@ _KENWARD_ROGER_SAMPLES = 20
 # number above this (variancePartition's NEWS for 1.31.16; the bound found by probing).
 _CONDITION_LIMIT = 1e6
 _METHODS = ("limma_voom", "limma_trend", "dream_voom")
+# The settings that the provenance records besides those of the call.
+_RECORDED_ONLY = (*_FIXED_SETTINGS, *_DREAM_SETTINGS)
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class GroupFit:
+    """The fit of one group of a differential-expression result.
+
+    :meth:`DifferentialExpressionResult.fit` computes it again from the cube and
+    design the result keeps, with the settings it records: the values, weights and
+    moderated statistics behind the group's tables, which figures such as
+    :func:`~cytepool.plotting.plot_mean_variance` and
+    :func:`~cytepool.plotting.plot_residual_variances` draw. Rows of the arrays are
+    the samples fitted, in the order of ``samples``, and columns the features
+    tested, in the order of ``features``. The arrays are read-only.
+
+    Attributes:
+        group: The group's id.
+        samples: The samples fitted, in the order of the fit: the rows of the
+            design's sample table, with ``n_cells`` (when the cube records cell
+            numbers), ``library_size`` (over the features tested), ``norm_factor``,
+            and ``prior_weight`` or ``quality_weight`` when the fit used them.
+            These columns take the place of design columns of the same names.
+        features: The features tested, the rows of the cube's feature table.
+        log2_cpm: ``(n_samples, n_features)`` the values fitted: voom's log2 counts
+            per million (limma-voom and dream), or those of limma-trend, with its
+            prior count.
+        weights: voom's precision weights, ``(n_samples, n_features)``; for
+            limma-trend, the sample weights of the fit, ``(n_samples,)``, or None
+            without them.
+        voom: The :class:`~cytepool.stats.voom.VoomResult` of limma-voom and dream,
+            with the mean-variance trend; None for limma-trend.
+        moderated: The moderated tests of the group's estimable contrasts: a
+            :class:`~cytepool.stats.empirical_bayes.ModeratedFit` for limma, whose
+            ``fit`` holds the linear model after ``contrasts_fit``, or a
+            :class:`~cytepool.stats.dream.ModeratedFixedEffectTests` for dream.
+    """
+
+    group: str
+    samples: Table
+    features: Table
+    log2_cpm: np.ndarray
+    weights: np.ndarray | None
+    voom: VoomResult | None
+    moderated: Any
+
+    def __repr__(self) -> str:
+        n_samples, n_features = np.shape(self.log2_cpm)
+        return (
+            f"GroupFit(group={self.group!r}, n_samples={n_samples}, "
+            f"n_features={n_features})"
+        )
 
 
 class DifferentialExpressionResult:
@@ -409,18 +469,33 @@ class DifferentialExpressionResult:
     left out, and of groups not fitted.
 
     Built by :func:`limma_voom`, :func:`limma_trend` and :func:`dream_voom`, from the
-    contrasts, tables and record they computed. Immutable.
+    contrasts, tables and record they computed, and the cube and design they
+    analysed, which the result keeps (``cube`` and ``design``, the objects given, not
+    copies) so that :meth:`fit` can compute a group's fit again. A pickled result
+    carries them: a cube read from a cube file refers to its file, and a cube in
+    memory carries its arrays. Immutable.
 
     Raises:
         TypeError: If ``method`` is not a string, ``contrasts`` not a ``Contrasts``,
             ``summary`` or ``samples`` not a ``Table``, ``tables`` not a mapping of
-            (group id, contrast name) to ``Table``, or ``provenance`` not a mapping
-            that JSON can write.
+            (group id, contrast name) to ``Table``, ``provenance`` not a mapping
+            that JSON can write, ``cube`` not a Cube or ``design`` not a Design.
         ValueError: If ``method`` is not ``"limma_voom"``, ``"limma_trend"`` or
-            ``"dream_voom"``, or ``provenance`` holds a NaN or an infinity.
+            ``"dream_voom"``, ``provenance`` holds a NaN or an infinity, or only one
+            of ``cube`` and ``design`` is given.
     """
 
-    __slots__ = ("_method", "_contrasts", "_summary", "_samples", "_tables", "_record")
+    __slots__ = (
+        "_method",
+        "_contrasts",
+        "_summary",
+        "_samples",
+        "_tables",
+        "_record",
+        "_cube",
+        "_design",
+        "_last_fit",
+    )
 
     _method: str
     _contrasts: Contrasts
@@ -428,6 +503,9 @@ class DifferentialExpressionResult:
     _samples: Table
     _tables: Mapping[tuple[str, str], Table]
     _record: str
+    _cube: Cube | None
+    _design: Design | None
+    _last_fit: GroupFit | None  # the group fitted last by fit(), kept
 
     def __init__(
         self,
@@ -437,6 +515,9 @@ class DifferentialExpressionResult:
         samples: Table,
         tables: Mapping[tuple[str, str], Table],
         provenance: Mapping[str, Any],
+        *,
+        cube: Cube | None = None,
+        design: Design | None = None,
     ) -> None:
         if not isinstance(method, str):
             raise TypeError(f"method must be a string, got {type(method).__name__}")
@@ -472,6 +553,17 @@ class DifferentialExpressionResult:
             raise TypeError(
                 f"provenance must be a mapping, got {type(provenance).__name__}"
             )
+        if cube is not None and not isinstance(cube, Cube):
+            raise TypeError(f"cube must be a Cube or None, got {type(cube).__name__}")
+        if design is not None and not isinstance(design, Design):
+            raise TypeError(
+                f"design must be a Design or None, got {type(design).__name__}"
+            )
+        if (cube is None) != (design is None):
+            raise ValueError(
+                "give both the cube and the design that the result analysed, or "
+                "neither: fit() needs both to compute a group's fit again"
+            )
         state = {
             "_method": method,
             "_contrasts": contrasts,
@@ -480,6 +572,9 @@ class DifferentialExpressionResult:
             "_tables": MappingProxyType(dict(tables)),
             # JSON holds no arrays: json.dumps raises TypeError for one.
             "_record": json.dumps(provenance, allow_nan=False),
+            "_cube": cube,
+            "_design": design,
+            "_last_fit": None,
         }
         for name, value in state.items():
             object.__setattr__(self, name, value)
@@ -492,7 +587,7 @@ class DifferentialExpressionResult:
 
     def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
         return (
-            DifferentialExpressionResult,
+            _restore_result,
             (
                 self._method,
                 self._contrasts,
@@ -500,8 +595,22 @@ class DifferentialExpressionResult:
                 self._samples,
                 dict(self._tables),
                 json.loads(self._record),
+                self._cube,
+                self._design,
             ),
         )
+
+    @property
+    def cube(self) -> Cube | None:
+        """The cube analysed, as given to the analysis; None for a result built
+        without it."""
+        return self._cube
+
+    @property
+    def design(self) -> Design | None:
+        """The design analysed, as given to the analysis; None for a result built
+        without it."""
+        return self._design
 
     @property
     def method(self) -> str:
@@ -582,18 +691,27 @@ class DifferentialExpressionResult:
         record: dict[str, Any] = json.loads(self._record)
         return record
 
-    def table(self, group: str, contrast: str) -> Table:
+    def table(self, group: str | None = None, contrast: str | None = None) -> Table:
         """Return the table of one group and contrast, or F-test.
 
         Args:
-            group: A group id.
+            group: A group id; it may be left out when the result has one group.
             contrast: A contrast name, or the name of an F-test of
-                :func:`dream_voom`.
+                :func:`dream_voom`; it may be left out when the result tests one
+                contrast and no F-test.
 
         Raises:
+            ValueError: If a key is left out and the result has several.
             KeyError: If the group or contrast was not analysed, or the group was
                 not fitted or cannot estimate the contrast; the message says why.
         """
+        group = only_key(group, list(self.groups), "group", "groups")
+        contrast = only_key(
+            contrast,
+            [*self._contrasts.names, *self.f_tests],
+            "contrast",
+            "contrasts and F-tests",
+        )
         found = self._tables.get((group, contrast))
         if found is not None:
             return found
@@ -620,13 +738,77 @@ class DifferentialExpressionResult:
             f"{entry['not_estimable'][contrast]}"
         )
 
+    def fit(self, group: str | None = None) -> GroupFit:
+        """Compute the fit of one group again: its values, weights and moderated tests.
+
+        The fit is computed from the cube and design the result keeps, with the
+        settings it records, by the steps that computed its tables, so that it is
+        what the analysis computed, bit for bit, on the same machine. It takes the
+        time of the analysis of one group; the result keeps the group fitted last,
+        so a second call for it costs nothing. The values it holds take memory as
+        the counts of the group do.
+
+        Args:
+            group: A group id; it may be left out when the result has one group.
+
+        Returns:
+            The samples fitted, the features tested, the values and weights fitted,
+            the voom result (limma-voom and dream) and the moderated tests.
+
+        Raises:
+            ValueError: If the result keeps no cube and design (it was built by hand
+                without them), ``group`` is left out and the result has several
+                groups, or the group's fit no longer gives what the result
+                records (a lazy cube whose source changed).
+            TypeError: If ``group`` is not a string.
+            KeyError: If the group was not analysed or not fitted.
+        """
+        if self._cube is None or self._design is None:
+            raise ValueError(
+                "this result keeps no cube and design, so its fits cannot be computed "
+                "again: it was built without them. limma_voom, limma_trend and "
+                "dream_voom keep both; DifferentialExpressionResult takes them as cube "
+                "and design"
+            )
+        name = only_key(group, list(self.groups), "group", "groups")
+        if not isinstance(name, str):
+            reject_masked(name, "group")
+            raise TypeError(
+                f"group must be a group id (str), got {type(name).__name__}"
+            )
+        record = {entry["group_id"]: entry for entry in self.provenance["groups"]}
+        if name not in record:
+            raise KeyError(
+                f"no group {name!r} was analysed; groups are: "
+                f"{listing(list(record)) or '(none)'}"
+            )
+        entry = record[name]
+        if entry["status"] != FITTED:
+            raise KeyError(
+                f"group {name!r} was not fitted ({entry['status']}): {entry['reason']}"
+            )
+        kept = self._last_fit
+        if kept is not None and kept.group == name:
+            return kept
+        found = _group_fit(
+            self._method,
+            self._cube,
+            self._design,
+            self._contrasts,
+            self.settings,
+            name,
+            entry,
+        )
+        object.__setattr__(self, "_last_fit", found)
+        return found
+
     def __repr__(self) -> str:
         statuses = self._summary["status"].tolist()
         fitted = statuses.count(FITTED)
         lines = [
-            f"DifferentialExpressionResult ({self._method}): {len(statuses)} "
-            f"group{'' if len(statuses) == 1 else 's'}, {fitted} fitted; "
-            f"{len(self._contrasts)} contrast"
+            f"DifferentialExpressionResult ({self._method}): {len(statuses):,} "
+            f"group{'' if len(statuses) == 1 else 's'}, {fitted:,} fitted; "
+            f"{len(self._contrasts):,} contrast"
             f"{'' if len(self._contrasts) == 1 else 's'}: "
             + ", ".join(self._contrasts.names),
         ]
@@ -637,12 +819,12 @@ class DifferentialExpressionResult:
                 continue
             used = int(self._summary["n_samples_used"][row])
             tested = int(self._summary["n_features_tested"][row])
-            text = f"  {group}: {used} samples, {tested} features"
+            text = f"  {group}: {used:,} samples, {tested:,} features"
             missing = self._summary["not_estimable"][row]
             if missing:
                 text += f"; not estimable: {missing}"
             lines.append(text)
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
 
 def limma_voom(
@@ -653,7 +835,7 @@ def limma_voom(
     contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
-    expression_filter: bool | Mapping[str, float] = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     normalization: Literal["tmm"] | None = "tmm",
     span: float | None = None,
     prior_weights: Literal["n_cells"] | None = None,
@@ -728,7 +910,13 @@ def limma_voom(
             ``min_prop=0.7``), using the group's design, as the edgeR and limma
             User's Guides do; a mapping with some of these settings to change them
             (see :func:`~cytepool.normalization.filter_by_expression`); or False to
-            test every feature.
+            test every feature. The mapping may also name, as ``"sample_groups"``,
+            a column of the design's samples, such as ``{"sample_groups":
+            "condition"}``, whose values group the samples for the filter in place
+            of the design (``filterByExpr(y, group = ...)``): analyses of the same
+            samples with different designs, such as :func:`limma_voom` with
+            ``~ donor + condition`` and :func:`dream_voom` with a random donor
+            intercept, then test the same features.
         normalization: ``"tmm"`` for edgeR's TMM normalization factors, the
             default of ``calcNormFactors``, or None for library sizes alone.
         span: The LOWESS span of voom's trend, in (0, 1], for every group; None
@@ -784,9 +972,11 @@ def limma_voom(
         ValueError: If the design has random effects or no ``sample_id`` column,
             names samples the cube does not have or names a sample twice, if there
             are no contrasts to test, an option is invalid, ``prior_weights`` and
-            ``quality_weights`` are both given, or ``prior_weights`` is
-            ``"n_cells"`` and the cube does not record cell numbers.
-        KeyError: If a group is not in the cube.
+            ``quality_weights`` are both given, ``prior_weights`` is ``"n_cells"``
+            and the cube does not record cell numbers, or the column of
+            ``"sample_groups"`` is missing for a sample.
+        KeyError: If a group is not in the cube, or the design's samples have no
+            column of ``"sample_groups"``.
     """
     standard_errors = checked_choice(
         contrast_standard_errors, "contrast_standard_errors", ("exact", "limma")
@@ -822,7 +1012,7 @@ def limma_trend(
     contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
-    expression_filter: bool | Mapping[str, float] = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     normalization: Literal["tmm"] | None = "tmm",
     prior_count: float = 3.0,
     prior_weights: Literal["n_cells"] | None = None,
@@ -855,7 +1045,8 @@ def limma_trend(
         min_counts: The fewest counts a sample needs in a group, over every
             feature of the cube, to enter its fit; 0 by default.
         expression_filter: True for edgeR's ``filterByExpr`` defaults with the
-            group's design, a mapping of changed settings, or False.
+            group's design, a mapping of changed settings or of the column of
+            ``"sample_groups"``, as for :func:`limma_voom`, or False.
         normalization: ``"tmm"`` for TMM normalization factors, or None.
         prior_count: The average count added to every observation before taking
             logs, scaled by library size as edgeR does; positive. 3 by default, as
@@ -927,7 +1118,7 @@ def dream_voom(
     f_tests: Mapping[str, Sequence[str]] | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
-    expression_filter: bool | Mapping[str, float] = True,
+    expression_filter: bool | Mapping[str, Any] = True,
     normalization: Literal["tmm"] | None = "tmm",
     span: float | None = None,
     prior_weights: Literal["n_cells"] | None = None,
@@ -1008,7 +1199,8 @@ def dream_voom(
         min_counts: The fewest counts a sample needs in a group, over every
             feature of the cube, to enter its fit; 0 by default.
         expression_filter: True for edgeR's ``filterByExpr`` defaults with the
-            group's fixed effects, a mapping of changed settings, or False.
+            group's fixed effects, a mapping of changed settings or of the column
+            of ``"sample_groups"``, as for :func:`limma_voom`, or False.
         normalization: ``"tmm"`` for TMM normalization factors, or None.
         span: The LOWESS span of the trend, in (0, 1], for every group; None
             chooses it in each group from the number of features tested, as
@@ -1089,7 +1281,7 @@ def dream_voom(
 
 @dataclass
 class _GroupFit(GroupRecord):
-    """What happened in one group, and its tables."""
+    """What happened in one group, and its tables; with ``keep``, its fit."""
 
     prior_df: float = float("nan")
     quality_weights: np.ndarray | None = None
@@ -1097,6 +1289,10 @@ class _GroupFit(GroupRecord):
     df_method: str = ""  # dream: the degrees of freedom of the group's tests
     features_satterthwaite_fallback: int = 0  # dream: Kenward-Roger tests not used
     f_test_df1: dict[str, int] = field(default_factory=dict)  # dream: per F-test
+    values: np.ndarray | None = None  # kept: the log2 CPM fitted
+    weights: np.ndarray | None = None  # kept: their weights
+    voom: VoomResult | None = None  # kept: voom's result
+    moderated: Any = None  # kept: the moderated tests
 
 
 def _analyse(
@@ -1141,16 +1337,8 @@ def _analyse(
             "this cube does not record (a cube of bulk samples has none); leave "
             "prior_weights at None"
         )
-    cube_rows, order = matched_samples(
-        cube,
-        design,
-        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
-        "be matched to the cube's samples; build the Design from cube.samples, or from "
-        "a table whose 'sample_id' column holds cube sample ids",
-        text_ids="the cube's does",
-        data="the cube",
-        data_ids="the cube's sample ids",
-    )
+    check_sample_groups(settings, design.samples)
+    cube_rows, order = _matched(cube, design)
     tested = _contrasts_to_test(design, contrasts, method)
     if settings.get("f_tests"):
         _check_f_tests(settings["f_tests"], tested)
@@ -1196,11 +1384,97 @@ def _analyse(
                 _group_record(fit, sample_ids, method, settings) for fit in fits
             ],
         },
+        cube=cube,
+        design=design,
     )
 
 
-def _fit_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
-    """Fit one group by limma, or record why it cannot be fitted."""
+def _matched(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray]:
+    """The cube position of every design sample, increasing, and its design row."""
+    return matched_samples(
+        cube,
+        design,
+        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
+        "be matched to the cube's samples; build the Design from cube.samples, or from "
+        "a table whose 'sample_id' column holds cube sample ids",
+        text_ids="the cube's does",
+        data="the cube",
+        data_ids="the cube's sample ids",
+    )
+
+
+def _group_fit(
+    method: str,
+    cube: Cube,
+    design: Design,
+    contrasts: Contrasts,
+    settings: Mapping[str, Any],
+    group: str,
+    entry: Mapping[str, Any],
+) -> GroupFit:
+    """The fit of one group computed again, as the analysis computed it."""
+    cube_rows, order = _matched(cube, design)
+    g = group_positions(cube, group)[0]
+    inputs = GroupInputs(method, cube, order, cube_rows, contrasts, settings)
+    fit_group = _fit_dream_group if method == "dream_voom" else _fit_group
+    fit = fit_group(inputs, design, g, keep=True)
+    tested = int(fit.tested.size) if fit.status == FITTED else 0
+    if fit.status != FITTED or tested != entry["n_features_tested"]:
+        raise ValueError(
+            f"the fit of group {group!r} no longer gives what the result records "
+            f"({fit.status}, {tested} features tested; the result records "
+            f"{entry['n_features_tested']}): the cube's values changed since the "
+            "analysis, as a lazy cube's source can"
+        )
+    assert fit.values is not None and fit.moderated is not None
+    used = fit.used
+    columns: dict[str, Any] = {}
+    if cube.n_cells is not None:
+        columns["n_cells"] = np.asarray(cube.n_cells)[cube_rows[used], g]
+    columns["library_size"] = fit.library_sizes
+    columns["norm_factor"] = fit.norm_factors
+    if settings["prior_weights"] is not None:
+        columns["prior_weight"] = fit.prior_weights
+    if settings.get("quality_weights") is not None:
+        columns["quality_weight"] = fit.quality_weights
+    return GroupFit(
+        group=group,
+        samples=design.samples.take(order[used]).with_columns(columns),
+        features=cube.features.take(fit.tested),
+        log2_cpm=fit.values,
+        weights=fit.weights,
+        voom=fit.voom,
+        moderated=fit.moderated,
+    )
+
+
+def _restore_result(
+    method: str,
+    contrasts: Contrasts,
+    summary: Table,
+    samples: Table,
+    tables: Mapping[tuple[str, str], Table],
+    provenance: Mapping[str, Any],
+    cube: Cube | None,
+    design: Design | None,
+) -> DifferentialExpressionResult:
+    return DifferentialExpressionResult(
+        method,
+        contrasts,
+        summary,
+        samples,
+        tables,
+        provenance,
+        cube=cube,
+        design=design,
+    )
+
+
+def _fit_group(
+    inputs: GroupInputs, design: Design, g: int, *, keep: bool = False
+) -> _GroupFit:
+    """Fit one group by limma, or record why it cannot be fitted; with ``keep``,
+    the record keeps the values, weights and tests of the fit."""
     cube, settings = inputs.cube, inputs.settings
     fit, data = prepare_group(_GroupFit, inputs, design, g)
     if data is None:
@@ -1285,6 +1559,19 @@ def _fit_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
     fit.norm_factors = np.ones(n_used) if factors is None else factors
     fit.prior_weights = prior
     fit.quality_weights = quality
+    if keep:
+        if inputs.method == "limma_voom":
+            fit.values, fit.weights, fit.voom = (
+                weighted.log_cpm,
+                weighted.weights,
+                weighted,
+            )
+        else:
+            sample_weights = quality if prior is None else prior
+            fit.values = read_only(values)
+            if sample_weights is not None:
+                fit.weights = read_only(np.array(sample_weights, dtype=np.float64))
+        fit.moderated = moderated
     features = cube.features
     identity = {"feature_id": features["feature_id"][fit.tested]}
     if "symbol" in features:
@@ -1309,8 +1596,11 @@ def _fit_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
     return fit
 
 
-def _fit_dream_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
-    """Fit one group by dream, or record why it cannot be fitted."""
+def _fit_dream_group(
+    inputs: GroupInputs, design: Design, g: int, *, keep: bool = False
+) -> _GroupFit:
+    """Fit one group by dream, or record why it cannot be fitted; with ``keep``,
+    the record keeps the values, weights and tests of the fit."""
     cube, settings = inputs.cube, inputs.settings
     fit, data = prepare_group(_GroupFit, inputs, design, g, mixed=True)
     if data is None or data.mixed is None:
@@ -1364,6 +1654,9 @@ def _fit_dream_group(inputs: GroupInputs, design: Design, g: int) -> _GroupFit:
     fit.library_sizes = data.sizes
     fit.norm_factors = np.ones(n_used) if data.factors is None else data.factors
     fit.prior_weights = data.prior
+    if keep:
+        fit.values, fit.weights = weighted.log_cpm, weighted.weights
+        fit.voom, fit.moderated = weighted, moderated
     features = cube.features
     identity = {"feature_id": features["feature_id"][fit.tested]}
     if "symbol" in features:

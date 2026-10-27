@@ -52,7 +52,7 @@ from typing import Any
 import numpy as np
 
 from .._masked_arrays import reject_masked
-from .._messages import close_matches
+from .._messages import close_matches, fitted_lines
 from ._contrast_weights import (
     is_named_contrasts,
     reject_masked_contrasts,
@@ -173,12 +173,12 @@ class Contrasts:
         return (Contrasts, (np.array(self.matrix), self.names, self.columns))
 
     def __repr__(self) -> str:
-        lines = [f"Contrasts: {len(self.names)} over {len(self.columns)} columns"]
+        lines = [f"Contrasts: {len(self.names):,} over {len(self.columns):,} columns"]
         for position, name in enumerate(self.names):
             lines.append(
                 f"  {name}: {_describe(self.matrix[:, position], self.columns)}"
             )
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
 
 def make_contrasts(

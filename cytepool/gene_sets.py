@@ -89,7 +89,7 @@ import numpy as np
 
 from ._gene_ids import gene_ids, listed_values
 from ._masked_arrays import reject_masked
-from ._messages import close_matches, listing
+from ._messages import KEEP_TOGETHER, close_matches, fitted_lines, listing
 
 __all__ = ["GeneSets", "read_gmt", "write_gmt"]
 
@@ -408,14 +408,14 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
             lines.append(f"  read from {self._file}{digest}")
         if sizes:
             shown = [
-                f"{name} ({len(members):,})"
+                f"{name} ({len(members):,})".replace(" ", KEEP_TOGETHER)
                 for name, members in list(self._sets.items())[:_SETS_SHOWN]
             ]
             more = count - len(shown)
             lines.append(
                 "  sets: " + ", ".join(shown) + (f" and {more:,} more" if more else "")
             )
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
     def _record(self) -> dict[str, str | None]:
         return {

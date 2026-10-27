@@ -110,6 +110,7 @@ from cytepool.stats._moderation import (
     posterior_variances,
 )
 from cytepool.stats._optimize import brent_minimum
+from cytepool.stats._result_tables import coefficient_position, feature_id_column
 from cytepool.stats.distributions import (
     _f_log_x_density,
     _f_tail_quantile,
@@ -131,6 +132,7 @@ from cytepool.stats.smoothing import (
     natural_spline_basis,
 )
 from cytepool.stats.special import digamma, trigamma, trigamma_inverse
+from cytepool.table import Table
 
 __all__ = [
     "FDistributionFit",
@@ -335,6 +337,52 @@ class ModeratedFit:
     f_df1: int
     proportion: float
     prior_estimator: str
+
+    def table(
+        self, coefficient: str | int | None = None, *, feature_ids: Any = None
+    ) -> Table:
+        """Return the tests of one coefficient or contrast as a table.
+
+        limma's ``topTable(sort.by = "none")``, with the columns of the tables of
+        :func:`~cytepool.differential_expression.limma_voom`, one row per feature
+        in the order of the fit: ``feature_id``; ``log2_fold_change``, the
+        coefficient (``logFC``); ``standard_error``, its moderated standard error,
+        ``stdev_unscaled`` times the posterior standard deviation;
+        ``average_log2_cpm``, the mean of the values fitted (``AveExpr``); ``t`` and
+        ``p_value``; ``adjusted_p_value``, Benjamini-Hochberg over the features
+        (``adj.P.Val``); and ``log_odds``, the B-statistic (``B``). The names of the
+        effect and of the mean are those of log2 counts per million, such as voom's,
+        as limma names them ``logFC`` and ``AveExpr`` whatever the values.
+
+        Args:
+            coefficient: The coefficient or contrast, by name or position; it may be
+                left out when the fit has one.
+            feature_ids: One id per feature, as text, such as the gene ids of the
+                columns of the counts; by default ``feature_0``, ``feature_1``, ...
+
+        Raises:
+            ValueError: If ``coefficient`` is left out and the fit has several, or
+                ``feature_ids`` does not give one id per feature.
+            KeyError, IndexError: If ``coefficient`` names or points to none.
+            TypeError: If an argument has the wrong type, or is or holds a numpy
+                masked array.
+        """
+        j = coefficient_position(coefficient, self.fit.coefficient_names)
+        ids = feature_id_column(feature_ids, self.t.shape[0])
+        p_value = self.p_value[:, j]
+        return Table(
+            {
+                "feature_id": ids,
+                "log2_fold_change": self.fit.coefficients[:, j],
+                "standard_error": self.fit.stdev_unscaled[:, j]
+                * np.sqrt(self.posterior_variance),
+                "average_log2_cpm": self.fit.mean_expression,
+                "t": self.t[:, j],
+                "p_value": p_value,
+                "adjusted_p_value": adjust_p_values(p_value, "bh"),
+                "log_odds": self.lods[:, j],
+            }
+        )
 
     def __repr__(self) -> str:
         return (

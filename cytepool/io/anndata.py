@@ -95,8 +95,8 @@ Export:
     ``n_cells``; ``obs_names`` are ``<sample id>_<group id>``, or the row positions
     when those repeat. ``var`` holds the feature table, indexed by feature id, and
     each layer of the cube is a layer of the same name. ``X`` is left empty, so
-    that no layer is stored twice: ``adata.X = adata.layers["counts"].copy()`` gives
-    tools that read ``X`` the counts.
+    that no layer is stored twice, unless ``x_layer`` names a layer to copy into it:
+    ``to_anndata(cube, x_layer="counts")`` gives tools that read ``X`` the counts.
 
     ``to_mudata`` writes a modality per group, named by the group id, whose
     observations are the samples with cells in that group (every sample, without
@@ -191,6 +191,7 @@ import numpy as np
 from .. import __version__
 from .._columns import values_equal, with_missing
 from .._masked_arrays import reject_masked, reject_masked_table, unmasked_array
+from .._messages import quoted
 from ..cube._axes import axis_codes, checked_n_cells, count_dtype, first_index
 from ..cube._provenance_records import source_record
 from ..cube.cube import LAYER_NAMES, Cube
@@ -235,14 +236,15 @@ _FRACTION_EPS = 8
 _TOTAL_SLACK = 1e-9
 
 
-def to_anndata(cube: Cube) -> Any:
+def to_anndata(cube: Cube, *, x_layer: str | None = None) -> Any:
     """Return a cube as a long AnnData, with a row per sample and group with cells.
 
     The rows of each group come together, groups and samples in the cube's order; a
     cube without cell numbers gives a row for every entry. ``obs`` holds
     ``sample_id`` and ``group_id`` (categorical), the other columns of the sample and
     group tables, and ``n_cells``; ``var`` the feature table, indexed by feature id;
-    each layer of the cube is a layer of the same name, and ``X`` is empty.
+    each layer of the cube is a layer of the same name, and ``X`` is empty unless
+    ``x_layer`` names a layer to copy into it, as tools that read ``X`` need.
     ``uns["cytepool"]`` holds the cube's fingerprint and provenance, and what
     ``from_anndata`` needs to give back the cube with the same fingerprint. The
     module documentation describes the layout ("Export") and the record ("The record
@@ -250,18 +252,34 @@ def to_anndata(cube: Cube) -> Any:
 
     Args:
         cube: The cube. A lazy cube is read one group at a time.
+        x_layer: The layer to copy into ``X`` too, such as ``"counts"`` for tools
+            that read counts from ``X``; None leaves ``X`` empty. The copy takes as
+            much memory as the layer.
 
     Returns:
         An ``anndata.AnnData``.
 
     Raises:
-        TypeError: If ``cube`` is not a Cube.
+        TypeError: If ``cube`` is not a Cube, or ``x_layer`` is not a string.
+        KeyError: If the cube has no layer ``x_layer``.
         ImportError: If anndata is not installed.
         ValueError: If a lazy layer gives a value that breaks a constraint (see
             ``Cube``).
         OverflowError: If a sum of a derived lazy layer does not fit.
     """
     _check_cube(cube, "to_anndata()")
+    if x_layer is not None:
+        if not isinstance(x_layer, str):
+            reject_masked(x_layer, "x_layer")
+            raise TypeError(
+                f"x_layer must be a layer name (str) or None, got "
+                f"{type(x_layer).__name__}"
+            )
+        if x_layer not in cube.layer_names:
+            raise KeyError(
+                f"the cube has no layer {x_layer!r} to copy into X; its layers are "
+                f"{quoted(list(cube.layer_names))}"
+            )
     anndata = _optional("anndata", "to_anndata()", "anndata")
     pandas = _optional("pandas", "to_anndata()", "anndata")
     samples, groups = _entries_with_cells(cube)
@@ -295,7 +313,10 @@ def to_anndata(cube: Cube) -> Any:
         name: _long_layer(cube, name, samples, groups) for name in cube.layer_names
     }
     record = _record(cube, _FORMATS["anndata"], features)
-    return anndata.AnnData(obs=obs, var=var, layers=layers, uns={_RECORD_KEY: record})
+    x = None if x_layer is None else layers[x_layer].copy()
+    return anndata.AnnData(
+        X=x, obs=obs, var=var, layers=layers, uns={_RECORD_KEY: record}
+    )
 
 
 def from_anndata(

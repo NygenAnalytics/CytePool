@@ -248,6 +248,43 @@ def test_numeric_columns_that_look_like_group_labels() -> None:
     assert Design(samples, "~ age + hours + dose").check().warnings == ()
 
 
+def test_numeric_ids_that_are_not_consecutive() -> None:
+    # Kang's donors 101, 107 and 1015, each in both conditions.
+    samples = {
+        "donor": [101, 101, 107, 107, 1015, 1015],
+        "condition": ["ctrl", "stim"] * 3,
+    }
+    report = Design(samples, "~ donor + condition").check()
+    assert report.kinds() == ("numeric_ids",)
+    assert report.warnings[0].message.startswith(
+        "donor holds whole numbers (3 distinct values, from 101 to 1015), each "
+        "shared by several samples, and its name says they are ids"
+    )
+    assert "convert the column to text" in report.warnings[0].message
+    # The names that say ids: by their last word, or a number after an id word.
+    for name in ("patient_id", "subjectID", "Batches", "plate2", "run_number", "id"):
+        renamed = {name: samples["donor"], "condition": samples["condition"]}
+        found = Design(renamed, f"~ {name} + condition").check()
+        assert found.kinds() == ("numeric_ids",), name
+    # Not ids: names of measurements and counts, the same numbers in a column whose
+    # name says nothing of ids, a sample of its own per value, too few values,
+    # values that are not whole, and consecutive codes (numeric_codes warns).
+    others = {
+        "hours": [0, 0, 6, 6, 24, 24],
+        "donor_age": [31, 31, 47, 47, 52, 52],
+        "n_donors": [3, 3, 5, 5, 9, 9],
+        "dose": [101, 101, 107, 107, 1015, 1015],
+        "batch": [3, 7, 12, 3, 7, 13],
+        "plate": [10, 10, 30, 30, 10, 30],
+        "lane": [1.5, 1.5, 2.5, 2.5, 4.5, 4.5],
+        "run": [4, 4, 5, 5, 6, 6],
+    }
+    for name, values in others.items():
+        table = {name: values, "condition": samples["condition"]}
+        kinds = Design(table, f"~ {name} + condition").check().kinds()
+        assert "numeric_ids" not in kinds, name
+
+
 def test_duplicate_column_names_are_reported_not_raised() -> None:
     # a = "bX" and ab = "X" both give a column named abX.
     samples = {"a": ["bX", "c", "d", "c"], "ab": ["X", "Y", "Y", "X"]}
@@ -278,9 +315,11 @@ def test_random_effect_checks() -> None:
     assert "random_confounded" in report.kinds()
     report = Design(samples, "~ condition", random="(1 | sample_id)").check()
     assert report.kinds() == ("random_unreplicated",)
-    assert "every group of the random effect (1 | sample_id) has a single" in str(
-        report
+    text = str(report)
+    assert "every group of the random effect (1 | sample_id) has a single" in " ".join(
+        text.split()
     )
+    assert max(map(len, text.splitlines())) <= 80
     report = Design(samples, "~ condition", random="(1 | site)").check()
     assert report.kinds() == ("random_single_group",)
     # A slope per donor is absorbed when the fixed effects have one per donor.
@@ -298,10 +337,11 @@ def test_a_clean_design_reports_nothing() -> None:
     }
     report = Design(samples, "~ donor + condition", contrasts=["conditionstim"]).check()
     assert report.ok and report.errors == () and report.warnings == ()
-    assert str(report) == (
-        "Design check: 8 samples, 5 columns, rank 5, 3 residual degrees of freedom; "
-        "no problems found."
-    )
+    # In lines of at most 80 characters.
+    assert str(report).splitlines() == [
+        "Design check: 8 samples, 5 columns, rank 5, 3 residual degrees of freedom; no",
+        "              problems found.",
+    ]
 
 
 def test_report_text_lists_errors_then_warnings(nested_batches: dict[str, Any]) -> None:

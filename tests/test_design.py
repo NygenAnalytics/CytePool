@@ -51,6 +51,35 @@ def test_design_holds_matrix_columns_terms_and_levels(samples: dict[str, Any]) -
     ]
 
 
+def test_long_formulas_and_names_print_in_lines_of_80_characters() -> None:
+    samples = {
+        "sample_id": [f"S{i}" for i in range(8)],
+        "condition": ["a", "b"] * 4,
+        "age": [31.0, 35, 38, 42, 47, 51, 56, 60],
+        "library_preparation_batch": ["x", "y", "z", "w"] * 2,
+    }
+    formula = "~ condition + age + library_preparation_batch + condition:age"
+    design = Design(
+        samples,
+        formula,
+        contrasts={"b_versus_a_at_the_mean_age_of_the_donors": "conditionb"},
+    )
+    for text in (repr(design), repr(design.model_matrix), repr(design.contrasts)):
+        assert max(map(len, text.splitlines())) <= 80
+    # Every column name is printed whole, on one line.
+    for text in (repr(design), repr(design.model_matrix)):
+        words = set(" ".join(text.splitlines()).replace(",", " ").split())
+        assert set(design.columns) <= words
+    lines = repr(design).splitlines()
+    assert " ".join(" ".join(lines).split()).startswith(
+        f"Design: 8 samples x 7 columns, formula '{formula}'"
+    )
+    # A continuation lines up under the text after its key.
+    columns = [line for line in lines if line.startswith("  columns: ")][0]
+    following = lines[lines.index(columns) + 1]
+    assert following.startswith(" " * len("  columns: ")) and following.strip()
+
+
 def test_random_effects_are_parsed_and_their_columns_validated(
     samples: dict[str, Any],
 ) -> None:

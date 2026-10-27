@@ -161,11 +161,11 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from ._analysis_records import software_versions
+from ._analysis_records import only_key, software_versions
 from ._columns import text_column
 from ._jit import jit
 from ._masked_arrays import read_only, reject_masked, unmasked_array
-from ._messages import PACKAGE_DIRECTORY, listing, quoted
+from ._messages import PACKAGE_DIRECTORY, fitted_lines, listing, quoted
 from ._options import checked_choice, index_integer, real_number
 from .cube import CubeCollection
 from .differential_expression import DifferentialExpressionResult
@@ -953,23 +953,27 @@ class MetaAnalysisResult:
         record: dict[str, Any] = json.loads(self._record)
         return record
 
-    def table(self, group: str, contrast: str) -> Table:
+    def table(self, group: str | None = None, contrast: str | None = None) -> Table:
         """Return the table of one group and contrast.
 
         Args:
-            group: A group id.
-            contrast: A contrast name.
+            group: A group id; it may be left out when the result has one group.
+            contrast: A contrast name; it may be left out when the result has one
+                contrast.
 
         Raises:
+            ValueError: If a key is left out and the result has several.
             KeyError: If the group or contrast was not analysed, fewer than
                 ``min_studies`` studies tested it, or none of its features; the message
                 says why.
         """
+        groups = list(dict.fromkeys(self._summary["group_id"].tolist()))
+        contrasts = list(dict.fromkeys(self._summary["contrast"].tolist()))
+        group = only_key(group, groups, "group", "groups")
+        contrast = only_key(contrast, contrasts, "contrast", "contrasts")
         found = self._tables.get((group, contrast))
         if found is not None:
             return found
-        groups = list(dict.fromkeys(self._summary["group_id"].tolist()))
-        contrasts = list(dict.fromkeys(self._summary["contrast"].tolist()))
         if group not in groups:
             raise KeyError(
                 f"no group {group!r} was analysed; groups are: "
@@ -997,18 +1001,18 @@ class MetaAnalysisResult:
         analysed = summary["status"].tolist().count(_ANALYSED)
         lines = [
             f"MetaAnalysisResult ({settings['method']}, test {settings['test']}): "
-            f"{len(record['studies'])} studies; {n} group and contrast "
-            f"pair{'' if n == 1 else 's'}, {analysed} analysed"
+            f"{len(record['studies']):,} studies; {n:,} group and contrast "
+            f"pair{'' if n == 1 else 's'}, {analysed:,} analysed"
         ]
         for row in range(n):
             label = f"  {summary['group_id'][row]}, {summary['contrast'][row]}: "
             used = int(summary["n_studies"][row])
             if summary["status"][row] == _ANALYSED:
                 features = int(summary["n_features"][row])
-                lines.append(f"{label}{used} studies, {features} features")
+                lines.append(f"{label}{used:,} studies, {features:,} features")
             else:
                 lines.append(f"{label}not analysed ({summary['status'][row]})")
-        return "\n".join(lines)
+        return fitted_lines("\n".join(lines))
 
 
 def differential_expression_meta_analysis(

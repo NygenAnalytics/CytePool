@@ -395,6 +395,7 @@ def test_the_repr_says_what_the_collection_holds_and_where_it_comes_from() -> No
         f"{len({g for genes in sets.values() for g in genes}):,} genes in all"
     )
     assert "source: simulated MSigDB; version: not stated; licence: not stated" in text
-    assert f"read from msigdb.gmt, SHA-256 {sets.sha256}" in text
+    assert f"read from msigdb.gmt, SHA-256 {sets.sha256}" in " ".join(text.split())
+    assert max(map(len, text.splitlines())) <= 80
     assert "and 3 more" in text
     assert repr(GeneSets({"A": ["G1"]})).startswith("GeneSets: 1 set of 1 gene,")

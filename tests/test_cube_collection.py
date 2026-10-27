@@ -10,6 +10,7 @@ them. A smaller example below is worked out by hand.
 import copy
 import json
 import pickle
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -422,6 +423,80 @@ def test_groups_without_an_ontology_id_take_one_from_the_mapping() -> None:
     assert CubeCollection({"A": a, "P": plain}, group_mapping={"P": {"B": "B cell"}})
 
 
+def test_group_names_name_the_aligned_groups_and_change_no_value() -> None:
+    cubes = {"A": study_a(), "B": study_b()}
+    names = {"CL:2": "T cells", "CL:1": "B cells"}
+    named = CubeCollection(cubes, group_names=names)
+    plain = CubeCollection(cubes)
+    assert named.groups["group_id"].tolist() == ["B cells", "T cells", "CL:3"]
+    # The aligned column keeps each group's ontology id.
+    assert named.groups["cell_ontology_id"].tolist() == ["CL:1", "CL:2", "CL:3"]
+    assert named.group_members["group_id"].tolist() == [
+        "B cells", "T cells", "B cells", "T cells", "T cells", "CL:3"
+    ]  # fmt: skip
+    for study in ("A", "B"):
+        aligned, expected = named.aligned_cube(study), plain.aligned_cube(study)
+        assert aligned.groups["group_id"].tolist() == [
+            names.get(group, group) for group in expected.groups["group_id"].tolist()
+        ]
+        assert aligned.groups.select(["cell_ontology_id"]).equals(
+            expected.groups.select(["cell_ontology_id"])
+        )
+        assert_array_equal(aligned.layer("counts"), expected.layer("counts"))
+        assert_array_equal(aligned.n_cells, expected.n_cells)
+    assert named.aligned_cube("B").provenance["operations"][-1]["membership"] == {
+        "B cells": ["B"], "T cells": ["CD4", "CD8"], "CL:3": ["NK"]
+    }  # fmt: skip
+    stacked = named.stack()
+    assert stacked.groups["group_id"].tolist() == ["B cells", "T cells"]
+    assert_array_equal(stacked.layer("counts"), plain.stack().layer("counts"))
+    # The records hold the names as given, and nothing when none are given.
+    assert named.provenance["alignment"]["group_names"] == names
+    assert list(named.provenance["alignment"]["group_names"]) == ["CL:2", "CL:1"]
+    assert stacked.provenance["construction"]["group_names"] == names
+    assert "group_names" not in plain.provenance["alignment"]
+    assert "group_names" not in plain.stack().provenance["construction"]
+    selected = named.select(groups=["T cells"])
+    assert selected.groups["group_id"].tolist() == ["T cells"]
+    assert selected.groups["cell_ontology_id"].tolist() == ["CL:2"]
+    # Groups aligned by group_id are renamed in that column.
+    mapping = {"B": {"B": "B cell", "CD4": "T cell", "CD8": "T cell", "NK": None}}
+    by_id = CubeCollection(
+        cubes,
+        align_groups_by="group_id",
+        group_mapping=mapping,
+        group_names={"T cell": "T lymphocytes"},
+    )
+    assert by_id.groups["group_id"].tolist() == ["B cell", "T lymphocytes"]
+
+
+@pytest.mark.parametrize(
+    ("group_names", "error", "message"),
+    [
+        (["CL:1"], TypeError, "group_names must map aligned group ids to names"),
+        ({1: "B cells"}, TypeError, "keyed by aligned group ids (str), got int 1"),
+        ({"CL:1": 3}, TypeError, "group_names['CL:1'] must be a name (str), got int"),
+        ({"CL:1": ""}, ValueError, "group_names['CL:1'] is empty"),
+        ({"CL:9": "x"}, KeyError, "names the aligned group 'CL:9', which no study has"),
+        (
+            {"CL:1": "T", "CL:2": "T"},
+            ValueError,
+            "the aligned groups 'CL:1' and 'CL:2' would both be named 'T'",
+        ),
+        (
+            {"CL:1": "CL:3"},
+            ValueError,
+            "the aligned groups 'CL:1' and 'CL:3' would both be named 'CL:3'",
+        ),
+    ],
+)
+def test_invalid_group_names_are_refused(
+    group_names: Any, error: type, message: str
+) -> None:
+    with pytest.raises(error, match=re.escape(message)):
+        CubeCollection({"A": study_a(), "B": study_b()}, group_names=group_names)
+
+
 # Invariants.
 
 
@@ -549,6 +624,38 @@ def test_stacked_layers_take_a_type_that_holds_every_study() -> None:
         ).stack()
 
 
+def _as_uint32(cube: Cube) -> Cube:
+    return Cube(
+        {"counts": cube.layer("counts").astype(np.uint32)},
+        samples=cube.samples,
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=cube.n_cells,
+        provenance=cube.provenance,
+    )
+
+
+def test_groups_only_renamed_keep_their_integer_dtype() -> None:
+    wide = {"A": study_a(), "B": study_b()}
+    small = {study: _as_uint32(cube) for study, cube in wide.items()}
+    # Aligned by ontology ids, A's groups are renamed (CL:1, CL:2) and B's CD4 and
+    # CD8 merge into CL:2; without CD8, B's groups are only renamed too.
+    for mapping, dtype_b in ((None, np.int64), ({"B": {"CD8": None}}, np.uint32)):
+        collection = CubeCollection(small, group_mapping=mapping)
+        reference = CubeCollection(wide, group_mapping=mapping)
+        for study, dtype in (("A", np.uint32), ("B", dtype_b)):
+            aligned = collection.aligned_cube(study)
+            assert aligned.groups["group_id"].tolist()[:2] == ["CL:1", "CL:2"]
+            assert aligned.layer("counts").dtype == dtype
+            assert_array_equal(
+                aligned.layer("counts"), reference.aligned_cube(study).layer("counts")
+            )
+        # The stack takes the type that holds every study's part.
+        stacked = collection.stack().layer("counts")
+        assert stacked.dtype == (np.int64 if dtype_b == np.int64 else np.uint32)
+        assert_array_equal(stacked, reference.stack().layer("counts"))
+
+
 def test_normalized_layers_stack_only_from_studies_normalized_alike() -> None:
     def cube(target: float) -> Cube:
         return Cube(
@@ -629,7 +736,9 @@ def test_a_stacked_cube_records_the_studies_it_stacks() -> None:
     assert construction["layers"] == ["counts"]
     history = stacked.history()
     assert "from 2 studies" in history
-    assert f"study 'B': the cube {b.fingerprint()}" in history
+    # Lines of at most 80 characters: a fingerprint goes on a line of its own.
+    assert f"study 'B': the cube {b.fingerprint()}" in " ".join(history.split())
+    assert max(map(len, history.splitlines())) <= 80
     assert "    CL:2: CD4 + CD8" in history
     assert "sample columns written study::value: donor" in history
 
