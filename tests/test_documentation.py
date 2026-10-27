@@ -24,9 +24,11 @@ import urllib.parse
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 from functools import cache
+from html.parser import HTMLParser
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from xml.etree import ElementTree
 
 import numpy as np
 import pytest
@@ -1580,3 +1582,331 @@ def test_the_capability_matrix_agrees_with_the_validation_summary() -> None:
     assert problems == []
     # Every script of the Validation page has a row.
     assert sorted(set(summary) - {_script(row[4]) for row in matrix}) == []
+
+
+@pytest.mark.parametrize("base_url", ["", "/CytePool"])
+def test_api_pages_join_the_staged_guide_navigation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_url: str
+) -> None:
+    yaml = pytest.importorskip("yaml")
+
+    api = tmp_path / "docs" / "build" / "api"
+    api.mkdir(parents=True)
+    (api / "index.html").write_text(
+        '<nav class="docs-api-tree"><ul><li>'
+        '<a href="cubes.html"><span>Cubes API reference</span></a>'
+        '</li><li><a href="import_export.html">Import &amp; export</a>'
+        "</li></ul></nav>"
+    )
+    site = tmp_path / "site"
+    site.mkdir()
+    config = {
+        "project": {
+            "toc": [
+                {"file": "index.md"},
+                {
+                    "title": "Reference",
+                    "children": [
+                        {"url": f"{base_url}/api/index.html", "title": "API reference"}
+                    ],
+                },
+            ]
+        }
+    }
+    (site / "myst.yml").write_text(yaml.safe_dump(config))
+    monkeypatch.setattr(build_docs, "DOCS", api.parents[1])
+    monkeypatch.setenv("BASE_URL", base_url)
+
+    build_docs.include_api_navigation(site)
+
+    toc = yaml.safe_load((site / "myst.yml").read_text())["project"]["toc"]
+    assert toc[0] == {"file": "index.md"}
+    assert toc[1]["children"][0]["children"] == [
+        {
+            "title": "Cubes API reference",
+            "url": f"{base_url}/api/cubes.html",
+            "open_in_same_tab": True,
+        },
+        {
+            "title": "Import & export",
+            "url": f"{base_url}/api/import_export.html",
+            "open_in_same_tab": True,
+        },
+    ]
+
+
+@pytest.mark.parametrize("base_url", ["", "/CytePool"])
+def test_api_pages_keep_the_guide_header_navigation_and_existing_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_url: str
+) -> None:
+    pytest.importorskip("yaml")
+
+    monkeypatch.setenv("BASE_URL", base_url)
+    html = tmp_path / "html"
+    api = html / "api"
+    api.mkdir(parents=True)
+    header = (
+        '<nav class="myst-top-nav-bar"><div>'
+        '<button class="myst-top-nav-menu-button flex">Menu</button>'
+        f'<a class="myst-home-link" href="{base_url}/"><img src="logo.svg"/>CytePool</a>'
+        '</div><button aria-expanded="false" data-state="closed" class="myst-search-bar flex myst-search-bar-disabled">Search'
+        "<script>window.headerScript = true;</script></button>"
+        '<button class="myst-theme-button">Theme</button></nav>'
+    )
+    navigation = (
+        '<nav class="myst-primary-sidebar-toc"><div class="myst-toc">'
+        f'<a class="myst-toc-item myst-toc-item-exact font-bold p-2 my-1" aria-current="page" href="{base_url}/">Overview</a>'
+        f'<a href="{base_url}/tutorials/remote-stores/">Remote stores</a>'
+        f'<a href="{base_url}/api/index.html">API reference</a>'
+        f'<a href="{base_url}/api/cubes.html">Cubes</a>'
+        "</div></nav>"
+    )
+    (html / "index.html").write_text(
+        f"<html><head></head><body>{header}{navigation}</body></html>"
+    )
+    article = '<article><h1 id="cubes">Cubes</h1><a href="cubes.html#method">Method</a></article>'
+    for name in ("index.html", "cubes.html", "search.html", "genindex.html"):
+        (api / name).write_text(
+            '<html><head></head><body class="docs-api"><header>'
+            '<nav class="docs-header-placeholder"></nav></header>'
+            '<div class="myst-primary-sidebar-nav docs-api-navigation">'
+            '<nav class="docs-api-tree"><ul><li>Original API menu</li></ul></nav>'
+            f"</div>{article}</body></html>"
+        )
+    (api / "objects.inv").write_bytes(b"existing Sphinx inventory")
+    static = api / "_static"
+    static.mkdir()
+    (static / "webpack-macros.html").write_text("{% macro assets() %}{% endmacro %}")
+
+    build_docs.integrate_api_navigation(html)
+
+    for page in api.glob("*.html"):
+        contents = page.read_text()
+        copied_header = build_docs.html_fragment(contents, "myst-top-nav-bar")
+        copied_navigation = build_docs.html_fragment(
+            contents, "myst-primary-sidebar-toc"
+        )
+        assert 'class="myst-search-bar search-button__button"' in copied_header
+        assert (
+            'class="myst-top-nav-menu-button sidebar-toggle primary-toggle"'
+            in copied_header
+        )
+        assert "myst-search-bar-disabled" not in copied_header
+        assert 'aria-label="Search documentation"' in copied_header
+        assert 'aria-controls="pst-search-dialog"' in copied_header
+        assert "aria-expanded" not in copied_header
+        assert "data-state" not in copied_header
+        assert "<script" not in copied_header
+        assert "Original API menu" not in contents
+        assert "font-bold" not in copied_navigation
+        assert "myst-toc-item-exact" not in copied_navigation
+        assert "p-2" not in copied_navigation
+        assert "my-1" not in copied_navigation
+        assert re.findall(r'href="([^"]+)"', copied_navigation) == re.findall(
+            r'href="([^"]+)"', navigation
+        )
+        selected = re.findall(r'<a\b[^>]*aria-current="page"[^>]*>', copied_navigation)
+        if page.name in {"index.html", "cubes.html"}:
+            assert len(selected) == 1
+            assert f'href="{base_url}/api/{page.name}"' in selected[0]
+        else:
+            assert not selected
+        assert article in contents
+        assert contents.count('src="https://docs.nygen.io/assets/brand/docs.js"') == 1
+        assert "nygen-docs-sidebar:" in contents
+        assert "fonts/inter/latin.woff2" in contents
+    assert (api / "objects.inv").read_bytes() == b"existing Sphinx inventory"
+    assert (
+        static / "webpack-macros.html"
+    ).read_text() == "{% macro assets() %}{% endmacro %}"
+
+
+def test_html_fragment_rejects_missing_or_duplicate_navigation() -> None:
+    pytest.importorskip("yaml")
+
+    for contents in (
+        "<html></html>",
+        '<nav class="menu"></nav><nav class="menu"></nav>',
+    ):
+        with pytest.raises(ValueError, match="Expected one complete .menu element"):
+            build_docs.html_fragment(contents, "menu")
+
+
+@pytest.mark.parametrize(
+    ("route", "title", "expected"),
+    [
+        ("/", "CytePool - CytePool", "CytePool documentation"),
+        ("/quickstart/", "Quick start - CytePool", "Quick start - CytePool"),
+        (
+            "/api/index.html",
+            "CytePool Python API reference — CytePool API reference",
+            "CytePool Python API reference",
+        ),
+        (
+            "/api/cytepool.html",
+            "CytePool API reference — CytePool API reference",
+            "CytePool Python API",
+        ),
+    ],
+)
+def test_page_metadata_preserves_authored_content_and_completes_link_previews(
+    route: str, title: str, expected: str
+) -> None:
+
+    class Metadata(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tags: list[dict[str, str | None]] = []
+
+        def handle_starttag(
+            self, tag: str, attrs: list[tuple[str, str | None]]
+        ) -> None:
+            if tag == "meta":
+                self.tags.append(dict(attrs))
+
+    body = "<body><h1>Keep this heading</h1><svg><title>Keep SVG title</title></svg></body>"
+    source = (
+        f"<html><head><title>{title}</title>"
+        '<meta name="description" content="Read RNA &amp; ATAC &quot;together&quot;."/>'
+        '<meta property="og:title" content="Stale title"/>'
+        '<meta name="twitter:card" content="summary_large_image"/>'
+        '<meta name="robots" content="noindex,follow"/>'
+        f"</head>{body}</html>"
+    )
+    canonical = build_docs.PUBLIC_URL + route
+
+    actual = build_docs.update_page_metadata(source, canonical)
+
+    head = actual.split("</head>")[0]
+    parser = Metadata()
+    parser.feed(head)
+    keys = [tag.get("property", tag.get("name")) for tag in parser.tags]
+    assert len(keys) == len(set(keys))
+    metadata = dict(zip(keys, (tag["content"] for tag in parser.tags), strict=True))
+    assert re.findall(r"<title>(.*?)</title>", head) == [expected]
+    assert metadata["description"] == 'Read RNA & ATAC "together".'
+    assert metadata["og:description"] == metadata["description"]
+    assert metadata["og:title"] == expected
+    assert metadata["og:type"] == "website"
+    assert metadata["og:url"] == canonical
+    assert (
+        metadata["og:image"]
+        == "https://docs.nygen.io/assets/brand/logo/cytepool-dark.png"
+    )
+    assert metadata["og:image:type"] == "image/png"
+    assert metadata["og:image:width"] == metadata["og:image:height"] == "512"
+    assert metadata["og:image:alt"] == "CytePool logo"
+    assert metadata["twitter:card"] == "summary"
+    assert metadata["twitter:image"] == metadata["og:image"]
+    assert metadata["twitter:image:alt"] == metadata["og:image:alt"]
+    assert metadata["robots"] == "noindex,follow"
+    assert actual.endswith(body + "</html>")
+    assert build_docs.update_page_metadata(actual, canonical) == actual
+
+
+def test_page_metadata_rejects_missing_authored_description() -> None:
+
+    with pytest.raises(ValueError, match="Expected a title and description"):
+        build_docs.update_page_metadata(
+            "<html><head><title>Guide</title></head><body></body></html>",
+            build_docs.PUBLIC_URL + "/guide/",
+        )
+
+
+@pytest.mark.parametrize("authored", [False, True])
+def test_staging_adds_introductory_descriptions_without_changing_source_or_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authored: bool
+) -> None:
+    yaml = pytest.importorskip("yaml")
+    source = tmp_path / "source"
+    source.mkdir()
+    prose = "# Example\n\nCompare **sample groups** with [tables](index.md).\n\n## Results\n"
+    if authored:
+        prose = "---\ndescription: Keep the authored summary.\n---\n\n" + prose
+    notebook = _executed_notebook()
+    notebook["cells"][0]["source"] = prose
+    saved = json.dumps(notebook)
+    (source / "example.ipynb").write_text(saved)
+    (source / "myst.yml").write_text(
+        yaml.safe_dump({"project": {"toc": [{"file": "example.ipynb"}]}})
+    )
+    monkeypatch.setattr(build_docs, "SOURCE", source)
+    monkeypatch.setattr(build_docs, "BUILD", tmp_path / "build")
+    monkeypatch.setattr(build_docs, "SITE", tmp_path / "build" / "site")
+
+    staged = json.loads((build_docs.stage_site() / "example.ipynb").read_text())
+
+    frontmatter = re.match(r"\A---\n(.*?)\n---\n", staged["cells"][0]["source"], re.S)
+    assert frontmatter
+    assert yaml.safe_load(frontmatter[1])["description"] == (
+        "Keep the authored summary."
+        if authored
+        else "Compare sample groups with tables."
+    )
+    assert build_docs.code_fingerprint(staged) == build_docs.code_fingerprint(notebook)
+    assert (source / "example.ipynb").read_text() == saved
+    assert prose.split("# Example", 1)[1] in staged["cells"][0]["source"]
+
+
+@pytest.mark.parametrize("base_url", ["", "/CytePool"])
+def test_discovery_covers_guides_and_authored_api_with_one_canonical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_url: str
+) -> None:
+    html = tmp_path / "html"
+    (html / "api" / "_sources").mkdir(parents=True)
+    body = '<body><h1>Unchanged title</h1><a id="symbol">API symbol</a></body>'
+    routes = ("/", "/guide/", "/api/index.html", "/api/cubes.html")
+    for route in routes:
+        path = html / route.lstrip("/")
+        if route.endswith("/"):
+            path /= "index.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><head><title>CytePool - CytePool</title>"
+            '<meta name="description" content="An authored description."/>'
+            '<link rel="canonical" href="https://old.example/"/>'
+            '<link href="https://duplicate.example/" rel="canonical"/>'
+            f"</head>{body}</html>"
+        )
+        if route.startswith("/api/"):
+            (html / "api" / "_sources" / f"{path.stem}.md").write_text("# API\n")
+    auxiliary = "<html><head></head><body>Useful index or search</body></html>"
+    for name in ("search.html", "genindex.html", "py-modindex.html"):
+        (html / "api" / name).write_text(auxiliary)
+    references = [
+        {"kind": "page", "url": f"{base_url}/", "data": "/index.json"},
+        {"kind": "page", "url": f"{base_url}/guide", "data": "/guide.json"},
+        {"kind": "page", "url": f"{base_url}/guide/", "data": "/guide.json"},
+    ]
+    (html / "myst.xref.json").write_text(json.dumps({"references": references}))
+    monkeypatch.setenv("BASE_URL", base_url)
+
+    build_docs.write_discovery_metadata(html)
+    build_docs.write_discovery_metadata(html)
+
+    sitemap = ElementTree.parse(html / "sitemap.xml")
+    locations = [node.text for node in sitemap.findall(".//{*}loc")]
+    assert sorted(locations) == sorted(
+        build_docs.PUBLIC_URL + route for route in routes
+    )
+    for route in routes:
+        path = html / route.lstrip("/")
+        if route.endswith("/"):
+            path /= "index.html"
+        contents = path.read_text()
+        assert re.findall(r'<link rel="canonical" href="([^"]+)"', contents) == [
+            build_docs.PUBLIC_URL + route
+        ]
+        assert contents.endswith(body + "</html>")
+        assert 'content="An authored description."' in contents
+        assert (
+            'content="https://docs.nygen.io/assets/brand/logo/cytepool-dark.png"'
+            in contents
+        )
+    for name in ("search.html", "genindex.html", "py-modindex.html"):
+        assert (html / "api" / name).read_text() == auxiliary
+    assert (
+        (html / "robots.txt")
+        .read_text()
+        .endswith("Sitemap: https://docs.nygen.io/CytePool/sitemap.xml\n")
+    )
