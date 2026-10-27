@@ -17,7 +17,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.design import Design, DesignIssue, DesignReport
+from cytepool import Design
+from cytepool.design import DesignIssue, DesignReport
 from cytepool.stats.linear_models import fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model
 
@@ -94,7 +95,7 @@ def test_batch_nested_in_condition(nested_batches: dict[str, Any]) -> None:
         "contrast_not_estimable",
     )
     assert (report.n_samples, report.n_columns, report.rank) == (8, 5, 4)
-    assert report.residual_df == 4 and not report.ok
+    assert report.df_residual == 4 and not report.ok
     assert report.aliased == ("conditionstim",)
     # conditionstim is exactly batchb3 + batchb4.
     assert (
@@ -156,7 +157,7 @@ def test_no_residual_degrees_of_freedom() -> None:
     samples = {"a": ["A", "A", "B", "B"], "b": ["X", "Y", "X", "Y"]}
     report = Design(samples, "~ a * b").check()
     assert report.kinds() == ("no_residual_df",)
-    assert report.rank == 4 and report.residual_df == 0
+    assert report.rank == 4 and report.df_residual == 0
     assert "no residual degrees of freedom: 4 samples and rank 4" in (
         _issue(report, "no_residual_df").message
     )
@@ -300,7 +301,7 @@ def test_duplicate_column_names_are_reported_not_raised() -> None:
 def test_a_formula_without_columns() -> None:
     report = Design({"a": ["x", "y"]}, "~ 0").check()
     assert report.kinds() == ("empty_design",)
-    assert report.n_columns == 0 and report.residual_df == 2
+    assert report.n_columns == 0 and report.df_residual == 2
 
 
 def test_random_effect_checks() -> None:
@@ -581,7 +582,7 @@ def test_high_leverage_from_few_residual_degrees_of_freedom() -> None:
         "rin": [7.0, 7.3, 6.7, 6.1, 6.5, 6.0],
     }
     report = Design(samples, "~ donor + condition + rin").check()
-    assert report.kinds() == ("high_leverage",) and report.residual_df == 1
+    assert report.kinds() == ("high_leverage",) and report.df_residual == 1
     message = report.warnings[0].message
     assert message.startswith("the model nearly fits S1 (leverage 0.99")
     assert "with 1 residual degree of freedom" in message

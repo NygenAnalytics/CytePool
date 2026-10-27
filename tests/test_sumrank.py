@@ -17,24 +17,20 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool._jit import thread_limit
-from cytepool._study_statistics import studies_summed
-from cytepool.cube import Cube, CubeCollection
-from cytepool.design import Design
-from cytepool.differential_expression import (
-    DifferentialExpressionResult,
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
+    StudyResults,
+    SumRankResult,
+    Table,
     dream_voom,
     limma_trend,
     limma_voom,
-)
-from cytepool.meta_analysis import align_study_results
-from cytepool.sumrank import (
-    SumRankResult,
-    _irwin_hall_cdf,
-    differential_expression_sumrank,
     sumrank,
 )
-from cytepool.table import Table
+from cytepool._jit import thread_limit
+from cytepool.stats.sumrank import _irwin_hall_cdf, _studies_summed, fit_sumrank
 
 DATA = Path(__file__).parent / "data" / "sumrank"
 CONTRAST = "case_vs_ctrl"
@@ -56,7 +52,7 @@ def signed(p: np.ndarray, change: np.ndarray) -> np.ndarray:
 @pytest.mark.parametrize("proportion", [1, 0.5])
 def test_statistics_match_the_authors_code(proportion: float) -> None:
     reference = authors()
-    fit = sumrank(
+    fit = fit_sumrank(
         signed(reference["ties_p"], reference["ties_change"]),
         proportion_of_studies=proportion,
     )
@@ -72,7 +68,7 @@ def test_statistics_match_the_authors_code(proportion: float) -> None:
 def test_permutation_p_values_count_the_authors_null_statistics() -> None:
     reference = authors()
     statistics = signed(reference["small_p"], reference["small_sign"])
-    fit = sumrank(
+    fit = fit_sumrank(
         statistics[0], proportion_of_studies=0.75, null_statistics=statistics[1:]
     )
     assert fit.n_studies_summed == 3
@@ -100,7 +96,7 @@ def test_permutation_p_values_count_the_authors_null_statistics() -> None:
 
 def test_two_studies_by_hand() -> None:
     # Study 1 ties genes b and c; study 2 did not test gene d, which is left out.
-    fit = sumrank([[3.0, 1.0, 1.0, 2.0, -2.0], [2.0, -1.0, 0.5, np.nan, 1.0]])
+    fit = fit_sumrank([[3.0, 1.0, 1.0, 2.0, -2.0], [2.0, -1.0, 0.5, np.nan, 1.0]])
     # Over a, b, c and e (G = 4), study 1 ranks a 1, b and c 2.5, e 4, so u = (0,
     # 1/2, 1/2, 1); study 2 ranks a 1, e 2, c 3, b 4, so u = (0, 1, 2/3, 1/3).
     assert_array_equal(fit.ranked, [True, True, True, False, True])
@@ -122,7 +118,7 @@ def test_two_studies_by_hand() -> None:
 
 
 def test_the_best_of_two_studies_by_hand() -> None:
-    fit = sumrank(
+    fit = fit_sumrank(
         [[3.0, 1.0, 1.0, 2.0, -2.0], [2.0, -1.0, 0.5, np.nan, 1.0]],
         proportion_of_studies=0.5,
     )
@@ -140,7 +136,7 @@ def test_permutation_p_values_pool_every_gene_of_every_permutation() -> None:
     # (1, 1, 0); so of the 12 null statistics two are 0 and ten are 1.
     forward, backward = [3.0, 2.0, 1.0], [1.0, 2.0, 3.0]
     null = [[a, b] for a in (forward, backward) for b in (forward, backward)]
-    fit = sumrank([forward, forward], null_statistics=null)
+    fit = fit_sumrank([forward, forward], null_statistics=null)
     assert_allclose(fit.up_statistic, [0, 1, 1])
     assert_allclose(fit.up_permutation_p_value, [3 / 13, 1, 1], rtol=1e-15)
     # Down, the data's statistics are (1, 1, 0): gene c ties the two null zeros.
@@ -154,7 +150,7 @@ def test_each_permutation_ranks_the_genes_its_studies_tested() -> None:
     statistics = [[3.0, 2.0, 1.0, 0.0], [2.0, 3.0, 1.0, 0.0]]
     null = np.array([statistics, statistics])
     null[1, 0, 2] = np.nan
-    fit = sumrank(statistics, null_statistics=null)
+    fit = fit_sumrank(statistics, null_statistics=null)
     assert fit.n_null_values == 4 + 3
     # Genes a and b rank 1 and 2 of 4 in one study each: they sum 0 + 1/3. The first
     # permutation is the data; in the second, over a, b and d, they sum 0 + 1/2. So
@@ -199,7 +195,51 @@ def test_irwin_hall_closed_forms() -> None:
 def test_the_number_of_studies_summed(
     proportion: float, n_studies: int, summed: int
 ) -> None:
-    assert studies_summed(proportion, n_studies) == summed
+    assert _studies_summed(None, proportion, n_studies) == (summed, proportion)
+
+
+@pytest.mark.parametrize(("summed", "proportion"), [(1, 0.25), (3, 0.6), (5, 1.0)])
+def test_a_number_of_studies_summed_is_the_proportion_that_gives_it(
+    summed: int, proportion: float
+) -> None:
+    # Of 5 studies, floor(0.25 * 5) = 1, floor(0.6 * 5) = 3 and 1.0 sums all 5.
+    statistics = random_statistics(14, (5, 30))
+    null = random_statistics(15, (3, 5, 30))
+    by_number = fit_sumrank(statistics, n_studies_summed=summed, null_statistics=null)
+    by_proportion = fit_sumrank(
+        statistics, proportion_of_studies=proportion, null_statistics=null
+    )
+    assert_fits_equal(by_number, by_proportion)
+    assert_array_equal(by_number.normalized_ranks, by_proportion.normalized_ranks)
+    assert by_number.n_studies_summed == by_proportion.n_studies_summed == summed
+    assert by_number.proportion_of_studies is None
+    assert by_proportion.proportion_of_studies == proportion
+
+
+@pytest.mark.parametrize(
+    ("options", "error", "match"),
+    [
+        (
+            {"n_studies_summed": 1, "proportion_of_studies": 0.5},
+            ValueError,
+            r"\(n_studies_summed\) or their proportion \(proportion_of_studies\), "
+            "not both",
+        ),
+        (
+            {"n_studies_summed": 0},
+            ValueError,
+            "n_studies_summed must be from 1 to the number of studies, 2, got 0",
+        ),
+        ({"n_studies_summed": 3}, ValueError, "number of studies, 2, got 3"),
+        ({"n_studies_summed": True}, TypeError, "whole number of studies, not bool"),
+        ({"n_studies_summed": 1.5}, TypeError, "whole number of studies, got float"),
+    ],
+)
+def test_a_number_of_studies_summed_out_of_range_is_refused(
+    options: dict[str, object], error: type[Exception], match: str
+) -> None:
+    with pytest.raises(error, match=match):
+        fit_sumrank([[1.0, 2.0], [3.0, 4.0]], **options)  # type: ignore[arg-type]
 
 
 # Invariants.
@@ -228,10 +268,12 @@ def assert_fits_equal(first: object, second: object) -> None:
 def test_the_order_of_studies_and_genes_does_not_matter(proportion: float) -> None:
     statistics = random_statistics(1, (5, 40))
     null = random_statistics(2, (6, 5, 40))
-    fit = sumrank(statistics, proportion_of_studies=proportion, null_statistics=null)
+    fit = fit_sumrank(
+        statistics, proportion_of_studies=proportion, null_statistics=null
+    )
     studies = [3, 0, 4, 1, 2]
     genes = np.random.default_rng(3).permutation(40)
-    shuffled = sumrank(
+    shuffled = fit_sumrank(
         statistics[studies][:, genes],
         proportion_of_studies=proportion,
         null_statistics=null[:, studies][:, :, genes],
@@ -260,8 +302,10 @@ def test_negated_statistics_swap_up_and_down() -> None:
     # Testing controls against cases negates every statistic.
     statistics = random_statistics(4, (4, 30))
     null = random_statistics(5, (3, 4, 30))
-    fit = sumrank(statistics, proportion_of_studies=0.75, null_statistics=null)
-    negated = sumrank(-statistics, proportion_of_studies=0.75, null_statistics=-null)
+    fit = fit_sumrank(statistics, proportion_of_studies=0.75, null_statistics=null)
+    negated = fit_sumrank(
+        -statistics, proportion_of_studies=0.75, null_statistics=-null
+    )
     for name in ("statistic", "irwin_hall_p_value", "permutation_p_value"):
         assert_array_equal(getattr(negated, f"up_{name}"), getattr(fit, f"down_{name}"))
         assert_array_equal(getattr(negated, f"down_{name}"), getattr(fit, f"up_{name}"))
@@ -272,24 +316,24 @@ def test_a_monotone_transform_of_a_study_changes_nothing() -> None:
     changed = statistics.copy()
     changed[1] = np.exp(changed[1]) + changed[1] ** 3  # increasing
     changed[2] = 10.0 * changed[2] - 4.0
-    assert_fits_equal(sumrank(changed), sumrank(statistics))
+    assert_fits_equal(fit_sumrank(changed), fit_sumrank(statistics))
 
 
 def test_infinite_statistics_rank_first_and_tie() -> None:
     # p-values of 0 give infinite statistics: genes a and b tie at the top.
-    fit = sumrank([[np.inf, np.inf, 1.0, -np.inf], [5.0, 4.0, 3.0, 2.0]])
+    fit = fit_sumrank([[np.inf, np.inf, 1.0, -np.inf], [5.0, 4.0, 3.0, 2.0]])
     assert_allclose(fit.normalized_ranks[0], [1 / 6, 1 / 6, 2 / 3, 1], rtol=1e-15)
     assert_allclose(fit.up_statistic, [1 / 6, 1 / 2, 1, 1], rtol=1e-15)
 
 
 def test_one_study_is_its_own_ranking() -> None:
-    fit = sumrank([[2.0, 0.5, -1.0, 3.0]])
+    fit = fit_sumrank([[2.0, 0.5, -1.0, 3.0]])
     assert_allclose(fit.up_statistic, [1 / 3, 0.5, 0.5, 0.0], rtol=1e-15)
     assert_allclose(fit.up_irwin_hall_p_value, [1 / 3, 1, 1, 0], rtol=1e-15)
 
 
 def test_statistics_are_read_only() -> None:
-    fit = sumrank(
+    fit = fit_sumrank(
         [[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]], null_statistics=np.ones((1, 2, 3))
     )
     for name in (
@@ -332,7 +376,7 @@ def test_invalid_arguments_are_refused(
 ) -> None:
     given = {"statistics": [[1.0, 2.0], [3.0, 4.0]]} | arguments
     with pytest.raises(error, match=match):
-        sumrank(**given)  # type: ignore[arg-type]
+        fit_sumrank(**given)  # type: ignore[arg-type]
 
 
 # Several studies of a collection.
@@ -370,7 +414,7 @@ def design(samples: object) -> Design:
 
 
 @cache
-def studies() -> tuple[CubeCollection, dict[str, DifferentialExpressionResult]]:
+def studies() -> StudyResults:
     """Three studies, the third without group B; the second analysed by limma-trend."""
     rng = np.random.default_rng(20261030)
     cubes = {
@@ -384,26 +428,27 @@ def studies() -> tuple[CubeCollection, dict[str, DifferentialExpressionResult]]:
         cube = collection.aligned_cube(study)
         analysis = limma_trend if study == "second" else limma_voom
         results[study] = analysis(cube, design(cube.samples))
-    return collection, results
+    return StudyResults(collection, results)
 
 
-def test_studies_of_a_collection_are_ranked_as_sumrank_ranks_their_results() -> None:
-    collection, results = studies()
+def test_studies_of_a_collection_are_ranked_as_fit_sumrank_ranks_their_results() -> (
+    None
+):
+    results = studies()
+    collection = results.collection
     # The warning's lines are at most 80 characters.
     with pytest.warns(
         RuntimeWarning, match=r"best 2 of 3 studies' ranks are too\ssmall"
     ):
-        result = differential_expression_sumrank(
-            collection, results, "T", CONTRAST, proportion_of_studies=0.7
-        )
+        result = sumrank(results, "T", CONTRAST, proportion_of_studies=0.7)
     # The signed -log10 p-values of the aligned results, as plain arrays.
-    table = align_study_results(collection, results, "T", CONTRAST)
+    table = results.table("T", CONTRAST)
     shape = (collection.n_studies, collection.n_features)
     p = table["p_value"].reshape(shape)
     change = table["log2_fold_change"].reshape(shape)
-    fit = sumrank(signed(p, change), proportion_of_studies=0.7)
+    fit = fit_sumrank(signed(p, change), proportion_of_studies=0.7)
     ranked = fit.ranked
-    out = result.table
+    out = result.features
     assert_array_equal(out["feature_id"], collection.features["feature_id"][ranked])
     for direction in ("up", "down"):
         assert_array_equal(
@@ -423,8 +468,7 @@ def test_studies_of_a_collection_are_ranked_as_sumrank_ranks_their_results() -> 
 
 
 def test_a_study_without_the_group_is_left_out() -> None:
-    collection, results = studies()
-    result = differential_expression_sumrank(collection, results, "B", CONTRAST)
+    result = sumrank(studies(), "B", CONTRAST)
     studies_table = result.studies
     assert studies_table["analysed"].tolist() == [True, True, False]
     assert "has no group 'B'" in studies_table["reason"][2]
@@ -432,15 +476,57 @@ def test_a_study_without_the_group_is_left_out() -> None:
     assert result.settings["n_studies"] == 2
 
 
+def test_the_studies_summed_may_be_given_as_a_number_or_a_proportion() -> None:
+    results = studies()
+    warning = r"best 2 of 3 studies' ranks are too\ssmall"
+    with pytest.warns(RuntimeWarning, match=warning):
+        by_number = sumrank(results, "T", CONTRAST, n_studies_summed=2)
+    with pytest.warns(RuntimeWarning, match=warning):
+        by_proportion = sumrank(results, "T", CONTRAST, proportion_of_studies=0.7)
+    assert by_number.features.equals(by_proportion.features)
+    assert by_number.studies.equals(by_proportion.studies)
+    settings = by_number.settings, by_proportion.settings
+    assert [s["n_studies_summed"] for s in settings] == [2, 2]
+    assert [s["proportion_of_studies"] for s in settings] == [None, 0.7]
+    with pytest.raises(ValueError, match="not both"):
+        sumrank(results, "T", CONTRAST, n_studies_summed=2, proportion_of_studies=0.7)
+    # The number is that of the studies that analysed the group: two have group B.
+    with pytest.raises(ValueError, match="from 1 to the number of studies, 3, got 4"):
+        sumrank(results, "T", CONTRAST, n_studies_summed=4)
+    with pytest.raises(ValueError, match="from 1 to the number of studies, 2, got 3"):
+        sumrank(results, "B", CONTRAST, n_studies_summed=3)
+
+
+def test_the_group_and_contrast_of_studies_that_have_one_may_be_left_out() -> None:
+    # The studies tested one contrast, and analysed two groups.
+    results = studies()
+    named = sumrank(results, "T", CONTRAST)
+    assert sumrank(results, "T").features.equals(named.features)
+    with pytest.raises(ValueError, match="the studies analysed 2 groups; name one"):
+        sumrank(results)
+    # The same studies with group T alone.
+    collection = results.collection
+    only_t = StudyResults(
+        collection,
+        {
+            study: (limma_trend if study == "second" else limma_voom)(
+                collection.aligned_cube(study), result.design, groups=["T"]
+            )
+            for study, result in results.items()
+        },
+    )
+    alone = sumrank(only_t)
+    assert alone.features.equals(named.features) and alone.studies.equals(named.studies)
+    assert (alone.settings["group"], alone.settings["contrast"]) == ("T", CONTRAST)
+
+
 def explicit_permutations(
-    collection: CubeCollection,
-    results: dict[str, DifferentialExpressionResult],
-    n_permutations: int,
-    seed: int,
+    results: StudyResults, n_permutations: int, seed: int
 ) -> np.ndarray:
     """The statistics of group T of the permutations that the seed draws, each
     study's analysis run by hand on a design with the condition permuted among the
     samples of its fit of T."""
+    collection = results.collection
     generator = np.random.default_rng(seed)
     index = {f: i for i, f in enumerate(collection.features["feature_id"].tolist())}
     null = np.full(
@@ -469,27 +555,20 @@ def explicit_permutations(
 
 
 def test_permutations_rerun_each_studys_analysis() -> None:
-    collection, results = studies()
-    result = differential_expression_sumrank(
-        collection,
-        results,
-        "T",
-        CONTRAST,
-        n_permutations=4,
-        permute="condition",
-        rng=7,
+    results = studies()
+    collection = results.collection
+    result = sumrank(
+        results, "T", CONTRAST, n_permutations=4, permute="condition", rng=7
     )
-    table = align_study_results(collection, results, "T", CONTRAST)
+    table = results.table("T", CONTRAST)
     shape = (collection.n_studies, collection.n_features)
     observed = signed(
         table["p_value"].reshape(shape), table["log2_fold_change"].reshape(shape)
     )
-    fit = sumrank(
-        observed, null_statistics=explicit_permutations(collection, results, 4, 7)
-    )
+    fit = fit_sumrank(observed, null_statistics=explicit_permutations(results, 4, 7))
     for direction in ("up", "down"):
         assert_array_equal(
-            result.table[f"{direction}_p_value"],
+            result.features[f"{direction}_p_value"],
             getattr(fit, f"{direction}_permutation_p_value")[fit.ranked],
         )
     assert result.settings["p_values"] == "permutation"
@@ -498,14 +577,13 @@ def test_permutations_rerun_each_studys_analysis() -> None:
 
 
 def test_permutations_follow_the_seed_and_not_the_threads() -> None:
-    collection, results = studies()
+    results = studies()
 
     def p_values(rng: object, threads: int | None = None) -> np.ndarray:
         with thread_limit(threads):
-            out = differential_expression_sumrank(
-                collection, results, "T", CONTRAST, n_permutations=3,
-                permute="condition", rng=rng,
-            ).table  # fmt: skip
+            out = sumrank(
+                results, "T", CONTRAST, n_permutations=3, permute="condition", rng=rng
+            ).features
         return np.concatenate([out["up_p_value"], out["down_p_value"]])
 
     first = p_values(11)
@@ -515,51 +593,84 @@ def test_permutations_follow_the_seed_and_not_the_threads() -> None:
 
 
 def test_the_result_records_its_studies_and_is_immutable() -> None:
-    collection, results = studies()
-    result = differential_expression_sumrank(
-        collection, results, "T", CONTRAST, n_permutations=2, permute="condition", rng=1
+    results = studies()
+    collection = results.collection
+    result = sumrank(
+        results, "T", CONTRAST, n_permutations=2, permute="condition", rng=1
     )
     record = result.provenance
-    assert record["analysis"] == "differential_expression_sumrank"
+    assert record["analysis"] == "sumrank"
     assert record["settings"]["permute"] == "condition"
     assert set(record["studies"]) == set(collection.studies)
     assert record["studies"]["first"] == results["first"].provenance
     with pytest.raises(AttributeError, match="immutable"):
-        result.table = result.studies  # type: ignore[misc]
+        result.features = result.studies  # type: ignore[misc]
     copy = pickle.loads(pickle.dumps(result))
-    assert copy.table.equals(result.table) and copy.provenance == record
+    assert copy.features.equals(result.features) and copy.provenance == record
     text = repr(result)
     assert "3 studies, the best 3 summed" in " ".join(text.split())
     assert "2 permutations of 'condition'" in text
     assert max(map(len, text.splitlines())) <= 80
 
 
+@cache
+def studies_with_a_covariate() -> StudyResults:
+    """The three studies with the sequencing depth of each sample in their designs,
+    and a contrast of it, which compares no two levels of a factor."""
+    collection = studies().collection
+    results = {}
+    for study in collection.studies:
+        cube = collection.aligned_cube(study)
+        samples = cube.samples.with_columns(
+            {"depth": np.linspace(1.0, 2.0, cube.n_samples)}
+        )
+        with_depth = Design(
+            samples,
+            "~ condition + depth",
+            levels={"condition": ["ctrl", "case"]},
+            contrasts={CONTRAST: "conditioncase", "depth": "depth"},
+        )
+        analysis = limma_trend if study == "second" else limma_voom
+        results[study] = analysis(cube, with_depth)
+    return StudyResults(collection, results)
+
+
+def test_permutations_permute_the_factor_whose_levels_the_contrast_compares() -> None:
+    # CONTRAST, conditioncase in ~ condition, compares case with ctrl, the reference.
+    results = studies()
+    read = sumrank(results, "T", CONTRAST, n_permutations=2, rng=1)
+    given = sumrank(
+        results, "T", CONTRAST, n_permutations=2, permute="condition", rng=1
+    )
+    assert read.features.equals(given.features) and read.studies.equals(given.studies)
+    assert read.settings == given.settings and read.settings["permute"] == "condition"
+    # A covariate beside the factor leaves the comparison of its levels as it is.
+    beside = sumrank(studies_with_a_covariate(), "T", CONTRAST, n_permutations=1, rng=1)
+    assert beside.settings["permute"] == "condition"
+
+
 def test_permutations_need_a_variable_of_each_design() -> None:
-    collection, results = studies()
-    with pytest.raises(ValueError, match="give its name as permute"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=2
-        )
+    results = studies()
+    # A contrast of a covariate compares no two levels: the variable must be named.
+    with pytest.raises(
+        ValueError,
+        match="contrast 'depth' does not compare two levels of one factor in every "
+        "study's design; give the variable's name as permute",
+    ):
+        sumrank(studies_with_a_covariate(), "T", "depth", n_permutations=2)
     with pytest.raises(ValueError, match="n_permutations is 0"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, permute="condition"
-        )
+        sumrank(results, "T", CONTRAST, permute="condition")
     with pytest.raises(ValueError, match="not a variable of the design of study"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=1, permute="donor"
-        )
+        sumrank(results, "T", CONTRAST, n_permutations=1, permute="donor")
     with pytest.raises(ValueError, match="at least 0"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=-1
-        )
+        sumrank(results, "T", CONTRAST, n_permutations=-1)
     with pytest.raises(TypeError, match="not bool"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=True
-        )
+        sumrank(results, "T", CONTRAST, n_permutations=True)
 
 
 def test_permutations_refuse_a_result_of_another_cube() -> None:
-    collection, results = studies()
+    results = studies()
+    collection = results.collection
     # The first study's result from counts other than those of its aligned cube, with
     # the same genes and groups: the line-up accepts it, a re-run would not be its own.
     cube = collection.aligned_cube("first")
@@ -572,11 +683,10 @@ def test_permutations_refuse_a_result_of_another_cube() -> None:
     )
     other = dict(results)
     other["first"] = limma_voom(changed, design(changed.samples))
-    assert len(differential_expression_sumrank(collection, other, "T", CONTRAST).table)
+    other_studies = StudyResults(collection, other)
+    assert len(sumrank(other_studies, "T", CONTRAST).features)
     with pytest.raises(ValueError, match="fingerprint"):
-        differential_expression_sumrank(
-            collection, other, "T", CONTRAST, n_permutations=1, permute="condition"
-        )
+        sumrank(other_studies, "T", CONTRAST, n_permutations=1, permute="condition")
 
 
 def test_a_mixed_model_is_not_permuted_sample_by_sample() -> None:
@@ -598,33 +708,35 @@ def test_a_mixed_model_is_not_permuted_sample_by_sample() -> None:
         levels={"condition": ["ctrl", "case"]},
         contrasts={CONTRAST: "conditioncase"},
     )
-    results = {
-        study: dream_voom(collection.aligned_cube(study), mixed)
-        for study in collection.studies
-    }
-    # Without permutations dream's results are ranked; with them they are refused.
-    assert len(
-        differential_expression_sumrank(collection, results, "T", CONTRAST).table
+    results = StudyResults(
+        collection,
+        {
+            study: dream_voom(collection.aligned_cube(study), mixed)
+            for study in collection.studies
+        },
     )
+    # Without permutations dream's results are ranked; with them they are refused.
+    assert len(sumrank(results, "T", CONTRAST).features)
     with pytest.raises(ValueError, match="random effects"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=1, permute="condition"
-        )
+        sumrank(results, "T", CONTRAST, n_permutations=1, permute="condition")
 
 
 def test_invalid_studies_and_contrasts_are_refused() -> None:
-    collection, results = studies()
+    results = studies()
     with pytest.raises(KeyError, match="no group 'NK'"):
-        differential_expression_sumrank(collection, results, "NK", CONTRAST)
+        sumrank(results, "NK", CONTRAST)
     with pytest.raises(KeyError, match="no study tested the contrast"):
-        differential_expression_sumrank(collection, results, "T", "other")
+        sumrank(results, "T", "other")
     with pytest.raises(ValueError, match="every study of the collection"):
-        differential_expression_sumrank(
-            collection, {"first": results["first"]}, "T", CONTRAST
+        sumrank(
+            StudyResults(results.collection, {"first": results["first"]}),
+            "T",
+            CONTRAST,
         )
+    with pytest.raises(TypeError, match="sumrank takes the studies' results"):
+        sumrank(dict(results), "T", CONTRAST)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="permute must be"):
-        differential_expression_sumrank(
-            collection,
+        sumrank(
             results,
             "T",
             CONTRAST,
@@ -632,10 +744,7 @@ def test_invalid_studies_and_contrasts_are_refused() -> None:
             permute=1,  # type: ignore[arg-type]
         )
     with pytest.raises(ValueError, match="non-negative seed"):
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=1,
-            permute="condition", rng=-1,
-        )  # fmt: skip
+        sumrank(results, "T", CONTRAST, n_permutations=1, permute="condition", rng=-1)
 
 
 def test_the_figure_shows_the_p_values_in_alphabetical_order() -> None:
@@ -644,10 +753,9 @@ def test_the_figure_shows_the_p_values_in_alphabetical_order() -> None:
 
     from cytepool.plotting import plot_sumrank
 
-    collection, results = studies()
-    result = differential_expression_sumrank(collection, results, "T", CONTRAST)
-    ax = plot_sumrank(result, direction="down", n_labels=3, ax=Figure().subplots())
-    table = result.table
+    result = sumrank(studies(), "T", CONTRAST)
+    ax = plot_sumrank(result, direction="down", top=3, ax=Figure().subplots())
+    table = result.features
     ids = table["feature_id"].tolist()
     order = np.argsort(ids, kind="stable")
     # A p-value of 0 is drawn at the smallest positive float.
@@ -722,11 +830,11 @@ def test_tied_p_values_are_labelled_by_statistic_and_the_labels_kept_apart() -> 
     result = tied_result()
     figure = Figure()
     FigureCanvasAgg(figure)
-    ax = plot_sumrank(result, n_labels=10, ax=figure.subplots())
+    ax = plot_sumrank(result, top=10, ax=figure.subplots())
     labels = [text for text in ax.texts if text.get_gid() == "labels"]
     # Of the 30 genes tied at the smallest p-value, the 10 with the smallest
     # statistics, the best ranks.
-    statistic = result.table["up_statistic"]
+    statistic = result.features["up_statistic"]
     tied = np.arange(50, 80)
     best = tied[np.argsort(statistic[tied], kind="stable")[:10]]
     assert sorted(text.get_text() for text in labels) == sorted(
@@ -788,8 +896,8 @@ def test_labels_and_legends_stay_inside_two_panels_after_the_final_draw() -> Non
     figure = Figure(figsize=(8, 6.5), layout="constrained")
     FigureCanvasAgg(figure)
     upper, lower = figure.subplots(2, 1)
-    plot_sumrank(result, n_labels=4, ax=upper)
-    plot_sumrank(result, direction="down", n_labels=4, ax=lower)
+    plot_sumrank(result, top=4, ax=upper)
+    plot_sumrank(result, direction="down", top=4, ax=lower)
     figure.savefig(io.BytesIO(), format="png")
     renderer = figure.canvas.get_renderer()
     for ax in (upper, lower):
@@ -806,9 +914,8 @@ def test_labels_and_legends_stay_inside_two_panels_after_the_final_draw() -> Non
 
 
 def test_a_result_is_built_from_tables_and_a_record() -> None:
-    collection, results = studies()
-    result = differential_expression_sumrank(collection, results, "T", CONTRAST)
-    with pytest.raises(TypeError, match="table must be a Table"):
+    result = sumrank(studies(), "T", CONTRAST)
+    with pytest.raises(TypeError, match="features must be a Table"):
         SumRankResult({}, result.studies, {})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="Out of range float values"):
-        SumRankResult(result.table, result.studies, {"x": float("nan")})
+        SumRankResult(result.features, result.studies, {"x": float("nan")})

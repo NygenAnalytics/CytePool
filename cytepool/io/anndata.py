@@ -55,8 +55,8 @@ What an import takes:
 
 Recognised layouts:
     The arguments left as None take their values from the layout of the data; a
-    long AnnData that CytePool did not make still needs ``sample=`` and ``group=``,
-    the columns of its labels.
+    long AnnData that CytePool did not make still needs ``sample_column=`` and
+    ``group_column=``, the columns of its labels.
 
     - CytePool's own export, which ``uns["cytepool"]`` marks (see "The record in
       uns" below): every layer, the cell numbers, the tables, the normalization and
@@ -322,12 +322,12 @@ def to_anndata(cube: Cube, *, x_layer: str | None = None) -> Any:
 def from_anndata(
     adata: Any,
     *,
-    sample: str | None = None,
-    group: str | None = None,
+    sample_column: str | None = None,
+    group_column: str | None = None,
     layers: Mapping[str, str] | None = None,
     n_cells: Any = None,
-    sample_table: Any = None,
-    group_table: Any = None,
+    samples: Any = None,
+    groups: Any = None,
     normalization: Mapping[str, Any] | None = None,
     source: Mapping[str, Any] | None = None,
 ) -> Cube:
@@ -343,11 +343,11 @@ def from_anndata(
 
     Args:
         adata: The AnnData.
-        sample: The ``obs`` column with the sample of each row, as text or integers
-            (which become their decimal text), as ``from_cells`` takes labels.
-            Required unless CytePool made the AnnData.
-        group: The ``obs`` column with the group, usually the cell type, of each
-            row. Required unless CytePool made the AnnData.
+        sample_column: The ``obs`` column with the sample of each row, as text or
+            integers (which become their decimal text), as ``from_cells`` takes
+            labels. Required unless CytePool made the AnnData.
+        group_column: The ``obs`` column with the group, usually the cell type, of
+            each row. Required unless CytePool made the AnnData.
         layers: Cube layer name to its source, ``"X"`` or the name of a layer, for
             example ``{"counts": "sum", "detected": "count_nonzero"}``. ``counts``
             is required. By default the sources of the recognised layout.
@@ -356,12 +356,12 @@ def from_anndata(
             such as ``pandas.crosstab(cells.obs["donor"], cells.obs["cell_type"])``
             for the cells that were pooled. By default the column of the recognised
             layout, or none.
-        sample_table: Sample metadata with a text column ``sample_id`` that holds
+        samples: The sample table, with a text column ``sample_id`` that holds
             every sample label, as ``from_cells`` takes it: its rows set the order of
             the samples, and a sample without rows has no cells. By default the
             samples are the sorted distinct labels, with the ``obs`` columns that
             are constant within every sample, over the rows with cells.
-        group_table: Group metadata, used in the same way. By default the groups are
+        groups: The group table, used in the same way. By default the groups are
             the sorted distinct labels, with the other ``obs`` columns that are
             constant within every group.
         normalization: How the normalized values were computed, required with
@@ -389,9 +389,10 @@ def from_anndata(
             constraint of ``Cube``; or ``uns["cytepool"]`` is not a record this
             version reads.
     """
-    _check_arguments(layers, n_cells, sample_table, group_table, normalization)
+    _check_arguments(layers, n_cells, samples, groups, normalization)
     caller_source = source_record(source)
-    for argument, value in (("sample", sample), ("group", group)):
+    sample, group = sample_column, group_column
+    for argument, value in (("sample_column", sample), ("group_column", group)):
         if value is not None and not isinstance(value, str):
             raise TypeError(
                 f"{argument} must name an obs column (str), got {type(value).__name__}"
@@ -409,12 +410,14 @@ def from_anndata(
         if sample is None or group is None:
             raise ValueError(
                 "name the obs columns that hold the sample and the group of each row, "
-                "with sample= and group=; obs has: "
+                "with sample_column= and group_column=; obs has: "
                 f"{', '.join(map(str, obs_columns)) or '(no columns)'}"
             )
     if sample == group:
-        raise ValueError(f"sample and group both name the obs column {sample!r}")
-    for argument, column in (("sample", sample), ("group", group)):
+        raise ValueError(
+            f"sample_column and group_column both name the obs column {sample!r}"
+        )
+    for argument, column in (("sample_column", sample), ("group_column", group)):
         _require_column(obs_columns, column, argument)
     sources = _source_names(adata)
     if n_cells is None:
@@ -433,7 +436,7 @@ def from_anndata(
         obs[group],
         len(names),
         (f"obs[{sample!r}]", f"obs[{group!r}]"),
-        _tables(record, sample_table, group_table),
+        _tables(record, samples, groups),
         row_name,
     )
     if isinstance(n_cells, str):
@@ -441,15 +444,15 @@ def from_anndata(
     else:
         rows.cells_from(n_cells)
     inferred: dict[str, list[str]] = {}
-    if record is None and (sample_table is None or group_table is None):
+    if record is None and (samples is None or groups is None):
         exclude = {sample, group, *_TOOL_COLUMNS}
         if isinstance(n_cells, str):
             exclude.add(n_cells)
         inferred = rows.infer_columns(
             obs,
             [name for name in obs_columns if name not in exclude],
-            infer_samples=sample_table is None,
-            infer_groups=group_table is None,
+            infer_samples=samples is None,
+            infer_groups=groups is None,
         )
     features = _feature_table(
         adata.var,
@@ -494,7 +497,7 @@ def from_anndata(
                 "group_column": group,
                 "layers": mapping,
                 "n_cells": _cells_origin(n_cells),
-                **rows.orders(sample_table, group_table),
+                **rows.orders(samples, groups),
                 "obs_columns": inferred or None,
             },
         }
@@ -571,8 +574,8 @@ def from_mudata(
     *,
     layers: Mapping[str, str] | None = None,
     n_cells: Any = None,
-    sample_table: Any = None,
-    group_table: Any = None,
+    samples: Any = None,
+    groups: Any = None,
     normalization: Mapping[str, Any] | None = None,
     source: Mapping[str, Any] | None = None,
 ) -> Cube:
@@ -598,11 +601,11 @@ def from_mudata(
             aligned by its labels, such as ``pandas.crosstab`` of the cells' sample
             and group labels. By default the cell numbers of the recognised
             layout, or none.
-        sample_table: Sample metadata with a text column ``sample_id`` that holds
+        samples: The sample table, with a text column ``sample_id`` that holds
             every sample, as in ``from_anndata``. By default the samples are the
             sorted distinct observation names, with the columns of the MuData's
             ``obs``.
-        group_table: Group metadata with a text column ``group_id`` that holds every
+        groups: The group table, with a text column ``group_id`` that holds every
             modality name. By default the groups are the sorted modality names.
         normalization: How the normalized values were computed, required with
             ``log_sum``, ``log_sum_sq`` or ``linear_sum`` (see ``Cube``).
@@ -620,8 +623,9 @@ def from_mudata(
         ValueError: If the modalities hold different features, or for the reasons
             ``from_anndata`` gives.
     """
-    _check_arguments(layers, n_cells, sample_table, group_table, normalization)
+    _check_arguments(layers, n_cells, samples, groups, normalization)
     caller_source = source_record(source)
+    sample_table, group_table = samples, groups
     modalities = _modalities(mdata)
     record = _read_record(mdata.uns, "mudata")
     names = [name for name, _ in modalities]
@@ -823,8 +827,8 @@ class _Rows:
         """
         positions = []
         for labels, name, (table, recorded), table_name, id_column in (
-            (sample_labels, label_names[0], tables[0], "sample_table", _SAMPLE_ID),
-            (group_labels, label_names[1], tables[1], "group_table", _GROUP_ID),
+            (sample_labels, label_names[0], tables[0], "samples", _SAMPLE_ID),
+            (group_labels, label_names[1], tables[1], "groups", _GROUP_ID),
         ):
             try:
                 positions.append(
@@ -1441,8 +1445,8 @@ def _check_arguments(
     """Refuse masked arrays and wrong types in the arguments, before any reading."""
     reject_masked(layers, "layers")
     reject_masked(n_cells, "n_cells")
-    reject_masked_table(sample_table, "sample_table", _SAMPLE_ID)
-    reject_masked_table(group_table, "group_table", _GROUP_ID)
+    reject_masked_table(sample_table, "samples", _SAMPLE_ID)
+    reject_masked_table(group_table, "groups", _GROUP_ID)
     reject_masked(normalization, "normalization", missing="None")
     if layers is not None and not isinstance(layers, Mapping):
         raise TypeError(

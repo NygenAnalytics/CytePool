@@ -54,6 +54,10 @@ def _load_fixtures() -> tuple[dict, list[dict]]:
 
 
 CASES, CALLS = _load_fixtures()
+# calls.json names the function log2_cpm and the argument sample_groups of
+# filter_by_expression as they were named when validation/normalization.py wrote it.
+RENAMED_FUNCTIONS = {"log_cpm": "log2_cpm"}
+RENAMED_ARGUMENTS = {"group": "sample_groups"}
 CHECKS = sorted({call["check"] for call in CALLS})
 
 
@@ -65,18 +69,19 @@ def _run(call: dict) -> np.ndarray:
             value = case[value[1:]]
             if key in ("a_cutoff", "min_prop"):
                 value = float(value[0])
-        kwargs[key] = value
-    return np.asarray(getattr(nz, call["function"])(case["Y"], **kwargs))
+        kwargs[RENAMED_ARGUMENTS.get(key, key)] = value
+    function = RENAMED_FUNCTIONS.get(call["function"], call["function"])
+    return np.asarray(getattr(nz, function)(case["Y"], **kwargs))
 
 
 def test_fixtures_cover_every_function_and_rule() -> None:
-    functions = {call["function"] for call in CALLS}
+    functions = {RENAMED_FUNCTIONS.get(c["function"], c["function"]) for c in CALLS}
     assert functions == set(nz.__all__) - {"library_sizes"}
     assert sum(check.startswith("edge case") for check in CHECKS) == 18
     assert sum(call["case"].startswith("small") for call in CALLS) == 177
 
 
-@pytest.mark.filterwarnings("ignore:no group or design given")
+@pytest.mark.filterwarnings("ignore:no sample_groups or design given")
 @pytest.mark.parametrize("check", CHECKS)
 def test_matches_edger_and_deseq2(check: str) -> None:
     failures = []
@@ -95,7 +100,7 @@ def test_matches_edger_and_deseq2(check: str) -> None:
     assert not failures, failures[:5]
 
 
-@pytest.mark.filterwarnings("ignore:no group or design given")
+@pytest.mark.filterwarnings("ignore:no sample_groups or design given")
 @pytest.mark.skipif(
     not SAME_MATH_LIBRARY, reason="R's results came from glibc on x86-64"
 )
@@ -260,7 +265,7 @@ def test_median_ratio_of_proportional_samples() -> None:
         assert_allclose(factors(counts), [1.0, 1.0, 1.0], rtol=1e-14)
 
 
-def test_cpm_and_log_cpm_by_hand() -> None:
+def test_cpm_and_log2_cpm_by_hand() -> None:
     counts = np.array([[1, 3], [2, 2]], dtype=np.float64)
     assert_array_equal(nz.cpm(counts), [[250000, 750000], [500000, 500000]])
     assert_array_equal(
@@ -270,15 +275,15 @@ def test_cpm_and_log_cpm_by_hand() -> None:
     # twice to the library size.
     swapped = np.array([[0, 4], [4, 0]], dtype=np.float64)
     expected = np.log2([[2 / 8 * 1e6, 6 / 8 * 1e6], [6 / 8 * 1e6, 2 / 8 * 1e6]])
-    assert_allclose(nz.log_cpm(swapped), expected, rtol=1e-14)
+    assert_allclose(nz.log2_cpm(swapped), expected, rtol=1e-14)
     # Library sizes 4 and 12 scale the prior to 1 and 3.
     unequal = np.array([[0, 4], [6, 6]], dtype=np.float64)
     expected = np.log2([[1 / 6 * 1e6, 5 / 6 * 1e6], [9 / 18 * 1e6, 9 / 18 * 1e6]])
-    assert_allclose(nz.log_cpm(unequal, prior_count=2), expected, rtol=1e-14)
+    assert_allclose(nz.log2_cpm(unequal, prior_count=2), expected, rtol=1e-14)
     # Without a prior, zero counts give minus infinity.
     million = math.log2(1e6)
     assert_allclose(
-        nz.log_cpm(swapped, prior_count=0),
+        nz.log2_cpm(swapped, prior_count=0),
         [[-math.inf, million], [million, -math.inf]],
         rtol=1e-14,
     )
@@ -303,13 +308,15 @@ def test_filter_by_expression_follows_the_documented_rule() -> None:
     )
     balanced = ["a", "a", "a", "b", "b", "b"]
     expected = [True, False, False, True, False, True]
-    assert_array_equal(nz.filter_by_expression(counts, group=balanced), expected)
+    assert_array_equal(
+        nz.filter_by_expression(counts, sample_groups=balanced), expected
+    )
     one_way = np.column_stack([np.ones(6), [0, 0, 0, 1, 1, 1]])
     assert_array_equal(nz.filter_by_expression(counts, design=one_way), expected)
     # A group of two needs only two samples.
     unbalanced = ["a", "a", "b", "b", "b", "b"]
     assert_array_equal(
-        nz.filter_by_expression(counts, group=unbalanced),
+        nz.filter_by_expression(counts, sample_groups=unbalanced),
         [True, True, False, True, False, True],
     )
 
@@ -319,7 +326,7 @@ def test_filter_by_expression_total_count_is_inclusive() -> None:
     group = [0, 0, 0, 1, 1, 1]
     for total, keep in ((3, True), (3.5, False)):
         got = nz.filter_by_expression(
-            counts, group=group, min_count=1, min_total_count=total
+            counts, sample_groups=group, min_count=1, min_total_count=total
         )
         assert_array_equal(got, [keep, True])
 
@@ -329,17 +336,19 @@ def test_filter_by_expression_relaxes_large_groups() -> None:
     counts = _equal_depth([[10] * 14 + [0] * 16, [10] * 13 + [0] * 17])
     group = [0] * 15 + [1] * 15
     assert_array_equal(
-        nz.filter_by_expression(counts, group=group), [True, False, True]
+        nz.filter_by_expression(counts, sample_groups=group), [True, False, True]
     )
     design = np.column_stack([np.ones(30), np.repeat([0.0, 1.0], 15)])
     assert_array_equal(
         nz.filter_by_expression(counts, design=design), [True, False, True]
     )
     assert_array_equal(
-        nz.filter_by_expression(counts, group=group, min_prop=1.0), [False, False, True]
+        nz.filter_by_expression(counts, sample_groups=group, min_prop=1.0),
+        [False, False, True],
     )
     assert_array_equal(
-        nz.filter_by_expression(counts, group=group, large_n=15), [False, False, True]
+        nz.filter_by_expression(counts, sample_groups=group, large_n=15),
+        [False, False, True],
     )
 
 
@@ -362,7 +371,7 @@ def test_filter_by_expression_reads_only_the_fixed_effects_of_a_design() -> None
     # intercept filters as edgeR's filterByExpr does with the model matrix of its
     # fixed effects. Read as fixed, the donor columns would give every sample
     # leverage 1, and so n = 1, a laxer filter.
-    from cytepool.design import Design
+    from cytepool import Design
 
     case = CASES["ties"]
     (call,) = [
@@ -396,7 +405,7 @@ def test_filter_by_expression_without_group_or_design_uses_one_group() -> None:
     counts = _equal_depth([[10, 10, 10, 10, 10, 0], [10] * 6])
     with pytest.warns(UserWarning, match="one group"):
         got = nz.filter_by_expression(counts)
-    assert_array_equal(got, nz.filter_by_expression(counts, group=[0] * 6))
+    assert_array_equal(got, nz.filter_by_expression(counts, sample_groups=[0] * 6))
     assert_array_equal(got, [False, True, True])
 
 
@@ -458,8 +467,8 @@ def test_factors_follow_the_order_of_samples(counts: np.ndarray) -> None:
     ):
         assert_allclose(factors(counts[order]), factors(counts)[order], rtol=1e-14)
     assert_array_equal(
-        nz.filter_by_expression(counts[order], group=group[order]),
-        nz.filter_by_expression(counts, group=group),
+        nz.filter_by_expression(counts[order], sample_groups=group[order]),
+        nz.filter_by_expression(counts, sample_groups=group),
     )
 
 
@@ -483,10 +492,10 @@ def test_all_zero_features_change_nothing(counts: np.ndarray) -> None:
         lambda y: nz.median_ratio_size_factors(y, method="poscounts"),
     ):
         assert_array_equal(factors(padded), factors(counts))
-    keep = nz.filter_by_expression(padded, group=[0, 0, 0, 1, 1, 1])
+    keep = nz.filter_by_expression(padded, sample_groups=[0, 0, 0, 1, 1, 1])
     assert not keep[:3].any() and not keep[-2:].any()
     assert_array_equal(
-        keep[3:-2], nz.filter_by_expression(counts, group=[0, 0, 0, 1, 1, 1])
+        keep[3:-2], nz.filter_by_expression(counts, sample_groups=[0, 0, 0, 1, 1, 1])
     )
 
 
@@ -499,7 +508,7 @@ def test_inputs_are_not_modified(counts: np.ndarray) -> None:
 
 
 def test_memory_layout_changes_nothing_and_compiles_nothing(counts: np.ndarray) -> None:
-    expected = nz.tmm_factors(counts), nz.log_cpm(counts), nz.rle_factors(counts + 1)
+    expected = nz.tmm_factors(counts), nz.log2_cpm(counts), nz.rle_factors(counts + 1)
     kernels = (nz._tmm_log2_factors, nz._log2_cpm, nz._rle_median_ratios, accurate_sums)
     compiled = [len(kernel.signatures) for kernel in kernels]
     read_only = counts.copy()
@@ -510,7 +519,7 @@ def test_memory_layout_changes_nothing_and_compiles_nothing(counts: np.ndarray) 
         np.repeat(counts, 2, 1)[:, ::2],
     ):
         assert_array_equal(nz.tmm_factors(layout), expected[0])
-        assert_array_equal(nz.log_cpm(layout), expected[1])
+        assert_array_equal(nz.log2_cpm(layout), expected[1])
         assert_array_equal(nz.rle_factors(layout + 1), expected[2])
     assert [len(kernel.signatures) for kernel in kernels] == compiled
 
@@ -545,15 +554,15 @@ def test_sums_beyond_the_float64_range_raise() -> None:
         nz.upper_quartile_factors,
         nz.rle_factors,
         nz.cpm,
-        nz.log_cpm,
-        lambda y: nz.filter_by_expression(y, group=[0, 1]),
+        nz.log2_cpm,
+        lambda y: nz.filter_by_expression(y, sample_groups=[0, 1]),
     ):
         with pytest.raises(OverflowError, match="counts of sample 0 sum beyond"):
             compute(huge)
     # Each sample sums to 1e308 at most, but feature 0 sums to 2e308 over them.
     tall = np.array([[1e308, 1.0], [1e308, 1.0], [1.0, 1.0]])
     with pytest.raises(OverflowError, match="the counts of feature 0 sum beyond"):
-        nz.filter_by_expression(tall, group=[0, 0, 1])
+        nz.filter_by_expression(tall, sample_groups=[0, 0, 1])
     # edgeR forms 1e6 * count before dividing by the library size: 1e309 here.
     with pytest.raises(
         OverflowError, match="count per million of sample 0, feature 0 exceeds"
@@ -561,7 +570,7 @@ def test_sums_beyond_the_float64_range_raise() -> None:
         nz.cpm(np.array([[1e303, 1.0], [1.0, 1.0]]))
     # log-CPM scales the prior count by the mean library size, here 2e308 / 2.
     with pytest.raises(OverflowError, match="the library sizes sum beyond the float64"):
-        nz.log_cpm(np.ones((2, 2)), library_sizes=[1e308, 1e308])
+        nz.log2_cpm(np.ones((2, 2)), library_sizes=[1e308, 1e308])
 
 
 # Errors
@@ -594,8 +603,8 @@ def test_counts_are_checked(counts: np.ndarray, error: type, match: str) -> None
         nz.rle_factors,
         nz.median_ratio_size_factors,
         nz.cpm,
-        nz.log_cpm,
-        lambda y: nz.filter_by_expression(y, group=[0] * y.shape[0]),
+        nz.log2_cpm,
+        lambda y: nz.filter_by_expression(y, sample_groups=[0] * y.shape[0]),
     ):
         with pytest.raises(error, match=match):
             function(counts)
@@ -683,22 +692,26 @@ def test_undefined_factors_raise() -> None:
     with pytest.raises(ValueError, match='method must be "ratio" or "poscounts"'):
         nz.median_ratio_size_factors(GOOD, method="iterate")
     with pytest.raises(ValueError, match="prior_count must be non-negative"):
-        nz.log_cpm(GOOD, prior_count=-1)
+        nz.log2_cpm(GOOD, prior_count=-1)
     with pytest.raises(ValueError, match="prior_count must be finite"):
-        nz.log_cpm(GOOD, prior_count=np.inf)
+        nz.log2_cpm(GOOD, prior_count=np.inf)
 
 
 @pytest.mark.parametrize(
     ("kwargs", "error", "match"),
     [
         (
-            dict(group=[0, 1], design=np.ones((2, 1))),
+            dict(sample_groups=[0, 1], design=np.ones((2, 1))),
             ValueError,
-            "group or design, not both",
+            "sample_groups or design, not both",
         ),
-        (dict(group=[0, 1, 2]), ValueError, r"one label per sample \(2\)"),
-        (dict(group=[0, None]), ValueError, "sample 1 has None"),
-        (dict(group=[0.0, np.nan]), ValueError, "group labels must not be missing"),
+        (dict(sample_groups=[0, 1, 2]), ValueError, r"one label per sample \(2\)"),
+        (dict(sample_groups=[0, None]), ValueError, "sample 1 has None"),
+        (
+            dict(sample_groups=[0.0, np.nan]),
+            ValueError,
+            "the labels of sample_groups must not be missing",
+        ),
         (dict(design=np.ones((3, 1))), ValueError, r"one row per sample \(2\)"),
         (dict(design=np.array([[1.0], [np.inf]])), ValueError, "design must be finite"),
         (
@@ -706,15 +719,23 @@ def test_undefined_factors_raise() -> None:
             TypeError,
             "design must be a numeric matrix",
         ),
-        (dict(group=[0, 1], min_prop=1.5), ValueError, r"min_prop must be in \[0, 1\]"),
         (
-            dict(group=[0, 1], min_count=-1),
+            dict(sample_groups=[0, 1], min_prop=1.5),
+            ValueError,
+            r"min_prop must be in \[0, 1\]",
+        ),
+        (
+            dict(sample_groups=[0, 1], min_count=-1),
             ValueError,
             "min_count must be non-negative",
         ),
-        (dict(group=[0, 1], large_n=-1), ValueError, "large_n must be non-negative"),
         (
-            dict(group=[0, 1], min_total_count=np.nan),
+            dict(sample_groups=[0, 1], large_n=-1),
+            ValueError,
+            "large_n must be non-negative",
+        ),
+        (
+            dict(sample_groups=[0, 1], min_total_count=np.nan),
             ValueError,
             "min_total_count must be finite",
         ),

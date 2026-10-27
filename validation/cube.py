@@ -46,7 +46,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.cube import Cube
+from cytepool import Cube
 
 SEED = 20261022
 TARGET_SUM = 1e4

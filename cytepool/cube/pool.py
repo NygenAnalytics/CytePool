@@ -86,10 +86,10 @@ _FLOAT64_MAX = float(np.finfo(np.float64).max)
 def from_cells(
     counts: Any,
     *,
-    samples: Any,
-    groups: Any,
-    sample_table: Any = None,
-    group_table: Any = None,
+    sample_labels: Any,
+    group_labels: Any,
+    samples: Any = None,
+    groups: Any = None,
     features: Any = None,
     target_sum: float = 10000.0,
     library_sizes: Any = None,
@@ -114,18 +114,18 @@ def from_cells(
             ``csr_array``. Counts are non-negative and below 2**53, whole numbers or
             not. The column indices of a CSR row may be in any order, and repeated
             entries of one row and column are summed, as scipy does.
-        samples: The sample label of every cell, as text or integers (integers
-            become their decimal text), for example a list, a numpy array or a
-            pandas Series or Categorical.
-        groups: The group label, usually the cell type, of every cell, in the same
-            forms.
-        sample_table: Sample metadata, as a ``Table`` or anything ``Table``
-            accepts, with a text column ``sample_id`` that holds every sample label.
-            Its rows set the order of the samples, and a sample without cells gets
-            zeros. By default the samples are the sorted distinct labels (integers
-            in numeric order).
-        group_table: Group metadata with a text column ``group_id``, used in the
-            same way.
+        sample_labels: The sample label of every cell, as text or integers
+            (integers become their decimal text), for example a list, a numpy array
+            or a pandas Series or Categorical.
+        group_labels: The group label, usually the cell type, of every cell, in the
+            same forms.
+        samples: The sample table, as a ``Table`` or anything ``Table`` accepts,
+            with a text column ``sample_id`` that holds every sample label and the
+            samples' metadata, such as condition and donor. Its rows set the order
+            of the samples, and a sample without cells gets zeros. By default the
+            samples are the sorted distinct labels (integers in numeric order).
+        groups: The group table, with a text column ``group_id``, used in the same
+            way.
         features: Feature metadata with a text column ``feature_id`` and one row
             per column of ``counts``, or a sequence of feature ids. By default the
             ids are the columns of a pandas DataFrame ``counts`` when they are text,
@@ -199,8 +199,8 @@ def from_cells(
     Example:
         >>> cube = from_cells(
         ...     np.array([[1, 0], [3, 2], [0, 4]]),
-        ...     samples=["S1", "S1", "S2"],
-        ...     groups=["T", "T", "T"],
+        ...     sample_labels=["S1", "S1", "S2"],
+        ...     group_labels=["T", "T", "T"],
         ...     layers=["counts", "detected"],
         ... )
         >>> cube.layer("counts", "T").tolist()
@@ -213,10 +213,22 @@ def from_cells(
         matrix = _cell_matrix(counts)
         n_rows, n_features = matrix.shape
         sample_codes, sample_axis, sample_integers = axis_codes(
-            samples, "samples", n_rows, sample_table, "sample_table", "sample_id"
+            sample_labels,
+            "sample_labels",
+            n_rows,
+            samples,
+            "samples",
+            "sample_id",
+            axis="samples",
         )
         group_codes, group_axis, group_integers = axis_codes(
-            groups, "groups", n_rows, group_table, "group_table", "group_id"
+            group_labels,
+            "group_labels",
+            n_rows,
+            groups,
+            "groups",
+            "group_id",
+            axis="groups",
         )
         feature_origin = _id_origin(features, counts, "columns")
         if features is None:
@@ -280,11 +292,11 @@ def from_cells(
         "target_sum": target,
         "library_sizes": "cell_totals" if sizes is None else "given",
         "samples": {
-            "order": "sorted_labels" if sample_table is None else "sample_table",
+            "order": "sorted_labels" if samples is None else "sample_table",
             "labels": "integers" if sample_integers else "text",
         },
         "groups": {
-            "order": "sorted_labels" if group_table is None else "group_table",
+            "order": "sorted_labels" if groups is None else "group_table",
             "labels": "integers" if group_integers else "text",
         },
         "features": feature_origin,

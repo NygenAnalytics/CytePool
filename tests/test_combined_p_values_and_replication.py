@@ -24,19 +24,21 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.cube import Cube, CubeCollection
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.meta_analysis import align_study_results, meta_analysis
-from cytepool.replication import (
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
     ReplicationResult,
-    differential_expression_replication,
+    StudyResults,
+    limma_voom,
+    replication,
 )
 from cytepool.stats.combined_p_values import (
     CombinedPValues,
     combine_p_values,
     partial_conjunction,
 )
+from cytepool.stats.meta_analysis import fit_meta_analysis
 from cytepool.stats.multiple_testing import (
     TrueNullProportion,
     proportion_of_true_nulls,
@@ -216,11 +218,11 @@ def test_p_values_near_1e_300_keep_their_digits() -> None:
         np.array([1e-300, 1e-300]), method="stouffer", directions=[1.0, -1.0]
     )
     assert float(signed.p_value) == 1.0
-    assert float(signed.direction) == 0.0
+    assert float(signed.sign) == 0.0
     one = combine_p_values(np.array([1e-300]), method="stouffer", directions=[-3.0])
     # Through z = 37, p comes back within |log p| = 690 times the rounding of z.
     assert_allclose(one.p_value, 1e-300, rtol=1e-11)
-    assert float(one.direction) == -1.0
+    assert float(one.sign) == -1.0
 
 
 # Values derived by hand.
@@ -271,14 +273,14 @@ def test_effects_in_opposite_directions_cancel_in_stouffers_method() -> None:
 
     assert float(signed.statistic) == 0.0
     assert float(signed.p_value) == 1.0
-    assert float(signed.direction) == 0.0
-    assert float(signed.p_value_up) == float(signed.p_value_down) == 0.5
+    assert float(signed.sign) == 0.0
+    assert float(signed.up_p_value) == float(signed.down_p_value) == 0.5
     # Without directions the two-sided p-values add up, whatever their signs.
     assert float(combine_p_values(p, method="stouffer").p_value) < 0.01
     # In the same direction, the two-sided p-value of Z = 2 z(0.02) / sqrt(2).
     same = combine_p_values(p, method="stouffer", directions=[2.5, 0.1])
-    assert float(same.direction) == 1.0
-    assert_allclose(same.p_value, 2.0 * same.p_value_up, rtol=1e-15)
+    assert float(same.sign) == 1.0
+    assert_allclose(same.p_value, 2.0 * same.up_p_value, rtol=1e-15)
 
 
 @pytest.mark.parametrize(
@@ -310,7 +312,7 @@ def test_one_study_is_its_own_combination(method: str) -> None:
     assert_allclose(result.p_value, [0.3, 0.004], rtol=1e-14)
     # With its direction, one study gives back its two-sided p-value.
     assert_allclose(signed.p_value, [0.3, 0.004], rtol=1e-14)
-    assert_array_equal(signed.direction, [-1.0, 1.0])
+    assert_array_equal(signed.sign, [-1.0, 1.0])
     assert_array_equal(result.n_studies, [1, 1])
 
 
@@ -325,7 +327,7 @@ def test_a_feature_that_no_study_tested_has_no_p_value() -> None:
     p = np.array([[0.1, np.nan], [0.2, np.nan]])
     for method in ("fisher", "stouffer", "simes"):
         result = combine_p_values(p, method=method, directions=np.ones((2, 2)))
-        assert np.isnan(result.p_value[1]) and np.isnan(result.direction[1])
+        assert np.isnan(result.p_value[1]) and np.isnan(result.sign[1])
         assert_array_equal(result.n_studies, [2, 0])
     assert np.isnan(partial_conjunction(p, 1).p_value[1])
 
@@ -372,7 +374,7 @@ def test_the_order_of_the_features_does_not_matter() -> None:
         first = combine_p_values(p, method=method, directions=signs)
         other = combine_p_values(p[:, order], method=method, directions=signs[:, order])
         assert_array_equal(other.p_value, first.p_value[order])
-        assert_array_equal(other.direction, first.direction[order])
+        assert_array_equal(other.sign, first.sign[order])
 
 
 def test_turning_every_direction_around_swaps_the_one_sided_p_values() -> None:
@@ -382,9 +384,9 @@ def test_turning_every_direction_around_swaps_the_one_sided_p_values() -> None:
         up = combine_p_values(p, method=method, directions=signs)
         down = combine_p_values(p, method=method, directions=-signs)
         assert_array_equal(down.p_value, up.p_value)
-        assert_array_equal(down.direction, -up.direction)
-        assert_array_equal(down.p_value_up, up.p_value_down)
-        assert_array_equal(down.p_value_down, up.p_value_up)
+        assert_array_equal(down.sign, -up.sign)
+        assert_array_equal(down.up_p_value, up.down_p_value)
+        assert_array_equal(down.down_p_value, up.up_p_value)
 
 
 def test_a_direction_is_the_one_sided_p_value_of_its_sign() -> None:
@@ -401,9 +403,9 @@ def test_a_direction_is_the_one_sided_p_value_of_its_sign() -> None:
             p[:, large], method=method, directions=signs[:, large]
         )
         plain = combine_p_values(one_sided[:, large], method=method)
-        assert_allclose(signed.p_value_up, plain.p_value, rtol=1e-11)
+        assert_allclose(signed.up_p_value, plain.p_value, rtol=1e-11)
         reversed_ = combine_p_values(1 - one_sided[:, large], method=method)
-        assert_allclose(signed.p_value_down, reversed_.p_value, rtol=1e-11)
+        assert_allclose(signed.down_p_value, reversed_.p_value, rtol=1e-11)
 
 
 def test_weights_scaled_together_change_nothing() -> None:
@@ -506,7 +508,7 @@ def test_results_are_read_only_and_say_what_they_hold() -> None:
         result.p_value[0] = 0.0
     assert "with directions" in repr(result) and "method='stouffer'" in repr(result)
     one = combine_p_values([0.2, 0.3])
-    assert one.p_value.shape == () and one.direction is None
+    assert one.p_value.shape == () and one.sign is None
 
 
 # The proportion of true nulls.
@@ -595,7 +597,7 @@ def test_pi0_refuses_p_values_outside_0_and_1_and_none_at_all() -> None:
 
 
 @cache
-def cohorts() -> tuple[CubeCollection, dict[str, Any]]:
+def cohorts() -> StudyResults:
     """The three small cohorts of the fixture, aligned and tested by limma_voom."""
     data = fixture("replication")
     cubes = {}
@@ -619,53 +621,51 @@ def cohorts() -> tuple[CubeCollection, dict[str, Any]]:
             contrasts={"stim_vs_ctrl": "conditionstim"},
         )
         results[study] = limma_voom(cube, design)
-    return collection, results
+    return StudyResults(collection, results)
 
 
 @cache
-def replication(name: str) -> ReplicationResult:
-    collection, results = cohorts()
-    return differential_expression_replication(
-        collection, results, "T", "stim_vs_ctrl", **SETTINGS[name]
-    )
+def replication_of(name: str) -> ReplicationResult:
+    return replication(cohorts(), "T", "stim_vs_ctrl", **SETTINGS[name])
 
 
 @pytest.mark.parametrize("name", ["T0", "T1"])
 def test_replication_matches_r(name: str) -> None:
     data = fixture("replication")
-    result = replication(name)
-    genes, g = result.genes, data[f"{name}/genes"]
-    counts = ("n_studies", "n_up", "n_down", "n_found", "n_found_up", "n_found_down", "direction")  # fmt: skip
+    result = replication_of(name)
+    features, g = result.features, data[f"{name}/genes"]
+    counts = ("n_studies", "n_up", "n_down", "n_found", "n_found_up", "n_found_down", "sign")  # fmt: skip
     for i, column in enumerate(counts):
-        assert_array_equal(genes[column], g[i], err_msg=column)
+        assert_array_equal(features[column], g[i], err_msg=column)
     for i, column in enumerate(("sign_agreement", "p_value", "replication_p_value", "adjusted_p_value", "replication_adjusted_p_value"), 7):  # fmt: skip
-        assert scaled_difference(genes[column], g[i], i > 7) <= EXACT, column
+        assert scaled_difference(features[column], g[i], i > 7) <= EXACT, column
     tier = CLOSE if SETTINGS[name]["meta_method"] == "reml" else EXACT
     for i, column in enumerate(("q_statistic", "q_p_value", "i_squared", "tau_squared")):  # fmt: skip
-        assert scaled_difference(genes[column], data[f"{name}/heterogeneity"][i], i == 1) <= tier, column  # fmt: skip
+        assert scaled_difference(features[column], data[f"{name}/heterogeneity"][i], i == 1) <= tier, column  # fmt: skip
     pairs, r = result.study_pairs, data[f"{name}/pairs"]
-    assert_array_equal(pairs["n_found"], r[2])
-    assert_array_equal(pairs["n_found_in_both"], r[3])
+    assert_array_equal(pairs["n_features_found"], r[2])
+    assert_array_equal(pairs["n_features_found_in_both"], r[3])
     assert scaled_difference(pairs["sign_agreement"], r[4]) <= EXACT
     known = ~np.isnan(r[5])  # qvalue stops where no p-value reaches its largest lambda
     assert scaled_difference(pairs["pi1"][known], r[5][known]) <= EXACT
     assert not np.isnan(pairs["pi1"]).any()
     f = data[f"{name}/found_in"]
-    assert_array_equal(result.found_in["n_genes"], f[1])
-    assert_array_equal(result.found_in["n_genes_same_direction"], f[2])
+    assert_array_equal(result.found_in["n_features"], f[1])
+    assert_array_equal(result.found_in["n_features_same_direction"], f[2])
 
 
 def test_replication_combines_the_aligned_results_as_the_array_functions_do() -> None:
-    collection, results = cohorts()
-    result = replication("T0")
-    aligned = align_study_results(collection, results, "T", "stim_vs_ctrl")
+    studies = cohorts()
+    collection = studies.collection
+    result = replication_of("T0")
+    aligned = studies.table("T", "stim_vs_ctrl")
     k, n = collection.n_studies, collection.n_features
     tested = np.array(aligned["status"].tolist()).reshape(k, n) == "tested"
-    genes = tested.any(axis=0)
+    features = tested.any(axis=0)
 
     def column(name: str) -> np.ndarray:
         values = np.asarray(aligned[name]).reshape(k, n)
-        return np.where(tested, values, np.nan)[:, genes]
+        return np.where(tested, values, np.nan)[:, features]
 
     p, lfc, se = column("p_value"), column("log2_fold_change"), column("standard_error")
     weights = np.sqrt(result.studies["n_samples"].astype(float))
@@ -675,32 +675,33 @@ def test_replication_combines_the_aligned_results_as_the_array_functions_do() ->
         weights=np.where(np.isnan(p), np.nan, weights[:, None]),
         directions=lfc,
     )
-    assert_array_equal(result.genes["p_value"], combined_p.p_value)
-    assert_array_equal(result.genes["direction"], combined_p.direction)
+    assert_array_equal(result.features["p_value"], combined_p.p_value)
+    assert_array_equal(result.features["sign"], combined_p.sign)
     replicated = partial_conjunction(p, 2, directions=lfc)
-    assert_array_equal(result.genes["replication_p_value"], replicated.p_value)
-    fit = meta_analysis(lfc, se)
+    assert_array_equal(result.features["replication_p_value"], replicated.p_value)
+    fit = fit_meta_analysis(lfc, se)
     several = combined_p.n_studies >= 2
-    assert_array_equal(result.genes["tau_squared"][several], fit.tau_squared[several])
-    assert np.isnan(result.genes["tau_squared"][~several]).all()
+    assert_array_equal(
+        result.features["tau_squared"][several], fit.tau_squared[several]
+    )
+    assert np.isnan(result.features["tau_squared"][~several]).all()
     # pi1 of the first pair, from the p-values of the genes the first study finds.
-    found = tested[0, genes] & (column("adjusted_p_value")[0] < 0.05)
+    found = tested[0, features] & (column("adjusted_p_value")[0] < 0.05)
     chosen = found & ~np.isnan(p[1])
     assert result.study_pairs["pi1"][0] == proportion_of_true_nulls(p[1, chosen]).pi1
-    # The genes found in at least k studies, counted from the genes table.
+    # The genes found in at least k studies, counted from the table of features.
     for k_studies, count in zip(
-        result.found_in["n_studies"], result.found_in["n_genes"]
+        result.found_in["n_studies"], result.found_in["n_features"]
     ):
-        assert count == np.count_nonzero(result.genes["n_found"] >= k_studies)
+        assert count == np.count_nonzero(result.features["n_found"] >= k_studies)
 
 
 def test_pi1_is_at_lambda_one_half_by_default_and_qvalues_with_no_options() -> None:
-    collection, results = cohorts()
+    studies = cohorts()
+    collection = studies.collection
 
     def run(**options: Any) -> ReplicationResult:
-        return differential_expression_replication(
-            collection, results, "T", "stim_vs_ctrl", **options
-        )
+        return replication(studies, "T", "stim_vs_ctrl", **options)
 
     default, half, smoother = (
         run(),
@@ -712,14 +713,15 @@ def test_pi1_is_at_lambda_one_half_by_default_and_qvalues_with_no_options() -> N
     assert default.settings["null_proportion"] == {"lambdas": 0.5}
     assert smoother.settings["null_proportion"] == {}
     # Only pi1 changes: every other number is the same.
-    assert default.genes.equals(smoother.genes)
-    assert default.study_pairs.select(["discovery", "replication", "n_found"]).equals(
-        smoother.study_pairs.select(["discovery", "replication", "n_found"])
+    assert default.features.equals(smoother.features)
+    columns = ["discovery", "replication", "n_features_found"]
+    assert default.study_pairs.select(columns).equals(
+        smoother.study_pairs.select(columns)
     )
     # pi1 of the first pair from its definition: 1 - pi0, pi0 the share of the
     # p-values above 0.5 over 0.5, at most 1 (Storey and Tibshirani 2003); and from
     # qvalue's smoother with {}.
-    aligned = align_study_results(collection, results, "T", "stim_vs_ctrl")
+    aligned = studies.table("T", "stim_vs_ctrl")
     k, n = collection.n_studies, collection.n_features
     tested = np.array(aligned["status"].tolist()).reshape(k, n) == "tested"
     p = np.where(tested, np.asarray(aligned["p_value"]).reshape(k, n), np.nan)
@@ -732,7 +734,7 @@ def test_pi1_is_at_lambda_one_half_by_default_and_qvalues_with_no_options() -> N
 
 
 def test_replication_records_its_settings_studies_and_provenance() -> None:
-    result = replication("T1")
+    result = replication_of("T1")
     settings = result.settings
     assert settings["group"] == "T" and settings["contrast"] == "stim_vs_ctrl"
     assert settings["method"] == "fisher" and settings["weights"] is None
@@ -740,20 +742,47 @@ def test_replication_records_its_settings_studies_and_provenance() -> None:
     assert "alignment" in result.provenance["collection"]
     assert_array_equal(result.studies["analysed"], [True, True, True])
     assert np.isnan(result.studies["weight"]).all()
-    assert_array_equal(replication("T0").studies["weight"], np.sqrt(result.studies["n_samples"]))  # fmt: skip
+    assert_array_equal(replication_of("T0").studies["weight"], np.sqrt(result.studies["n_samples"]))  # fmt: skip
     copy = pickle.loads(pickle.dumps(result))
-    assert copy.genes.equals(result.genes) and copy.provenance == result.provenance
+    assert (
+        copy.features.equals(result.features) and copy.provenance == result.provenance
+    )
     with pytest.raises(AttributeError, match="immutable"):
-        result._genes = None  # type: ignore[misc]
+        result._features = None  # type: ignore[misc]
     assert "ReplicationResult of group 'T'" in repr(result)
     assert max(map(len, repr(result).splitlines())) <= 80
 
 
+def test_the_group_and_contrast_of_studies_that_have_one_may_be_left_out() -> None:
+    # The cohorts tested one contrast, and analysed two groups.
+    studies = cohorts()
+    named = replication(studies, "T", "stim_vs_ctrl")
+    assert replication(studies, "T").features.equals(named.features)
+    with pytest.raises(ValueError, match="the studies analysed 2 groups; name one"):
+        replication(studies)
+    # The same studies with group T alone.
+    collection = studies.collection
+    only_t = StudyResults(
+        collection,
+        {
+            study: limma_voom(
+                collection.aligned_cube(study), result.design, groups=["T"]
+            )
+            for study, result in studies.items()
+        },
+    )
+    alone = replication(only_t)
+    assert alone.settings["group"] == "T"
+    assert alone.settings["contrast"] == "stim_vs_ctrl"
+    for name in ("features", "study_pairs", "found_in", "studies"):
+        assert getattr(alone, name).equals(getattr(named, name)), name
+
+
 def test_replication_refuses_invalid_settings() -> None:
-    collection, results = cohorts()
+    studies = cohorts()
 
     def run(**options: Any) -> None:
-        differential_expression_replication(collection, results, "T", "stim_vs_ctrl", **options)  # fmt: skip
+        replication(studies, "T", "stim_vs_ctrl", **options)
 
     with pytest.raises(ValueError, match="at_least must be from 1 to the 3"):
         run(at_least=4)
@@ -768,12 +797,11 @@ def test_replication_refuses_invalid_settings() -> None:
     with pytest.raises(ValueError, match="one value or at least 4"):
         run(null_proportion={"lambdas": [0.2, 0.5]})
     with pytest.raises(KeyError, match="no group 'NK'"):
-        differential_expression_replication(collection, results, "NK", "stim_vs_ctrl")
+        replication(studies, "NK", "stim_vs_ctrl")
+    collection = studies.collection
     one = CubeCollection({"A": collection.cubes["A"]}, align_groups_by="group_id")
     with pytest.raises(ValueError, match="replication needs at least two"):
-        differential_expression_replication(
-            one, {"A": results["A"]}, "T", "stim_vs_ctrl"
-        )
+        replication(StudyResults(one, {"A": studies["A"]}), "T", "stim_vs_ctrl")
 
 
 # Figures.
@@ -783,7 +811,7 @@ def test_the_agreement_heatmap_draws_pi1_of_every_pair() -> None:
     pyplot = pytest.importorskip("matplotlib.pyplot")
     from cytepool.plotting import plot_study_agreement
 
-    result = replication("T1")
+    result = replication_of("T1")
     ax = plot_study_agreement(result)
     drawn = np.ma.filled(ax.get_images()[0].get_array().astype(float), np.nan)
     pairs = result.study_pairs
@@ -799,7 +827,7 @@ def test_the_agreement_heatmap_draws_pi1_of_every_pair() -> None:
     with pytest.raises(ValueError, match="measure must be one of"):
         plot_study_agreement(result, measure="kappa")
     with pytest.raises(TypeError, match="ReplicationResult"):
-        plot_study_agreement(result.genes)  # type: ignore[arg-type]
+        plot_study_agreement(result.features)  # type: ignore[arg-type]
     pyplot.close("all")
 
 
@@ -807,11 +835,11 @@ def test_the_bars_count_the_genes_each_number_of_studies_finds() -> None:
     pyplot = pytest.importorskip("matplotlib.pyplot")
     from cytepool.plotting import plot_replicated_genes
 
-    result = replication("T0")
+    result = replication_of("T0")
     ax = plot_replicated_genes(result)
-    genes = result.genes
-    found = np.asarray(genes["n_found"])
-    one_way = np.maximum(genes["n_found_up"], genes["n_found_down"]) == found
+    features = result.features
+    found = np.asarray(features["n_found"])
+    one_way = np.maximum(features["n_found_up"], features["n_found_down"]) == found
     for gid, mask in (("same direction", one_way), ("both directions", ~one_way)):
         heights = [bar.get_height() for bar in ax.patches if bar.get_gid() == gid]
         assert heights == [np.count_nonzero((found == k) & mask) for k in (1, 2, 3)]

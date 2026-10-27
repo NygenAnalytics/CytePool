@@ -3,9 +3,9 @@ set enrichment analysis along them.
 
 Gene set enrichment analysis, its figures and over-representation analysis read their
 genes the same way: from a group and contrast of a
-:class:`~cytepool.differential_expression.DifferentialExpressionResult`, from a table
-of results, or, for a ranking, from a mapping of gene id to statistic, and their gene
-sets from a :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to genes.
+:class:`~cytepool.DifferentialExpressionResult`, from a table of results, or, for a
+ranking, from a mapping of gene id to statistic, and their gene sets from a
+:class:`~cytepool.GeneSets` or a mapping of set name to genes.
 
 The ranking:
     Genes are ranked by decreasing statistic. Genes with equal statistics keep the

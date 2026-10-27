@@ -65,7 +65,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
@@ -382,7 +382,7 @@ def run_voom(case):
 def cytepool_results(case):
     """CytePool's outputs for a case, keyed and shaped as limma writes them."""
     design, factors, result, warned = run_voom(case)
-    out = {"warned": warned, "E": result.log_cpm, "weights": result.weights}
+    out = {"warned": warned, "E": result.log2_cpm, "weights": result.weights}
     out["lib.size"] = result.effective_library_sizes
     if case["span"] is None:
         out["span"] = result.span  # NaN where limma returns no span
@@ -394,7 +394,7 @@ def cytepool_results(case):
         order = np.argsort(x, kind="stable")
         out |= {"xy.x": x, "xy.y": result.sqrt_sd[in_trend], "line.x": x[order]}
         out["line.y"] = result.sqrt_sd_trend[in_trend][order]
-        fit = fit_linear_model(result.log_cpm, design, weights=result.weights)
+        fit = fit_linear_model(result.log2_cpm, design, weights=result.weights)
         if len(design.contrasts):
             fit = contrasts_fit(fit, design.contrasts, method="limma")
         moderated = moderated_statistics(fit)

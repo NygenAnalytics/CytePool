@@ -24,9 +24,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.cube import Cube, from_bulk
-from cytepool.design import Design
-from cytepool.differential_expression import dream_voom, limma_voom
+from cytepool import Cube, Design, dream_voom, from_bulk, limma_voom
 from cytepool.stats.dream import (
     ModeratedFixedEffectTests,
     _signed_z,
@@ -79,7 +77,7 @@ def fixture_tests(name: str) -> Any:
     voom = voom_with_dream_weights(
         data["counts"], design, span=0.5, weights=data.get("prior_weights")
     )
-    fit = fit_mixed_model(voom.log_cpm, design, weights=voom.weights)
+    fit = fit_mixed_model(voom.log2_cpm, design, weights=voom.weights)
     names = data["names"]
     return voom, fixed_effect_tests(fit, contrast_weights(design, names), names=names)
 
@@ -140,9 +138,9 @@ def test_the_moderation_matches_variance_partitions_ebayes(
     np.testing.assert_allclose(
         np.sqrt(moderated.residual_variance_at_mean_weight), data["sigma"], rtol=CLOSE
     )
-    np.testing.assert_allclose(moderated.residual_df, data["rdf"], rtol=CLOSE)
+    np.testing.assert_allclose(moderated.df_residual, data["rdf"], rtol=CLOSE)
     for ours, key in (
-        (moderated.prior_df, "df_prior"),
+        (moderated.df_prior, "df_prior"),
         (moderated.prior_variance, "s2_prior"),
     ):
         np.testing.assert_allclose(
@@ -152,14 +150,14 @@ def test_the_moderation_matches_variance_partitions_ebayes(
         moderated.posterior_variance, reference["s2_post"], rtol=CLOSE
     )
     assert scaled(moderated.t, reference["t"]) <= CLOSE
-    assert scaled(moderated.lods, reference["lods"]) <= CLOSE
+    assert scaled(moderated.log_odds, reference["lods"]) <= CLOSE
     np.testing.assert_allclose(
         moderated.df_total, reference["df_total"], rtol=SATTERTHWAITE
     )
     assert p_value_difference(moderated.p_value, reference["p"]) <= SATTERTHWAITE
     assert scaled(moderated.z, reference["z"]) <= SATTERTHWAITE
     if variant == "robust":  # the fixture's outliers get smaller prior df
-        assert np.ptp(moderated.prior_df) > 1.0
+        assert np.ptp(moderated.df_prior) > 1.0
 
 
 @cache
@@ -208,7 +206,7 @@ def test_dream_voom_matches_variance_partition_on_every_cell_type(variant: str) 
         assert scaled(table["log2_fold_change"], data[f"{group} logFC"]) <= CLOSE
         assert scaled(table["average_log2_cpm"], reference["average"]) <= CLOSE
         assert scaled(table["t"], reference["t"]) <= CLOSE
-        assert scaled(table["b_statistic"], reference["lods"]) <= CLOSE
+        assert scaled(table["log_odds"], reference["lods"]) <= CLOSE
         np.testing.assert_allclose(
             table["df"], reference["df_total"], rtol=SATTERTHWAITE
         )
@@ -247,14 +245,14 @@ def test_the_fits_match_lme4_and_lmertest_at_the_same_estimates(
     evaluated at CytePool's estimates of the first 20 genes."""
     data, _ = fixture(name)
     voom, _ = fixture_tests(name)
-    n = voom.log_cpm.shape[0]
+    n = voom.log2_cpm.shape[0]
     if method == "ml":
         prior = data.get("prior_weights", np.ones(n))
         weights = np.repeat((prior / prior.mean())[:, None], N_GIVEN, axis=1)
     else:
         weights = voom.weights[:, :N_GIVEN]
     fit = fit_mixed_model(
-        voom.log_cpm[:, :N_GIVEN],
+        voom.log2_cpm[:, :N_GIVEN],
         case_design(name),
         weights=weights,
         method=method,  # type: ignore[arg-type]
@@ -266,7 +264,7 @@ def test_the_fits_match_lme4_and_lmertest_at_the_same_estimates(
     }
     np.testing.assert_allclose(fit.log_likelihood, reference["loglik"], rtol=EXACT)
     np.testing.assert_allclose(fit.residual_variance, reference["sigma2"], rtol=EXACT)
-    np.testing.assert_allclose(fit.residual_df, reference["rdf"], rtol=EXACT)
+    np.testing.assert_allclose(fit.df_residual, reference["rdf"], rtol=EXACT)
     largest = np.abs(reference["fitted"]).max()
     np.testing.assert_allclose(
         fit.fitted_values, reference["fitted"].T, rtol=0.0, atol=EXACT * largest
@@ -334,7 +332,7 @@ def test_fitted_values_and_residual_df_of_a_balanced_design_have_closed_forms(
     # I - H is the identity on the q (m - 1) contrasts within groups, 1 / (1 + m
     # gamma) on the q - 1 between them and zero on the grand mean.
     rdf = q * (m - 1) + (q - 1) / (1.0 + m * gamma) ** 2
-    np.testing.assert_allclose(fit.residual_df, rdf, rtol=1e-10)
+    np.testing.assert_allclose(fit.df_residual, rdf, rtol=1e-10)
     np.testing.assert_allclose(fit.mean_expression, y.mean(axis=0), rtol=1e-15)
     np.testing.assert_array_equal(fit.mean_weights, np.ones(3))
 
@@ -389,10 +387,10 @@ def test_sample_order_donor_labels_and_the_scale_of_prior_weights_change_nothing
     )
     np.testing.assert_allclose(permuted.weights, reference.weights[order], rtol=1e-8)
     first = fixed_effect_tests(
-        fit_mixed_model(reference.log_cpm, design, weights=reference.weights)
+        fit_mixed_model(reference.log2_cpm, design, weights=reference.weights)
     )
     second = fixed_effect_tests(
-        fit_mixed_model(permuted.log_cpm, other, weights=permuted.weights)
+        fit_mixed_model(permuted.log2_cpm, other, weights=permuted.weights)
     )
     a, b = moderated_fixed_effect_tests(first), moderated_fixed_effect_tests(second)
     np.testing.assert_allclose(b.t, a.t, rtol=1e-7)
@@ -424,7 +422,7 @@ def test_a_donor_variance_of_zero_gives_limmas_moderated_tests() -> None:
     fit = fit_mixed_model(y, design, weights=weights)
     assert np.all(fit.boundary)
     moderated = moderated_fixed_effect_tests(fixed_effect_tests(fit))
-    np.testing.assert_allclose(moderated.residual_df, donor.size - 2, rtol=1e-12)
+    np.testing.assert_allclose(moderated.df_residual, donor.size - 2, rtol=1e-12)
     limma = fit_linear_model(
         y, x, weights=weights / weights.mean(axis=0), coefficient_names=design.columns
     )
@@ -433,7 +431,7 @@ def test_a_donor_variance_of_zero_gives_limmas_moderated_tests() -> None:
         moderated.posterior_variance, reference.posterior_variance, rtol=1e-9
     )
     np.testing.assert_allclose(moderated.t, reference.t, rtol=1e-9)
-    np.testing.assert_allclose(moderated.lods, reference.lods, rtol=1e-9)
+    np.testing.assert_allclose(moderated.log_odds, reference.log_odds, rtol=1e-9)
     # dream adds the prior df to n - p without limma's cap, which these data leave
     # unreached.
     total = np.broadcast_to(reference.df_total[:, None], moderated.df_total.shape)
@@ -478,7 +476,7 @@ def test_a_feature_the_effects_reproduce_is_left_out_of_the_trend_and_untested()
     assert np.isnan(voom.sqrt_sd[0]) and np.isfinite(voom.sqrt_sd[1:]).all()
     assert np.isfinite(voom.weights).all() and (voom.weights > 0.0).all()
     moderated = moderated_fixed_effect_tests(
-        fixed_effect_tests(fit_mixed_model(voom.log_cpm, design, weights=voom.weights))
+        fixed_effect_tests(fit_mixed_model(voom.log2_cpm, design, weights=voom.weights))
     )
     assert np.isnan(moderated.t[0]).all() and np.isfinite(moderated.t[1:]).all()
     assert np.isnan(moderated.p_value[0]).all() and np.isnan(moderated.z[0]).all()
@@ -510,7 +508,7 @@ def test_dream_voom_records_its_settings_and_the_features_not_fitted() -> None:
         "p_value",
         "adjusted_p_value",
         "adjusted_p_value_across_groups",
-        "b_statistic",
+        "log_odds",
         "z_statistic",
     )
     # The feature without a fit is untested, and left out of both adjustments.

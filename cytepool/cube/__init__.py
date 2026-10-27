@@ -1,7 +1,15 @@
-"""Pseudobulk cubes: additive statistics per sample, group and feature."""
+"""Pseudobulk cubes: additive statistics per sample, group and feature.
 
-from .collection import CubeCollection
-from .cube import Cube
-from .pool import from_bulk, from_cells
+:class:`cytepool.Cube`, :class:`cytepool.CubeCollection`, :func:`cytepool.from_cells`
+and :func:`cytepool.from_bulk` are documented at the top level; the modules
+:mod:`cytepool.cube.fingerprints` and :mod:`cytepool.cube.provenance` specify the
+fingerprints and provenance records of cube files.
+"""
 
-__all__ = ["Cube", "CubeCollection", "from_bulk", "from_cells"]
+from .collection import CubeCollection as CubeCollection
+from .cube import Cube as Cube
+from .pool import from_bulk as from_bulk
+from .pool import from_cells as from_cells
+
+# The names above are the top level's (cytepool.Cube and the others).
+__all__: list[str] = []

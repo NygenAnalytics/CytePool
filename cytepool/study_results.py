@@ -2,33 +2,36 @@
 
 Studies of one question, such as cohorts of a disease, are compared or combined only
 once each is analysed on the collection's axes: its aligned cube
-(:meth:`~cytepool.cube.CubeCollection.aligned_cube`), with a design built from its own
-samples. :func:`analyse_each_study` runs one analysis per study that way, and
-:class:`StudyResults` keeps the results with their collection: it lines them up gene
-by gene (:meth:`StudyResults.table`, as
-:func:`~cytepool.meta_analysis.align_study_results` does) and gives one column of every
-study as a studies x features matrix (:meth:`StudyResults.matrix`), the form that
-combined p-values (:func:`~cytepool.stats.combined_p_values.combine_p_values`) and
-SumRank (:func:`~cytepool.sumrank.sumrank`) take.
+(:meth:`~cytepool.CubeCollection.aligned_cube`), with a design built from its own
+samples. :func:`~cytepool.analyse_each_study` runs one analysis per study that way, and
+:class:`~cytepool.StudyResults` keeps the results with their collection: it lines them
+up feature by feature (:meth:`~cytepool.StudyResults.table`), with the reason a study
+has no result for a feature (it did not measure it, did not test it, or did not analyse
+the group or contrast), and gives one column of every study as a studies x features
+matrix (:meth:`~cytepool.StudyResults.matrix`), the form that combined p-values
+(:func:`~cytepool.stats.combined_p_values.combine_p_values`) take. Every function that
+combines studies takes it: :func:`~cytepool.meta_analysis`,
+:func:`~cytepool.replication`, :func:`~cytepool.sumrank` and
+:func:`~cytepool.held_out_prediction`.
 
 Memory:
     Each result keeps the cube it analysed (see
-    :class:`~cytepool.differential_expression.DifferentialExpressionResult`), here the
-    study's aligned cube. The aligned cube of a cube read with
-    :func:`~cytepool.io.read_cube` stays on disk; that of a cube in memory, when its
-    groups or features are selected or renamed, holds a copy of the study's values,
-    which the results keep for as long as they exist.
+    :class:`~cytepool.DifferentialExpressionResult`), here the study's aligned cube. The
+    aligned cube of a cube read with :func:`~cytepool.read_cube` stays on disk; that of
+    a cube in memory, when its groups or features are selected or renamed, holds a copy
+    of the study's values, which the results keep for as long as they exist.
 """
 
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
+from ._analysis_records import absence, study_keys, study_union
 from ._columns import text_column
 from ._masked_arrays import reject_masked
-from ._messages import fitted_lines, quoted
+from ._messages import fitted_lines, listing, quoted
 from .cube import CubeCollection
 from .design import Design
 from .differential_expression import (
@@ -37,12 +40,16 @@ from .differential_expression import (
     limma_trend,
     limma_voom,
 )
-from .meta_analysis import align_study_results
 from .table import Table
 
 __all__ = ["StudyResults", "analyse_each_study"]
 
 _ANALYSES = (limma_voom, limma_trend, dream_voom)
+# Why a study has no result for a feature, as StudyResults.table gives it.
+_NOT_TESTED = (
+    "the study measured the feature and tested the group and contrast, but not the "
+    "feature, as when its expression filter left the feature out"
+)
 
 
 class StudyResults(Mapping[str, DifferentialExpressionResult]):
@@ -57,9 +64,8 @@ class StudyResults(Mapping[str, DifferentialExpressionResult]):
     Args:
         collection: The collection whose aligned cubes the results analysed.
         results: The result of every study of the collection, by study name, from
-            :func:`~cytepool.differential_expression.limma_voom`,
-            :func:`~cytepool.differential_expression.limma_trend` or
-            :func:`~cytepool.differential_expression.dream_voom`.
+            :func:`~cytepool.limma_voom`, :func:`~cytepool.limma_trend` or
+            :func:`~cytepool.dream_voom`.
 
     Raises:
         TypeError: If ``collection`` is not a ``CubeCollection``, ``results`` not a
@@ -209,31 +215,52 @@ class StudyResults(Mapping[str, DifferentialExpressionResult]):
     def table(self, group: str | None = None, contrast: str | None = None) -> Table:
         """Line up the studies' results of one group and contrast, feature by feature.
 
-        :func:`~cytepool.meta_analysis.align_study_results` of the collection and
-        the results: a row for every study and every feature of the collection, with
-        ``status`` and ``reason`` saying whether the study tested the feature, and
-        why not, and the studies' numeric columns, NaN where a study did not test
-        the feature.
+        The table has a row for every study and every feature of the collection: the
+        studies in order, and the features in the collection's order within each
+        study, as :meth:`matrix` lays them out. ``status`` says whether the study
+        tested the feature, and why not:
+
+        - ``"tested"``: the study's table of the group and contrast has the feature;
+        - ``"not_tested"``: the study measured the feature and has a table of the
+          group and contrast, without the feature, as when its expression filter
+          left it out;
+        - ``"not_measured"``: the study did not measure the feature
+          (:attr:`CubeCollection.measured <cytepool.CubeCollection.measured>`), so no
+          analysis of it could test it;
+        - ``"not_analysed"``: the study measured the feature but has no table of the
+          group and contrast: it does not have the group, its result leaves the group
+          out, the group was not fitted, or the contrast cannot be estimated from its
+          samples; ``reason`` says which, in the words of the study's result.
+
+        The columns are ``study``, ``feature_id``, ``symbol`` (when the collection's
+        features have it), ``status``, ``reason`` (empty where tested), and then the
+        numeric columns of the studies' tables, such as ``log2_fold_change``,
+        ``standard_error``, ``t``, ``p_value`` and ``adjusted_p_value``, in the order
+        in which the studies first have them, NaN where a study did not test the
+        feature. A missing feature is thus never a zero, and a feature that a study
+        did not measure is told apart from one that it measured and left out.
 
         Args:
             group: An aligned group id; it may be left out when the studies analysed
                 one group.
             contrast: A contrast name, or the name of an F-test of
-                :func:`~cytepool.differential_expression.dream_voom`; it may be
-                left out when the studies tested one.
+                :func:`~cytepool.dream_voom`; it may be left out when the studies tested
+                one.
 
         Returns:
             A table of ``collection.n_studies * collection.n_features`` rows.
 
         Raises:
             ValueError: If a key is left out and the studies analysed several, or a
-                study's result did not analyse its aligned cube.
+                study's result did not analyse its aligned cube: it analyses a group
+                that the study does not have in the collection, or tests a feature
+                that the study did not measure there.
             KeyError: If ``group`` is not a group of the collection, or no study
                 tested ``contrast``.
             TypeError: If a key is not a string.
         """
-        group, contrast = self._keys(group, contrast)
-        return align_study_results(self._collection, self._results, group, contrast)
+        group, contrast = study_keys(self._results, group, contrast)
+        return _aligned_table(self._collection, self._results, group, contrast)
 
     def matrix(
         self, column: str, group: str | None = None, contrast: str | None = None
@@ -292,8 +319,8 @@ class StudyResults(Mapping[str, DifferentialExpressionResult]):
         return values
 
     def __repr__(self) -> str:
-        groups = self._union("groups")
-        contrasts = self._union("contrasts")
+        groups = study_union(self._results, "groups")
+        contrasts = study_union(self._results, "contrasts")
         lines = [
             f"StudyResults of {len(self._results):,} "
             f"stud{'y' if len(self._results) == 1 else 'ies'}: {len(groups):,} "
@@ -309,42 +336,6 @@ class StudyResults(Mapping[str, DifferentialExpressionResult]):
             )
         return fitted_lines("\n".join(lines))
 
-    def _union(self, what: Literal["groups", "contrasts"]) -> list[str]:
-        """The groups, or the contrasts and F-tests, of any study, in order."""
-        if what == "groups":
-            return list(
-                dict.fromkeys(
-                    group
-                    for result in self._results.values()
-                    for group in result.groups
-                )
-            )
-        return list(
-            dict.fromkeys(
-                name
-                for result in self._results.values()
-                for name in (*result.contrasts.names, *result.f_tests)
-            )
-        )
-
-    def _keys(self, group: Any, contrast: Any) -> tuple[Any, Any]:
-        """The group and contrast asked for, or the only ones the studies analysed."""
-        found = []
-        for name, value, what in (
-            ("group", group, "groups"),
-            ("contrast", contrast, "contrasts"),
-        ):
-            if value is None:
-                available = self._union(what)  # type: ignore[arg-type]
-                if len(available) != 1:
-                    raise ValueError(
-                        f"the studies analysed {len(available)} {what}; name one with "
-                        f"{name}, one of {quoted(available)}"
-                    )
-                value = available[0]
-            found.append(value)
-        return found[0], found[1]
-
 
 def analyse_each_study(
     collection: CubeCollection,
@@ -359,22 +350,20 @@ def analyse_each_study(
     """Analyse every study of a collection alike, each on its aligned cube.
 
     For each study, in the collection's order: its aligned cube
-    (:meth:`~cytepool.cube.CubeCollection.aligned_cube`), a
-    :class:`~cytepool.design.Design` built from the cube's own samples with the
-    formula, random effects, levels and contrasts given, and ``analysis`` of the
-    cube with that design and ``options``. The loop a meta-analysis or a replication
-    analysis starts from, in one call: ``analyse_each_study(collection, "~
-    condition", levels={"condition": ["control", "case"]}, contrasts={"case_vs_control":
-    "conditioncase"})``. A study whose design or analysis fails stops the run, with
-    a note that names the study.
+    (:meth:`~cytepool.CubeCollection.aligned_cube`), a :class:`~cytepool.Design` built
+    from the cube's own samples with the formula, random effects, levels and contrasts
+    given, and ``analysis`` of the cube with that design and ``options``. The loop a
+    meta-analysis or a replication analysis starts from, in one call:
+    ``analyse_each_study(collection, "~ condition", levels={"condition": ["control", "case"]}, contrasts={"case_vs_control": "conditioncase"})``.
+    A study whose design or analysis fails stops the run, with a note that names the
+    study.
 
     Args:
         collection: The studies, aligned.
         formula: The design's formula, such as ``"~ condition"``, over the columns
             of each study's sample table.
-        analysis: :func:`~cytepool.differential_expression.limma_voom` (by default),
-            :func:`~cytepool.differential_expression.limma_trend` or
-            :func:`~cytepool.differential_expression.dream_voom`.
+        analysis: :func:`~cytepool.limma_voom` (by default),
+            :func:`~cytepool.limma_trend` or :func:`~cytepool.dream_voom`.
         random: The design's random effects, such as ``"(1 | donor)"``, for
             ``dream_voom``.
         levels: The levels of the design's factors, the reference first, such as
@@ -428,3 +417,113 @@ def analyse_each_study(
             error.add_note(f"(in study {study!r} of the collection)")
             raise
     return StudyResults(collection, results)
+
+
+def _aligned_table(
+    collection: CubeCollection,
+    results: Mapping[str, DifferentialExpressionResult],
+    group: str,
+    contrast: str,
+) -> Table:
+    """The table of :meth:`StudyResults.table`, of results checked to be one per
+    study of the collection."""
+    studies = collection.studies
+    for name, value in (("group", group), ("contrast", contrast)):
+        reject_masked(value, name)
+        if not isinstance(value, str):
+            raise TypeError(f"{name} must be a string, got {type(value).__name__}")
+    group_ids = collection.groups["group_id"].tolist()
+    if group not in group_ids:
+        raise KeyError(
+            f"no group {group!r} in the collection; its groups are: "
+            f"{listing(group_ids) or '(none)'}"
+        )
+    tested_names = list(
+        dict.fromkeys(
+            name
+            for study in studies
+            for name in (*results[study].contrasts.names, *results[study].f_tests)
+        )
+    )
+    if contrast not in tested_names:
+        raise KeyError(
+            f"no study tested the contrast {contrast!r}; the studies tested: "
+            f"{listing(tested_names) or '(none)'}"
+        )
+    members = collection.group_members
+    held: dict[str, set[str]] = {study: set() for study in studies}
+    for study, aligned in zip(
+        members["study"].tolist(), members["group_id"].tolist(), strict=True
+    ):
+        held[study].add(aligned)
+    feature_ids = collection.features["feature_id"].tolist()
+    index = {feature: position for position, feature in enumerate(feature_ids)}
+    n_features = len(feature_ids)
+    measured = collection.measured
+    statuses: list[np.ndarray] = []
+    reasons: list[list[str]] = []
+    values: dict[str, list[tuple[int, np.ndarray, np.ndarray]]] = {}
+    for row, study in enumerate(studies):
+        result = results[study]
+        foreign = [name for name in result.groups if name not in held[study]]
+        if foreign:
+            raise ValueError(
+                f"the result of study {study!r} analyses the group"
+                f"{'' if len(foreign) == 1 else 's'} {quoted(foreign)}, which the "
+                "study does not have in this collection; analyse the study's aligned "
+                f"cube, collection.aligned_cube({study!r})"
+            )
+        table = None
+        if group not in held[study]:
+            why = f"study {study!r} has no group {group!r}"
+        else:
+            table = result.tables.get((group, contrast))
+            why = "" if table is not None else absence(result, group, contrast)
+        status = np.where(measured[row], "not_analysed", "not_measured").astype(object)
+        reason = [
+            why if flag else f"study {study!r} did not measure the feature"
+            for flag in measured[row].tolist()
+        ]
+        if table is not None:
+            positions = np.array(
+                [index.get(feature, -1) for feature in table["feature_id"].tolist()],
+                dtype=np.intp,
+            )
+            outside = (positions < 0) | ~measured[row, np.maximum(positions, 0)]
+            if outside.any():
+                feature = table["feature_id"][int(np.flatnonzero(outside)[0])]
+                raise ValueError(
+                    f"the result of study {study!r} tests the feature {feature!r}, "
+                    "which the study did not measure in this collection; analyse the "
+                    f"study's aligned cube, collection.aligned_cube({study!r})"
+                )
+            status[measured[row]] = "not_tested"
+            status[positions] = "tested"
+            for position in np.flatnonzero(measured[row]).tolist():
+                reason[position] = _NOT_TESTED
+            for position in positions.tolist():
+                reason[position] = ""
+            for name in table.columns:
+                column = table[name]
+                if name not in ("feature_id", "symbol") and column.dtype.kind in "biuf":
+                    values.setdefault(name, []).append((row, positions, column))
+        statuses.append(status)
+        reasons.append(reason)
+    columns: dict[str, Any] = {
+        "study": text_column([study for study in studies for _ in range(n_features)]),
+        "feature_id": text_column(feature_ids * len(studies)),
+    }
+    if "symbol" in collection.features:
+        columns["symbol"] = text_column(
+            collection.features["symbol"].tolist() * len(studies)
+        )
+    columns["status"] = text_column(
+        [status for array in statuses for status in array.tolist()]
+    )
+    columns["reason"] = text_column([text for part in reasons for text in part])
+    for name, parts in values.items():
+        column = np.full((len(studies), n_features), np.nan)
+        for row, positions, found in parts:
+            column[row, positions] = found
+        columns[name] = column.reshape(-1)
+    return Table(columns)

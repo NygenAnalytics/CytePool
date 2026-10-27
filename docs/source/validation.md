@@ -315,7 +315,7 @@ numba 0.68.0.
 | The genes, as a set and in the order in which the studies first list them, and which study measured which | `anndata.concat`, outer join (NaN where a study lacks a gene), `pandas.unique` | identical; 0 mismatches | 0 | 2 pass |
 | Every layer of each study's aligned cube: merged cell types, measured genes | the outer join's values | 0 | 1e-10 | 1 pass |
 | `stack()`: genes in order, cell types and samples; every layer; the cells of each entry, and an entry without cells | `anndata.concat`, inner join, kept to the cell types of every study | 0 | 0 and 1e-10 | 3 pass |
-| `limma_voom` on each study's aligned cube, lined up by `align_study_results`: logFC, AveExpr, t, P.Value, adj.P.Val, B and the standard error, in 12 cell types of 3 studies | limma, study by study | 3.8e-13 | 1e-10 | 3 pass |
+| `limma_voom` on each study's aligned cube, lined up by `StudyResults.table`: logFC, AveExpr, t, P.Value, adj.P.Val, B and the standard error, in 12 cell types of 3 studies | limma, study by study | 3.8e-13 | 1e-10 | 3 pass |
 | The status of every gene of every study: tested, measured and left out, or not measured | limma's tables and each study's measured genes | 0 mismatches | 0 | 3 pass |
 | `limma_voom` on the stack of `lupus` and `covid`, `~ donor + condition` with donors `study::donor` | limma on the stacked counts | 1.4e-13 | 1e-10 | 1 pass |
 | The same with the donor ids as the studies give them | limma on the stacked counts, donors `study::donor` | 1.9 (log2 fold changes) | must exceed 1e-10 | 1 control |
@@ -751,7 +751,7 @@ large counts, and 2e-3 with a dispersion of 2e-5. Deliberate differences:
 [`validation/quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py)
 compares `fit_quasi_likelihood` and `quasi_likelihood_f_test` with edgeR's `glmQLFit`
 and `glmQLFTest` (edgeR 4.4's default, `legacy = FALSE`), `common_dispersion` with
-`estimateGLMCommonDisp` and `dispCoxReid`, `average_log_cpm` with `aveLogCPM`, and
+`estimateGLMCommonDisp` and `dispCoxReid`, `average_log2_cpm` with `aveLogCPM`, and
 `negative_binomial_unit_deviance_moments` with sums at 30 digits in mpmath and the
 gamma limit. The counts are simulated from fixed seeds, with a dispersion for each
 gene, in 14 cases of 1,000 genes and 8 or 9 samples, with genes without counts and
@@ -1739,7 +1739,7 @@ the F-tests here have independent coefficients.
 
 [`validation/variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py)
 compares `variance_fractions` and `variance_partitioning`, and the figures
-`plot_variance_fractions` and `plot_gene_variance_fractions`, with variancePartition's
+`plot_variance_fractions` and `plot_feature_variance_fractions`, with variancePartition's
 `fitExtractVarPartModel`, `calcVarPart`, `plotVarPart` and `plotPercentBars`, on data
 from fixed seeds (20261101 to 20261108), 60 genes each: one random donor intercept (10
 donors x 3 samples, a fifth of the genes without a donor effect); random donor, batch
@@ -1784,7 +1784,7 @@ describes, and differs from the kernel density estimate that CytePool draws by u
 segments with a width are compared by position.
 
 The conventions of variancePartition that its documentation leaves open, found by
-probing it and listed in the documentation of `cytepool.variance_partitioning`, are
+probing it and listed in the documentation of `cytepool.stats.variance_fractions`, are
 exercised here: the variance of a fixed effect is the weighted variance of its fitted
 contribution, with the denominator of a maximum likelihood variance; in a mixed model
 the terms share the variance of all the fitted fixed effects in proportion to their
@@ -2015,7 +2015,7 @@ agree to rounding.
 ## Meta-analysis
 
 [`validation/meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py)
-compares `meta_analysis` with metafor's `rma.uni`, run feature by feature in R on the
+compares `fit_meta_analysis` with metafor's `rma.uni`, run feature by feature in R on the
 same simulated effects and standard errors (seed 20261028), for the fixed-effect model
 (`method = "EE"`) and the DerSimonian-Laird, REML and Paule-Mandel estimators of the
 between-study variance, each with z-tests and with the Knapp-Hartung adjustment
@@ -2036,8 +2036,8 @@ the first has T, B and NK cells and 400 genes, the second too few NK cells to fi
 cells and 10% fewer genes, and 30% of the changes differ between cohorts. `limma_voom`
 tests the stimulation in every cohort; R merges the cohorts' tables by gene id, runs
 `rma.uni` on every gene that enough cohorts tested and adjusts the p-values with
-`p.adjust(method = "BH")`, and `differential_expression_meta_analysis` is compared with
-its results. Reference: R 4.4.3, metafor 5.0.1, jsonlite 2.0.0.
+`p.adjust(method = "BH")`, and `meta_analysis` is compared with its results. Reference:
+R 4.4.3, metafor 5.0.1, jsonlite 2.0.0.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
@@ -2107,8 +2107,8 @@ lambda, with its defaults, `smooth.df = 5`, `smooth.log.pi0`, `pi0.method =
 "bootstrap"`, one lambda and three other grids. Then three cohorts of 6, 4 and 8 donors,
 before and after a stimulation that changes 15% of 700 genes in two cell types, alike in
 every cohort up to 50% more or less, each measuring part of the genes, are aligned in a
-`CubeCollection` and tested by `limma_voom`; `differential_expression_replication` runs
-on both cell types with four settings, among them qvalue's defaults for pi1
+`CubeCollection` and tested by `limma_voom`; `replication` runs on both cell types
+with four settings, among them qvalue's defaults for pi1
 (`null_proportion={}`) and pi1 by default (lambda = 0.5), and R computes every column
 from the cohorts' tables with metap, qvalue, `p.adjust` and metafor's `rma.uni` (REML
 with `control = list(threshold = 1e-13, maxiter = 10000)`, or DerSimonian-Laird). The
@@ -2168,7 +2168,7 @@ labels each are all analysed. Reference: R 4.4.3, the authors' code, mpmath 1.3.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
-| The Irwin-Hall distribution function on a grid of 1 to 200 studies (118 values), and the Irwin-Hall p-values of `sumrank` for 3, 10 and 30 studies (1,199 genes) | mpmath, 200 digits | 6.2e-15 | 1e-12 | 2 pass |
+| The Irwin-Hall distribution function on a grid of 1 to 200 studies (118 values), and the Irwin-Hall p-values of `fit_sumrank` for 3, 10 and 30 studies (1,199 genes) | mpmath, 200 digits | 6.2e-15 | 1e-12 | 2 pass |
 | The SumRank statistics of 5 studies, T and B, up and down, summing every study, 0.65 and 0.5 of them; of 4 studies with tied p-values | the authors' SumRank | 4.2e-15 | 1e-12 | 2 pass |
 | Permutation p-values of 40 permutations of the condition, up and down: (1 + the null statistics at most the gene's) / (1 + N) | the authors' null statistics | 0 | 0 | 1 pass |
 | The authors' calibration, between the null statistics strictly below the gene's and those at most it, divided by N | `CalibratePValueswithPermutations` | 0 genes outside | 0 | 1 pass |

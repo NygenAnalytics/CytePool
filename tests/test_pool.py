@@ -8,10 +8,9 @@ import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
 import cytepool
-from cytepool.cube import Cube, from_bulk, from_cells
+from cytepool import Cube, Table, from_bulk, from_cells
 from cytepool.cube import pool as pool_module
 from cytepool.cube.cube import LAYER_NAMES
-from cytepool.table import Table
 
 FIXTURE = Path(__file__).parent / "data" / "pool" / "scanpy_decoupler.npz"
 TARGET_SUM = 1e4
@@ -169,7 +168,7 @@ def assert_same_cube(actual: Cube, expected: Cube) -> None:
 
 def pool(counts: Any, cells: dict[str, np.ndarray], **options: Any) -> Cube:
     return from_cells(
-        counts, samples=cells["samples"], groups=cells["groups"], **options
+        counts, sample_labels=cells["samples"], group_labels=cells["groups"], **options
     )
 
 
@@ -245,8 +244,8 @@ def test_single_cell_entries_hold_that_cells_values_to_a_few_ulps() -> None:
     groups = [f"g{i:02d}" for i in range(values.size)]
     cube = from_cells(
         values[:, None],
-        samples=["s"] * values.size,
-        groups=groups,
+        sample_labels=["s"] * values.size,
+        group_labels=groups,
         target_sum=1.0,
         library_sizes=np.ones(values.size),
     )
@@ -355,17 +354,17 @@ def test_sums_above_the_largest_uint32_switch_counts_to_uint64() -> None:
     expected, n_cells = pooled_with_masks(
         above, np.array(samples), np.array(groups), ["a", "b"], ["g", "h"]
     )
-    cube = from_cells(above, samples=samples, groups=groups)
+    cube = from_cells(above, sample_labels=samples, group_labels=groups)
     assert cube.layer("counts").dtype == np.uint64
     assert cube.layer("counts", "g").tolist() == [[2**32, 3], [5, 0]]
     assert_pooled(cube, expected, n_cells)
     # 2**31 + (2**31 - 1) is the largest uint32 itself.
     at_limit = np.array([[2**31, 1], [2**31 - 1, 2], [5, 0], [0, 7]])
-    cube = from_cells(at_limit, samples=samples, groups=groups)
+    cube = from_cells(at_limit, sample_labels=samples, group_labels=groups)
     assert cube.layer("counts").dtype == np.uint32
     assert cube.layer("counts", "g")[0, 0] == 2**32 - 1
     # A single count above the largest uint32.
-    cube = from_cells(np.array([[2**33 + 1]]), samples=["a"], groups=["g"])
+    cube = from_cells(np.array([[2**33 + 1]]), sample_labels=["a"], group_labels=["g"])
     assert cube.layer("counts").dtype == np.uint64
     assert cube.layer("counts")[0, 0, 0] == 2**33 + 1
 
@@ -424,8 +423,8 @@ def test_tables_set_the_order_and_keep_metadata(
     ordered = pool(
         to_csr(cells["counts"]),
         cells,
-        sample_table=sample_table,
-        group_table=group_table,
+        samples=sample_table,
+        groups=group_table,
         features=features,
     )
     assert ordered.samples.equals(Table(sample_table))
@@ -452,25 +451,35 @@ def test_tables_set_the_order_and_keep_metadata(
 def test_integer_and_categorical_labels() -> None:
     counts = np.arange(1, 13).reshape(6, 2)
     # Integer labels sort in numeric order and become text.
-    cube = from_cells(counts, samples=[10, 2, 2, 10, 1, 2], groups=[0, 0, 1, 1, 0, 0])
+    cube = from_cells(
+        counts, sample_labels=[10, 2, 2, 10, 1, 2], group_labels=[0, 0, 1, 1, 0, 0]
+    )
     assert cube.samples["sample_id"].tolist() == ["1", "2", "10"]
     assert cube.groups["group_id"].tolist() == ["0", "1"]
     assert cube.layer("counts", "0").tolist() == [[9, 10], [14, 16], [1, 2]]
     # numpy reads a list that mixes text with NaN or numbers as text ("nan", "1").
-    with pytest.raises(ValueError, match="samples has a missing label at cell 2"):
-        from_cells(counts, samples=["a", "b", np.nan, "a", "b", "a"], groups=[0] * 6)
-    with pytest.raises(TypeError, match="groups mixes text and integer labels"):
-        from_cells(counts, samples=[1] * 6, groups=["a", "b", 1, "a", "b", "a"])
+    with pytest.raises(ValueError, match="sample_labels has a missing label at cell 2"):
+        from_cells(
+            counts,
+            sample_labels=["a", "b", np.nan, "a", "b", "a"],
+            group_labels=[0] * 6,
+        )
+    with pytest.raises(TypeError, match="group_labels mixes text and integer labels"):
+        from_cells(
+            counts, sample_labels=[1] * 6, group_labels=["a", "b", 1, "a", "b", "a"]
+        )
     with pytest.raises(ValueError, match=r"features\['feature_id'\] has a missing"):
-        from_cells(counts, samples=[1] * 6, groups=[0] * 6, features=["x", np.nan])
+        from_cells(
+            counts, sample_labels=[1] * 6, group_labels=[0] * 6, features=["x", np.nan]
+        )
     pd = pytest.importorskip("pandas")
     missing = pd.Categorical(["a", None, "b", "a", "b", "a"])
-    with pytest.raises(ValueError, match="samples has a missing label at cell 1"):
-        from_cells(counts, samples=missing, groups=[0] * 6)
+    with pytest.raises(ValueError, match="sample_labels has a missing label at cell 1"):
+        from_cells(counts, sample_labels=missing, group_labels=[0] * 6)
     # Categories sort like other labels, and unused categories are dropped.
     labels = pd.Categorical(["b", "a", "b", "a", "a", "b"], categories=["z", "b", "a"])
     for samples in (labels, pd.Series(labels), pd.Series(np.asarray(labels))):
-        by_category = from_cells(counts, samples=samples, groups=["g"] * 6)
+        by_category = from_cells(counts, sample_labels=samples, group_labels=["g"] * 6)
         assert by_category.samples["sample_id"].tolist() == ["a", "b"]
         assert by_category.layer("counts", "g").tolist() == [[19, 22], [17, 20]]
 
@@ -533,18 +542,18 @@ def test_layer_subsets_equal_the_full_cube(
 def test_empty_inputs() -> None:
     no_cells = from_cells(
         np.zeros((0, 3)),
-        samples=[],
-        groups=[],
-        sample_table={"sample_id": ["S1"]},
-        group_table={"group_id": ["g"]},
+        sample_labels=[],
+        group_labels=[],
+        samples={"sample_id": ["S1"]},
+        groups={"group_id": ["g"]},
     )
     assert no_cells.layer("counts").shape == (1, 1, 3)
     assert not no_cells.layer("log_sum").any()
     assert no_cells.n_cells is not None and no_cells.n_cells.tolist() == [[0]]
     no_features = from_cells(
         CSR(np.zeros(0), np.zeros(0, np.int32), np.zeros(3, np.int32), (2, 0)),
-        samples=["a", "b"],
-        groups=["g", "g"],
+        sample_labels=["a", "b"],
+        group_labels=["g", "g"],
         layers=["counts", "detected"],
     )
     assert no_features.layer("counts").shape == (1, 2, 0)
@@ -555,7 +564,7 @@ def test_matches_scanpy_and_decoupler() -> None:
     # cells that scanpy normalized itself, and decoupler's pseudobulk sums.
     data = np.load(FIXTURE, allow_pickle=False)
     counts = CSR(data["data"], data["indices"], data["indptr"], tuple(data["shape"]))
-    cube = from_cells(counts, samples=data["sample"], groups=data["group"])
+    cube = from_cells(counts, sample_labels=data["sample"], group_labels=data["group"])
     groups = [cube.groups["group_id"].tolist().index(g) for g in data["keys_group"]]
     samples = [cube.samples["sample_id"].tolist().index(s) for s in data["keys_sample"]]
     n_cells = cube.n_cells
@@ -652,7 +661,7 @@ def test_text_labels_of_a_data_frame_give_the_ids() -> None:
     unnamed = from_bulk(frame.reset_index(drop=True), features=["u", "v", "w"])
     assert unnamed.samples["sample_id"].tolist() == ["sample_0", "sample_1"]
     assert unnamed.features["feature_id"].tolist() == ["u", "v", "w"]
-    pooled = from_cells(frame, samples=["s", "s"], groups=["g", "g"])
+    pooled = from_cells(frame, sample_labels=["s", "s"], group_labels=["g", "g"])
     assert pooled.features["feature_id"].tolist() == ["x", "y", "z"]
     assert pooled.layer("counts", "g").tolist() == [[12, 1, 21]]
 
@@ -845,49 +854,51 @@ INVALID_CALLS = [
     ),
     (
         "too few labels",
-        lambda d: {"samples": np.array(["S1"] * 102)},
+        lambda d: {"sample_labels": np.array(["S1"] * 102)},
         ValueError,
-        "counts has 103 rows, samples has 102 labels",
+        "counts has 103 rows, sample_labels has 102 labels",
     ),
     (
         "missing label",
-        lambda d: {"groups": np.array(["B"] * 50 + [None] + ["B"] * 52, dtype=object)},
+        lambda d: {
+            "group_labels": np.array(["B"] * 50 + [None] + ["B"] * 52, dtype=object)
+        },
         ValueError,
-        "groups has a missing label at cell 50",
+        "group_labels has a missing label at cell 50",
     ),
     (
         "empty label",
-        lambda d: {"samples": np.array(["S1"] * 102 + [""])},
+        lambda d: {"sample_labels": np.array(["S1"] * 102 + [""])},
         ValueError,
-        "samples has an empty label at cell 102",
+        "sample_labels has an empty label at cell 102",
     ),
     (
         "float labels",
-        lambda d: {"samples": np.ones(103)},
+        lambda d: {"sample_labels": np.ones(103)},
         TypeError,
-        "samples must hold text or integer labels, got dtype float64",
+        "sample_labels must hold text or integer labels, got dtype float64",
     ),
     (
         "mixed labels",
-        lambda d: {"samples": np.array(["S1", 1] * 51 + ["S1"], dtype=object)},
+        lambda d: {"sample_labels": np.array(["S1", 1] * 51 + ["S1"], dtype=object)},
         TypeError,
         "mixes text and integer labels",
     ),
     (
         "2-D labels",
-        lambda d: {"samples": np.array([["S1"] * 103])},
+        lambda d: {"sample_labels": np.array([["S1"] * 103])},
         ValueError,
-        r"samples must be 1-D, one label per cell, got shape \(1, 103\)",
+        r"sample_labels must be 1-D, one label per cell, got shape \(1, 103\)",
     ),
     (
         "label without a row",
-        lambda d: {"sample_table": {"sample_id": ["S1", "S2", "S4"]}},
+        lambda d: {"samples": {"sample_id": ["S1", "S2", "S4"]}},
         ValueError,
-        r"the label 'S3' of cell \d+ in samples is not in sample_table\['sample_id'\]",
+        r"the label 'S3' of cell \d+ in sample_labels is not in samples\['sample_id'\]",
     ),
     (
         "table without ids",
-        lambda d: {"group_table": {"name": GROUP_IDS}},
+        lambda d: {"groups": {"name": GROUP_IDS}},
         ValueError,
         "the groups table needs a 'group_id' column",
     ),
@@ -964,8 +975,8 @@ def test_invalid_calls_are_rejected(
 ) -> None:
     arguments: dict[str, Any] = {
         "counts": cells["counts"],
-        "samples": cells["samples"],
-        "groups": cells["groups"],
+        "sample_labels": cells["samples"],
+        "group_labels": cells["groups"],
     }
     arguments.update(change(cells["counts"]))
     with pytest.raises(error, match=message):
@@ -976,7 +987,10 @@ def test_sums_up_to_the_largest_int64_are_exact_and_beyond_it_raise() -> None:
     # 1,024 cells of 2**53 - 1, the largest count, and one of 1,023 sum to 2**63 - 1,
     # the largest int64; float64 would round that sum to 2**63.
     counts = np.append(np.full(1024, 2**53 - 1), 1023).reshape(-1, 1)
-    labels = {"samples": ["a"] * counts.shape[0], "groups": ["g"] * counts.shape[0]}
+    labels = {
+        "sample_labels": ["a"] * counts.shape[0],
+        "group_labels": ["g"] * counts.shape[0],
+    }
     cube = from_cells(counts, **labels)
     assert cube.layer("counts").dtype == np.uint64
     assert cube.layer("counts")[0, 0, 0] == 2**63 - 1
@@ -996,7 +1010,7 @@ def test_sums_up_to_the_largest_int64_are_exact_and_beyond_it_raise() -> None:
             from_cells(counts, **labels)
     # One count that is not a whole number makes the counts float64, which have no
     # such limit, wherever that cell comes: here after the sum passes 2**63 - 1.
-    labels = {"samples": ["a"] * 1026, "groups": ["g"] * 1026}
+    labels = {"sample_labels": ["a"] * 1026, "group_labels": ["g"] * 1026}
     expected = sum(counts[:, 0].tolist()) + 0.5  # Python integers, exact
     for fractional in (np.vstack([counts, [[0.5]]]), np.vstack([[[0.5]], counts])):
         cube = from_cells(fractional, **labels, layers="counts")
@@ -1023,19 +1037,23 @@ def test_an_entry_with_more_cells_than_detected_counts_is_rejected(
         pool_module._check_detected_fits(np.array([7, 2**32]), ids)
     # ... and from_cells is run with the limit lowered to two cells.
     monkeypatch.setattr(pool_module, "_MOST_DETECTED", 2)
-    labels = {"samples": ["a", "b", "a", "a", "b"], "groups": ["g"] * 5}
+    labels = {"sample_labels": ["a", "b", "a", "a", "b"], "group_labels": ["g"] * 5}
     with pytest.raises(OverflowError, match="sample 'a' has 3 cells, more than the 2"):
         from_cells(np.ones((5, 1)), **labels)
     counts_only = from_cells(np.ones((5, 1)), **labels, layers="counts")
     assert counts_only.layer("counts", "g").tolist() == [[3], [2]]
-    at_limit = from_cells(np.ones((4, 1)), samples=["a", "b"] * 2, groups=["g"] * 4)
+    at_limit = from_cells(
+        np.ones((4, 1)), sample_labels=["a", "b"] * 2, group_labels=["g"] * 4
+    )
     assert at_limit.layer("detected", "g").tolist() == [[2], [2]]
 
 
 def test_normalized_values_that_sum_beyond_float64_are_rejected() -> None:
     # One cell's normalized values sum to target_sum, 1e308, which float64 holds;
     # two such cells in an entry do not fit.
-    one = from_cells(np.array([[1]]), samples=["a"], groups=["g"], target_sum=1e308)
+    one = from_cells(
+        np.array([[1]]), sample_labels=["a"], group_labels=["g"], target_sum=1e308
+    )
     assert one.layer("linear_sum")[0, 0, 0] == 1e308
     with pytest.raises(
         OverflowError,
@@ -1044,8 +1062,8 @@ def test_normalized_values_that_sum_beyond_float64_are_rejected() -> None:
     ):
         from_cells(
             np.array([[1], [1]]),
-            samples=["a", "a"],
-            groups=["g", "g"],
+            sample_labels=["a", "a"],
+            group_labels=["g", "g"],
             target_sum=1e308,
         )
 
@@ -1054,14 +1072,22 @@ def test_normalized_values_beyond_float64_are_rejected() -> None:
     message = r"normalized values of cell 0 \(row 0 of counts\).*exceed the float64"
     # target_sum / library size is 5e309, beyond float64 for both counts.
     with pytest.raises(ValueError, match=message):
-        from_cells(np.array([[1e-306, 1e-306]]), samples=["a"], groups=["g"])
+        from_cells(
+            np.array([[1e-306, 1e-306]]), sample_labels=["a"], group_labels=["g"]
+        )
     with pytest.raises(ValueError, match=message):
         from_cells(
-            np.array([[1, 2]]), samples=["a"], groups=["g"], library_sizes=[1e-306]
+            np.array([[1, 2]]),
+            sample_labels=["a"],
+            group_labels=["g"],
+            library_sizes=[1e-306],
         )
     # Counts alone need no normalization.
     cube = from_cells(
-        np.array([[1e-306, 1e-306]]), samples=["a"], groups=["g"], layers="counts"
+        np.array([[1e-306, 1e-306]]),
+        sample_labels=["a"],
+        group_labels=["g"],
+        layers="counts",
     )
     assert cube.layer("counts")[0, 0].tolist() == [1e-306, 1e-306]
 
@@ -1071,4 +1097,4 @@ def test_repeated_entries_that_sum_too_high_are_rejected() -> None:
         np.array([2.0**52, 2.0**52]), np.array([0, 0]), np.array([0, 2]), (1, 1)
     )
     with pytest.raises(ValueError, match="repeated entries that sum to 9.0072e"):
-        from_cells(matrix, samples=["a"], groups=["g"])
+        from_cells(matrix, sample_labels=["a"], group_labels=["g"])

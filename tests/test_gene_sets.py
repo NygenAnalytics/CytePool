@@ -21,9 +21,16 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.gene_sets import GeneSets, read_gmt, write_gmt
-from cytepool.stats.gene_set_tests import camera, fry
-from cytepool.stats.rotation_gene_set_tests import mroast, roast, romer
+from cytepool import (
+    GeneSets,
+    camera,
+    fry,
+    mroast,
+    read_gmt,
+    roast,
+    romer,
+    write_gmt,
+)
 
 DATA = Path(__file__).parent / "data" / "gene_set_files_and_ora"
 FILES = ("msigdb.gmt", "reactome.gmt", "wikipathways.gmt", "gene_ontology.gmt.gz")
@@ -53,10 +60,10 @@ def assert_same_reading(sets: GeneSets, reading: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("name", FILES)
 def test_files_are_read_as_r_reads_them_by_hand(name: str) -> None:
-    sets = read_gmt(DATA / name, source="simulated", version="1", licence="CC0")
+    sets = read_gmt(DATA / name, name="simulated", version="1", licence="CC0")
 
     assert_same_reading(sets, by_hand()[name])
-    assert (sets.source, sets.version, sets.licence) == ("simulated", "1", "CC0")
+    assert (sets.name, sets.version, sets.licence) == ("simulated", "1", "CC0")
     # The record names the file and the digest of its bytes as stored.
     assert sets.file == name
     assert sets.sha256 == hashlib.sha256((DATA / name).read_bytes()).hexdigest()
@@ -201,7 +208,7 @@ def test_the_record_and_descriptions_are_kept_by_every_new_collection() -> None:
     sets = GeneSets(
         {"A": ["G1", "G2", "G3"], "B": ["G2"], "C": ["G9"]},
         descriptions={"A": "first", "B": "na", "C": ""},
-        source="a curated list",
+        name="a curated list",
         version="2",
         licence="CC BY 4.0",
         file="sets.gmt",
@@ -217,7 +224,7 @@ def test_the_record_and_descriptions_are_kept_by_every_new_collection() -> None:
         pickle.loads(pickle.dumps(sets)),
     ):
         assert (
-            derived.source,
+            derived.name,
             derived.version,
             derived.licence,
             derived.file,
@@ -227,7 +234,7 @@ def test_the_record_and_descriptions_are_kept_by_every_new_collection() -> None:
     assert list(sets.select(["C", "A"])) == ["C", "A"]
     assert dict(pickle.loads(pickle.dumps(sets))) == dict(sets)
     with pytest.raises(AttributeError, match="GeneSets is immutable"):
-        sets.source = "other"  # type: ignore[misc]
+        sets.name = "other"  # type: ignore[misc]
     with pytest.raises(TypeError):
         sets.descriptions["A"] = "x"  # type: ignore[index]
 
@@ -260,7 +267,9 @@ def test_a_collection_tested_by_camera_gives_limmas_p_values() -> None:
     kept = read_gmt(DATA / "matching.gmt").restrict_to(identifiers)
     kept = kept.filter_by_size(15, 200)
     design = np.column_stack([np.ones(8), np.repeat([0.0, 1.0], 4)])
-    tested = camera(fixture["y"].T, design, 1, kept, gene_ids=identifiers)
+    tested = camera(
+        fixture["y"].T, kept, design=design, contrast=1, feature_ids=identifiers
+    )
 
     assert list(kept) == fixture["limma camera names"].tolist()
     assert_allclose(tested["p_value"], fixture["limma camera"], rtol=EXACT)
@@ -276,24 +285,26 @@ def test_every_gene_set_test_takes_a_collection_as_a_mapping_of_ids() -> None:
     ids = [f"g{i}" for i in range(60)]
     sets = GeneSets({"up": [*ids[:10], "absent"], "other": ids[20:35]})
     plain = {name: list(genes) for name, genes in sets.items()}
-    options = {"gene_ids": ids, "rng": 7, "n_rotations": 49, "n_threads": 1}
+    options = {"feature_ids": ids, "rng": 7, "n_rotations": 49, "n_threads": 1}
 
-    assert camera(y, design, 1, sets, gene_ids=ids).equals(
-        camera(y, design, 1, plain, gene_ids=ids)
+    assert camera(y, sets, design=design, contrast=1, feature_ids=ids).equals(
+        camera(y, plain, design=design, contrast=1, feature_ids=ids)
     )
-    assert fry(y, design, 1, sets, gene_ids=ids).equals(
-        fry(y, design, 1, plain, gene_ids=ids)
+    assert fry(y, sets, design=design, contrast=1, feature_ids=ids).equals(
+        fry(y, plain, design=design, contrast=1, feature_ids=ids)
     )
-    assert mroast(y, design, 1, sets, **options).equals(
-        mroast(y, design, 1, plain, **options)
+    assert mroast(y, sets, design=design, contrast=1, **options).equals(
+        mroast(y, plain, design=design, contrast=1, **options)
     )
-    assert romer(y, design, 1, sets, **options).equals(
-        romer(y, design, 1, plain, **options)
+    assert romer(y, sets, design=design, contrast=1, **options).equals(
+        romer(y, plain, design=design, contrast=1, **options)
     )
-    assert roast(y, design, 1, sets["up"], **options).equals(
-        roast(y, design, 1, plain["up"], **options)
+    assert roast(y, sets["up"], design=design, contrast=1, **options).equals(
+        roast(y, plain["up"], design=design, contrast=1, **options)
     )
-    assert camera(y, design, 1, sets, gene_ids=ids)["n_genes"].tolist() == [10, 15]
+    assert camera(y, sets, design=design, contrast=1, feature_ids=ids)[
+        "n_genes"
+    ].tolist() == [10, 15]
 
 
 def test_restrict_to_drops_empty_sets_ignores_missing_ids_and_needs_a_match() -> None:
@@ -381,12 +392,12 @@ def test_descriptions_and_the_record_are_checked() -> None:
         GeneSets({"A": ["G1"]}, descriptions=["x"])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="sha256 must be a SHA-256 digest"):
         GeneSets({"A": ["G1"]}, sha256="ABC")
-    with pytest.raises(TypeError, match="source must be a string or None"):
-        GeneSets({"A": ["G1"]}, source=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="name must be a string or None"):
+        GeneSets({"A": ["G1"]}, name=1)  # type: ignore[arg-type]
 
 
 def test_the_repr_says_what_the_collection_holds_and_where_it_comes_from() -> None:
-    sets = read_gmt(DATA / "msigdb.gmt", source="simulated MSigDB")
+    sets = read_gmt(DATA / "msigdb.gmt", name="simulated MSigDB")
     text = repr(sets)
     sizes = [len(genes) for genes in sets.values()]
 
@@ -394,7 +405,7 @@ def test_the_repr_says_what_the_collection_holds_and_where_it_comes_from() -> No
         f"GeneSets: 6 sets of {min(sizes)} to {max(sizes)} genes, "
         f"{len({g for genes in sets.values() for g in genes}):,} genes in all"
     )
-    assert "source: simulated MSigDB; version: not stated; licence: not stated" in text
+    assert "name: simulated MSigDB; version: not stated; licence: not stated" in text
     assert f"read from msigdb.gmt, SHA-256 {sets.sha256}" in " ".join(text.split())
     assert max(map(len, text.splitlines())) <= 80
     assert "and 3 more" in text

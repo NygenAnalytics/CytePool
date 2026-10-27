@@ -18,7 +18,7 @@ mean of M values ({api}`tmm_factors`; @robinson2010a), the upper quartile
 ({api}`upper_quartile_factors`; @bullard2010) or the relative log expression
 ({api}`rle_factors`; @anders2010). DESeq2 replaces library sizes by size factors, the
 median of each sample's ratios to the geometric mean of every gene
-({api}`median_ratio_size_factors`; @anders2010). {api}`cpm` and {api}`log_cpm` give
+({api}`median_ratio_size_factors`; @anders2010). {api}`cpm` and {api}`log2_cpm` give
 counts per million, and {api}`filter_by_expression` keeps genes with enough counts in
 enough samples for the design [@chen2016].
 
@@ -67,7 +67,7 @@ $$
    ({api}`negative_binomial_unit_deviance_moments`, which gives
    {api}`UnitDevianceMoments`), where edgeR approximates them.
 3. The quasi-dispersions are moderated by empirical Bayes towards a trend in the average
-   log CPM ({api}`average_log_cpm`), with limma's estimator for unequal degrees of
+   log CPM ({api}`average_log2_cpm`), with limma's estimator for unequal degrees of
    freedom ([Empirical Bayes moderation](empirical_bayes.md)).
 
 The fit is a {api}`QuasiLikelihoodFit`. {api}`quasi_likelihood_f_test` fits the model

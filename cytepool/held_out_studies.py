@@ -1,25 +1,26 @@
 """Prediction of case status in held-out studies, from genes chosen in the others.
 
-Genes found by combining studies should separate cases from controls in a study that
-had no part in finding them. :func:`held_out_prediction` measures this as the paper
-that introduced SumRank does (Nakatsuka et al. 2025): each study of a collection is
-left out in turn; genes up and genes down in each cell type are chosen from the other
-studies, by SumRank (:func:`~cytepool.sumrank.sumrank`) and, for comparison, by a
-random-effects meta-analysis (:func:`~cytepool.meta_analysis.meta_analysis`); every
-sample of the held-out study is scored by how high its profiles rank those genes; and
-the area under the ROC curve (AUC) of the score says how well it separates the
-study's cases from its controls. :func:`~cytepool.plotting.plot_held_out_auc` draws
-the AUC of every held-out study by method.
+Genes found by combining studies should separate cases from controls in a study that had
+no part in finding them. :func:`~cytepool.held_out_prediction` measures this as the
+paper that introduced SumRank does (Nakatsuka et al. 2025): each study of a collection
+is left out in turn; genes up and genes down in each cell type are chosen from the other
+studies, by SumRank (:func:`~cytepool.stats.sumrank.fit_sumrank`) and, for comparison,
+by a random-effects meta-analysis
+(:func:`~cytepool.stats.meta_analysis.fit_meta_analysis`); every sample of the held-out
+study is scored by how high its profiles rank those genes; and the area under the ROC
+curve (AUC) of the score says how well it separates the study's cases from its controls.
+:func:`~cytepool.plotting.plot_held_out_auc` draws the AUC of every held-out study by
+method.
 
 Choosing the genes:
     In every group (cell type), from the studies other than the held-out one whose
     results test the group and contrast, and among the genes that every one of them
-    tested, ``n_genes`` genes up and ``n_genes`` down, the same number for each
+    tested, ``n_features`` genes up and ``n_features`` down, the same number for each
     method, as the paper compares methods by gene sets of one size:
 
     - ``"sumrank"``: the genes with the smallest ``up_statistic``, and those with the
-      smallest ``down_statistic``, below the cap, with the given proportion of the
-      studies summed; ties in the collection's order of the genes. Every gene has
+      smallest ``down_statistic``, below the cap, with the given number or proportion
+      of the studies summed; ties in the collection's order of the genes. Every gene has
       the same numbers of studies and ranks, so this is also the order of the
       permutation p-values, which therefore need no permutations here.
     - ``"meta_analysis"``: the genes with a positive estimate and the smallest
@@ -54,7 +55,10 @@ The AUC:
     The probability that a case scores higher than a control, ties counting one
     half: the Mann-Whitney statistic divided by the number of pairs of a case and a
     control (Hanley and McNeil 1982). The samples are those of the held-out study's
-    design whose value of ``variable`` is ``case`` or ``control``. 0.5 says the
+    design at one of the two levels that the contrast compares, cases at the level it
+    tests and controls at the other, such as ``case`` and ``control`` of
+    ``condition`` for the contrast ``conditioncase``; or those whose value of
+    ``variable`` is ``case`` or ``control``, when these are given. 0.5 says the
     score does not separate them, and below 0.5 the genes predict the wrong
     direction; the AUC is NaN, with the reason, for a study without a case or
     without a control.
@@ -74,8 +78,8 @@ Deliberate differences from the paper:
       normalized expression, which weighs each cell's counts by its depth.
 
 Not done:
-    The proportion of studies is given, not chosen: the paper chose it as the one
-    whose genes predict best, which a loop over proportions gives. The paper's
+    The number of studies summed is given, not chosen: the paper chose the proportion
+    whose genes predict best, which a loop over the numbers gives. The paper's
     prediction of disease severity in cases (a linear regression on the score) is
     not done.
 
@@ -106,17 +110,23 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from ._analysis_records import software_versions
+from ._analysis_records import only_study_key, software_versions
 from ._columns import text_column
 from ._masked_arrays import reject_masked
 from ._messages import fitted_lines, listing, quoted
 from ._options import index_integer
 from ._ranks import average_ranks
-from ._study_statistics import StudyStatistics, study_statistics, studies_summed
+from ._study_statistics import (
+    StudyStatistics,
+    contrast_levels,
+    study_results,
+    study_statistics,
+)
 from .cube import CubeCollection
 from .differential_expression import DifferentialExpressionResult
-from .meta_analysis import meta_analysis
-from .sumrank import sumrank
+from .stats.meta_analysis import fit_meta_analysis
+from .stats.sumrank import _studies_summed, fit_sumrank
+from .study_results import StudyResults
 from .table import Table
 
 __all__ = ["HeldOutPrediction", "held_out_prediction"]
@@ -141,13 +151,13 @@ class HeldOutPrediction:
 
     - ``auc``: one row per held-out study and method: ``study``, ``method``,
       ``auc`` (NaN where it cannot be computed), ``n_cases``, ``n_controls``,
-      ``n_groups`` (the groups whose genes scored the study), ``n_genes_up`` and
-      ``n_genes_down`` (the genes chosen, summed over the groups, that the study
+      ``n_groups`` (the groups whose genes scored the study), ``n_features_up`` and
+      ``n_features_down`` (the genes chosen, summed over the groups, that the study
       measured) and ``reason`` (why the AUC is NaN; empty otherwise);
     - ``scores``: one row per held-out study, method and sample of its design that
       is a case or a control: ``study``, ``method``, ``sample_id``, ``case``
       (whether it is a case) and ``score``;
-    - ``genes``: the genes chosen for each held-out study from the other studies:
+    - ``features``: the genes chosen for each held-out study from the other studies:
       ``study`` (held out), ``method``, ``group_id``, ``direction`` (``"up"`` or
       ``"down"``), ``rank`` (from 1) and ``feature_id``.
 
@@ -159,17 +169,17 @@ class HeldOutPrediction:
         ValueError: If ``provenance`` holds a NaN or an infinity.
     """
 
-    __slots__ = ("_auc", "_scores", "_genes", "_record")
+    __slots__ = ("_auc", "_scores", "_features", "_record")
 
     _auc: Table
     _scores: Table
-    _genes: Table
+    _features: Table
     _record: str
 
     def __init__(
-        self, auc: Table, scores: Table, genes: Table, provenance: Mapping[str, Any]
+        self, auc: Table, scores: Table, features: Table, provenance: Mapping[str, Any]
     ) -> None:
-        for name, given in (("auc", auc), ("scores", scores), ("genes", genes)):
+        for name, given in (("auc", auc), ("scores", scores), ("features", features)):
             if not isinstance(given, Table):
                 raise TypeError(f"{name} must be a Table, got {type(given).__name__}")
         if not isinstance(provenance, Mapping):
@@ -179,7 +189,7 @@ class HeldOutPrediction:
         state = {
             "_auc": auc,
             "_scores": scores,
-            "_genes": genes,
+            "_features": features,
             # JSON holds no arrays: json.dumps raises TypeError for one.
             "_record": json.dumps(provenance, allow_nan=False),
         }
@@ -195,7 +205,7 @@ class HeldOutPrediction:
     def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
         return (
             HeldOutPrediction,
-            (self._auc, self._scores, self._genes, json.loads(self._record)),
+            (self._auc, self._scores, self._features, json.loads(self._record)),
         )
 
     @property
@@ -209,9 +219,9 @@ class HeldOutPrediction:
         return self._scores
 
     @property
-    def genes(self) -> Table:
+    def features(self) -> Table:
         """The genes chosen from the other studies for every held-out study."""
-        return self._genes
+        return self._features
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -238,7 +248,7 @@ class HeldOutPrediction:
             f"HeldOutPrediction of {settings['case']!r} against {settings['control']!r}"
             f" ({settings['variable']}), contrast {settings['contrast']!r}: "
             f"{len(set(table['study'].tolist())):,} held-out studies, "
-            f"{settings['n_genes']:,} genes up and down per group"
+            f"{settings['n_features']:,} genes up and down per group"
         ]
         for method in settings["methods"]:
             values = table["auc"][(table["method"] == method) & ~np.isnan(table["auc"])]
@@ -248,16 +258,16 @@ class HeldOutPrediction:
 
 
 def held_out_prediction(
-    collection: CubeCollection,
-    results: Mapping[str, DifferentialExpressionResult],
-    contrast: str,
-    variable: str,
-    case: str,
-    control: str,
+    studies: StudyResults,
+    contrast: str | None = None,
     *,
     groups: str | Sequence[str] | None = None,
-    n_genes: int = 50,
-    proportion_of_studies: float = 1.0,
+    n_features: int = 50,
+    n_studies_summed: int | None = None,
+    proportion_of_studies: float | None = None,
+    variable: str | None = None,
+    case: str | None = None,
+    control: str | None = None,
 ) -> HeldOutPrediction:
     """Leave each study out, choose genes from the others, and predict its cases.
 
@@ -267,49 +277,52 @@ def held_out_prediction(
     scored by how high its profiles rank those genes, as UCell scores them; and the
     AUC says how well the scores separate cases from controls. The module
     description gives each step. The results are those that
-    :func:`~cytepool.sumrank.differential_expression_sumrank` takes: each study's
-    analysis of its aligned cube.
+    :func:`~cytepool.sumrank` takes: each study's analysis of its aligned cube.
 
     Args:
-        collection: The collection whose aligned cubes the studies' results
-            analysed.
-        results: The differential-expression result of every study of the
-            collection, by study name, from
-            :func:`~cytepool.differential_expression.limma_voom` or
-            :func:`~cytepool.differential_expression.limma_trend`, whose tables
-            hold the standard errors of the meta-analysis.
-        contrast: The contrast that the studies tested, cases against controls.
-        variable: The variable of the studies' designs that tells cases from
-            controls, such as ``"condition"``.
-        case: Its value for a case, such as ``"AD"``.
-        control: Its value for a control.
+        studies: The differential-expression result of every study of a
+            collection, from :func:`~cytepool.limma_voom` or
+            :func:`~cytepool.limma_trend`, whose tables hold the standard errors of
+            the meta-analysis, as :func:`~cytepool.analyse_each_study` gives them.
+        contrast: The contrast that the studies tested, cases against controls; it
+            may be left out when they tested one.
         groups: A group id or a list of them, whose scores are summed; by default
             every group of the collection. A group that no other study tested gives
             a held-out study no genes.
-        n_genes: The number of genes chosen up, and down, in each group, by each
+        n_features: The number of genes chosen up, and down, in each group, by each
             method; at least 1.
-        proportion_of_studies: The proportion of the studies summed by SumRank, as
-            for :func:`~cytepool.sumrank.sumrank`.
+        n_studies_summed: The number of the other studies summed by SumRank, as for
+            :func:`~cytepool.sumrank`; by default every one.
+        proportion_of_studies: Instead of ``n_studies_summed``, the proportion of
+            the other studies summed by SumRank.
+        variable: The variable of the studies' designs that tells cases from
+            controls, such as ``"condition"``. By default, the factor whose two
+            levels the contrast compares in every study's design (a level against
+            the reference, or one level minus another), with ``case`` the level it
+            tests and ``control`` the other; give ``variable``, ``case`` and
+            ``control`` together otherwise.
+        case: The variable's value for a case, such as ``"AD"``.
+        control: Its value for a control.
 
     Returns:
         The AUC of every held-out study and method, the score of every sample, and
         the genes chosen.
 
     Raises:
-        TypeError: If an argument has the wrong type, or is or holds a numpy masked
-            array.
-        ValueError: If ``results`` does not give the result of every study of the
-            collection or a result did not analyse its study's aligned cube, the
-            contrast is an F-test, the results have no standard errors (dream's), a
-            study's design has no variable ``variable``, ``case`` equals
+        TypeError: If ``studies`` is not a ``StudyResults``, an argument has the
+            wrong type, or is or holds a numpy masked array.
+        ValueError: If a result did not analyse its study's aligned cube, the
+            contrast is left out and the studies tested several, the contrast is an
+            F-test, the results have no standard errors (dream's), some but not all
+            of ``variable``, ``case`` and ``control`` are given, none is given and
+            the contrast does not compare two levels of one factor in every study's
+            design, a study's design has no variable ``variable``, ``case`` equals
             ``control``, a group is listed twice, or an option is invalid.
         KeyError: If a group is not a group of the collection, or no study tested
             ``contrast``.
     """
-    if not isinstance(collection, CubeCollection):
-        raise TypeError(
-            f"collection must be a CubeCollection, got {type(collection).__name__}"
-        )
+    studies = study_results(studies, "held_out_prediction")
+    collection = studies.collection
     for name, value in (
         ("contrast", contrast),
         ("variable", variable),
@@ -317,21 +330,39 @@ def held_out_prediction(
         ("control", control),
     ):
         reject_masked(value, name)
-        if not isinstance(value, str):
+        if value is not None and not isinstance(value, str):
             raise TypeError(f"{name} must be a string, got {type(value).__name__}")
+    contrast = only_study_key(studies, contrast, "contrast", "contrasts")
+    given = [value is not None for value in (variable, case, control)]
+    if any(given) and not all(given):
+        raise ValueError(
+            "variable, case and control are given together, or none of them, to read "
+            "the two levels that the contrast compares from the studies' designs"
+        )
+    if not any(given):
+        compared = contrast_levels(studies, contrast, collection.studies)
+        if compared is None:
+            raise ValueError(
+                f"contrast {contrast!r} does not compare two levels of one factor in "
+                "every study's design; give the variable that tells cases from "
+                "controls, and its values, as variable, case and control"
+            )
+        variable, case, control = compared
+    assert variable is not None and case is not None and control is not None
     if case == control:
         raise ValueError(
             f"case and control are both {case!r}; give the two values of {variable!r} "
             "that the AUC compares"
         )
     chosen = _groups(collection, groups)
-    count = _n_genes(n_genes)
-    studies_summed(proportion_of_studies, collection.n_studies)  # checks it
+    count = _n_features(n_features)
+    # Checked here, against the studies other than one held out; a group that fewer
+    # studies tested is checked when its genes are chosen.
+    _studies_summed(
+        n_studies_summed, proportion_of_studies, max(1, collection.n_studies - 1)
+    )
     # Every group's results, read once: the held-out studies take rows of them.
-    inputs = {
-        group: study_statistics(collection, results, group, contrast)
-        for group in chosen
-    }
+    inputs = {group: study_statistics(studies, group, contrast) for group in chosen}
     for group, found in inputs.items():
         missing = found.analysed & np.isnan(found.standard_error).all(axis=1)
         if missing.any():
@@ -341,14 +372,15 @@ def held_out_prediction(
                 f"{group!r}, which the meta-analysis reads: dream_voom's tables have "
                 "none; give results of limma_voom or limma_trend"
             )
-    studies = list(collection.studies)
+    summed = (n_studies_summed, proportion_of_studies)
+    names = list(collection.studies)
     rows: list[dict[str, Any]] = []
     score_rows: list[dict[str, Any]] = []
     gene_rows: list[dict[str, Any]] = []
     feature_ids = collection.features["feature_id"]
-    for held, study in enumerate(studies):
-        samples = _held_out_samples(results[study], study, variable, case, control)
-        profiles = _profiles(collection, results[study], study, chosen)
+    for held, study in enumerate(names):
+        samples = _held_out_samples(studies[study], study, variable, case, control)
+        profiles = _profiles(collection, studies[study], study, chosen)
         for method in METHODS:
             sets = {}
             for group in chosen:
@@ -357,9 +389,15 @@ def held_out_prediction(
                 training[held] = False
                 if not training.any():
                     continue
-                chosen_genes = _chosen_genes(
-                    method, found, training, count, proportion_of_studies
-                )
+                try:
+                    chosen_genes = _chosen_genes(method, found, training, count, summed)
+                except ValueError as error:
+                    error.add_note(
+                        f"(choosing the genes of group {group!r} without study "
+                        f"{study!r}, from the {int(training.sum())} other studies that "
+                        "tested it)"
+                    )
+                    raise
                 sets[group] = chosen_genes
                 for direction, positions in zip(_DIRECTIONS, chosen_genes, strict=True):
                     for rank, position in enumerate(positions.tolist(), start=1):
@@ -395,8 +433,15 @@ def held_out_prediction(
         "case": case,
         "control": control,
         "groups": chosen,
-        "n_genes": count,
-        "proportion_of_studies": float(proportion_of_studies),
+        "n_features": count,
+        "n_studies_summed": n_studies_summed,
+        "proportion_of_studies": (
+            None
+            if n_studies_summed is not None
+            else 1.0
+            if proportion_of_studies is None
+            else float(proportion_of_studies)
+        ),
         "methods": list(METHODS),
         "meta_analysis": dict(_META_ANALYSIS),
         "score": "UCell, maxRank = the number of genes ranked",
@@ -426,7 +471,7 @@ def held_out_prediction(
             "analysis": "held_out_prediction",
             "versions": software_versions(),
             "settings": settings,
-            "studies": {name: results[name].provenance for name in studies},
+            "studies": {name: studies[name].provenance for name in names},
         },
     )
 
@@ -466,12 +511,12 @@ def _groups(collection: CubeCollection, value: Any) -> list[str]:
     return listed
 
 
-def _n_genes(value: Any) -> int:
+def _n_features(value: Any) -> int:
     if isinstance(value, bool | np.bool_):
-        raise TypeError("n_genes must be a whole number of genes, not bool")
-    number = index_integer(value, "n_genes", expected="a whole number of genes")
+        raise TypeError("n_features must be a whole number of genes, not bool")
+    number = index_integer(value, "n_features", expected="a whole number of genes")
     if number < 1:
-        raise ValueError(f"n_genes must be at least 1, got {number}")
+        raise ValueError(f"n_features must be at least 1, got {number}")
     return number
 
 
@@ -483,7 +528,7 @@ def _chosen_genes(
     found: StudyStatistics,
     training: npt.NDArray[np.bool_],
     count: int,
-    proportion: float,
+    summed: tuple[Any, Any],
 ) -> tuple[IntArray, IntArray]:
     """The positions, in the collection's features, of the genes chosen up and down
     from the training studies, best first."""
@@ -494,7 +539,9 @@ def _chosen_genes(
         return empty, empty
     chosen: list[IntArray] = []
     if method == "sumrank":
-        ranking = sumrank(statistics, proportion_of_studies=proportion)
+        ranking = fit_sumrank(
+            statistics, n_studies_summed=summed[0], proportion_of_studies=summed[1]
+        )
         cap = ranking.n_studies_summed / 2.0
         for statistic in (ranking.up_statistic, ranking.down_statistic):
             candidates = np.flatnonzero(ranking.ranked & (statistic < cap))
@@ -503,7 +550,7 @@ def _chosen_genes(
         return chosen[0], chosen[1]
     effects = found.log2_fold_change[training][:, universe]
     errors = found.standard_error[training][:, universe]
-    combined = meta_analysis(effects, errors, method="reml", test="knapp_hartung")
+    combined = fit_meta_analysis(effects, errors, method="reml", test="knapp_hartung")
     positions = np.flatnonzero(universe)
     for sign in (1.0, -1.0):
         candidates = np.flatnonzero(sign * combined.estimate > 0.0)
@@ -666,8 +713,8 @@ def _scores(
         n_groups += contributed
     return total, {
         "n_groups": n_groups,
-        "n_genes_up": measured["up"],
-        "n_genes_down": measured["down"],
+        "n_features_up": measured["up"],
+        "n_features_down": measured["down"],
     }
 
 
@@ -696,7 +743,13 @@ def _auc_table(rows: list[dict[str, Any]]) -> Table:
         "method": text_column([r["method"] for r in rows]),
         "auc": np.array([r["auc"] for r in rows], dtype=np.float64),
     }
-    for name in ("n_cases", "n_controls", "n_groups", "n_genes_up", "n_genes_down"):
+    for name in (
+        "n_cases",
+        "n_controls",
+        "n_groups",
+        "n_features_up",
+        "n_features_down",
+    ):
         columns[name] = np.array([r[name] for r in rows], dtype=np.int64)
     columns["reason"] = text_column([r["reason"] for r in rows])
     return Table(columns)

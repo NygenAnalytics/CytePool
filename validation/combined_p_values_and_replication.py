@@ -28,11 +28,11 @@ a third with effects, none, 15% and 5% missing, with signs and with weights (squ
 roots of sample sizes). Then three cohorts of 6, 4 and 8 donors, before and after a
 stimulation that changes 15% of 700 genes in two cell types alike in every cohort, up
 to 50% more or less, each measuring part of the genes, are aligned in a
-``CubeCollection``, tested by ``limma_voom`` and passed to
-``differential_expression_replication`` with four settings, among them pi1 with
-qvalue's defaults (``null_proportion={}``) and pi1 by default (``null_proportion`` left
-out), which is ``pi0est(lambda = 0.5)``; R computes every column from the cohorts'
-tables, and the figures are compared with what R computes for them.
+``CubeCollection``, tested by ``limma_voom`` and passed to ``replication`` with four
+settings, among them pi1 with qvalue's defaults (``null_proportion={}``) and pi1 by
+default (``null_proportion`` left out), which is ``pi0est(lambda = 0.5)``; R computes
+every column from the cohorts' tables, and the figures are compared with what R
+computes for them.
 
 Tolerances: exact (1e-10) for every closed form, the smoother of pi0 included (R's
 search for its smoothing parameter is followed step by step); close (1e-6) for REML.
@@ -386,9 +386,7 @@ def pi0_sets(rng):
 
 def cohorts(rng, n_genes, n_donors=(6, 4, 8)):
     """Three cohorts' cubes, their collection and limma_voom results."""
-    from cytepool.cube import Cube, CubeCollection
-    from cytepool.design import Design
-    from cytepool.differential_expression import limma_voom
+    from cytepool import Cube, CubeCollection, Design, limma_voom
 
     genes = [f"g{j:04d}" for j in range(n_genes)]
     base = {g: rng.normal(0.0, 1.5, n_genes) for g in "TB"}
@@ -442,17 +440,18 @@ def cohorts(rng, n_genes, n_donors=(6, 4, 8)):
 
 
 def replications(collection, results, settings=SETTINGS):
-    """differential_expression_replication of every group with every setting."""
-    from cytepool.replication import differential_expression_replication
+    """replication of every group with every setting."""
+    from cytepool import StudyResults, replication
 
+    studies = StudyResults(collection, results)
     out = []
     for group in collection.groups["group_id"].tolist():
         for s, (method, conjunction, u, alpha, meta, pi0) in enumerate(settings):
             options = {} if pi0 is None else {
                 "null_proportion": {NAMES[key]: value for key, value in pi0.items()}
             }  # fmt: skip
-            result = differential_expression_replication(
-                collection, results, group, "stim_vs_ctrl", alpha=alpha, method=method,
+            result = replication(
+                studies, group, "stim_vs_ctrl", alpha=alpha, method=method,
                 at_least=u, conjunction_method=conjunction, meta_method=meta,
                 **options,
             )  # fmt: skip
@@ -466,7 +465,7 @@ def write_binary(path, values):
 
 def run_references(directory, cases, extreme, pi0, analyses, collection, results):
     """Write the inputs, run the reference programs and read their outputs."""
-    from cytepool.meta_analysis import align_study_results
+    from cytepool import StudyResults
 
     parts = ("p", "signs", "weights")
     inputs = {
@@ -504,9 +503,9 @@ def run_references(directory, cases, extreme, pi0, analyses, collection, results
     columns["adjusted_p_value"] = "adj"
     for name, s, result in analyses:
         group = result.settings["group"]
-        table = align_study_results(collection, results, group, "stim_vs_ctrl")
+        table = StudyResults(collection, results).table(group, "stim_vs_ctrl")
         k, n = collection.n_studies, collection.n_features
-        ids = result.genes["feature_id"].tolist()
+        ids = result.features["feature_id"].tolist()
         keep = np.isin(table["feature_id"][:n].tolist(), ids)
         tested = np.array(table["status"].tolist()).reshape(k, n) == "tested"
         folder = directory / "replication" / name
@@ -755,13 +754,13 @@ def check_replication(analyses, reference):
     worst["default"] = 0.0
     compared = stops = by_default = 0
     counts = ("n_studies", "n_up", "n_down", "n_found", "n_found_up", "n_found_down")
-    counts += ("direction",)
+    counts += ("sign",)
     values = ("sign_agreement", "p_value", "replication_p_value", "adjusted_p_value")
     values += ("replication_adjusted_p_value",)
     heterogeneity = ("q_statistic", "q_p_value", "i_squared", "tau_squared")
     for name, s, result in analyses:
         theirs = reference["replication"][name]
-        genes, g = result.genes, theirs["genes"]
+        genes, g = result.features, theirs["genes"]
         if any(not np.array_equal(genes[c], g[i]) for i, c in enumerate(counts)):
             worst["genes"] = np.inf
         for i, column in enumerate(values, len(counts)):
@@ -771,8 +770,8 @@ def check_replication(analyses, reference):
             value = difference(genes[column], theirs["heterogeneity"][i], i == 1)
             worst[meta] = max(worst[meta], value)
         pairs, r = result.study_pairs, theirs["pairs"]
-        same = np.array_equal(pairs["n_found"], r[2])
-        if not (same and np.array_equal(pairs["n_found_in_both"], r[3])):
+        same = np.array_equal(pairs["n_features_found"], r[2])
+        if not (same and np.array_equal(pairs["n_features_found_in_both"], r[3])):
             worst["pairs"] = np.inf
         known = ~np.isnan(r[5])
         worst["pairs"] = max(worst["pairs"], difference(pairs["sign_agreement"], r[4]))
@@ -787,8 +786,8 @@ def check_replication(analyses, reference):
         compared += int(known.sum())
         stops += int(np.count_nonzero(~known & ~np.isnan(pairs["pi1"])))
         f, found_in = theirs["found_in"], result.found_in
-        same = np.array_equal(found_in["n_genes"], f[1])
-        if not (same and np.array_equal(found_in["n_genes_same_direction"], f[2])):
+        same = np.array_equal(found_in["n_features"], f[1])
+        if not (same and np.array_equal(found_in["n_features_same_direction"], f[2])):
             worst["found_in"] = np.inf
     n = len(analyses)
     reml = sum(result.settings["meta_method"] == "reml" for _, _, result in analyses)

@@ -38,10 +38,11 @@ fingerprint of each file it was given, which the build checks against the regist
 
 ## Networks
 
-The activity functions of {mod}`cytepool.activity` read networks that {api}`collectri`
-and {api}`progeny` download on first use into `cytepool/networks` under
-`XDG_CACHE_HOME` or `~/.cache` (or the directory given as `cache_dir`), each checked
-against its size and SHA-256 digest; no file of them is in the repository.
+The activity functions ({api}`ulm`, {api}`mlm` and {api}`weighted_aggregate`) read
+networks that {api}`collectri` and {api}`progeny` download on first use into
+`cytepool/networks` under `XDG_CACHE_HOME` or `~/.cache` (or the directory given as
+`cache_dir`), each checked against its size and SHA-256 digest; no file of them is in
+the repository.
 
 | Network | What it holds | Source | Licence | Cite |
 | --- | --- | --- | --- | --- |

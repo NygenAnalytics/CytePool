@@ -18,12 +18,20 @@ import pytest
 from numpy.testing import assert_array_equal
 
 import cytepool
-from cytepool.cube import Cube, from_bulk, from_cells
+from cytepool import (
+    Cube,
+    Design,
+    from_anndata,
+    from_bulk,
+    from_cells,
+    from_mudata,
+    limma_voom,
+    read_cube,
+    to_anndata,
+    to_mudata,
+    write_cube,
+)
 from cytepool.cube.provenance import describe_provenance
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.io import read_cube, write_cube
-from cytepool.io.anndata import from_anndata, from_mudata, to_anndata, to_mudata
 
 # anndata and mudata warn about their own use of pandas options that pandas 4 removes.
 pytestmark = [
@@ -67,9 +75,9 @@ def varied_cube() -> Cube:
     counts, samples, groups = _cells()
     return from_cells(
         counts,
-        samples=samples,
-        groups=groups,
-        sample_table={
+        sample_labels=samples,
+        group_labels=groups,
+        samples={
             "sample_id": ["S1", "S2", "S3", "S4"],
             "collected": np.array(
                 ["2024-01-05", "NaT", "2024-03-01", "2024-04-11"], "datetime64[D]"
@@ -82,7 +90,7 @@ def varied_cube() -> Cube:
             "notes": [None, None, None, None],
             "..": [1, 2, 3, 4],
         },
-        group_table={
+        groups={
             "group_id": ["B", "T", "NK", "Plasma"],
             "parent": ["L", "L", None, "L"],
             "since": np.full(4, "NaT", dtype="datetime64[s]"),
@@ -346,8 +354,8 @@ def cells() -> dict[str, Any]:
 def _pooled(cells: dict[str, Any], **tables: Any) -> Cube:
     return from_cells(
         cells["counts"],
-        samples=cells["sample"],
-        groups=cells["group"],
+        sample_labels=cells["sample"],
+        group_labels=cells["group"],
         features={"feature_id": cells["feature_id"], "symbol": cells["symbol"]},
         layers=["counts", "detected"],
         **tables,
@@ -367,7 +375,7 @@ def test_scanpy_aggregate_imports_as_the_cube_of_its_cells(
 ) -> None:
     aggregated = ad.read_h5ad(DATA / "scanpy_counts.h5ad")
 
-    cube = from_anndata(aggregated, sample="sample", group="group")
+    cube = from_anndata(aggregated, sample_column="sample", group_column="group")
 
     # Counts, detected cells and cell numbers, ids and tables: the same cube.
     assert cube.fingerprint() == _pooled(cells).fingerprint()
@@ -386,12 +394,12 @@ def test_decoupler_pseudobulk_imports_with_the_metadata_of_samples_and_groups(
     # not be its own.
     assert (pseudobulk.obs["psbulk_cells"] == 0).sum() == 1
 
-    cube = from_anndata(pseudobulk, sample="sample", group="group")
+    cube = from_anndata(pseudobulk, sample_column="sample", group_column="group")
 
     # Detected cells come from decoupler's fractions times its cell numbers.
     samples = _metadata(cells, "sample", "condition")
     groups = _metadata(cells, "group", "lineage")
-    expected = _pooled(cells, sample_table=samples, group_table=groups)
+    expected = _pooled(cells, samples=samples, groups=groups)
     assert cube.fingerprint() == expected.fingerprint()
     assert cube.provenance["construction"]["obs_columns"] == {
         "samples": ["condition"],
@@ -413,7 +421,7 @@ def test_liana_views_import_with_the_cell_numbers_of_the_cells(
 
     # Feature ids without LIANA's "<view>:" prefix; groups sorted, as from_cells
     # sorts them; the condition of each sample from the MuData's obs.
-    expected = _pooled(cells, sample_table=_metadata(cells, "sample", "condition"))
+    expected = _pooled(cells, samples=_metadata(cells, "sample", "condition"))
     assert cube.fingerprint() == expected.fingerprint()
     assert cube.provenance["construction"]["layout"] == "liana.multi.adata_to_views"
     # Without fractions, counts alone come without cell numbers... and so cannot
@@ -426,12 +434,14 @@ def test_an_imported_cube_feeds_a_design_and_limma_voom(
     ad: Any, cells: dict[str, Any]
 ) -> None:
     imported = from_anndata(
-        ad.read_h5ad(DATA / "decoupler.h5ad"), sample="sample", group="group"
+        ad.read_h5ad(DATA / "decoupler.h5ad"),
+        sample_column="sample",
+        group_column="group",
     )
     pooled = _pooled(
         cells,
-        sample_table=_metadata(cells, "sample", "condition"),
-        group_table=_metadata(cells, "group", "lineage"),
+        samples=_metadata(cells, "sample", "condition"),
+        groups=_metadata(cells, "group", "lineage"),
     )
 
     def analysis(cube: Cube) -> Any:
@@ -458,16 +468,24 @@ def test_means_variances_and_medians_are_refused(ad: Any) -> None:
         ValueError,
         match=r"no layer 'sum'; its layers are \['mean', 'var'\], which hold means and variances",
     ):
-        from_anndata(means, sample="sample", group="group")
+        from_anndata(means, sample_column="sample", group_column="group")
     for source, statistic in (("mean", "means"), ("var", "variances")):
         with pytest.raises(
             ValueError, match=f"fill with {statistic}. A cube holds sums"
         ):
             from_anndata(
-                means, sample="sample", group="group", layers={"counts": source}
+                means,
+                sample_column="sample",
+                group_column="group",
+                layers={"counts": source},
             )
     with pytest.raises(ValueError, match="'median', which .* fill with medians"):
-        from_anndata(means, sample="sample", group="group", layers={"counts": "median"})
+        from_anndata(
+            means,
+            sample_column="sample",
+            group_column="group",
+            layers={"counts": "median"},
+        )
 
 
 def test_decoupler_means_are_refused_because_x_adds_up_to_totals_over_cells(
@@ -479,10 +497,12 @@ def test_decoupler_means_are_refused_because_x_adds_up_to_totals_over_cells(
     # mode; X adds up to them divided by the cells of each row.
     message = r"X holds means: at row 0 \('S\d_\w+'\) it adds up to [\d.]+, the"
     with pytest.raises(ValueError, match=message):
-        from_anndata(means, sample="sample", group="group")
+        from_anndata(means, sample_column="sample", group_column="group")
     # Whatever X is read as.
     with pytest.raises(ValueError, match="X holds means"):
-        from_anndata(means, sample="sample", group="group", layers={"counts": "X"})
+        from_anndata(
+            means, sample_column="sample", group_column="group", layers={"counts": "X"}
+        )
 
 
 def _medians(cells: dict[str, Any], samples: Any, groups: Any) -> np.ndarray:
@@ -509,7 +529,7 @@ def test_medians_are_refused_where_a_cell_detects_a_feature_and_x_is_zero(
 
     message = "X does not hold sums of the counts of its cells: at .* psbulk_props says"
     with pytest.raises(ValueError, match=message):
-        from_anndata(pseudobulk, sample="sample", group="group")
+        from_anndata(pseudobulk, sample_column="sample", group_column="group")
     crosstab = pd.crosstab(cells["sample"], cells["group"])
     with pytest.raises(ValueError, match=message):
         from_mudata(views, n_cells=crosstab)
@@ -523,12 +543,14 @@ def test_decoupler_pseudobulk_of_fewer_features_still_imports(
 
     # As decoupler.pp.filter_by_expr leaves it: fewer features, and psbulk_counts
     # still the totals over all of them.
-    cube = from_anndata(pseudobulk[:, kept], sample="sample", group="group")
+    cube = from_anndata(
+        pseudobulk[:, kept], sample_column="sample", group_column="group"
+    )
 
     expected = _pooled(
         cells,
-        sample_table=_metadata(cells, "sample", "condition"),
-        group_table=_metadata(cells, "group", "lineage"),
+        samples=_metadata(cells, "sample", "condition"),
+        groups=_metadata(cells, "group", "lineage"),
     )
     assert cube.fingerprint() == expected.select(features=kept).fingerprint()
 
@@ -541,7 +563,7 @@ def test_x_that_adds_up_to_more_than_its_counts_is_refused(ad: Any) -> None:
         r"X adds up to [\d.e+]+ at row 0 \('S1_\w+'\), more than the [\d.]+ counts"
     )
     with pytest.raises(ValueError, match=message):
-        from_anndata(pseudobulk, sample="sample", group="group")
+        from_anndata(pseudobulk, sample_column="sample", group_column="group")
 
 
 # Long AnnData made by hand.
@@ -574,15 +596,15 @@ def test_given_layers_cell_numbers_and_tables(ad: Any, pd: Any) -> None:
 
     cube = from_anndata(
         adata,
-        sample="donor",
-        group="cell_type",
+        sample_column="donor",
+        group_column="cell_type",
         layers={"counts": "sum"},
         n_cells="n",
-        sample_table={"sample_id": ["D2", "D1", "D3"], "age": [30, 40, 50]},
+        samples={"sample_id": ["D2", "D1", "D3"], "age": [30, 40, 50]},
         source={"study": "hand-made"},
     )
 
-    # The rows of sample_table set the order; D3 has no cells.
+    # The rows of the sample table set the order; D3 has no cells.
     assert cube.samples["sample_id"].tolist() == ["D2", "D1", "D3"]
     assert_array_equal(cube.n_cells, [[1, 4], [2, 3], [0, 0]])
     assert_array_equal(cube.layer("counts", "B"), [[3, 1], [4, 0], [0, 0]])
@@ -618,7 +640,11 @@ def test_obs_columns_go_to_the_table_they_are_constant_in(ad: Any, pd: Any) -> N
     )
 
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers={"counts": "sum"}, n_cells="n"
+        adata,
+        sample_column="donor",
+        group_column="cell_type",
+        layers={"counts": "sum"},
+        n_cells="n",
     )
 
     assert cube.samples.equals(
@@ -641,7 +667,11 @@ def test_inference_keeps_the_ids_and_the_types_a_table_holds(ad: Any, pd: Any) -
     )
 
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers={"counts": "sum"}, n_cells="n"
+        adata,
+        sample_column="donor",
+        group_column="cell_type",
+        layers={"counts": "sum"},
+        n_cells="n",
     )
 
     assert cube.samples["sample_id"].tolist() == ["D1", "D2"]
@@ -659,12 +689,22 @@ def test_feature_columns_that_a_cube_holds_otherwise_are_refused(
     adata = _long(ad, pd, ROWS, SUMS)
     adata.var["symbol"] = [1, 2]
     with pytest.raises(TypeError, match="'symbol' of var has dtype int64, but a cube"):
-        from_anndata(adata, sample="donor", group="cell_type", layers={"counts": "sum"})
+        from_anndata(
+            adata,
+            sample_column="donor",
+            group_column="cell_type",
+            layers={"counts": "sum"},
+        )
 
     adata.var["symbol"] = ["CD3E", "MS4A1"]
     adata.var["seen"] = pd.to_datetime(["2024-01-01", "2024-01-02"]).tz_localize("UTC")
     with pytest.raises(TypeError) as raised:
-        from_anndata(adata, sample="donor", group="cell_type", layers={"counts": "sum"})
+        from_anndata(
+            adata,
+            sample_column="donor",
+            group_column="cell_type",
+            layers={"counts": "sum"},
+        )
     assert "drop the column to read the data without it" in raised.value.__notes__[0]
 
 
@@ -675,8 +715,8 @@ def test_integer_labels_become_text_in_numeric_order(ad: Any, pd: Any) -> None:
 
     cube = from_anndata(
         adata,
-        sample="donor",
-        group="cell_type",
+        sample_column="donor",
+        group_column="cell_type",
         layers={"counts": "sum"},
         n_cells=crosstab,
     )
@@ -692,10 +732,10 @@ def test_counts_that_a_layout_gives_must_be_whole_numbers(ad: Any, pd: Any) -> N
     adata = _long(ad, pd, ROWS, sums, n_obs_aggregated=[2, 1, 3, 4])
 
     with pytest.raises(ValueError, match=r"holds 2.5 at row 2 \('r2'\), feature 'G1'"):
-        from_anndata(adata, sample="donor", group="cell_type")
+        from_anndata(adata, sample_column="donor", group_column="cell_type")
     # Counts that are not whole numbers, said so.
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers={"counts": "sum"}
+        adata, sample_column="donor", group_column="cell_type", layers={"counts": "sum"}
     )
     assert cube.layer("counts").dtype == np.float64
     assert cube.layer("counts", "T")[0, 1] == 2.5
@@ -709,11 +749,15 @@ def test_whole_counts_become_the_narrowest_integers_that_hold_them(
     small = _long(ad, pd, ROWS, sums, n_obs_aggregated=[2, 1, 3, 4])
 
     assert (
-        from_anndata(small, sample="donor", group="cell_type").layer("counts").dtype
+        from_anndata(small, sample_column="donor", group_column="cell_type")
+        .layer("counts")
+        .dtype
         == np.uint32
     )
     assert (
-        from_anndata(large, sample="donor", group="cell_type").layer("counts").dtype
+        from_anndata(large, sample_column="donor", group_column="cell_type")
+        .layer("counts")
+        .dtype
         == np.uint64
     )
 
@@ -728,10 +772,10 @@ def test_whole_floats_beyond_2_to_the_53_are_not_counts_of_a_layout(
     with pytest.raises(
         ValueError, match=r"feature 'G0', at or above 2\*\*53, beyond which float64"
     ):
-        from_anndata(adata, sample="donor", group="cell_type")
+        from_anndata(adata, sample_column="donor", group_column="cell_type")
     # Said to be counts, they are float64 counts.
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers={"counts": "sum"}
+        adata, sample_column="donor", group_column="cell_type", layers={"counts": "sum"}
     )
     assert cube.layer("counts").dtype == np.float64
 
@@ -739,7 +783,7 @@ def test_whole_floats_beyond_2_to_the_53_are_not_counts_of_a_layout(
 def test_counts_must_sum_over_the_cells_that_detected_counts(ad: Any, pd: Any) -> None:
     adata = _long(ad, pd, ROWS, SUMS, n_obs_aggregated=[2, 1, 3, 4])
     adata.layers["count_nonzero"] = np.array([[2, 0], [1, 1], [0, 2], [3, 3]])
-    cube = from_anndata(adata, sample="donor", group="cell_type")
+    cube = from_anndata(adata, sample_column="donor", group_column="cell_type")
     assert_array_equal(cube.layer("detected", "T"), [[0, 2], [3, 3]])
 
     # A cell detects the feature, but the sum is 0: the sums are not of these cells.
@@ -748,16 +792,16 @@ def test_counts_must_sum_over_the_cells_that_detected_counts(ad: Any, pd: Any) -
         ValueError,
         match="at group 'B', sample 'D1', feature 'G1' the counts are 0 and 1 cells",
     ):
-        from_anndata(adata, sample="donor", group="cell_type")
+        from_anndata(adata, sample_column="donor", group_column="cell_type")
     # 3 cells with a positive count sum to 2: not a sum of whole counts.
     adata.layers["count_nonzero"][0, 1] = 0
     adata.layers["count_nonzero"][2, 1] = 3
     with pytest.raises(ValueError, match="the counts are 2 and 3 cells detect"):
-        from_anndata(adata, sample="donor", group="cell_type")
+        from_anndata(adata, sample_column="donor", group_column="cell_type")
     # Counts that are not whole numbers can sum to less than their cells.
     adata.layers["sum"] = SUMS / 4.0
     layers = {"counts": "sum", "detected": "count_nonzero"}
-    from_anndata(adata, sample="donor", group="cell_type", layers=layers)
+    from_anndata(adata, sample_column="donor", group_column="cell_type", layers=layers)
 
 
 def test_whole_sums_of_counts_that_are_not_whole_are_read_when_said_so(
@@ -767,8 +811,8 @@ def test_whole_sums_of_counts_that_are_not_whole_are_read_when_said_so(
     # the number of cells detecting the feature.
     cube = from_cells(
         np.array([[0.5, 1.0], [0.5, 0.0], [1.5, 2.0], [0.5, 1.0]]),
-        samples=["a", "a", "b", "b"],
-        groups=["g"] * 4,
+        sample_labels=["a", "a", "b", "b"],
+        group_labels=["g"] * 4,
         layers=["counts", "detected"],
     )
     adata = to_anndata(cube)
@@ -777,7 +821,11 @@ def test_whole_sums_of_counts_that_are_not_whole_are_read_when_said_so(
     layers = {"counts": "counts", "detected": "detected"}
 
     back = from_anndata(
-        adata, sample="sample_id", group="group_id", layers=layers, n_cells="n_cells"
+        adata,
+        sample_column="sample_id",
+        group_column="group_id",
+        layers=layers,
+        n_cells="n_cells",
     )
 
     assert_array_equal(back.layer("counts", "g"), [[1, 1], [2, 3]])
@@ -794,7 +842,11 @@ def test_fractions_are_read_to_the_precision_they_are_stored_in(
 
     # 7 / 19 in float32 is 0.36842105, which times 19 is 7.0000001.
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers=layers, n_cells="n"
+        adata,
+        sample_column="donor",
+        group_column="cell_type",
+        layers=layers,
+        n_cells="n",
     )
     assert_array_equal(cube.layer("detected", "B"), detected[:2])
     # float16 holds too few digits for the cells of a row of 1,000 cells.
@@ -804,7 +856,11 @@ def test_fractions_are_read_to_the_precision_they_are_stored_in(
         ValueError, match=r"fractions in float16, too few digits .* 1000 cells of row 0"
     ):
         from_anndata(
-            adata, sample="donor", group="cell_type", layers=layers, n_cells="n"
+            adata,
+            sample_column="donor",
+            group_column="cell_type",
+            layers=layers,
+            n_cells="n",
         )
 
 
@@ -812,12 +868,17 @@ def test_entries_without_rows_need_cell_numbers(ad: Any, pd: Any) -> None:
     adata = _long(ad, pd, ROWS[:3], SUMS[:3])
 
     with pytest.raises(ValueError, match="sample 'D2' has no row in group 'T', and"):
-        from_anndata(adata, sample="donor", group="cell_type", layers={"counts": "sum"})
+        from_anndata(
+            adata,
+            sample_column="donor",
+            group_column="cell_type",
+            layers={"counts": "sum"},
+        )
     crosstab = pd.DataFrame({"B": [1, 1], "T": [2, 0]}, index=["D1", "D2"])
     cube = from_anndata(
         adata,
-        sample="donor",
-        group="cell_type",
+        sample_column="donor",
+        group_column="cell_type",
         layers={"counts": "sum"},
         n_cells=crosstab,
     )
@@ -829,8 +890,8 @@ def test_entries_without_rows_need_cell_numbers(ad: Any, pd: Any) -> None:
     ):
         from_anndata(
             adata,
-            sample="donor",
-            group="cell_type",
+            sample_column="donor",
+            group_column="cell_type",
             layers={"counts": "sum"},
             n_cells=crosstab,
         )
@@ -846,8 +907,8 @@ def test_a_table_of_cell_numbers_names_every_sample_and_group(ad: Any, pd: Any) 
     with pytest.raises(ValueError, match=message + r" and has \['D9'\] besides"):
         from_anndata(
             adata,
-            sample="donor",
-            group="cell_type",
+            sample_column="donor",
+            group_column="cell_type",
             layers={"counts": "sum"},
             n_cells=crosstab,
         )
@@ -856,8 +917,8 @@ def test_a_table_of_cell_numbers_names_every_sample_and_group(ad: Any, pd: Any) 
 def test_without_cell_numbers_every_entry_needs_a_row(ad: Any, pd: Any) -> None:
     cube = from_anndata(
         _long(ad, pd, ROWS, SUMS),
-        sample="donor",
-        group="cell_type",
+        sample_column="donor",
+        group_column="cell_type",
         layers={"counts": "sum"},
     )
 
@@ -875,7 +936,11 @@ def test_fractions_give_detected_cells_only_when_they_are_whole_numbers(
     layers = {"counts": "sum", "detected": "psbulk_props"}
 
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers=layers, n_cells="n"
+        adata,
+        sample_column="donor",
+        group_column="cell_type",
+        layers=layers,
+        n_cells="n",
     )
     assert_array_equal(cube.layer("detected", "T"), [[0, 2], [3, 1]])
 
@@ -884,29 +949,39 @@ def test_fractions_give_detected_cells_only_when_they_are_whole_numbers(
         ValueError, match=r"fraction 0.3 of the 4 cells of row 3 \('r3'\)"
     ):
         from_anndata(
-            adata, sample="donor", group="cell_type", layers=layers, n_cells="n"
+            adata,
+            sample_column="donor",
+            group_column="cell_type",
+            layers=layers,
+            n_cells="n",
         )
     with pytest.raises(
         ValueError, match="give 'detected' only with the number of cells"
     ):
-        from_anndata(adata, sample="donor", group="cell_type", layers=layers)
+        from_anndata(
+            adata, sample_column="donor", group_column="cell_type", layers=layers
+        )
 
 
 @pytest.mark.parametrize(
     ("change", "error", "message"),
     [
-        ({"sample": None}, ValueError, "name the obs columns that hold the sample"),
         (
-            {"group": "donor"},
+            {"sample_column": None},
             ValueError,
-            "sample and group both name the obs column 'donor'",
+            "name the obs columns that hold the sample",
         ),
         (
-            {"group": "lineage"},
-            KeyError,
-            "group names 'lineage', which is not a column",
+            {"group_column": "donor"},
+            ValueError,
+            "sample_column and group_column both name the obs column 'donor'",
         ),
-        ({"sample": 3}, TypeError, "sample must name an obs column"),
+        (
+            {"group_column": "lineage"},
+            KeyError,
+            "group_column names 'lineage', which is not a column",
+        ),
+        ({"sample_column": 3}, TypeError, "sample_column must name an obs column"),
         ({"layers": {"count": "sum"}}, ValueError, "unknown cube layer 'count'"),
         (
             {"layers": {"detected": "sum"}},
@@ -944,8 +1019,8 @@ def test_invalid_arguments_are_refused(
 ) -> None:
     adata = _long(ad, pd, ROWS, SUMS)
     arguments: dict[str, Any] = {
-        "sample": "donor",
-        "group": "cell_type",
+        "sample_column": "donor",
+        "group_column": "cell_type",
         "layers": {"counts": "sum"},
     }
     arguments.update(change)
@@ -972,8 +1047,8 @@ def test_values_that_cannot_be_counts_are_refused(
     with pytest.raises(ValueError, match=message):
         from_anndata(
             _long(ad, pd, ROWS, values),
-            sample="donor",
-            group="cell_type",
+            sample_column="donor",
+            group_column="cell_type",
             layers={"counts": "sum"},
         )
 
@@ -985,7 +1060,10 @@ def test_rows_must_name_each_entry_once_with_its_labels(ad: Any, pd: Any) -> Non
         match=r"row 2 \('r2'\) and row 4 \('r4'\) are both sample 'D1' in group 'T'",
     ):
         from_anndata(
-            repeated, sample="donor", group="cell_type", layers={"counts": "sum"}
+            repeated,
+            sample_column="donor",
+            group_column="cell_type",
+            layers={"counts": "sum"},
         )
     missing = _long(ad, pd, ROWS, SUMS)
     missing.obs["donor"] = ["D1", None, "D1", "D2"]
@@ -993,7 +1071,10 @@ def test_rows_must_name_each_entry_once_with_its_labels(ad: Any, pd: Any) -> Non
         ValueError, match=r"obs\['donor'\] has a missing label at row 1"
     ):
         from_anndata(
-            missing, sample="donor", group="cell_type", layers={"counts": "sum"}
+            missing,
+            sample_column="donor",
+            group_column="cell_type",
+            layers={"counts": "sum"},
         )
 
 
@@ -1003,7 +1084,7 @@ def test_sparse_layers_are_read(ad: Any, pd: Any) -> None:
     adata.layers["sum"] = sparse.csr_matrix(SUMS)
 
     cube = from_anndata(
-        adata, sample="donor", group="cell_type", layers={"counts": "sum"}
+        adata, sample_column="donor", group_column="cell_type", layers={"counts": "sum"}
     )
 
     assert_array_equal(cube.layer("counts", "B"), SUMS[:2])
@@ -1112,7 +1193,7 @@ def test_a_record_table_that_lacks_a_label_says_so(ad: Any) -> None:
     adata = to_anndata(CUBES["bulk"])
     adata.obs["sample_id"] = adata.obs["sample_id"].cat.rename_categories({"z": "w"})
 
-    with pytest.raises(ValueError, match="'w' .* is not in sample_table") as raised:
+    with pytest.raises(ValueError, match="'w' .* is not in samples") as raised:
         from_anndata(adata)
     assert "CytePool recorded in uns['cytepool']" in str(raised.value.__notes__)
 
@@ -1201,7 +1282,7 @@ def test_liana_statistics_give_the_cell_numbers_when_they_hold_them(
 
     cube = from_mudata(views)
 
-    expected = _pooled(cells, sample_table=_metadata(cells, "sample", "condition"))
+    expected = _pooled(cells, samples=_metadata(cells, "sample", "condition"))
     assert cube.fingerprint() == expected.fingerprint()
     assert cube.provenance["construction"]["n_cells"] == "uns['psbulk_stats']"
     first = next(iter(views.mod))
@@ -1315,9 +1396,9 @@ def test_the_history_describes_imports_in_plain_terms() -> None:
         "Built by from_anndata (CytePool 1.0) from 12 profiles of an AnnData, in the",
         "    layout of decoupler.pp.pseudobulk:",
         "  samples: the sorted distinct labels",
-        "  groups: the rows of group_table; the labels were integers, written as "
-        "decimal",
-        "          text",
+        "  groups: the rows of the group table given; the labels were integers, "
+        "written",
+        "          as decimal text",
         "  layers: counts from 'X', detected from 'psbulk_props'",
         '  sample_column: "sample"',
         '  group_column: "group"',

@@ -24,18 +24,22 @@ import numba
 import numpy as np
 import pytest
 
-from cytepool.cube import Cube, from_bulk, from_cells
-from cytepool.design import Contrasts, Design
-from cytepool.differential_expression import (
+from cytepool import (
+    Cube,
+    Design,
     DifferentialExpressionResult,
+    Table,
     dream_voom,
+    from_bulk,
+    from_cells,
     limma_trend,
     limma_voom,
+    read_cube,
+    write_cube,
 )
-from cytepool.io import read_cube, write_cube
+from cytepool.design import Contrasts
 from cytepool.io.zarr import ZarrArray
 from cytepool.normalization import filter_by_expression
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "differential_expression"
 EXACT = 1e-10
@@ -47,7 +51,7 @@ STATISTICS = {
     "t": 2,
     "p_value": 3,
     "adjusted_p_value": 4,
-    "b_statistic": 5,
+    "log_odds": 5,
     # limma's sqrt(s2.post) * stdev.unscaled, the moderated standard error of logFC.
     "standard_error": 6,
 }
@@ -91,9 +95,9 @@ def cells_cube() -> Cube:
     }
     return from_cells(
         data["counts"],
-        samples=data["samples"],
-        groups=data["groups"],
-        sample_table=table,
+        sample_labels=data["samples"],
+        group_labels=data["groups"],
+        samples=table,
         layers="counts",
     )
 
@@ -181,7 +185,7 @@ def test_tables_from_cells_match_limma(analysis: str) -> None:
         assert record.get("voom_span") == span
         row = result.groups.index(group)
         prior = float(np.median(limma[f"{key} df_prior"]))
-        assert result.summary["prior_df"][row] == pytest.approx(prior, rel=tolerance)
+        assert result.summary["df_prior"][row] == pytest.approx(prior, rel=tolerance)
         tested = cube.features["feature_id"][limma[f"{key} keep"]]
         computed = {c for c in CONTRASTS if f"{key} {c}" in limma}
         ours = {c for g, c in result.tables if g == group}
@@ -567,7 +571,7 @@ def test_a_filter_by_sample_groups_is_filter_by_expression_with_their_labels() -
         rows = [sample_ids.index(sample) for sample in used]
         keep = filter_by_expression(
             cube.layer("counts", group)[rows],
-            group=cube.samples["condition"][rows],
+            sample_groups=cube.samples["condition"][rows],
             min_count=5,
         )
         assert genes == features[keep].tolist(), group

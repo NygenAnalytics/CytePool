@@ -10,9 +10,8 @@ import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
 import cytepool
-from cytepool.cube import Cube, from_bulk, from_cells
+from cytepool import Cube, from_bulk, from_cells, read_cube, write_cube
 from cytepool.cube.provenance import describe_provenance
-from cytepool.io import read_cube, write_cube
 
 SAMPLES = {
     "sample_id": ["S1", "S2", "S3", "S4", "S5"],
@@ -55,10 +54,10 @@ def cube(cells: tuple[np.ndarray, np.ndarray, np.ndarray]) -> Cube:
     counts, samples, groups = cells
     return from_cells(
         counts,
-        samples=samples,
-        groups=groups,
-        sample_table=SAMPLES,
-        group_table=GROUPS,
+        sample_labels=samples,
+        group_labels=groups,
+        samples=SAMPLES,
+        groups=GROUPS,
         features=FEATURES,
         source=SOURCE,
     )
@@ -91,8 +90,8 @@ def test_from_cells_records_other_settings(
     numbers = np.array([int(label[1:]) for label in samples])  # S3 is 3
     cube = from_cells(
         counts,
-        samples=numbers,
-        groups=groups,
+        sample_labels=numbers,
+        group_labels=groups,
         features={"feature_id": FEATURES},
         target_sum=1e6,
         library_sizes=counts.sum(axis=1) + 1.0,
@@ -107,7 +106,9 @@ def test_from_cells_records_other_settings(
     assert construction["target_sum"] == 1e6
     assert construction["library_sizes"] == "given"
     assert construction["layers"] == ["counts", "linear_sum"]
-    positions = from_cells(counts, samples=samples, groups=groups, layers="counts")
+    positions = from_cells(
+        counts, sample_labels=samples, group_labels=groups, layers="counts"
+    )
     assert positions.provenance["construction"]["features"] == "positions"
 
 
@@ -117,7 +118,9 @@ def test_records_name_where_ids_of_data_frames_came_from(
     pandas = pytest.importorskip("pandas")
     counts, samples, groups = cells
     frame = pandas.DataFrame(counts, columns=FEATURES)
-    pooled = from_cells(frame, samples=samples, groups=groups, layers="counts")
+    pooled = from_cells(
+        frame, sample_labels=samples, group_labels=groups, layers="counts"
+    )
     assert pooled.provenance["construction"]["features"] == "data_frame_columns"
     bulk = pandas.DataFrame(counts[:3], index=["a", "b", "c"], columns=FEATURES)
     assert from_bulk(bulk).provenance["construction"] == {
@@ -172,7 +175,7 @@ def test_invalid_source_records_are_refused(
 ) -> None:
     counts, samples, groups = cells
     with pytest.raises(error, match=message):
-        from_cells(counts, samples=samples, groups=groups, source=source)
+        from_cells(counts, sample_labels=samples, group_labels=groups, source=source)
     with pytest.raises(error, match=message):
         from_bulk(np.ones((2, 2), dtype=int), source=source)
 
@@ -406,8 +409,8 @@ def test_history_reads_the_chain_in_plain_terms(cube: Cube) -> None:
         '  artifacts: {"membership": "membership.parquet#sha256:5e1f"}',
         '  exporter: {"name": "a cell store", "version": "2.1", "min_genes": 200}',
         f"Built by from_cells (CytePool {cytepool.__version__}) from 400 cells:",
-        "  samples: the rows of sample_table",
-        "  groups: the rows of group_table",
+        "  samples: the rows of the sample table given",
+        "  groups: the rows of the group table given",
         "  features: ids given as a sequence",
         "  layers: counts, detected, log_sum, log_sum_sq, linear_sum",
         "  normalized values: each cell scaled to a total of 10,000, with library "

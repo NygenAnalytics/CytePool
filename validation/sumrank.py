@@ -18,20 +18,20 @@ Checks:
 
 1. The Irwin-Hall distribution function against mpmath at 200 digits (its alternating
    sum) on a grid from 1e-6 to m - 0.5, for 1 to 200 studies, and the Irwin-Hall
-   p-values of ``sumrank`` for random statistics of 3, 10 and 30 studies.
+   p-values of ``fit_sumrank`` for random statistics of 3, 10 and 30 studies.
 2. SumRank statistics against the authors' SumRank: five studies of cases and controls
    (seed ``SEED``), cell types T and B, one study without B and one that did not
-   measure 20 genes, each analysed by ``limma_voom``: ``differential_expression_sumrank``
-   against SumRank on their tables, up and down (genes down with the log2 fold changes
-   negated, as testing controls against cases gives them), summing every study and the
-   proportions 0.65 and 0.5; and ``sumrank`` against SumRank on 4 studies of 60 genes
-   whose p-values take 6 values.
-3. Permutation p-values: ``differential_expression_sumrank`` with 40 permutations of the
-   condition in cell type T, against the same permutations drawn here in the documented
-   order and analysed by ``limma_voom`` with designs built from the cubes' sample
-   tables, whose tables the authors' SumRank and ``CalibratePValueswithPermutations``
-   take. Their sums are floating-point sums, so that equal sums can differ in their last
-   digits; they are compared as the integers q of q / (2 (G - 1)), G the genes ranked.
+   measure 20 genes, each analysed by ``limma_voom``: ``sumrank`` against SumRank on
+   their tables, up and down (genes down with the log2 fold changes negated, as testing
+   controls against cases gives them), summing every study and the proportions 0.65 and
+   0.5; and ``fit_sumrank`` against SumRank on 4 studies of 60 genes whose p-values take
+   6 values.
+3. Permutation p-values: ``sumrank`` with 40 permutations of the condition in cell
+   type T, against the same permutations drawn here in the documented order and
+   analysed by ``limma_voom`` with designs built from the cubes' sample tables, whose
+   tables the authors' SumRank and ``CalibratePValueswithPermutations`` take. Their
+   sums are floating-point sums, so that equal sums can differ in their last digits;
+   they are compared as the integers q of q / (2 (G - 1)), G the genes ranked.
    CytePool's p-value must be (1 + the null sums at most the gene's) / (1 + N); the
    authors' counts those strictly below and some of those equal, as rounding decides,
    without the one (a deliberate difference).
@@ -96,12 +96,18 @@ import numpy as np
 from scipy.stats import rankdata
 from sklearn.metrics import roc_auc_score
 
-from cytepool.cube import Cube, CubeCollection
-from cytepool.design import Design
-from cytepool.differential_expression import limma_trend, limma_voom
-from cytepool.held_out_prediction import held_out_prediction
-from cytepool.meta_analysis import differential_expression_meta_analysis
-from cytepool.sumrank import _irwin_hall_cdf, differential_expression_sumrank, sumrank
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
+    StudyResults,
+    held_out_prediction,
+    limma_trend,
+    limma_voom,
+    meta_analysis,
+    sumrank,
+)
+from cytepool.stats.sumrank import _irwin_hall_cdf, fit_sumrank
 
 SEED = 20261030
 COMMIT = "46392f66edcbaea2614a17d90bc2409648e63951"
@@ -335,7 +341,7 @@ def irwin_hall():
              f"max relative difference ({count} values)", worst, EXACT)]  # fmt: skip
     worst, count, rng = 0.0, 0, np.random.default_rng(SEED)
     for k in (3, 10, 30):
-        fit = sumrank(rng.normal(size=(k, 400)))
+        fit = fit_sumrank(rng.normal(size=(k, 400)))
         for direction, _ in DIRECTIONS:
             statistic = getattr(fit, f"{direction}_statistic")
             p = getattr(fit, f"{direction}_irwin_hall_p_value")
@@ -343,16 +349,16 @@ def irwin_hall():
             reference = [exact(s, k) for s in statistic[below]]
             worst = max(worst, relative(p[below], reference))
             count += int(below.sum())
-    rows.append(("Irwin-Hall p-values of sumrank, 3, 10 and 30 studies",
+    rows.append(("Irwin-Hall p-values of fit_sumrank, 3, 10 and 30 studies",
                  "mpmath, 200 digits", f"max relative difference ({count} genes)",
                  worst, EXACT))  # fmt: skip
     return rows
 
 
 def permuted_tables(collection, results, n_permutations):
-    """Group T's tables of the permutations that differential_expression_sumrank draws
-    with the seed SEED: permutation by permutation and study by study, the condition
-    permuted among the samples of the study's fit of T, then limma_voom."""
+    """Group T's tables of the permutations that sumrank draws with the seed SEED:
+    permutation by permutation and study by study, the condition permuted among the
+    samples of the study's fit of T, then limma_voom."""
     tables = {"Real": tables_of(results, collection.studies, "T", 1.0)}
     generator = np.random.default_rng(SEED)
     for b in range(n_permutations):
@@ -395,10 +401,11 @@ def enumeration(rng):
         ranks.append((rankdata(-values, axis=1) - 1) / (len(genes) - 1))
     rows = []
     for proportion, summed in ((1, 3), (0.7, 2)):
-        ours = differential_expression_sumrank(
-            collection, results, "T", CONTRAST, proportion_of_studies=proportion,
-            n_permutations=1000, permute="condition", rng=SEED + summed,
-        ).table  # fmt: skip
+        ours = sumrank(
+            StudyResults(collection, results), "T", CONTRAST,
+            proportion_of_studies=proportion, n_permutations=1000, permute="condition",
+            rng=SEED + summed,
+        ).features  # fmt: skip
         worst = 0.0
         for direction, sign in DIRECTIONS:
             u = [r if sign > 0 else 1 - r for r in ranks]
@@ -454,7 +461,7 @@ def recomputed_scores(collection, results, genes, held, method):
 
 
 def held_out_rows(collection, results, prediction, runs):
-    genes, scores, auc = prediction.genes, prediction.scores, prediction.auc
+    genes, scores, auc = prediction.features, prediction.scores, prediction.auc
     worst_score = worst_auc = 0.0
     mismatched = compared = 0
     for held, method in itertools.product(
@@ -501,8 +508,8 @@ def manhattan_rows(result, root):
 
     from cytepool.plotting import plot_sumrank
 
-    ax = plot_sumrank(result, n_labels=len(result.table), ax=Figure().subplots())
-    heights = np.empty(len(result.table))
+    ax = plot_sumrank(result, top=len(result.features), ax=Figure().subplots())
+    heights = np.empty(len(result.features))
     for artist in ax.collections:
         offsets = artist.get_offsets()
         heights[np.rint(offsets[:, 0]).astype(int)] = offsets[:, 1]
@@ -529,16 +536,17 @@ def simulation(rng):
     rows = []
     collection, results, _ = simulate(rng, [16] * 6, 1200, ("T",), np.zeros(1200), 0)
     for proportion in (1, 0.5):
-        out = differential_expression_sumrank(
-            collection, results, "T", CONTRAST, proportion_of_studies=proportion,
-            n_permutations=40, permute="condition", rng=SEED,
+        out = sumrank(
+            StudyResults(collection, results), "T", CONTRAST,
+            proportion_of_studies=proportion, n_permutations=40, permute="condition",
+            rng=SEED,
         )  # fmt: skip
         summed = out.settings["n_studies_summed"]
         for source, column in (
             ("Irwin-Hall", "irwin_hall_p_value"),
             ("permutation", "p_value"),
         ):
-            p = np.concatenate([out.table[f"{d}_{column}"] for d in ("up", "down")])
+            p = np.concatenate([out.features[f"{d}_{column}"] for d in ("up", "down")])
             shares = (
                 f"{np.mean(p <= 0.05):.4f} at 0.05, {np.mean(p <= 0.01):.4f} at 0.01"
             )
@@ -550,16 +558,16 @@ def simulation(rng):
     collection, results, own = simulate(rng, [16] * 6, 1200, ("T",), changes, 5)
     replicated = {f"g{j:04d}" for j in range(60)}
     single = {f"g{j:04d}" for genes in own.values() for j in genes}
-    table = differential_expression_sumrank(
-        collection, results, "T", CONTRAST, n_permutations=40, permute="condition",
-        rng=SEED,
-    ).table  # fmt: skip
+    table = sumrank(
+        StudyResults(collection, results), "T", CONTRAST, n_permutations=40,
+        permute="condition", rng=SEED,
+    ).features  # fmt: skip
     either = (table["up_adjusted_p_value"] < 0.05) | (
         table["down_adjusted_p_value"] < 0.05
     )
     found = {"SumRank, 40 permutations": set(table["feature_id"][either].tolist())}
     for test in ("z", "knapp_hartung"):
-        meta = differential_expression_meta_analysis(results, test=test)
+        meta = meta_analysis(results, test=test)
         meta_table = meta.table("T", CONTRAST)
         called = meta_table["feature_id"][meta_table["adjusted_p_value"] < 0.05]
         found[f"meta-analysis, REML, {test} test"] = set(called.tolist())
@@ -569,8 +577,9 @@ def simulation(rng):
                      "the simulated changes", "found of the 60; of the 30", counts,
                      "information"))  # fmt: skip
     prediction = held_out_prediction(
-        collection, results, CONTRAST, "condition", "case", "ctrl", n_genes=30
-    )
+        StudyResults(collection, results), CONTRAST, variable="condition",
+        case="case", control="ctrl", n_features=30,
+    )  # fmt: skip
     for method in ("sumrank", "meta_analysis"):
         auc = prediction.auc["auc"][prediction.auc["method"] == method]
         text = f"{auc.mean():.3f} ({auc.min():.3f} to {auc.max():.3f})"
@@ -592,13 +601,10 @@ def benchmark():
                 s: limma_trend(c, design_of(c.samples)) for s, c in cubes.items()
             }
         options = {"permute": "condition", "rng": SEED}
-        differential_expression_sumrank(  # compiles
-            collection, results, "T", CONTRAST, n_permutations=1, **options
-        )
+        studies = StudyResults(collection, results)
+        sumrank(studies, "T", CONTRAST, n_permutations=1, **options)  # compiles
         started = time.perf_counter()
-        differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=10, **options
-        )
+        sumrank(studies, "T", CONTRAST, n_permutations=10, **options)
         seconds = (time.perf_counter() - started) / (10 * len(sizes))
         print(f"{analysis.__name__}: {seconds:.3f} s per study and permutation")
 
@@ -632,8 +638,8 @@ def main():
     small_p[0, :, :10] *= 0.01
     small_sign[0, :, :10] = 1.0
     prediction = held_out_prediction(
-        collection, results, CONTRAST, "condition", "case", "ctrl", n_genes=15,
-        proportion_of_studies=HELD_OUT,
+        StudyResults(collection, results), CONTRAST, variable="condition",
+        case="case", control="ctrl", n_features=15, proportion_of_studies=HELD_OUT,
     )  # fmt: skip
     proportions = (1, 0.65, 0.5)
     null = [f"Permutation_{b}" for b in range(40)]
@@ -671,20 +677,23 @@ def main():
                     runs.add(f"{held}_{group}_{direction}", {"Real": tables}, HELD_OUT)
         # The figure of every study summed, whose p-values from 20 permutations pass
         # the adjustment for some genes and are never 0 (MakeManhattanPlot jitters 0).
-        drawn = differential_expression_sumrank(
-            collection, results, "T", CONTRAST, n_permutations=20,
+        drawn = sumrank(
+            StudyResults(collection, results), "T", CONTRAST, n_permutations=20,
             permute="condition", rng=SEED,
         )  # fmt: skip
-        table = drawn.table
+        table = drawn.features
         columns = ("feature_id", "up_p_value", "up_adjusted_p_value")
         references = runs.execute(code, [table[column] for column in columns])
         rows += manhattan_rows(drawn, runs.root)
 
         worst = 0.0
         for group, proportion in itertools.product(("T", "B"), proportions):
-            ours = differential_expression_sumrank(
-                collection, results, group, CONTRAST, proportion_of_studies=proportion
-            ).table
+            ours = sumrank(
+                StudyResults(collection, results),
+                group,
+                CONTRAST,
+                proportion_of_studies=proportion,
+            ).features
             for direction, _ in DIRECTIONS:
                 name = f"{group}_{proportion}_{direction}"
                 mine = at(ours, runs.runs[name]["genes"], f"{direction}_statistic")
@@ -695,20 +704,21 @@ def main():
         worst = 0.0
         signed = np.where(ties_change < 0, np.log10(ties_p), -np.log10(ties_p))
         for proportion in (1, 0.5):
-            fit = sumrank(signed, proportion_of_studies=proportion)
+            fit = fit_sumrank(signed, proportion_of_studies=proportion)
             for direction, _ in DIRECTIONS:
                 mine = getattr(fit, f"{direction}_statistic")
                 worst = max(
                     worst, relative(mine, runs.sums(f"ties_{proportion}_{direction}"))
                 )
-        rows.append(("sumrank of 4 studies of 60 genes with tied p-values, proportions "
-                     "1 and 0.5", "the authors' SumRank", "max relative difference",
-                     worst, EXACT))  # fmt: skip
+        rows.append(("fit_sumrank of 4 studies of 60 genes with tied p-values, "
+                     "proportions 1 and 0.5", "the authors' SumRank",
+                     "max relative difference", worst, EXACT))  # fmt: skip
 
-        ours = differential_expression_sumrank(
-            collection, results, "T", CONTRAST, proportion_of_studies=0.65,
-            n_permutations=len(null), permute="condition", rng=SEED,
-        ).table  # fmt: skip
+        ours = sumrank(
+            StudyResults(collection, results), "T", CONTRAST,
+            proportion_of_studies=0.65, n_permutations=len(null), permute="condition",
+            rng=SEED,
+        ).features  # fmt: skip
         differences = deliberate = 0.0
         outside = 0
         for direction, _ in DIRECTIONS:

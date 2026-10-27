@@ -20,10 +20,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from cytepool import Cube, Design, dream_voom, from_bulk
 from cytepool._jit import thread_limit
-from cytepool.cube import Cube, from_bulk
-from cytepool.design import Design
-from cytepool.differential_expression import dream_voom
 from cytepool.stats._fixed_effect_inference import combined_df
 from cytepool.stats.dream import moderated_fixed_effect_tests, voom_with_dream_weights
 from cytepool.stats.mixed_models import (
@@ -178,7 +176,7 @@ def study(name: str, method: str) -> tuple[Any, Any]:
     data, samples = fixture(f"study_{name}")
     design = Design(samples, "~ time + age", random="(1 | donor)")
     voom = voom_with_dream_weights(data["counts"], design, span=0.5)
-    fit = fit_mixed_model(voom.log_cpm, design, weights=voom.weights)
+    fit = fit_mixed_model(voom.log2_cpm, design, weights=voom.weights)
     tests = fixed_effect_tests(fit, CONTRASTS, df_method=method)  # type: ignore[arg-type]
     time = fixed_effect_tests(
         fit,
@@ -210,7 +208,7 @@ def test_moderated_tests_match_dream(name: str, ddf: str, method: str) -> None:
     assert_relative(moderated.tests.standard_error, reference["se"], CLOSE)
     assert_relative(moderated.tests.df, reference["df"], CLOSE)
     assert_relative(moderated.t, reference["t"], CLOSE, 1.0)
-    assert_relative(moderated.lods, reference["lods"], CLOSE, 1.0)
+    assert_relative(moderated.log_odds, reference["lods"], CLOSE, 1.0)
     assert_relative(moderated.z, reference["z"], CLOSE, 1.0)
     assert_relative(moderated.df_total, reference["df_total"], CLOSE)
     assert_relative(moderated.p_value, reference["p"], CLOSE, p_scale(reference["p"]))
@@ -268,7 +266,7 @@ def test_dream_voom_by_default_chooses_the_degrees_of_freedom_as_dream_does() ->
             }
             assert_relative(table["t"], reference["t"], CLOSE, 1.0)
             assert_relative(table["df"], reference["df_total"], CLOSE)
-            assert_relative(table["b_statistic"], reference["lods"], CLOSE, 1.0)
+            assert_relative(table["log_odds"], reference["lods"], CLOSE, 1.0)
             assert_relative(table["z_statistic"], reference["z"], CLOSE, 1.0)
             assert_relative(
                 table["p_value"], reference["p"], CLOSE, p_scale(reference["p"])

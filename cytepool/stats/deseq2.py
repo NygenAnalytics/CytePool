@@ -541,10 +541,10 @@ class DESeq2Results:
         """Return the test as a table, one row per gene in the order of the counts.
 
         DESeq2's ``results()``, with the columns of the tables of
-        :func:`~cytepool.differential_expression.limma_voom`: ``feature_id``;
-        ``base_mean`` (``baseMean``); ``log2_fold_change`` (``log2FoldChange``);
-        ``standard_error`` (``lfcSE``); ``statistic`` (``stat``); ``p_value``
-        (``pvalue``); and ``adjusted_p_value`` (``padj``).
+        :func:`~cytepool.limma_voom`: ``feature_id``; ``base_mean`` (``baseMean``);
+        ``log2_fold_change`` (``log2FoldChange``); ``standard_error`` (``lfcSE``);
+        ``statistic`` (``stat``); ``p_value`` (``pvalue``); and ``adjusted_p_value``
+        (``padj``).
 
         Args:
             feature_ids: One id per gene, as text, such as the gene ids of the

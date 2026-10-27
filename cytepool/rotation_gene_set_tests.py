@@ -3,35 +3,34 @@ romer.
 
 A rotation test (Langsrud 2005) draws random rotations of the residual space of the
 linear model fitted to every gene, which leave the joint distribution of the data
-unchanged under the null hypothesis, and compares a set statistic with its values
-under the rotations. :func:`roast` and :func:`mroast` are self-contained tests of one
-gene set and of many (Wu et al. 2010): whether the genes of a set are differentially
-expressed for the contrast at all. :func:`romer` is a competitive test of many sets
-(Majewski et al. 2010): whether the genes of a set rank higher than the other genes.
-:func:`~cytepool.stats.gene_set_tests.fry` gives the limit of ``mroast`` with the mean
-statistic over infinitely many rotations without drawing any. Results match limma
-3.62.1 within Monte Carlo error, and exactly when CytePool is given limma's rotations,
-except where noted under "Deliberate differences".
+unchanged under the null hypothesis, and compares a set statistic with its values under
+the rotations. :func:`~cytepool.roast` and :func:`~cytepool.mroast` are self-contained
+tests of one gene set and of many (Wu et al. 2010): whether the genes of a set are
+differentially expressed for the contrast at all. :func:`~cytepool.romer` is a
+competitive test of many sets (Majewski et al. 2010): whether the genes of a set rank
+higher than the other genes. :func:`~cytepool.fry` gives the limit of ``mroast`` with
+the mean statistic over infinitely many rotations without drawing any. Results match
+limma 3.62.1 within Monte Carlo error, and exactly when CytePool is given limma's
+rotations, except where noted under "Deliberate differences".
 
 Effects and rotations:
     Each gene's contrast effect u_0 and residual effects u_1, ..., u_d are those of
-    :mod:`cytepool.stats.gene_set_tests`: coordinates of its data, whitened by its
-    precision weights, in the basis of the Householder QR decomposition of the design
-    reparametrised so that the contrast is its last coefficient. Under the null
-    hypothesis they are independent with variance sigma^2, so one rotation applied to
-    the (d + 1)-vectors of every gene leaves the joint distribution of the data, and
-    the correlation between genes, unchanged (Wu et al. 2010, section 4.2). A
-    rotation is given by its first row r, a point drawn uniformly from the unit
-    sphere in d + 1 dimensions (a vector of standard normal draws divided by its
-    length): a gene's rotated contrast effect is u* = r'u and its rotated residual
-    sum of squares |u|^2 - u*^2. The rotated moderated t-statistic of a gene uses
-    the prior variance s_0^2 and prior df d_0 estimated once from the observed
-    residual variances of all genes (Wu et al. 2010, section 2.4): t* = u* / s*, with
-    s*^2 = (d_0 s_0^2 + |u|^2 - u*^2) / (d_0 + d). The rotations come from
-    ``rng.standard_normal``, 4,096 at a time, which bounds the memory they take; numpy
-    gives the same stream however its draws are split, so a seeded generator gives the
-    same p-values every time. limma draws its own rotations from R's generator, so the
-    two programs agree within Monte Carlo error.
+    :func:`~cytepool.camera` and :func:`~cytepool.fry`: coordinates of its data,
+    whitened by its precision weights, in the basis of the Householder QR decomposition
+    of the design reparametrised so that the contrast is its last coefficient. Under the
+    null hypothesis they are independent with variance sigma^2, so one rotation applied
+    to the (d + 1)-vectors of every gene leaves the joint distribution of the data, and
+    the correlation between genes, unchanged (Wu et al. 2010, section 4.2). A rotation
+    is given by its first row r, a point drawn uniformly from the unit sphere in d + 1
+    dimensions (a vector of standard normal draws divided by its length): a gene's
+    rotated contrast effect is u* = r'u and its rotated residual sum of squares |u|^2 -
+    u*^2. The rotated moderated t-statistic of a gene uses the prior variance s_0^2 and
+    prior df d_0 estimated once from the observed residual variances of all genes (Wu et
+    al. 2010, section 2.4): t* = u* / s*, with s*^2 = (d_0 s_0^2 + |u|^2 - u*^2) / (d_0
+    + d). The rotations come from ``rng.standard_normal``, 4,096 at a time, which bounds
+    the memory they take; numpy gives the same stream however its draws are split, so a
+    seeded generator gives the same p-values every time. limma draws its own rotations
+    from R's generator, so the two programs agree within Monte Carlo error.
 
 roast and mroast:
     Each gene's moderated t becomes a z-score by Bailey's (1980) normalizing
@@ -125,10 +124,10 @@ Deliberate differences from limma:
     - A gene of contribution weight zero leaves the set: it counts neither in
       ``n_genes`` nor among the values that ``"mean50"`` averages. limma keeps it in
       both (and leaves it out of the active proportions, as CytePool does).
-    - romer's posterior probability P_g is 1 / (1 + exp(-lods)). limma computes
-      exp(lods) / (1 + exp(lods)), which is NaN beyond lods = 709.8 (|t| above about
-      38 with an infinite prior df); the gene's shrunk contrast effect is then NaN and
-      the p-values of every set change (found by probing).
+    - romer's posterior probability P_g is 1 / (1 + exp(-B)), of the log-odds B.
+      limma computes exp(B) / (1 + exp(B)), which is NaN beyond B = 709.8 (|t| above
+      about 38 with an infinite prior df); the gene's shrunk contrast effect is then
+      NaN and the p-values of every set change (found by probing).
     - A set without genes, or whose genes all have weight zero, has NaN p-values and
       no direction and is left out of the adjustment of the other sets; limma reports
       "down" and NA, or the smallest possible p-value when all weights are zero. A
@@ -190,11 +189,12 @@ from cytepool._masked_arrays import reject_masked, unmasked_array
 from cytepool._options import checked_flag, positive_integer, random_generator
 from cytepool._ranks import average_ranks_in_order
 from cytepool._summation import observed_means
-from cytepool.stats._gene_sets import (
+from cytepool._gene_sets import (
+    GeneSetData,
+    gene_set_data,
     check_matched,
     checked_gene_sets,
     contrast_design,
-    expression_values,
     gene_effects,
     gene_positions,
     id_positions,
@@ -234,53 +234,64 @@ _COEFFICIENT_LIMITS = (0.1, 4.0)
 
 
 def roast(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    data: Any,
     gene_set: Any,
     *,
-    gene_ids: npt.ArrayLike | None = None,
+    group: str | None = None,
+    contrast: Any = None,
+    design: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: npt.ArrayLike | None = None,
     weights: npt.ArrayLike | None = None,
     gene_weights: npt.ArrayLike | None = None,
     set_statistic: str = "mean",
     n_rotations: int = 1999,
-    trend: bool = False,
-    robust: bool = False,
+    trend: bool | None = None,
+    robust: bool | None = None,
     rng: np.random.Generator | int | None = None,
     n_threads: int | None = None,
 ) -> Table:
     """Self-contained rotation test of one gene set for one contrast.
 
     limma's ``roast`` (Wu et al. 2010): tests whether the genes of the set are
-    differentially expressed for ``contrast``, for each alternative: down, up, either
+    differentially expressed for ``contrast``, down, up, in either direction
     (two-sided) and mixed (in either direction, gene by gene), by comparing a set
     statistic of the genes' moderated z-scores with its values under random rotations
     of the residual space. The module docstring gives the method and the deliberate
-    differences from limma. With many sets, :func:`mroast` reports one row per set.
+    differences from limma. With many sets, :func:`mroast` tests them together. A
+    result of :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested
+    as :func:`~cytepool.camera` tests it.
 
     Args:
-        y: ``(n_samples, n_genes)`` log-expression values, finite, or a
-            :class:`~cytepool.stats.voom.VoomResult`, whose log-CPM values are tested
-            with its weights. All genes are used to estimate the prior of the
-            residual variances.
-        design: ``(n_samples, n_coefficients)`` design matrix of full column rank, or
-            anything else that ``fit_linear_model`` accepts, such as a
-            :class:`~cytepool.design.Design`. It needs residual degrees of freedom.
-        contrast: The contrast to test, as for
-            :func:`~cytepool.stats.gene_set_tests.camera`: the name of a named
-            contrast of a ``Design``, the name or 0-based position of a design
-            column, or weights on the design columns.
-        gene_set: The set's genes: gene ids (matched to ``gene_ids``; ids not among
-            them are left out), 0-based positions of columns of ``y`` when
-            ``gene_ids`` is not given, or a boolean mask over the genes; or a mapping
-            of gene (id or position) to its contribution weight. A gene listed twice
-            counts once, and a gene of weight zero leaves the set. One set of a
-            :class:`~cytepool.gene_sets.GeneSets`, ``gene_sets[name]``, is a tuple of
+        data: A :class:`~cytepool.DifferentialExpressionResult` of limma-voom or
+            limma-trend, a :class:`~cytepool.stats.voom.VoomResult`, whose log2-CPM
+            values are tested with its weights, or ``(n_samples, n_genes)``
+            log-expression values, finite. All genes are used to estimate the prior
+            of the residual variances.
+        gene_set: The set's genes: gene ids (matched to the ids of the data; ids not
+            among them are left out), 0-based positions of columns of an array when
+            ``feature_ids`` is not given, or a boolean mask over the genes; or a
+            mapping of gene (id or position) to its contribution weight. A gene
+            listed twice counts once, and a gene of weight zero leaves the set. One
+            set of a :class:`~cytepool.GeneSets`, ``gene_sets[name]``, is a tuple of
             gene ids.
-        gene_ids: One id per gene (column of ``y``), unique, to name genes by id.
-        weights: Precision weights, positive and finite: ``(n_samples,)`` for sample
-            weights or ``(n_samples, n_genes)`` for observation weights. Not with a
-            ``VoomResult``, which carries its own.
+        group: For a result, the group (cell type) whose fit is tested; it may be
+            left out when the result has one.
+        contrast: The contrast to test, as for :func:`~cytepool.camera`: for a
+            result, one of its contrasts; for an array or a VoomResult, the name of a
+            named contrast of a ``Design``, the name or 0-based position of a design
+            column, or weights on the design columns.
+        design: For an array or a VoomResult, ``(n_samples, n_coefficients)``
+            design matrix of full column rank, or anything else that
+            ``fit_linear_model`` accepts, such as a :class:`~cytepool.Design`. It
+            needs residual degrees of freedom.
+        id_column: For a result, the column of its features whose ids the set
+            names, such as ``"feature_id"`` (the default) or ``"symbol"``.
+        feature_ids: For an array or a VoomResult, one id per gene (column),
+            unique, to name genes by id.
+        weights: For an array, precision weights, positive and finite:
+            ``(n_samples,)`` for sample weights or ``(n_samples, n_genes)`` for
+            observation weights.
         gene_weights: ``(n_genes,)`` contribution weights, finite, one per gene: a
             negative weight marks a gene expected to change in the opposite
             direction to the set, and larger weights count more in the set
@@ -292,36 +303,47 @@ def roast(
         n_rotations: Number of rotations B, at least 1. The smallest p-value is
             1 / (B + 1), and 1 / (2B + 1) for the up and down alternatives.
         trend: Whether the prior variance follows the mean log-expression of the
-            genes (limma's ``trend``).
-        robust: Whether to estimate the prior robustly (limma's ``robust``).
+            genes (limma's ``trend``); None takes the moderation of a result
+            (limma-trend's trend), and False otherwise.
+        robust: Whether to estimate the prior robustly (limma's ``robust``); None
+            takes the result's setting, and False otherwise.
         rng: A ``numpy.random.Generator`` to draw the rotations from, or an integer
             seed for one, or None for a fresh, unseeded generator.
         n_threads: The most threads to use for the rotations; ``None`` uses numba's
             current setting. The result does not depend on it.
 
     Returns:
-        A table with one row per alternative, ``"down"``, ``"up"``, ``"up_or_down"``
-        (two-sided) and ``"mixed"``: ``alternative``; ``n_genes``, the number of the
-        set's genes among those tested; ``active_proportion``, the proportion of the
-        set's genes active for that alternative; and ``p_value``. A set without genes
-        has NaN proportions and p-values.
+        A table with one row, as :func:`mroast` gives a row per set: ``n_genes``,
+        the number of the set's genes among those tested; ``proportion_down``,
+        ``proportion_up`` and ``proportion_mixed``, the proportions of the set's
+        genes active down, up and in either direction; ``direction``, ``"up"`` or
+        ``"down"`` (None where the p-value is NaN); ``p_value``, the two-sided
+        p-value (limma's ``UpOrDown``); and ``down_p_value``, ``up_p_value`` and
+        ``mixed_p_value``, those of the other alternatives. A set without genes has
+        NaN proportions and p-values.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
             array.
-        ValueError: If ``y`` is not finite, the design does not have one row per
-            sample, is not of full column rank or leaves no residual degrees of
-            freedom, the contrast or the set is invalid, a weight is not positive and
-            finite, a contribution weight is not finite, an option is invalid, or no
-            gene id of the set is among ``gene_ids``.
+        ValueError: If the values are not finite, the design is missing for an
+            array, does not have one row per sample, is not of full column rank or
+            leaves no residual degrees of freedom, the contrast or the set is
+            invalid, a weight is not positive and finite, a contribution weight is
+            not finite, an option is invalid, no gene id of the set is among the
+            data's ids, an argument applies to another kind of data, or the result is
+            from ``dream_voom``.
+        KeyError: If a result has no such group, contrast or column of its features,
+            or the group cannot estimate the contrast.
     """
     reject_masked(gene_set, "gene_set")
     tests = _roast_tests(
-        y,
-        design,
-        contrast,
+        data,
         {"gene_set": gene_set},
-        gene_ids=gene_ids,
+        group=group,
+        contrast=contrast,
+        design=design,
+        id_column=id_column,
+        feature_ids=feature_ids,
         weights=weights,
         gene_weights=gene_weights,
         set_statistic=set_statistic,
@@ -333,29 +355,37 @@ def roast(
         function="roast",
     )
     down, up, mixed = tests.active[0]
+    p_down, p_up, two_sided, p_mixed = tests.p_values[0].tolist()
     return Table(
         {
-            "alternative": ["down", "up", "up_or_down", "mixed"],
-            "n_genes": np.full(4, tests.n_genes[0], dtype=np.int64),
-            "active_proportion": np.array([down, up, max(down, up), mixed]),
-            "p_value": tests.p_values[0],
+            "n_genes": tests.n_genes[:1].copy(),
+            "proportion_down": np.array([down]),
+            "proportion_up": np.array([up]),
+            "proportion_mixed": np.array([mixed]),
+            "direction": [_direction(two_sided, p_up, p_down)],
+            "p_value": np.array([two_sided]),
+            "down_p_value": np.array([p_down]),
+            "up_p_value": np.array([p_up]),
+            "mixed_p_value": np.array([p_mixed]),
         }
     )
 
 
 def mroast(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: npt.ArrayLike | None = None,
+    group: str | None = None,
+    contrast: Any = None,
+    design: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: npt.ArrayLike | None = None,
     weights: npt.ArrayLike | None = None,
     gene_weights: npt.ArrayLike | None = None,
     set_statistic: str = "mean",
     n_rotations: int = 1999,
-    trend: bool = False,
-    robust: bool = False,
+    trend: bool | None = None,
+    robust: bool | None = None,
     mid_p: bool = True,
     rng: np.random.Generator | int | None = None,
     n_threads: int | None = None,
@@ -367,22 +397,27 @@ def mroast(
     the method and the deliberate differences from limma.
 
     Args:
-        y: Log-expression values or a ``VoomResult``, as for :func:`roast`.
-        design: The design, as for :func:`roast`.
-        contrast: The contrast to test, as for :func:`roast`.
+        data: A differential-expression result, a VoomResult or log-expression
+            values, as for :func:`roast`.
         gene_sets: Mapping of set name to its genes, each as ``gene_set`` of
             :func:`roast`: gene ids, positions or a boolean mask, or a mapping of
-            gene to its contribution weight. A
-            :class:`~cytepool.gene_sets.GeneSets`, such as one read from a GMT file
-            by :func:`~cytepool.gene_sets.read_gmt`, is such a mapping, of gene ids.
-        gene_ids: One id per gene, unique, to name genes by id.
-        weights: Precision weights, as for :func:`roast`.
+            gene to its contribution weight. A :class:`~cytepool.GeneSets`, such as
+            one read from a GMT file by :func:`~cytepool.read_gmt`, is such a
+            mapping, of gene ids.
+        group: For a result, the group whose fit is tested, as for :func:`roast`.
+        contrast: The contrast to test, as for :func:`roast`.
+        design: For an array or a VoomResult, the design, as for :func:`roast`.
+        id_column: For a result, the column of its features whose ids the sets name.
+        feature_ids: For an array or a VoomResult, one id per gene, unique, to name
+            genes by id.
+        weights: For an array, precision weights, as for :func:`roast`.
         gene_weights: ``(n_genes,)`` contribution weights, as for :func:`roast`; not
             with sets that give their own weights.
         set_statistic: ``"mean"``, ``"floormean"``, ``"mean50"`` or ``"msq"``.
         n_rotations: Number of rotations B, at least 1.
-        trend: Whether the prior variance follows the mean log-expression.
-        robust: Whether to estimate the prior robustly.
+        trend: Whether the prior variance follows the mean log-expression, as for
+            :func:`roast`.
+        robust: Whether to estimate the prior robustly, as for :func:`roast`.
         mid_p: Whether the adjustment uses mid-p-values, p - 1 / (2 (B + 1)), as
             limma does by default (limma's ``midp``), which suit false discovery
             rates; the adjusted p-values are then at least the p-values.
@@ -396,24 +431,26 @@ def mroast(
         ``"down"`` (None where the p-value is NaN); ``p_value``, the two-sided
         directional p-value; ``adjusted_p_value``, Benjamini-Hochberg over the sets
         (Benjamini and Hochberg 1995), limma's default (its other ``adjust.method``
-        choices are not offered);
-        ``mixed_p_value``, the p-value of the mixed alternative; and
-        ``adjusted_mixed_p_value``. A set without genes has NaN proportions and
-        p-values.
+        choices are not offered); ``mixed_p_value``, the p-value of the mixed
+        alternative; and ``mixed_adjusted_p_value``. A set without genes has NaN
+        proportions and p-values.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
             array.
         ValueError: As :func:`roast`, or if ``gene_sets`` is empty or no gene id of
-            any set is among ``gene_ids``.
+            any set is among the data's ids.
+        KeyError: As :func:`roast`.
     """
     use_mid_p = checked_flag(mid_p, "mid_p", expected="a bool")
     tests = _roast_tests(
-        y,
-        design,
-        contrast,
+        data,
         gene_sets,
-        gene_ids=gene_ids,
+        group=group,
+        contrast=contrast,
+        design=design,
+        id_column=id_column,
+        feature_ids=feature_ids,
         weights=weights,
         gene_weights=gene_weights,
         set_statistic=set_statistic,
@@ -425,8 +462,8 @@ def mroast(
         function="mroast",
     )
     down, up, two_sided, mixed = tests.p_values.T
-    direction: list[str | None] = [
-        None if math.isnan(p) else ("up" if p_up < p_down else "down")
+    direction = [
+        _direction(p, p_up, p_down)
         for p, p_up, p_down in zip(
             two_sided.tolist(), up.tolist(), down.tolist(), strict=True
         )
@@ -442,18 +479,26 @@ def mroast(
             "p_value": two_sided,
             "adjusted_p_value": _adjusted(two_sided, shift),
             "mixed_p_value": mixed,
-            "adjusted_mixed_p_value": _adjusted(mixed, shift),
+            "mixed_adjusted_p_value": _adjusted(mixed, shift),
         }
     )
 
 
+def _direction(p: float, p_up: float, p_down: float) -> str | None:
+    """The direction of a set with the two-sided p-value p: up when its up p-value is
+    the smaller, down otherwise; None where p is NaN."""
+    return None if math.isnan(p) else ("up" if p_up < p_down else "down")
+
+
 def romer(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: npt.ArrayLike | None = None,
+    group: str | None = None,
+    contrast: Any = None,
+    design: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: npt.ArrayLike | None = None,
     weights: npt.ArrayLike | None = None,
     set_statistic: str = "mean",
     n_rotations: int = 9999,
@@ -470,20 +515,26 @@ def romer(
     ranked again. Like gene set enrichment analysis it pits the sets against one
     another, but it uses rotations instead of permuting samples, so it works for any
     contrast of a linear model with residual degrees of freedom. The module docstring
-    gives the method.
+    gives the method. A result of :func:`~cytepool.limma_trend` is tested as
+    :func:`~cytepool.camera` tests it; romer has no observation weights, so a result
+    of :func:`~cytepool.limma_voom`, whose voom weights are, is refused, and limma's
+    romer moderates the variances without a trend.
 
     Args:
-        y: ``(n_samples, n_genes)`` log-expression values, finite. All genes are
+        data: A :class:`~cytepool.DifferentialExpressionResult` of limma-trend, or
+            ``(n_samples, n_genes)`` log-expression values, finite. All genes are
             ranked.
-        design: The design, as for :func:`roast`.
-        contrast: The contrast to test, as for :func:`roast`.
-        gene_sets: Mapping of set name to its genes: gene ids (matched to
-            ``gene_ids``; ids not among them are left out), 0-based positions, or a
+        gene_sets: Mapping of set name to its genes: gene ids (matched to the ids of
+            the data; ids not among them are left out), 0-based positions, or a
             boolean mask over the genes. A gene listed twice counts once. A
-            :class:`~cytepool.gene_sets.GeneSets` is such a mapping, of gene ids.
-        gene_ids: One id per gene, unique, to name genes by id.
-        weights: ``(n_samples,)`` sample weights, positive and finite (limma's
-            ``array.weights``). romer has no observation weights.
+            :class:`~cytepool.GeneSets` is such a mapping, of gene ids.
+        group: For a result, the group whose fit is tested, as for :func:`roast`.
+        contrast: The contrast to test, as for :func:`roast`.
+        design: For an array, the design, as for :func:`roast`.
+        id_column: For a result, the column of its features whose ids the sets name.
+        feature_ids: For an array, one id per gene, unique, to name genes by id.
+        weights: For an array, ``(n_samples,)`` sample weights, positive and finite
+            (limma's ``array.weights``). romer has no observation weights.
         set_statistic: ``"mean"`` (limma's default), ``"floormean"`` or ``"mean50"``;
             see the module docstring.
         n_rotations: Number of rotations B, at least 1; limma's default is 9999. The
@@ -506,8 +557,10 @@ def romer(
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
             array.
-        ValueError: As :func:`mroast`, or if ``y`` is a ``VoomResult`` or
-            ``weights`` are observation weights, which romer does not take.
+        ValueError: As :func:`mroast`, or if the data have observation weights,
+            which romer does not take: a ``VoomResult``, a result of limma-voom, or
+            ``weights`` of one value per observation.
+        KeyError: As :func:`roast`.
     """
     statistic = _statistic(set_statistic, _ROMER_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
@@ -516,41 +569,38 @@ def romer(
     )
     generator = random_generator(rng)
     with thread_limit(n_threads):
-        return _romer_sets(
-            y,
-            design,
-            contrast,
-            gene_sets,
-            gene_ids,
-            weights,
-            statistic,
-            n_rotations,
-            shrink,
-            generator,
+        read = gene_set_data(
+            data,
+            group=group,
+            contrast=contrast,
+            design=design,
+            id_column=id_column,
+            feature_ids=feature_ids,
+            weights=weights,
+            trend=None,
+            robust=None,
+            function="romer",
         )
+        return _romer_sets(read, gene_sets, statistic, n_rotations, shrink, generator)
 
 
 def _romer_sets(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    read: GeneSetData,
     gene_sets: Any,
-    gene_ids: Any,
-    weights: Any,
     statistic: int,
     n_rotations: int,
     shrink: bool,
     generator: np.random.Generator,
 ) -> Table:
-    """:func:`romer` once its options are checked."""
-    values, precision = expression_values(y, weights)
+    """:func:`romer` once its options are checked and its data read."""
+    values, precision = read.values, read.precision
     if precision is not None and precision.ndim != 1:
         raise ValueError(
             "romer takes sample weights only, of shape (n_samples,); limma's romer "
-            "has no observation weights, so a VoomResult or a matrix of weights "
-            "cannot be used"
+            "has no observation weights, so a VoomResult, a result of limma_voom or a "
+            "matrix of weights cannot be used"
         )
-    index = checked_gene_sets(gene_sets, gene_ids, values.shape[1])
+    index = checked_gene_sets(gene_sets, read.ids, values.shape[1], read.ids_name)
     names, members = [], []
     matched = 0
     for name, genes in gene_sets.items():
@@ -564,11 +614,11 @@ def _romer_sets(
         names.append(name)
         members.append(positions)
         matched += found
-    check_matched(index, matched)
+    check_matched(index, matched, read.ids_name)
     p_values = _romer_p_values(
         values,
-        design,
-        contrast,
+        read.design,
+        read.contrast,
         precision,
         members,
         statistic,
@@ -603,12 +653,14 @@ class _RoastTests(NamedTuple):
 
 
 def _roast_tests(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    data: Any,
     gene_sets: Any,
     *,
-    gene_ids: Any,
+    group: Any,
+    contrast: Any,
+    design: Any,
+    id_column: Any,
+    feature_ids: Any,
     weights: Any,
     gene_weights: Any,
     set_statistic: Any,
@@ -622,50 +674,60 @@ def _roast_tests(
     """The active proportions and p-values of each set, for roast and mroast."""
     statistic = _statistic(set_statistic, _ROAST_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    with_trend = checked_flag(trend, "trend", expected="a bool")
-    with_robust = checked_flag(robust, "robust", expected="a bool")
+    with_trend = (
+        None if trend is None else checked_flag(trend, "trend", expected="a bool")
+    )
+    with_robust = (
+        None if robust is None else checked_flag(robust, "robust", expected="a bool")
+    )
     generator = random_generator(rng)
     with thread_limit(n_threads):
+        read = gene_set_data(
+            data,
+            group=group,
+            contrast=contrast,
+            design=design,
+            id_column=id_column,
+            feature_ids=feature_ids,
+            weights=weights,
+            trend=with_trend,
+            robust=with_robust,
+            function=function,
+        )
         return _roast_sets(
-            y,
-            design,
-            contrast,
+            read,
             gene_sets,
-            gene_ids,
-            weights,
             gene_weights,
             statistic,
             n_rotations,
-            with_trend,
-            with_robust,
             generator,
             function,
         )
 
 
 def _roast_sets(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    read: GeneSetData,
     gene_sets: Any,
-    gene_ids: Any,
-    weights: Any,
     gene_weights: Any,
     statistic: int,
     n_rotations: int,
-    with_trend: bool,
-    with_robust: bool,
     generator: np.random.Generator,
     function: str,
 ) -> _RoastTests:
-    """:func:`_roast_tests` once its options are checked."""
-    values, precision = expression_values(y, weights)
+    """:func:`_roast_tests` once its options are checked and its data read."""
+    values, precision = read.values, read.precision
+    with_trend, with_robust = bool(read.trend), bool(read.robust)
     n_genes = values.shape[1]
     contribution = _gene_weights(gene_weights, n_genes)
     names, members, set_weights = _weighted_sets(
-        gene_sets, gene_ids, n_genes, contribution, single=function == "roast"
+        gene_sets,
+        read.ids,
+        n_genes,
+        contribution,
+        single=function == "roast",
+        ids_name=read.ids_name,
     )
-    reparametrised, d = contrast_design(values, design, contrast, function)
+    reparametrised, d = contrast_design(values, read.design, read.contrast, function)
     effects = gene_effects(values, reparametrised, precision)
     variances = np.sum(effects[:, 1:] ** 2, axis=1) / d
     squeezed = squeeze_variances(
@@ -675,11 +737,11 @@ def _roast_sets(
         robust=with_robust,
     )
     prior_variance = np.broadcast_to(squeezed.prior_variance, (n_genes,))
-    prior_df = np.broadcast_to(squeezed.prior_df, (n_genes,))
+    df_prior = np.broadcast_to(squeezed.df_prior, (n_genes,))
     with np.errstate(divide="ignore", invalid="ignore"):
         t = effects[:, 0] / np.sqrt(squeezed.posterior_variance)
     t = np.where(np.isnan(t), 0.0, t)  # a contrast effect of 0 over a variance of 0
-    z = _bailey_z_scores(t, _capped_df(prior_df, d))
+    z = _bailey_z_scores(t, _capped_df(df_prior, d))
 
     # Only the genes of some set are rotated; members index this union.
     union, inverse = np.unique(
@@ -693,7 +755,7 @@ def _roast_sets(
         np.ascontiguousarray(effects[union]),
         np.sum(effects[union] ** 2, axis=1),
         np.ascontiguousarray(prior_variance[union], dtype=np.float64),
-        np.ascontiguousarray(prior_df[union], dtype=np.float64),
+        np.ascontiguousarray(df_prior[union], dtype=np.float64),
         float(d),
         starts,
         union_members,
@@ -897,7 +959,7 @@ def _roast_counts(
     effects: FloatArray,
     norms: FloatArray,
     prior_variance: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: float,
     starts: npt.NDArray[np.int64],
     members: npt.NDArray[np.int64],
@@ -916,7 +978,7 @@ def _roast_counts(
             effects,
             norms,
             prior_variance,
-            prior_df,
+            df_prior,
             d,
             starts,
             members,
@@ -937,7 +999,7 @@ def _roast_counts_in_order(
     effects: FloatArray,
     norms: FloatArray,
     prior_variance: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: float,
     starts: npt.NDArray[np.int64],
     members: npt.NDArray[np.int64],
@@ -952,7 +1014,7 @@ def _roast_counts_in_order(
         effects,
         norms,
         prior_variance,
-        prior_df,
+        df_prior,
         d,
         starts,
         members,
@@ -972,7 +1034,7 @@ def _roast_chunk(
     effects: FloatArray,
     norms: FloatArray,
     prior_variance: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: float,
     starts: npt.NDArray[np.int64],
     members: npt.NDArray[np.int64],
@@ -991,7 +1053,7 @@ def _roast_chunk(
             effect first.
         norms: Each gene's squared length of its effects.
         prior_variance: Each gene's prior variance.
-        prior_df: Each gene's prior df, possibly infinite.
+        df_prior: Each gene's prior df, possibly infinite.
         d: Residual degrees of freedom.
         starts: ``(n_sets + 1,)`` start of each set in ``members``.
         members: The genes (rows of ``effects``) of each set, one set after another.
@@ -1014,8 +1076,8 @@ def _roast_chunk(
             u = 0.0
             for j in range(k):
                 u += rotations[b, j] * effects[g, j]
-            t = _moderated_t(u, norms[g], prior_variance[g], prior_df[g], d)
-            z[g] = _bailey_z(t, min(prior_df[g] + d, _DF_LIMIT))
+            t = _moderated_t(u, norms[g], prior_variance[g], df_prior[g], d)
+            z[g] = _bailey_z(t, min(df_prior[g] + d, _DF_LIMIT))
         for s in range(n_sets):
             if starts[s + 1] == starts[s]:
                 continue
@@ -1033,15 +1095,15 @@ def _roast_chunk(
 
 @jit
 def _moderated_t(
-    u: float, norm: float, prior_variance: float, prior_df: float, d: float
+    u: float, norm: float, prior_variance: float, df_prior: float, d: float
 ) -> float:
     """The moderated t of a rotated contrast effect u of a gene whose effects have
     squared length ``norm``."""
     residual = max(norm - u * u, 0.0) / d
-    if math.isinf(prior_df):
+    if math.isinf(df_prior):
         posterior = prior_variance
     else:
-        posterior = (prior_df * prior_variance + d * residual) / (prior_df + d)
+        posterior = (df_prior * prior_variance + d * residual) / (df_prior + d)
     if posterior > 0.0:
         return u / math.sqrt(posterior)
     if u == 0.0:
@@ -1084,10 +1146,10 @@ def _bailey_z_scores(t: FloatArray, df: FloatArray) -> FloatArray:
     return result
 
 
-def _capped_df(prior_df: FloatArray, d: int) -> FloatArray:
+def _capped_df(df_prior: FloatArray, d: int) -> FloatArray:
     """min(d_0 + d, 10^4): the degrees of freedom of roast's z-scores."""
     capped: FloatArray = np.minimum(
-        np.asarray(prior_df, dtype=np.float64) + d, _DF_LIMIT
+        np.asarray(df_prior, dtype=np.float64) + d, _DF_LIMIT
     )
     return capped
 
@@ -1122,7 +1184,7 @@ def _romer_p_values(
     squeezed = squeeze_variances(variances, d)
     n_genes = values.shape[1]
     prior_variance = np.broadcast_to(squeezed.prior_variance, (n_genes,))
-    prior_df = np.broadcast_to(squeezed.prior_df, (n_genes,))
+    df_prior = np.broadcast_to(squeezed.df_prior, (n_genes,))
     with np.errstate(divide="ignore", invalid="ignore"):
         t = effects[:, 0] / np.sqrt(squeezed.posterior_variance)
     t = np.where(np.isnan(t), 0.0, t)
@@ -1130,7 +1192,7 @@ def _romer_p_values(
     rotated = effects.copy()
     if shrink:
         rotated[:, 0] *= _shrinkage(
-            reparametrised, weights, t, prior_df, d, prior_variance
+            reparametrised, weights, t, df_prior, d, prior_variance
         )
     sizes = np.array([rows.size for rows in members], dtype=np.int64)
     starts = np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64)
@@ -1139,7 +1201,7 @@ def _romer_p_values(
         np.ascontiguousarray(rotated),
         norms,
         np.ascontiguousarray(prior_variance, dtype=np.float64),
-        np.ascontiguousarray(prior_df, dtype=np.float64),
+        np.ascontiguousarray(df_prior, dtype=np.float64),
         float(d),
         starts,
         flat,
@@ -1166,7 +1228,7 @@ def _shrinkage(
     reparametrised: FloatArray,
     weights: FloatArray | None,
     t: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: int,
     prior_variance: FloatArray,
 ) -> FloatArray:
@@ -1176,7 +1238,7 @@ def _shrinkage(
     the t-statistics on d_0 + d degrees of freedom and the proportion of
     differentially expressed genes 1 - pi_0.
     """
-    df = np.asarray(prior_df, dtype=np.float64) + d
+    df = np.asarray(df_prior, dtype=np.float64) + d
     p_values = 2.0 * np.asarray(t_sf(np.abs(t), df), dtype=np.float64)
     null_proportion = _proportion_true_null(p_values)
     if null_proportion >= 1.0:
@@ -1354,7 +1416,7 @@ def _romer_counts(
     effects: FloatArray,
     norms: FloatArray,
     prior_variance: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: float,
     starts: npt.NDArray[np.int64],
     members: npt.NDArray[np.int64],
@@ -1372,7 +1434,7 @@ def _romer_counts(
             effects,
             norms,
             prior_variance,
-            prior_df,
+            df_prior,
             d,
             starts,
             members,
@@ -1392,7 +1454,7 @@ def _romer_counts_in_order(
     effects: FloatArray,
     norms: FloatArray,
     prior_variance: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: float,
     starts: npt.NDArray[np.int64],
     members: npt.NDArray[np.int64],
@@ -1406,7 +1468,7 @@ def _romer_counts_in_order(
         effects,
         norms,
         prior_variance,
-        prior_df,
+        df_prior,
         d,
         starts,
         members,
@@ -1425,7 +1487,7 @@ def _romer_chunk(
     effects: FloatArray,
     norms: FloatArray,
     prior_variance: FloatArray,
-    prior_df: FloatArray,
+    df_prior: FloatArray,
     d: float,
     starts: npt.NDArray[np.int64],
     members: npt.NDArray[np.int64],
@@ -1454,7 +1516,7 @@ def _romer_chunk(
             u = 0.0
             for j in range(k):
                 u += rotations[b, j] * effects[g, j]
-            t[g] = _moderated_t(u, norms[g], prior_variance[g], prior_df[g], d)
+            t[g] = _moderated_t(u, norms[g], prior_variance[g], df_prior[g], d)
         _alternative_ranks(t, statistic, up, down, mixed)
         for s in range(n_sets):
             start = starts[s]
@@ -1490,10 +1552,11 @@ def _weighted_sets(
     gene_weights: FloatArray | None,
     *,
     single: bool,
+    ids_name: str,
 ) -> tuple[list[str], list[IntArray], list[FloatArray]]:
     """Each set's name, the sorted positions of its genes and their contribution
     weights, with genes of weight zero left out."""
-    index = checked_gene_sets(gene_sets, gene_ids, n_genes)
+    index = checked_gene_sets(gene_sets, gene_ids, n_genes, ids_name)
     names: list[str] = []
     members: list[IntArray] = []
     weights: list[FloatArray] = []
@@ -1521,10 +1584,11 @@ def _weighted_sets(
         matched += found
     if index is not None and matched == 0 and single:
         raise ValueError(
-            "no gene of gene_set is among gene_ids; the set and gene_ids must name "
-            "genes the same way (for example both by symbol, or both by Ensembl id)"
+            f"no gene of gene_set is among {ids_name}; the set and {ids_name} must "
+            "name genes the same way (for example both by symbol, or both by Ensembl "
+            "id)"
         )
-    check_matched(index, matched)
+    check_matched(index, matched, ids_name)
     return names, members, weights
 
 

@@ -60,9 +60,8 @@ from pathlib import Path
 import matplotlib.figure
 import numpy as np
 
-from cytepool.cube import Cube
-from cytepool.normalization import filter_by_expression, log_cpm, tmm_factors
-from cytepool.pathway_scores import combined_z_scores, gsva, plage, ssgsea
+from cytepool import Cube, combined_z_scores, gsva, plage, ssgsea
+from cytepool.normalization import filter_by_expression, log2_cpm, tmm_factors
 from cytepool.plotting import plot_pathway_scores
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests/data/pathway_scores"
@@ -159,9 +158,9 @@ def cube_of(rng, genes, counts):
         n_cells=cells[:, np.newaxis],
     )
     kept = pooled[(pooled.sum(axis=1) > 0) & (cells >= 10)]
-    keep = filter_by_expression(kept, group=np.zeros(kept.shape[0]))
+    keep = filter_by_expression(kept, sample_groups=np.zeros(kept.shape[0]))
     kept = kept[:, keep]
-    values = log_cpm(kept, norm_factors=tmm_factors(kept), prior_count=2.0)
+    values = log2_cpm(kept, norm_factors=tmm_factors(kept), prior_count=2.0)
     return cube, values, kept, [g for g, k in zip(genes, keep, strict=True) if k]
 
 
@@ -301,11 +300,11 @@ def run_cytepool(case, data, sets, cube):
     function = FUNCTIONS[case["method"]]
     options = options_of(case)
     if case["data"].startswith("cube"):
-        values = "counts" if case["data"] == "cube_counts" else "log_cpm"
+        values = "counts" if case["data"] == "cube_counts" else "log2_cpm"
         return function(cube, sets[case["sets"]], values=values, **options)
     values, genes, integer = data[case["data"]]
     values = values.astype(np.int64) if integer else values
-    return function(values, sets[case["sets"]], gene_ids=genes, **options)
+    return function(values, sets[case["sets"]], feature_ids=genes, **options)
 
 
 # Comparisons.
@@ -420,11 +419,11 @@ def benchmark(data, sets, runs, seconds):
         values, genes, integer = data[run["data"]]
         values = values.astype(np.int64) if integer else values
         function, options = FUNCTIONS[run["method"]], options_of(run)
-        function(values[:4, :50], {"s": genes[:5]}, gene_ids=genes[:50], **options)
+        function(values[:4, :50], {"s": genes[:5]}, feature_ids=genes[:50], **options)
         best = np.inf
         for _ in range(3):
             start = time.perf_counter()
-            function(values, sets["bench"], gene_ids=genes, **options)
+            function(values, sets["bench"], feature_ids=genes, **options)
             best = min(best, time.perf_counter() - start)
         label = f"{run['method']} {run['options'].get('kcdf', '')}".strip()
         print(f"| {label} | {reference:.2f} | {best:.2f} |")

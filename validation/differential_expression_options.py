@@ -67,9 +67,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.cube import from_cells
-from cytepool.design import Design
-from cytepool.differential_expression import limma_trend, limma_voom
+from cytepool import Design, from_cells, limma_trend, limma_voom
 
 FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[1]
@@ -86,7 +84,7 @@ COLUMNS = {
     "t": "t",
     "P.Value": "p_value",
     "adj.P.Val": "adjusted_p_value",
-    "B": "b_statistic",
+    "B": "log_odds",
 }
 CONTRASTS = {"stim_vs_ctrl": "conditionstim", "D3_vs_D2": "donorD3 - donorD2"}
 ACROSS = "adjusted_p_value_across_groups"
@@ -256,7 +254,11 @@ def study(rng, n_donors, bounds, n_genes, outlier, shallow, few):
         rng, samples, cells, n_genes, outlier, shallow
     )
     cube = from_cells(
-        counts, samples=labels, groups=types, sample_table=samples, layers="counts"
+        counts,
+        sample_labels=labels,
+        group_labels=types,
+        samples=samples,
+        layers="counts",
     )
     design = Design(
         cube.samples,
@@ -413,7 +415,7 @@ def compare(name, cube, result, limma, options):
         tested = np.isin(
             cube.features["feature_id"], tables["stim_vs_ctrl"]["feature_id"]
         )
-        prior_df = result.summary["prior_df"][k]
+        prior_df = result.summary["df_prior"][k]
         their_prior = float(np.median(theirs["df_prior"]))
         mismatches = (
             np.count_nonzero(used != theirs["used"].astype(bool))

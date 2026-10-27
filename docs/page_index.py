@@ -23,11 +23,13 @@ reference (``docs/source/reference/api``) link to each other through this index:
 Citations are written ``[@key]`` or ``@key`` and resolve in ``references.bib``.
 
 The documented names are read from the API sources, as Sphinx documents them:
-``automodule`` documents a module's public names (its ``__all__``, or else the public
-functions and classes it defines) that have docstrings, and the methods and
-properties of its classes that have docstrings; ``autofunction`` and ``autoclass``
-document one object; ``py:data`` documents a constant under the module the page
-documents last, or its ``:module:`` option.
+``automodule`` documents a module and its public names (its ``__all__``, or else the
+public functions and classes it defines) that have docstrings, and the methods and
+properties of its classes that have docstrings; with ``:no-members:`` it documents none
+of its names, and with ``:no-index:`` the module itself is no entry, as for the
+description of a module whose names are documented at the top level;
+``autofunction`` and ``autoclass`` document one object; ``py:data`` documents a
+constant under the module the page documents last, or its ``:module:`` option.
 """
 
 import ast
@@ -217,7 +219,10 @@ def api_entries(api_source: Path = API_SOURCE) -> dict[str, ApiEntry]:
             if kind == "automodule":
                 current = name
                 module = importlib.import_module(name)
-                documented[name] = "module"
+                if "no-index" not in options:
+                    documented[name] = "module"
+                if "no-members" in options:
+                    continue
                 for member in public_names(module):
                     if member not in excluded:
                         documented |= _members(

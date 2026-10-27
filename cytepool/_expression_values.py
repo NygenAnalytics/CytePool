@@ -37,12 +37,12 @@ from ._masked_arrays import Missing, real_array, reject_masked, unmasked_array
 from ._messages import quoted
 from ._options import checked_choice, checked_flag, integral_number
 from .cube import Cube
-from .normalization import filter_by_expression, log_cpm, tmm_factors
+from .normalization import filter_by_expression, log2_cpm, tmm_factors
 from .table import Table
 
 FloatArray = npt.NDArray[np.float64]
 
-VALUES = ("log_cpm", "counts")
+VALUES = ("log2_cpm", "counts")
 # As limma_voom leaves samples out, and edgeR's cpm(log = TRUE) shifts counts.
 MIN_CELLS = 10
 PRIOR_COUNT = 2.0
@@ -61,7 +61,8 @@ class ExpressionValues(NamedTuple):
 
 def expression_values(
     data: Any,
-    gene_ids: Any,
+    id_column: Any,
+    feature_ids: Any,
     sample_ids: Any,
     group: Any,
     values: Any,
@@ -76,11 +77,12 @@ def expression_values(
 
     Args:
         data: A 2-D array of values, samples x genes, or a Cube.
-        gene_ids: For an array, one id per column; for a cube, the name of a column
-            of its features table (``"feature_id"`` by default) or one id per feature.
+        id_column: For a cube, the column of its features table with the ids
+            (``"feature_id"`` by default).
+        feature_ids: For an array, one id per column.
         sample_ids: For an array, one id per row; by default "1", "2", ...
         group: The group of a cube; None for its only one.
-        values: For a cube, ``"log_cpm"`` or ``"counts"``.
+        values: For a cube, ``"log2_cpm"`` or ``"counts"``.
         min_cells: For a cube, the fewest cells a sample needs in the group.
         expression_filter: For a cube, whether to keep only the genes that
             filter_by_expression keeps: True or False, or a mapping of its settings,
@@ -91,19 +93,27 @@ def expression_values(
         other_forms: The other forms that ``data`` may take, for messages, such as
             ", a DifferentialExpressionResult".
     """
-    reject_masked(gene_ids, "gene_ids", missing="None")
+    reject_masked(feature_ids, "feature_ids", missing="None")
     reject_masked(sample_ids, "sample_ids")
+    reject_masked(id_column, "id_column")
     if isinstance(data, Cube):
         if sample_ids is not None:
             raise ValueError(
                 "sample_ids applies to an array; a cube's samples have their ids"
             )
+        if feature_ids is not None:
+            raise ValueError(
+                "feature_ids applies to an array; a cube's features are named by a "
+                "column of its features table, which id_column names (add one with "
+                "Cube.with_columns(features=...))"
+            )
         return _cube_values(
-            data, gene_ids, group, values, min_cells, expression_filter, matched_to
+            data, id_column, group, values, min_cells, expression_filter, matched_to
         )
     defaults = (
         ("group", group is None),
-        ("values", isinstance(values, str) and values == "log_cpm"),
+        ("values", isinstance(values, str) and values == "log2_cpm"),
+        ("id_column", isinstance(id_column, str) and id_column == "feature_id"),
         (
             "min_cells",
             isinstance(min_cells, int)
@@ -138,18 +148,18 @@ def expression_values(
         )
     if np.isinf(matrix).any():
         raise ValueError("data holds infinite values; mark missing values with NaN")
-    if gene_ids is None:
+    if feature_ids is None:
         raise ValueError(
-            "gene_ids is needed with an array: one id per column, by which "
+            "feature_ids is needed with an array: one id per column, by which "
             f"{matched_to} name the genes"
         )
-    if isinstance(gene_ids, str):
+    if isinstance(feature_ids, str):
         raise TypeError(
-            "gene_ids names a column of a cube's features table; with an array, give "
-            "one id per column"
+            "feature_ids gives one id per column of an array; id_column names a "
+            "column of a cube's features table"
         )
-    ids = _gene_id_list(gene_ids, n_genes, "gene_ids")
-    _check_unique(ids, "gene_ids", matched_to)
+    ids = _gene_id_list(feature_ids, n_genes, "feature_ids")
+    _check_unique(ids, "feature_ids", matched_to)
     if sample_ids is None:
         names = [str(i + 1) for i in range(n_samples)]
     else:
@@ -161,6 +171,24 @@ def expression_values(
         ids,
         {},
     )
+
+
+PROFILE_ID = "profile_id"
+
+
+def profile_table(samples: Table, what: str) -> Table:
+    """The profiles of scores read from a sample table: ``profile_id``, the sample
+    ids, then the sample table's columns.
+
+    Raises:
+        ValueError: If the sample table has a column ``profile_id``.
+    """
+    if PROFILE_ID in samples:
+        raise ValueError(
+            f"the sample table has a column {PROFILE_ID!r}, the name {what} give the "
+            "ids of their profiles; rename it"
+        )
+    return Table({PROFILE_ID: samples["sample_id"], **samples.to_dict()})
 
 
 def _gene_id_list(values: Any, n: int, name: str) -> list[str | None]:
@@ -198,7 +226,7 @@ def _gene_id_list(values: Any, n: int, name: str) -> list[str | None]:
 
 def _cube_values(
     cube: Cube,
-    gene_ids: Any,
+    id_column: Any,
     group: Any,
     values: Any,
     min_cells: Any,
@@ -250,33 +278,32 @@ def _cube_values(
             labels = cube.samples[filter_settings[SAMPLE_GROUPS]][rows]
         else:
             labels = np.zeros(rows.size)
-        genes = filter_by_expression(kept, group=labels, **numbers)
+        genes = filter_by_expression(kept, sample_groups=labels, **numbers)
         if not genes.any():
             raise ValueError(
                 f"no gene of group {group!r} passes filter_by_expression; pass "
                 "expression_filter=False to score every gene"
             )
     kept = kept[:, genes]
-    if kind == "log_cpm":
-        matrix = log_cpm(kept, norm_factors=tmm_factors(kept), prior_count=PRIOR_COUNT)
+    if kind == "log2_cpm":
+        matrix = log2_cpm(kept, norm_factors=tmm_factors(kept), prior_count=PRIOR_COUNT)
         integer = False
     else:
         matrix = np.asarray(kept, dtype=np.float64)
         integer = kept.dtype.kind in "iu"
-    if gene_ids is None:
-        gene_ids = "feature_id"
-    if isinstance(gene_ids, str):
-        features = cube.features
-        if gene_ids not in features:
-            raise KeyError(
-                f"the cube's features table has no column {gene_ids!r}; its columns "
-                f"are {quoted(list(features.columns))}"
-            )
-        label = f"the features column {gene_ids!r}"
-        ids = _gene_id_list(features[gene_ids], cube.n_features, label)
-    else:
-        label = "gene_ids"
-        ids = _gene_id_list(gene_ids, cube.n_features, label)
+    if not isinstance(id_column, str):
+        raise TypeError(
+            "id_column must name a column of the cube's features table (str), got "
+            f"{type(id_column).__name__}"
+        )
+    features = cube.features
+    if id_column not in features:
+        raise KeyError(
+            f"the cube's features table has no column {id_column!r}; its columns "
+            f"are {quoted(list(features.columns))}"
+        )
+    label = f"the features column {id_column!r}"
+    ids = _gene_id_list(features[id_column], cube.n_features, label)
     ids = [ids[j] for j in np.flatnonzero(genes).tolist()]
     _check_unique(ids, label, matched_to)
     settings = {

@@ -1,6 +1,6 @@
 """Check the gene-set tests camera and fry against limma.
 
-Compares ``cytepool.stats.gene_set_tests`` with limma's ``camera`` and ``fry`` on
+Compares ``cytepool.gene_set_tests`` with limma's ``camera`` and ``fry`` on
 log-expression simulated from fixed seeds, with gene variances from a scaled inverse
 chi-squared prior around a mean-variance trend. The sets change up, down or in both
 directions, or not at all, share random sample effects (inter-gene correlation) with
@@ -56,8 +56,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.design import Design
-from cytepool.stats.gene_set_tests import camera, fry
+from cytepool import Design, camera, fry
 from cytepool.stats.voom import voom
 
 FIXTURE_DIRECTORY = (
@@ -96,7 +95,7 @@ RUNS = {
 COLUMNS = {
     "NGenes": "n_genes", "Correlation": "correlation", "Direction": "direction",
     "PValue": "p_value", "FDR": "adjusted_p_value", "PValue.Mixed": "mixed_p_value",
-    "FDR.Mixed": "adjusted_mixed_p_value",
+    "FDR.Mixed": "mixed_adjusted_p_value",
 }  # fmt: skip
 
 R_SCRIPT = r"""
@@ -265,7 +264,7 @@ def make_cases(rng, n_genes):
     counts = rng.poisson(np.exp2(expression.T) * rng.uniform(0.5, 2.0, 12)[:, None])
     result = voom(counts, design)
     for name, contrast in (("voom", "conditionstim"), ("voom_weights", "stim")):
-        add(name, design, result.log_cpm.T, sets, contrast, camera_runs + fry_runs,
+        add(name, design, result.log2_cpm.T, sets, contrast, camera_runs + fry_runs,
             voom_result=result)  # fmt: skip
 
     paired = Design(
@@ -375,13 +374,14 @@ def cytepool_results(case, run):
     genes = [f"g{i:04d}" for i in range(case["y"].shape[0])]
     sets = {name: [genes[i] for i in rows] for name, rows in case["sets"].items()}
     data = case["voom"] if case["voom"] is not None else case["y"].T
-    common = {"gene_ids": genes, "weights": case["weights"], "trend": bool(trend)}
+    common = {"design": design, "contrast": case["contrast"], "feature_ids": genes}
+    common |= {"weights": case["weights"], "trend": bool(trend)}
     if test == "fry":
         style = {"none": "none", "residual.sd": "residual_sd"}
-        return fry(data, design, case["contrast"], sets, robust=bool(robust),
+        return fry(data, sets, robust=bool(robust),
                    standardize=style.get(standardize, "posterior_sd"), **common)  # fmt: skip
     return camera(
-        data, design, case["contrast"], sets, robust=bool(robust),
+        data, sets, robust=bool(robust),
         inter_gene_correlation=None if cor == "NA" else float(cor),
         allow_negative_correlation=bool(neg), use_ranks=bool(ranks), **common,
     )  # fmt: skip

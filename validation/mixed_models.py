@@ -61,7 +61,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 
 FIXTURE_DIRECTORY = (

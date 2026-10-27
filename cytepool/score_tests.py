@@ -1,25 +1,25 @@
 """Tests of per-sample scores with a design: limma on pathway scores and activities.
 
-Pathway scores (:mod:`cytepool.pathway_scores`) and activities of regulators
-(:mod:`cytepool.activity`) give every sample of a cube's group one value per gene set
-or source, which differ between conditions as expression values do. GSVA's guide
-tests its scores with limma, as decoupler's guides test activities: a linear model of
-every set's scores on the design (``lmFit``), the contrast (``contrasts.fit``),
+Pathway scores (:func:`~cytepool.gsva` and the others) and activities of regulators
+(:func:`~cytepool.ulm` and the others) give every sample of a cube's group one value per
+gene set or source, which differ between conditions as expression values do. GSVA's
+guide tests its scores with limma, as decoupler's guides test activities: a linear model
+of every set's scores on the design (``lmFit``), the contrast (``contrasts.fit``),
 moderated t-tests (``eBayes``, Smyth 2004) and a table of the results (``topTable``).
-:func:`limma` takes these steps in one call, with the :class:`~cytepool.design.Design`
-built for the cube: its rows are matched to the scores by ``sample_id``, so that the
-samples a score leaves out, such as those with too few cells, leave the fit too.
+:func:`~cytepool.limma` takes these steps in one call, with the
+:class:`~cytepool.Design` built for the cube: its rows are matched to the scores by
+``sample_id``, so that the samples a score leaves out, such as those with too few cells,
+leave the fit too.
 
 The fit:
     The samples fitted are those of the scores that the design has, in the order of
     the scores. The design matrix is the design's rows for them, so every column keeps
     its meaning; when those rows do not determine every column (the samples left out
     took a donor's every sample, say), the fit keeps the columns that span them, as
-    R's ``qr()`` keeps them and :func:`~cytepool.differential_expression.limma_voom`
-    fits a group, and the contrast is tested when it is estimable from these samples
-    (see "The design of a group" in :mod:`cytepool.differential_expression`). Missing
-    scores (NaN) leave a set out of the fit of the samples they miss, as limma's
-    ``lmFit`` does.
+    R's ``qr()`` keeps them and :func:`~cytepool.limma_voom` fits a group, and the
+    contrast is tested when it is estimable from these samples (see "The design of a
+    group" in the description of :func:`~cytepool.limma_voom`). Missing scores (NaN)
+    leave a set out of the fit of the samples they miss, as limma's ``lmFit`` does.
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
@@ -81,16 +81,15 @@ def limma(
     fitted. Sort the table to read it, as ``limma(scores, design).sort("p_value")``.
 
     Args:
-        data: :class:`~cytepool.pathway_scores.PathwayScores`, such as
-            :func:`~cytepool.pathway_scores.gsva` returns;
-            :class:`~cytepool.activity.Activities` of samples, such as
-            :func:`~cytepool.activity.ulm` returns for a cube's group; or an array of
-            values, samples x features, NaN where missing, such as log-expression
-            values of another platform.
-        design: A :class:`~cytepool.design.Design` whose sample table has a
+        data: :class:`~cytepool.PathwayScores`, such as
+            :func:`~cytepool.gsva` returns; :class:`~cytepool.Activities` of samples,
+            such as :func:`~cytepool.ulm` returns for a cube's group; or an array of
+            values, samples x features, NaN where missing, such as log-expression values
+            of another platform.
+        design: A :class:`~cytepool.Design` whose sample table has a
             ``sample_id`` column, such as the design built for the cube, with named
             contrasts; random effects are refused, as by
-            :func:`~cytepool.differential_expression.limma_voom`.
+            :func:`~cytepool.limma_voom`.
         contrast: The name of one of the design's contrasts; it may be left out
             when the design has one.
         feature_ids: For an array, one id per column, as text; ``feature_0``,
@@ -179,7 +178,7 @@ def limma(
             "t": moderated.t[:, 0],
             "p_value": p_value,
             "adjusted_p_value": adjust_p_values(p_value, "bh"),
-            "log_odds": moderated.lods[:, 0],
+            "log_odds": moderated.log_odds[:, 0],
         }
     )
 
@@ -198,7 +197,7 @@ def _scores(
                     "their samples and scores"
                 )
     if isinstance(data, PathwayScores):
-        rows = data.samples["sample_id"].tolist()
+        rows = data.profiles["sample_id"].tolist()
         ids = text_column(list(data.gene_sets))
         return np.asarray(data.scores, dtype=np.float64), rows, "gene_set", ids
     if isinstance(data, Activities):

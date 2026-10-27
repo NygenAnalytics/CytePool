@@ -140,6 +140,69 @@ def only_key(value: Any, available: list[str], argument: str, what: str) -> Any:
     )
 
 
+def absence(result: Any, group: str, contrast: str) -> str:
+    """Why a differential-expression result has no table of a group and contrast, in
+    the words of its own ``table`` method."""
+    try:
+        result.table(group, contrast)
+    except KeyError as error:
+        return str(error.args[0])
+    raise AssertionError("a table that is not in result.tables")  # pragma: no cover
+
+
+def study_keys(
+    results: Mapping[str, Any], group: Any, contrast: Any
+) -> tuple[Any, Any]:
+    """The group and contrast of the studies' differential-expression results asked
+    for, or, for one left out, the only one that the studies analysed.
+
+    Raises:
+        ValueError: If a key is left out and the studies analysed several, or none.
+    """
+    return (
+        only_study_key(results, group, "group", "groups"),
+        only_study_key(results, contrast, "contrast", "contrasts"),
+    )
+
+
+def only_study_key(
+    results: Mapping[str, Any], value: Any, argument: str, what: str
+) -> Any:
+    """``value`` when given, else the only group (``what="groups"``), or contrast
+    (``what="contrasts"``), that the studies' results analysed.
+
+    Raises:
+        ValueError: If ``value`` is None and the studies analysed several, or none.
+    """
+    if value is not None:
+        return value
+    available = study_union(results, what)
+    if len(available) != 1:
+        raise ValueError(
+            f"the studies analysed {len(available)} {what}; name one with "
+            f"{argument}, one of {quoted(available)}"
+        )
+    return available[0]
+
+
+def study_union(results: Mapping[str, Any], what: str) -> list[str]:
+    """The groups (``what="groups"``), or the contrasts and F-tests, of any study's
+    result, in the order in which the studies first have them."""
+    if what == "groups":
+        return list(
+            dict.fromkeys(
+                group for result in results.values() for group in result.groups
+            )
+        )
+    return list(
+        dict.fromkeys(
+            name
+            for result in results.values()
+            for name in (*result.contrasts.names, *result.f_tests)
+        )
+    )
+
+
 def software_versions() -> dict[str, str]:
     """The versions of CytePool, numpy, numba and Python that run an analysis."""
     return {

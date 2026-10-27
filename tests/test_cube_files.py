@@ -14,8 +14,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.cube import Cube
-from cytepool.io import cube_files, read_cube, write_cube
+from cytepool import Cube, read_cube, write_cube
+from cytepool.io import cube_files
 from cytepool.io import zarr as zarr_module
 from cytepool.io.zarr import open_array, write_array
 
@@ -434,7 +434,7 @@ def test_array_names_are_portable_and_unique(tmp_path: Path) -> None:
 def test_compression_choices_reach_every_array(
     cube: Cube, tmp_path: Path, compression: str | None, level: Any, codec: Any
 ) -> None:
-    write_cube(cube, tmp_path / "c", compression=compression, level=level)
+    write_cube(cube, tmp_path / "c", compression=compression, compression_level=level)
     arrays = 0
     for metadata in (tmp_path / "c").rglob("zarr.json"):
         document = json.loads(metadata.read_text())
@@ -961,8 +961,12 @@ def test_write_cube_rejects_invalid_arguments(
             write_cube(*arguments)
     for options, error, message in [
         ({"compression": "lz4"}, ValueError, "'gzip', 'zstd' or None, got 'lz4'"),
-        ({"level": 10}, ValueError, "gzip level must be from 0 to 9"),
-        ({"compression": None, "level": 1}, ValueError, "level applies only"),
+        ({"compression_level": 10}, ValueError, "gzip level must be from 0 to 9"),
+        (
+            {"compression": None, "compression_level": 1},
+            ValueError,
+            "compression_level applies only",
+        ),
         ({"overwrite": "yes"}, TypeError, "overwrite must be True or False"),
     ]:
         with pytest.raises(error, match=message):

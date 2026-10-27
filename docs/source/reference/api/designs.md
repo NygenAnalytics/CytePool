@@ -6,13 +6,20 @@ myst:
 
 # Designs and contrasts
 
-A {class}`~cytepool.design.Design` joins a sample table, the fixed effects as an R
-formula, optional random effects in lme4 notation and named contrasts. Its model
-matrix has the columns and column names that R's `model.matrix` gives for the same
-level order. Without explicit levels, factor levels are sorted by code point, as R
-sorts them with `LC_COLLATE=C`; R's default follows the session's locale.
-{meth}`~cytepool.design.Design.check` reports problems such as aliased columns before
-anything is fitted.
+A {class}`~cytepool.Design` joins a sample table, the fixed effects as an R formula,
+optional random effects in lme4 notation and named contrasts. Its model matrix has the
+columns and column names that R's `model.matrix` gives for the same level order.
+Without explicit levels, factor levels are sorted by code point, as R sorts them with
+`LC_COLLATE=C`; R's default follows the session's locale.
+{meth}`~cytepool.Design.check` reports problems such as aliased columns before anything
+is fitted.
+
+```{eval-rst}
+.. autoclass:: cytepool.Design
+```
+
+The parts of a design are in `cytepool.design`: its model matrix, its contrasts, its
+formula and random effects as they are read, and the report of its check.
 
 ```{eval-rst}
 .. automodule:: cytepool.design

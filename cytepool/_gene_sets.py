@@ -22,14 +22,16 @@ References:
 import math
 import numbers
 from collections.abc import Mapping, Set
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
 
+from cytepool._analysis_records import only_key
 from cytepool._jit import jit
 from cytepool._linear_algebra import RANK_TOLERANCE, householder_qr
 from cytepool._masked_arrays import real_array, reject_masked, unmasked_array
+from cytepool._options import checked_flag
 from cytepool.design._contrast_weights import is_named_contrasts, weights_on_columns
 from cytepool.design._design_matrices import (
     design_matrix,
@@ -37,6 +39,7 @@ from cytepool.design._design_matrices import (
     require_full_rank,
 )
 from cytepool.design.design import Design
+from cytepool.differential_expression import DifferentialExpressionResult
 from cytepool.stats.voom import VoomResult
 
 FloatArray = npt.NDArray[np.float64]
@@ -47,16 +50,168 @@ IntArray = npt.NDArray[np.intp]
 _ZERO_PIVOT = 1e-12
 
 
+class GeneSetData(NamedTuple):
+    """What a gene-set test reads from its data: an array, a VoomResult or a
+    differential-expression result."""
+
+    values: FloatArray  # samples x genes
+    precision: FloatArray | None  # None, (n_samples,) or (n_samples, n_genes)
+    design: Any  # a design matrix, a Design, or None when not given
+    contrast: Any  # as contrast_design takes it, or None when not given
+    ids: Any  # one id per gene, or None to name genes by position
+    ids_name: str  # how messages name the ids
+    trend: bool | None  # None: not given, and no result to take it from
+    robust: bool | None
+
+
+def gene_set_data(
+    data: Any,
+    *,
+    group: Any,
+    contrast: Any,
+    design: Any,
+    id_column: Any,
+    feature_ids: Any,
+    weights: Any,
+    trend: Any,
+    robust: Any,
+    function: str,
+) -> GeneSetData:
+    """The values, weights, design, contrast and gene ids that a gene-set test of
+    ``data`` reads, and its trend and robust settings.
+
+    A differential-expression result of limma-voom or limma-trend gives its group's
+    fit (``result.fit(group)``): the values and weights fitted, the design rows of
+    the samples fitted on the columns kept, the contrast's weights on them, the ids
+    of its tested features from the column ``id_column``, and, where ``trend`` and
+    ``robust`` are None, the settings of its moderation. An array or a VoomResult
+    gives its values (and a VoomResult its weights), and ``design``, ``contrast`` and
+    ``feature_ids`` are as given.
+    """
+    with_trend = (
+        None if trend is None else checked_flag(trend, "trend", expected="a bool")
+    )
+    with_robust = (
+        None if robust is None else checked_flag(robust, "robust", expected="a bool")
+    )
+    if isinstance(data, DifferentialExpressionResult):
+        for name, value, owner in (
+            ("design", design, "the design of its group's fit"),
+            ("feature_ids", feature_ids, "the ids of the column id_column"),
+            ("weights", weights, "the weights of its group's fit"),
+        ):
+            if value is not None:
+                reject_masked(value, name)
+                # romer takes sample weights only, so no VoomResult.
+                inputs = (
+                    "an array" if function == "romer" else "an array or a VoomResult"
+                )
+                raise ValueError(
+                    f"{name} applies to {inputs}; a differential-expression result "
+                    f"gives {owner}"
+                )
+        return _result_data(
+            data, group, contrast, id_column, function, with_trend, with_robust
+        )
+    if group is not None:
+        reject_masked(group, "group")
+        raise ValueError(
+            "group names a group of a differential-expression result, and data is a "
+            f"{type(data).__name__}"
+        )
+    if not (isinstance(id_column, str) and id_column == "feature_id"):
+        reject_masked(id_column, "id_column")
+        raise ValueError(
+            "id_column names a column of the features of a differential-expression "
+            f"result, and data is a {type(data).__name__}; name its genes with "
+            "feature_ids"
+        )
+    values, precision = expression_values(data, weights)
+    return GeneSetData(
+        values, precision, design, contrast, feature_ids, "feature_ids", with_trend,
+        with_robust,
+    )  # fmt: skip
+
+
+def _result_data(
+    result: DifferentialExpressionResult,
+    group: Any,
+    contrast: Any,
+    id_column: Any,
+    function: str,
+    trend: bool | None,
+    robust: bool | None,
+) -> GeneSetData:
+    """The fit of a result's group that a gene-set test reads."""
+    if result.method == "dream_voom":
+        raise ValueError(
+            f"{function} tests the contrast and residual effects of a linear model, "
+            "and this result is from dream_voom, which fits a mixed model to every "
+            "gene; test a result of limma_voom or limma_trend, such as limma_voom with "
+            "the donor as a fixed effect"
+        )
+    if not isinstance(id_column, str):
+        reject_masked(id_column, "id_column")
+        raise TypeError(
+            "id_column must name a column of the result's features (str), got "
+            f"{type(id_column).__name__}"
+        )
+    fit = result.fit(group)
+    name = only_key(contrast, list(result.contrasts.names), "contrast", "contrasts")
+    if not isinstance(name, str):
+        reject_masked(name, "contrast")
+        raise TypeError(
+            f"contrast must be a contrast name of the result (str), got "
+            f"{type(name).__name__}"
+        )
+    linear = fit.moderated.fit
+    if name not in linear.coefficient_names:
+        result.table(fit.group, name)  # raises KeyError, saying why
+    column = linear.coefficient_names.index(name)
+    assert linear.contrasts is not None
+    weights_on_kept = np.array(linear.contrasts[:, column], dtype=np.float64)
+    features = fit.features
+    if id_column not in features:
+        raise KeyError(
+            f"the result's features have no column {id_column!r}; their columns are "
+            f"{', '.join(map(repr, features.columns))}"
+        )
+    ids = features[id_column].tolist()
+    return GeneSetData(
+        values=np.asarray(fit.log2_cpm, dtype=np.float64),
+        precision=None
+        if fit.weights is None
+        else np.ascontiguousarray(fit.weights, dtype=np.float64),
+        design=np.asarray(linear.design, dtype=np.float64),
+        contrast=weights_on_kept,
+        ids=ids,
+        ids_name=f"the column {id_column!r} of the result's features",
+        trend=result.method == "limma_trend" if trend is None else trend,
+        robust=bool(result.settings["robust"]) if robust is None else robust,
+    )
+
+
 def contrast_design(
     values: FloatArray, design: Any, contrast: Any, function: str
 ) -> tuple[FloatArray, int]:
     """The design, checked, with the contrast as its last coefficient, and d."""
+    if design is None:
+        raise ValueError(
+            f"{function} of an array or a VoomResult needs the design of its samples: "
+            "give design, such as the Design the values were fitted with"
+        )
+    if contrast is None:
+        raise ValueError(
+            f"{function} of an array or a VoomResult needs the contrast to test: give "
+            "contrast, a contrast name of the design, a column, or weights on its "
+            "columns"
+        )
     refuse_random_effects(design, function)
     x, names = design_matrix(design, None)
     n_samples, n_coefficients = x.shape
     if n_samples != values.shape[0]:
         raise ValueError(
-            f"y has {values.shape[0]} rows but the design has {n_samples}; rows "
+            f"data has {values.shape[0]} rows but the design has {n_samples}; rows "
             "of both are samples"
         )
     require_full_rank(x, names)
@@ -306,20 +461,20 @@ def expression_values(y: Any, weights: Any) -> tuple[FloatArray, FloatArray | No
                 "weights cannot be given with a VoomResult, which carries the "
                 "precision weights of its log-CPM values"
             )
-        return np.asarray(y.log_cpm, dtype=np.float64), np.asarray(
+        return np.asarray(y.log2_cpm, dtype=np.float64), np.asarray(
             y.weights, dtype=np.float64
         )
-    values = real_array(unmasked_array(y, "y"), "y", boolean=False, objects=False)
+    values = real_array(unmasked_array(y, "data"), "data", boolean=False, objects=False)
     if values.ndim != 2:
         raise ValueError(
-            "y must be a 2-D array of shape (n_samples, n_genes), or a VoomResult, got "
-            f"shape {values.shape}"
+            "data must be a 2-D array of shape (n_samples, n_genes), a VoomResult or a "
+            f"DifferentialExpressionResult, got shape {values.shape}"
         )
     if values.shape[1] == 0:
-        raise ValueError("y must have at least one gene (column)")
+        raise ValueError("data must have at least one gene (column)")
     if not np.all(np.isfinite(values)):
         raise ValueError(
-            "y must be finite: gene-set tests fit every gene to every sample, so "
+            "data must be finite: gene-set tests fit every gene to every sample, so "
             "values cannot be missing (NaN) or infinite"
         )
     if weights is None:
@@ -345,9 +500,10 @@ def expression_values(y: Any, weights: Any) -> tuple[FloatArray, FloatArray | No
 
 
 def checked_gene_sets(
-    gene_sets: Any, gene_ids: Any, n_genes: int
+    gene_sets: Any, gene_ids: Any, n_genes: int, ids_name: str = "feature_ids"
 ) -> dict[Any, int] | None:
-    """Check that ``gene_sets`` is a non-empty mapping; the index of ``gene_ids``."""
+    """Check that ``gene_sets`` is a non-empty mapping; the index of ``gene_ids``,
+    which messages name ``ids_name``."""
     reject_masked(gene_sets, "gene_sets")
     if not isinstance(gene_sets, Mapping):
         raise TypeError(
@@ -356,7 +512,7 @@ def checked_gene_sets(
         )
     if not gene_sets:
         raise ValueError("gene_sets is empty; give at least one gene set")
-    return None if gene_ids is None else _gene_index(gene_ids, n_genes)
+    return None if gene_ids is None else _gene_index(gene_ids, n_genes, ids_name)
 
 
 def set_label(name: Any) -> str:
@@ -411,26 +567,29 @@ def id_positions(ids: list[Any], label: str, index: dict[Any, int]) -> IntArray:
     return np.array(found, dtype=np.intp)
 
 
-def check_matched(index: dict[Any, int] | None, matched: int) -> None:
+def check_matched(
+    index: dict[Any, int] | None, matched: int, ids_name: str = "feature_ids"
+) -> None:
     if index is not None and matched == 0:
         raise ValueError(
-            "no gene of any set is among gene_ids; the sets and gene_ids must name "
-            "genes the same way (for example both by symbol, or both by Ensembl id)"
+            f"no gene of any set is among {ids_name}; the sets and {ids_name} must "
+            "name genes the same way (for example both by symbol, or both by Ensembl "
+            "id)"
         )
 
 
-def _gene_index(gene_ids: Any, n_genes: int) -> dict[Any, int]:
-    ids = unmasked_array(gene_ids, "gene_ids")
+def _gene_index(gene_ids: Any, n_genes: int, ids_name: str) -> dict[Any, int]:
+    ids = unmasked_array(gene_ids, ids_name)
     if ids.shape != (n_genes,):
         raise ValueError(
-            f"gene_ids must have one id per gene ({n_genes}), got shape {ids.shape}"
+            f"{ids_name} must have one id per gene ({n_genes}), got shape {ids.shape}"
         )
     index: dict[Any, int] = {}
     try:
         for position, gene in enumerate(ids.tolist()):
             if gene in index:
                 raise ValueError(
-                    f"gene_ids must be unique, but {gene!r} names genes "
+                    f"{ids_name} must be unique, but {gene!r} names genes "
                     f"{index[gene]} and {position}"
                 )
             index[gene] = position
@@ -444,8 +603,8 @@ def gene_positions(array: npt.NDArray[Any], label: str, n_genes: int) -> IntArra
         return np.empty(0, dtype=np.intp)
     if array.dtype.kind not in "iu":
         raise TypeError(
-            f"{label} must hold 0-based gene positions (integers) when gene_ids is not "
-            f"given; give gene_ids to name genes by id (got dtype {array.dtype})"
+            f"{label} must hold 0-based gene positions (integers) when feature_ids is "
+            f"not given; give feature_ids to name genes by id (got dtype {array.dtype})"
         )
     outside = (array < 0) | (array >= n_genes)
     if np.any(outside):

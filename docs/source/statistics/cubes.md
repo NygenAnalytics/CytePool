@@ -140,8 +140,9 @@ of several studies and keeps each as it was given:
 Each study is then analysed on its own: {api}`CubeCollection.aligned_cube` gives its
 cube with the aligned cell types and the genes it measured, and with its own samples and
 library sizes, and an analysis such as {api}`limma_voom` with the study's own design
-gives results keyed by the aligned cell types. {api}`align_study_results` lines them up
-gene by gene, and {api}`differential_expression_meta_analysis` combines them
+gives results keyed by the aligned cell types. {api}`analyse_each_study` runs one on
+every study, and the {api}`StudyResults` it returns lines them up gene by gene
+({api}`StudyResults.table`) for {api}`meta_analysis`, which combines them
 ([Meta-analysis](meta_analysis.md)). For a joint model with the study as a covariate,
 {api}`CubeCollection.stack` puts the studies into one cube with the genes that every
 study measured and the cell types that every study has: a cube holds no missing values,

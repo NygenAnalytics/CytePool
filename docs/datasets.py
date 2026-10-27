@@ -169,10 +169,10 @@ def simulated_pbmc(downloads: Path, output: Path) -> None:
     features = {"feature_id": genes, "symbol": genes}
     cube = from_cells(
         SimpleNamespace(**cells),
-        samples=cell_samples,
-        groups=cell_types,
-        sample_table=sample_table,
-        group_table={"group_id": list(CELL_TYPES)},
+        sample_labels=cell_samples,
+        group_labels=cell_types,
+        samples=sample_table,
+        groups={"group_id": list(CELL_TYPES)},
         features=features,
         source={
             "dataset": "simulated_pbmc",
@@ -536,9 +536,9 @@ def kang2018(downloads: Path, output: Path) -> None:
     donors = sorted({sample.split("_")[0] for sample in labels["sample"]})
     cube = from_cells(
         SimpleNamespace(**_stack(blocks, GEO_GENES)),
-        samples=labels["sample"],
-        groups=labels["group"],
-        sample_table={
+        sample_labels=labels["sample"],
+        group_labels=labels["group"],
+        samples={
             "sample_id": [f"{d}_{c}" for d in donors for c in ("ctrl", "stim")],
             "donor": [d for d in donors for _ in range(2)],
             "condition": ["ctrl", "stim"] * len(donors),

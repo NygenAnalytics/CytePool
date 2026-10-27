@@ -7,7 +7,7 @@ import pytest
 from numpy.dtypes import StringDType
 from numpy.testing import assert_array_equal
 
-from cytepool.table import Table
+from cytepool import Table
 
 
 @pytest.fixture(scope="module")

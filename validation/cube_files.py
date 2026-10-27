@@ -40,8 +40,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.cube import Cube
-from cytepool.io import read_cube, write_cube
+from cytepool import Cube, read_cube, write_cube
 from cytepool.io.zarr import DATA_TYPES, open_array
 
 SEED = 20261023

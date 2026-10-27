@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
@@ -132,14 +132,14 @@ def assert_p_values_agree(ours: Any, desired: np.ndarray, tolerance: float) -> N
 
 
 @pytest.mark.parametrize("case", CASES)
-def test_log_cpm_weights_and_library_sizes_match_limma(case: str) -> None:
+def test_log2_cpm_weights_and_library_sizes_match_limma(case: str) -> None:
     data = fixture(case)
     result = run_voom(case)
     n_samples = data["counts"].shape[0]
     exact = 1e-10
     # log2 CPM is a closed form: limma's to the last bit on the validation inputs.
     np.testing.assert_allclose(
-        result.log_cpm, limma_matrix(case, "E", n_samples).T, rtol=exact, atol=exact
+        result.log2_cpm, limma_matrix(case, "E", n_samples).T, rtol=exact, atol=exact
     )
     np.testing.assert_allclose(
         result.weights,
@@ -187,7 +187,7 @@ def test_moderated_statistics_of_the_weighted_fit_match_limma(case: str) -> None
     """counts -> voom -> fit_linear_model -> contrasts_fit -> moderated_statistics."""
     design = design_of(case)
     result = run_voom(case)
-    fit = fit_linear_model(result.log_cpm, design, weights=result.weights)
+    fit = fit_linear_model(result.log2_cpm, design, weights=result.weights)
     if len(design.contrasts):
         # limma's contrasts.fit approximates the standard errors of contrasts of
         # correlated coefficients in a weighted fit; method="limma" reproduces it.
@@ -264,7 +264,7 @@ def test_counts_to_moderated_statistics_with_a_design_and_named_contrasts() -> N
         contrasts={"BvsA": "groupB - groupA", "CvsB": "groupC - groupB"},
     )
     result = voom(counts, design, norm_factors=tmm_factors(counts))
-    fit = fit_linear_model(result.log_cpm, design, weights=result.weights)
+    fit = fit_linear_model(result.log2_cpm, design, weights=result.weights)
     contrasted = contrasts_fit(fit, design.contrasts)
     moderated = moderated_statistics(contrasted)
     assert contrasted.coefficient_names == ("BvsA", "CvsB")
@@ -286,7 +286,7 @@ def test_no_replication_gives_unit_weights_and_no_trend() -> None:
     assert float(fixture("no_replication")["span"]) == 0.5 and np.isnan(result.span)
 
 
-def test_scaling_library_sizes_plus_one_shifts_log_cpm_and_keeps_weights() -> None:
+def test_scaling_library_sizes_plus_one_shifts_log2_cpm_and_keeps_weights() -> None:
     """With R + 1 scaled by c, log2 CPM falls by log2(c) and nothing else changes.
 
     log2((r + 0.5) / (c (R + 1)) 1e6) = y - log2(c); with an intercept the fitted
@@ -299,7 +299,7 @@ def test_scaling_library_sizes_plus_one_shifts_log_cpm_and_keeps_weights() -> No
     sizes = counts.sum(axis=1)
     base = voom(counts, design, library_sizes=sizes)
     scaled = voom(counts, design, library_sizes=4.0 * (sizes + 1.0) - 1.0)
-    np.testing.assert_allclose(scaled.log_cpm, base.log_cpm - 2.0, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(scaled.log2_cpm, base.log2_cpm - 2.0, rtol=0, atol=1e-12)
     np.testing.assert_allclose(scaled.weights, base.weights, rtol=1e-12)
     for name in ("mean_log_count", "sqrt_sd", "sqrt_sd_trend"):
         np.testing.assert_allclose(
@@ -320,7 +320,7 @@ def test_weights_depend_on_a_feature_only_through_its_fitted_values() -> None:
     pair = 2.0**log_cpm * (sizes[:, np.newaxis] + 1.0) / 1e6 - 0.5
     counts = np.column_stack([fixture("two_groups")["counts"], pair])
     result = voom(counts, TWO_GROUPS, library_sizes=sizes)
-    np.testing.assert_allclose(result.log_cpm[:, -2:], log_cpm, rtol=1e-13)
+    np.testing.assert_allclose(result.log2_cpm[:, -2:], log_cpm, rtol=1e-13)
     np.testing.assert_allclose(result.weights[:, -1], result.weights[:, -2], rtol=1e-12)
     np.testing.assert_allclose(
         result.sqrt_sd[-1] / result.sqrt_sd[-2], np.sqrt(3.0), rtol=1e-12
@@ -335,7 +335,7 @@ def test_identical_features_are_weighted_by_their_inverse_variance() -> None:
     counts = np.column_stack([column, column])
     sizes = np.array([1e3, 1.2e3, 0.9e3, 1.5e3, 1.1e3, 1.3e3])
     result = voom(counts, TWO_GROUPS, library_sizes=sizes)
-    _, residual_sum, *_ = np.linalg.lstsq(TWO_GROUPS, result.log_cpm[:, 0])
+    _, residual_sum, *_ = np.linalg.lstsq(TWO_GROUPS, result.log2_cpm[:, 0])
     np.testing.assert_allclose(result.weights, 4.0 / residual_sum[0], rtol=1e-12)
 
 
@@ -384,7 +384,7 @@ def test_permuting_samples_and_features_permutes_the_results() -> None:
         shuffled.weights, base.weights[rows][:, columns], rtol=1e-12
     )
     np.testing.assert_allclose(
-        shuffled.log_cpm, base.log_cpm[rows][:, columns], rtol=1e-14
+        shuffled.log2_cpm, base.log2_cpm[rows][:, columns], rtol=1e-14
     )
     np.testing.assert_allclose(
         shuffled.sqrt_sd_trend, base.sqrt_sd_trend[columns], rtol=1e-12
@@ -408,7 +408,7 @@ def test_result_is_read_only_with_a_summary() -> None:
     )
     with pytest.raises(ValueError, match="effective_library_sizes must have shape"):
         VoomResult(
-            result.log_cpm,
+            result.log2_cpm,
             result.weights,
             result.effective_library_sizes[:-1],
             result.mean_log_count,

@@ -57,7 +57,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
@@ -235,7 +235,7 @@ def make_cases(rng, small):
         ("reml_criterion_rises", "weights", rises, oscillating, {"method": "reml"}),
         ("one_gene", "weights", two, values[:, :1], {"method": "gene_by_gene"}),
         ("no_replication", "weights", saturated, values[:4], {"method": "reml"}),
-        ("voom_log_cpm", "weights", two, flat.log_cpm, {"method": both, "weights": flat.weights}),
+        ("voom_log_cpm", "weights", two, flat.log2_cpm, {"method": both, "weights": flat.weights}),
         (f"{many}_genes", "weights", two, simulate_values(rng, many, [1] * 6 + [3, 1]), {"method": both}),
         ("voom_sample_weights", "voom", two, counts, {"weights": sample_weights[:8]}),
         ("voom_observation_weights", "voom", two, counts, {"weights": weights}),
@@ -368,7 +368,7 @@ def cytepool_results(case):
     design, result, caught = run_cytepool(case)
     if case["kind"] == "weights":
         return {"sample.weights": result}, caught
-    out = {"E": result.log_cpm, "weights": result.weights}
+    out = {"E": result.log2_cpm, "weights": result.weights}
     if result.sample_weights is not None:
         out["sample.weights"] = result.sample_weights
     if case["span"] is None and not np.isnan(result.span):
@@ -380,7 +380,7 @@ def cytepool_results(case):
         out |= {"xy.x": x, "xy.y": result.sqrt_sd[in_trend], "line.x": x[order]}
         out["line.y"] = result.sqrt_sd_trend[in_trend][order]
     if in_trend.any():
-        fit = fit_linear_model(result.log_cpm, design, weights=result.weights)
+        fit = fit_linear_model(result.log2_cpm, design, weights=result.weights)
         if len(design.contrasts):
             fit = contrasts_fit(fit, design.contrasts, method="limma")
         moderated = moderated_statistics(fit)

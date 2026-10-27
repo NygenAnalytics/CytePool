@@ -248,12 +248,12 @@ def test_moderated_statistics_match_limma(case: str, run: str) -> None:
     tolerance = tolerance_of(run)
     for key, ours in (
         ("s2.prior", eb.prior_variance),
-        ("df.prior", eb.prior_df),
+        ("df.prior", eb.df_prior),
         ("s2.post", eb.posterior_variance),
         ("df.total", eb.df_total),
         ("t", eb.t),
         ("p.value", eb.p_value),
-        ("lods", eb.lods),
+        ("lods", eb.log_odds),
         ("var.prior", eb.coefficient_prior_variance),
         ("F", eb.f_statistic),
         ("F.p.value", eb.f_p_value),
@@ -339,7 +339,7 @@ def test_hyperparameters_match_limma(case: str, run: str) -> None:
     tolerance = CLOSE if robust or estimator == "likelihood" else EXACT
     check(case, run, "var.post", squeezed.posterior_variance, tolerance)
     check(case, run, "var.prior", squeezed.prior_variance, tolerance)
-    check(case, run, "df.prior", squeezed.prior_df, tolerance)
+    check(case, run, "df.prior", squeezed.df_prior, tolerance)
     for key, ours in parts.items():
         if reference(case)[f"limma {run} {key}"].size:  # limma omits some parts
             check(case, run, key, ours, tolerance)
@@ -348,7 +348,7 @@ def test_hyperparameters_match_limma(case: str, run: str) -> None:
 def test_infinite_prior_df_gives_ordinary_t_on_the_prior_variance() -> None:
     eb = moderated("infinite_prior", "constant")
     fit = model_fit("infinite_prior")
-    assert eb.prior_df == np.inf
+    assert eb.df_prior == np.inf
     np.testing.assert_array_equal(eb.posterior_variance, eb.prior_variance)
     ordinary = fit.coefficients / (fit.stdev_unscaled * np.sqrt(eb.prior_variance))
     np.testing.assert_allclose(eb.t, ordinary, rtol=1e-14)
@@ -371,7 +371,7 @@ def test_infinite_prior_df_gives_ordinary_t_on_the_prior_variance() -> None:
     bayes_factor = log_normal_density(fit.coefficients, v + v0)
     bayes_factor -= log_normal_density(fit.coefficients, v)
     np.testing.assert_allclose(
-        eb.lods, np.log(0.01 / 0.99) + bayes_factor, rtol=1e-12, atol=1e-12
+        eb.log_odds, np.log(0.01 / 0.99) + bayes_factor, rtol=1e-12, atol=1e-12
     )
 
 
@@ -447,7 +447,7 @@ def test_zero_coefficient_variance_gives_the_prior_log_odds() -> None:
         model_fit("two_groups"), proportion=0.05, stdev_coef_lim=(0.0, 0.0)
     )
     np.testing.assert_array_equal(eb.coefficient_prior_variance, 0.0)
-    np.testing.assert_allclose(eb.lods, np.log(0.05 / 0.95), rtol=1e-14)
+    np.testing.assert_allclose(eb.log_odds, np.log(0.05 / 0.95), rtol=1e-14)
 
 
 def test_exact_f_statistic_is_invariant_to_coding_and_matches_group_means() -> None:
@@ -486,7 +486,7 @@ def test_results_do_not_depend_on_the_order_of_features(run: str) -> None:
         fit_linear_model(data["y"][order].T, data["X"]), **options(run)
     )
     eb = moderated_statistics(fit_linear_model(data["y"].T, data["X"]), **options(run))
-    for name in ("posterior_variance", "df_total", "t", "p_value", "lods"):
+    for name in ("posterior_variance", "df_total", "t", "p_value", "log_odds"):
         np.testing.assert_allclose(
             getattr(permuted, name), getattr(eb, name)[order], rtol=1e-10
         )
@@ -510,9 +510,9 @@ def test_rescaling_the_data_rescales_the_variances(run: str) -> None:
     np.testing.assert_allclose(
         scaled.posterior_variance, 16.0 * eb.posterior_variance, rtol=1e-10
     )
-    np.testing.assert_allclose(scaled.prior_df, eb.prior_df, rtol=1e-10)
+    np.testing.assert_allclose(scaled.df_prior, eb.df_prior, rtol=1e-10)
     np.testing.assert_allclose(scaled.t, eb.t, rtol=1e-10)
-    np.testing.assert_allclose(scaled.lods, eb.lods, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(scaled.log_odds, eb.log_odds, rtol=1e-10, atol=1e-10)
 
 
 def test_features_without_observations_do_not_change_the_others() -> None:
@@ -534,12 +534,12 @@ def test_variance_with_zero_df_gets_the_prior() -> None:
     v = np.array([0.05, 0.9, np.nan, 0.8, 0.3, 2.5, 0.01, 0.25])
     d = np.array([4.0, 4.0, 0.0, 0.0, 4.0, 4.0, 4.0, 4.0])
     squeezed = squeeze_variances(v, d)
-    assert np.isfinite(squeezed.prior_df)
+    assert np.isfinite(squeezed.df_prior)
     assert squeezed.posterior_variance[2] == squeezed.prior_variance
     assert squeezed.posterior_variance[3] == squeezed.prior_variance
     usable = d > 0
     alone = squeeze_variances(v[usable], d[usable])
-    assert alone.prior_df == squeezed.prior_df
+    assert alone.df_prior == squeezed.df_prior
     np.testing.assert_array_equal(
         alone.posterior_variance, squeezed.posterior_variance[usable]
     )
@@ -566,7 +566,7 @@ def test_equal_variances_give_an_infinite_prior_df() -> None:
 def test_at_most_two_variances_are_not_moderated() -> None:
     for v in (np.array([0.5]), np.array([0.2, 3.0])):
         squeezed = squeeze_variances(v, 4.0, robust=True)
-        assert squeezed.prior_df == 0.0
+        assert squeezed.df_prior == 0.0
         np.testing.assert_array_equal(squeezed.posterior_variance, v)
         np.testing.assert_array_equal(squeezed.prior_variance, v)
 
@@ -583,9 +583,9 @@ def test_one_or_two_features_with_zero_variance_give_nan_not_an_error() -> None:
     for trend in (False, True):
         for robust in (False, True):
             eb = moderated_statistics(one, trend=trend, robust=robust)
-            assert np.isnan(eb.t).all() and np.isnan(eb.lods).all()
+            assert np.isnan(eb.t).all() and np.isnan(eb.log_odds).all()
             np.testing.assert_array_equal(eb.prior_variance, 0.0)
-            assert eb.prior_df == 0.0
+            assert eb.df_prior == 0.0
             np.testing.assert_array_equal(eb.coefficient_prior_variance, np.inf)
             eb = moderated_statistics(two, trend=trend, robust=robust)
             # The second feature keeps its own variance, 1 on 2 df: t = sqrt(3).
@@ -684,7 +684,7 @@ def test_default_estimator_follows_limmas_rule_for_fits() -> None:
     default = moderated_statistics(fit, trend=True)
     moments = moderated_statistics(fit, trend=True, prior_estimator="moments")
     assert default.prior_estimator == moments.prior_estimator == "moments"
-    for name in ("prior_variance", "prior_df", "posterior_variance", "t", "lods"):
+    for name in ("prior_variance", "df_prior", "posterior_variance", "t", "log_odds"):
         np.testing.assert_array_equal(getattr(default, name), getattr(moments, name))
     unequal = model_fit("missing_values_all_df")
     assert np.unique(unequal.df_residual).size > 1
@@ -705,12 +705,12 @@ def test_default_estimator_compares_the_positive_df_exactly() -> None:
     v = 0.4 * np.random.default_rng(12).f(4.0, 8.0, 40)
 
     def estimator_of(variances: np.ndarray, df: np.ndarray) -> str:
-        chosen = squeeze_variances(variances, df).prior_df
+        chosen = squeeze_variances(variances, df).df_prior
         moments = squeeze_variances(variances, df, prior_estimator="moments")
         likelihood = squeeze_variances(variances, df, prior_estimator="likelihood")
-        assert moments.prior_df != likelihood.prior_df
-        assert chosen in (moments.prior_df, likelihood.prior_df)
-        return "moments" if chosen == moments.prior_df else "likelihood"
+        assert moments.df_prior != likelihood.df_prior
+        assert chosen in (moments.df_prior, likelihood.df_prior)
+        return "moments" if chosen == moments.df_prior else "likelihood"
 
     d = np.full(40, 4.0)
     assert estimator_of(v, d) == "moments"
@@ -801,7 +801,7 @@ def test_robust_fit_without_genes_lacking_residual_df_is_limmas_of_the_others() 
     eb = moderated(case, run)
     keep = reference(case)["keep"] == 1
     assert not keep.all() and eb.prior_estimator == "likelihood"
-    prior_df = eb.prior_df[keep] if np.ndim(eb.prior_df) else eb.prior_df
+    prior_df = eb.df_prior[keep] if np.ndim(eb.df_prior) else eb.df_prior
     for key, ours in (
         ("s2.prior", eb.prior_variance),
         ("df.prior", prior_df),
@@ -854,7 +854,7 @@ def test_fit_object_fields_are_read_only() -> None:
     eb = moderated("two_groups", "trend")
     with pytest.raises(ValueError, match="read-only"):
         eb.t[0, 0] = 1.0
-    assert "n_features=100" in repr(eb) and "prior_df=" in repr(eb)
+    assert "n_features=100" in repr(eb) and "df_prior=" in repr(eb)
     assert "prior_estimator='moments'" in repr(eb)
     assert "lfc=" in repr(treat(model_fit("two_groups")))
 

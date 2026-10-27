@@ -184,7 +184,7 @@ the mean-variance trend of the mixed model, and records the samples each fit use
 a {api}`VariancePartitioningResult`; {api}`VariancePartitioningResult.table` gives the
 fractions of one cell type. {api}`plot_variance_fractions` draws variancePartition's
 violins of the fractions over the genes [@hintze1998], with Silverman's bandwidth
-[@silverman1986], and {api}`plot_gene_variance_fractions` its bars for chosen genes.
+[@silverman1986], and {api}`plot_feature_variance_fractions` its bars for chosen genes.
 The residual fraction mixes biological variation, the precision of the measurements
 and technical variation that the design does not name, so its size alone does not say
 whether variables are missing from the design.

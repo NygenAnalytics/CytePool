@@ -24,7 +24,7 @@ them (``voomWithDreamWeights``, ``dream``, ``eBayes`` and ``topTable``):
    feature, that of an observation of its average weight, is shrunk towards a prior
    by limma's empirical Bayes (Smyth 2004) on the approximate residual degrees of
    freedom of the mixed model, tr((I - H)' (I - H)) for its hat matrix H
-   (``MixedModelFit.residual_df``). The moderated t-statistic divides an estimate by
+   (``MixedModelFit.df_residual``). The moderated t-statistic divides an estimate by
    its standard error with the posterior variance in place of the residual
    variance, and has the degrees of freedom of the test plus the prior's. Several
    contrasts are tested at once by the moderated F-statistic t' R^-1 t / r, limma's,
@@ -111,7 +111,7 @@ and ``validation/kenward_roger_and_f_tests.py``:
   about 2% of 1e6.
 
 Random slopes are not implemented yet; variancePartition's variance partitioning is
-:mod:`cytepool.variance_partitioning`.
+:func:`cytepool.variance_partitioning`.
 
 References:
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
@@ -215,11 +215,11 @@ class ModeratedFixedEffectTests:
             moderated: the residual variance of an observation of each feature's
             average weight, ``fit.residual_variance / fit.mean_weights`` (dream's
             ``sigma^2``).
-        residual_df: ``(n_features,)`` their degrees of freedom, the fit's
+        df_residual: ``(n_features,)`` their degrees of freedom, the fit's
             approximate residual degrees of freedom (dream's ``rdf``).
         prior_variance: The prior variance (``s2.prior``): a float, or one value
             per feature with a trend.
-        prior_df: The prior degrees of freedom (``df.prior``): a float, possibly
+        df_prior: The prior degrees of freedom (``df.prior``): a float, possibly
             infinite, or one value per feature from a robust fit that finds
             outliers.
         posterior_variance: ``(n_features,)`` posterior variances (``s2.post``).
@@ -229,13 +229,15 @@ class ModeratedFixedEffectTests:
         df_total: ``(n_features, n_contrasts)`` their degrees of freedom:
             Satterthwaite's plus the prior's (``df.total``).
         p_value: Two-sided p-values of ``t`` on ``df_total`` degrees of freedom.
-        lods: Log-odds that each contrast is non-zero (the B-statistic), as limma's
-            ``eBayes`` gives them for these variances on ``residual_df``.
+        log_odds: Log-odds that each contrast is non-zero (limma's B-statistic,
+            ``lods``), as limma's ``eBayes`` gives them for these variances on
+            ``df_residual``.
         z: Signed z-statistics with the same p-values, sign(t) times the standard
             normal quantile of half the p-value (``topTable``'s ``z.std``).
         coefficient_prior_variance: ``(n_contrasts,)`` unscaled prior variance of
             a non-zero contrast (``var.prior``).
-        proportion: The assumed proportion of non-zero contrasts behind ``lods``.
+        proportion: The assumed proportion of non-zero contrasts behind
+            ``log_odds``.
         prior_estimator: The estimator of the prior: ``"moments"`` or
             ``"likelihood"``.
         f_statistic: ``(n_features,)`` moderated F-statistics testing every
@@ -255,14 +257,14 @@ class ModeratedFixedEffectTests:
 
     tests: FixedEffectTests
     residual_variance_at_mean_weight: FloatArray
-    residual_df: FloatArray
+    df_residual: FloatArray
     prior_variance: float | FloatArray
-    prior_df: float | FloatArray
+    df_prior: float | FloatArray
     posterior_variance: FloatArray
     t: FloatArray
     df_total: FloatArray
     p_value: FloatArray
-    lods: FloatArray
+    log_odds: FloatArray
     z: FloatArray
     coefficient_prior_variance: FloatArray
     proportion: float
@@ -298,7 +300,7 @@ def voom_with_dream_weights(
     :func:`~cytepool.stats.voom.voom`), with the linear model replaced by the mixed
     model of ``design``, fitted to every feature by maximum likelihood, and the trend
     read at the fitted values with the predicted random effects; the module
-    docstring gives the conventions. Continue with ``fit_mixed_model(result.log_cpm,
+    docstring gives the conventions. Continue with ``fit_mixed_model(result.log2_cpm,
     design, weights=result.weights)``, ``fixed_effect_tests`` and
     :func:`moderated_fixed_effect_tests`.
 
@@ -456,7 +458,7 @@ def _moderated_tests(
         )
     # dream's sigma^2: the residual variance of an observation of average weight.
     variance = fit.residual_variance / fit.mean_weights
-    fitted = np.isfinite(variance) & np.isfinite(fit.residual_df)
+    fitted = np.isfinite(variance) & np.isfinite(fit.df_residual)
     if not fitted.any():
         raise ValueError(
             "no feature has a mixed model fit, so the prior cannot be estimated; "
@@ -475,7 +477,7 @@ def _moderated_tests(
         stdev_unscaled=stdev_unscaled,
         sigma=sigma,
         # A feature without a fit has no information about the prior.
-        df_residual=np.where(fitted, fit.residual_df, 0.0),
+        df_residual=np.where(fitted, fit.df_residual, 0.0),
         cov_coefficients=matrix.T @ np.linalg.solve(cross, matrix),
         mean_expression=fit.mean_expression,
         coefficient_names=tests.contrast_names,
@@ -492,11 +494,11 @@ def _moderated_tests(
         winsor_tail_p=winsor_tail_p,
         prior_estimator=prior_estimator,
     )
-    prior_df = np.broadcast_to(moderated.prior_df, variance.shape)
-    df_total = tests.df + prior_df[:, np.newaxis]
+    df_prior = np.broadcast_to(moderated.df_prior, variance.shape)
+    df_total = tests.df + df_prior[:, np.newaxis]
     t = moderated.t
     p_value = 2.0 * np.asarray(t_sf(np.abs(t), df_total), dtype=np.float64)
-    f_value, f_df1, f_df2 = _moderated_f(t, tests, parts, prior_df)
+    f_value, f_df1, f_df2 = _moderated_f(t, tests, parts, df_prior)
     with np.errstate(invalid="ignore"):
         f_p_value = np.asarray(f_sf(f_value, float(f_df1), f_df2), dtype=np.float64)
         standardized = np.asarray(
@@ -505,14 +507,14 @@ def _moderated_tests(
     return ModeratedFixedEffectTests(
         tests=tests,
         residual_variance_at_mean_weight=_frozen(variance),
-        residual_df=_frozen(fit.residual_df),
+        df_residual=_frozen(fit.df_residual),
         prior_variance=moderated.prior_variance,
-        prior_df=moderated.prior_df,
+        df_prior=moderated.df_prior,
         posterior_variance=moderated.posterior_variance,
         t=t,
         df_total=_frozen(df_total),
         p_value=_frozen(p_value),
-        lods=moderated.lods,
+        log_odds=moderated.log_odds,
         z=_frozen(_signed_z(t, df_total, p_value)),
         coefficient_prior_variance=moderated.coefficient_prior_variance,
         proportion=moderated.proportion,
@@ -526,7 +528,7 @@ def _moderated_tests(
 
 
 def _moderated_f(
-    t: FloatArray, tests: FixedEffectTests, parts: InferenceParts, prior_df: FloatArray
+    t: FloatArray, tests: FixedEffectTests, parts: InferenceParts, df_prior: FloatArray
 ) -> tuple[FloatArray, int, FloatArray]:
     """dream's moderated F-statistic of every contrast, and its degrees of freedom.
 
@@ -550,7 +552,7 @@ def _moderated_f(
     with np.errstate(divide="ignore", invalid="ignore"):
         scores = np.einsum("gc,gcm->gm", t, vectors) / np.sqrt(values)
         f_value: FloatArray = np.sum(scores**2, axis=1) / rank
-    f_df2 = combined_df(df + prior_df[:, np.newaxis])
+    f_df2 = combined_df(df + df_prior[:, np.newaxis])
     return f_value, rank, f_df2
 
 
@@ -574,16 +576,16 @@ def _dream_weights(
         prior: Prior weights, each feature's scaled to mean one, or None.
         ml: Whether to fit by maximum likelihood.
     """
-    log_cpm = voom_log_cpm(y, sizes)
-    fit = _fit(log_cpm, prior, ml, parts)
+    log2_cpm = voom_log_cpm(y, sizes)
+    fit = _fit(log2_cpm, prior, ml, parts)
     mean_log_count = voom_mean_log_count(fit.mean_expression, sizes, y)
     sigma = np.sqrt(fit.residual_variance)
     in_trend = (y > 0.0).any(axis=0) & np.isfinite(sigma)
     # A feature that the effects reproduce has no fit; its fitted values are its
     # values, the limit of the fits as the residual variance goes to zero.
-    fitted = np.where(np.isnan(fit.fitted_values), log_cpm, fit.fitted_values)
+    fitted = np.where(np.isnan(fit.fitted_values), log2_cpm, fit.fitted_values)
     trend = trend_weights(
-        log_cpm,
+        log2_cpm,
         mean_log_count,
         sigma,
         in_trend,
@@ -597,7 +599,7 @@ def _dream_weights(
     if prior is not None:
         weights = weights * (prior[:, np.newaxis] if prior.ndim == 1 else prior)
     return VoomResult(
-        log_cpm=log_cpm,
+        log2_cpm=log2_cpm,
         weights=weights,
         effective_library_sizes=sizes,
         mean_log_count=mean_log_count,

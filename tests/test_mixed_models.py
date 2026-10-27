@@ -16,7 +16,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.design import Design, make_contrasts
+from cytepool import Design
+from cytepool.design import make_contrasts
 from cytepool.stats.linear_models import fit_linear_model
 from cytepool.stats.mixed_models import (
     FixedEffectTests,

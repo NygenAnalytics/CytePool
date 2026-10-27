@@ -21,10 +21,15 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.composition import CompositionResult, propeller
-from cytepool.cube import Cube, from_bulk, from_cells
-from cytepool.design import Design
-from cytepool.table import Table
+from cytepool import (
+    CompositionResult,
+    Cube,
+    Design,
+    Table,
+    from_bulk,
+    from_cells,
+    propeller,
+)
 
 DATA = Path(__file__).parent / "data" / "composition_tests"
 EXACT = 1e-10
@@ -67,10 +72,10 @@ def fixture_cube(case: str) -> Cube:
     variables = [c for c in columns if "|" not in c and c not in ("n_cells", "groups")]
     return from_cells(
         np.zeros((sample_labels.size, 1)),
-        samples=sample_labels,
-        groups=group_labels,
-        sample_table={name: data[f"{case} {name}"] for name in variables},
-        group_table={"group_id": groups},
+        sample_labels=sample_labels,
+        group_labels=group_labels,
+        samples={name: data[f"{case} {name}"] for name in variables},
+        groups={"group_id": groups},
         layers="counts",
     )
 
@@ -171,7 +176,7 @@ def test_two_groups_match_speckle_propeller(
     assert_matches_speckle(table, f"two_groups | {label}", columns, tolerance)
     if label == "logit":
         # Robust moderation gave the cell types prior df of their own.
-        assert np.ptp(result.summary["prior_df"]) > 0.1
+        assert np.ptp(result.summary["df_prior"]) > 0.1
 
 
 @pytest.mark.parametrize(
@@ -229,14 +234,16 @@ def test_only_comparisons_of_levels_have_mean_proportions() -> None:
 
 def test_f_test_with_a_covariate_matches_speckle_anova() -> None:
     cube = fixture_cube("covariate")
-    result = propeller(cube, covariate_design(), contrasts=[], f_test="group")
+    result = propeller(cube, covariate_design(), contrasts=[], f_tests="group")
 
-    assert result.tables == {} and result.f_test is not None
+    assert list(result.tables) == ["group"] and result.f_tests == {
+        "group": ("A", "B", "C")
+    }
     columns: dict[str, str | None] = {"baseline_proportion": None}
     columns |= {f"mean_proportion_{lv}": f"PropMean.group{lv}" for lv in "ABC"}
     columns |= {"f_statistic": "Fstatistic", **P_VALUES}
     prefix = "covariate | logit, F-test of group"
-    assert_matches_speckle(result.f_test, prefix, columns, EXACT)
+    assert_matches_speckle(result.table("group"), prefix, columns, EXACT)
 
 
 # Values derived by hand.
@@ -324,7 +331,9 @@ def test_every_parametrisation_of_a_comparison_gives_the_same_table() -> None:
         design = covariate_design(formula, contrasts={"B_vs_A": contrast})
         assert_tables_equal(propeller(cube, design).table("B_vs_A"), group_means)
     f_tests = [
-        propeller(cube, covariate_design(formula, contrasts={}), f_test="group").f_test
+        propeller(cube, covariate_design(formula, contrasts={}), f_tests="group").table(
+            "group"
+        )
         for formula in ("~ 0 + group + age", "~ group + age", "~ age + group")
     ]
     assert_tables_equal(f_tests[1], f_tests[0])
@@ -391,19 +400,46 @@ def test_an_f_test_of_two_levels_is_the_two_sided_t_test() -> None:
     cube = fixture_cube("two_groups")
     contrasts = {"ctrl_vs_stim": "conditionctrl - conditionstim"}
     result = propeller(
-        cube, two_group_design(cube.samples, contrasts=contrasts), f_test="condition"
+        cube, two_group_design(cube.samples, contrasts=contrasts), f_tests="condition"
     )
     table = result.table("ctrl_vs_stim")
 
-    assert result.f_test is not None
+    assert result.f_tests == {"condition": ("ctrl", "stim")}
     np.testing.assert_allclose(
-        result.f_test["f_statistic"], table["t"] ** 2, rtol=1e-12
+        result.table("condition")["f_statistic"], table["t"] ** 2, rtol=1e-12
     )
     # limma caps the df of t-tests at the residual df of all cell types, and not
     # those of F-tests; here the cap is not reached, so the p-values agree.
-    df_total = result.summary["df_residual"] + result.summary["prior_df"]
+    df_total = result.summary["df_residual"] + result.summary["df_prior"]
     assert np.all(df_total < np.sum(result.summary["df_residual"]))
-    np.testing.assert_allclose(result.f_test["p_value"], table["p_value"], rtol=1e-12)
+    np.testing.assert_allclose(
+        result.table("condition")["p_value"], table["p_value"], rtol=1e-12
+    )
+
+
+def test_f_tests_of_two_factors_are_those_of_each_factor_alone() -> None:
+    cube = fixture_cube("covariate")
+    # A batch that crosses the groups A, B, C, A, B, C, A, B, C.
+    samples = cube.samples.with_columns(
+        {"batch": ["x", "x", "y", "y", "y", "x", "x", "y", "x"]}
+    )
+    formula = "~ 0 + group + batch + age"
+    design = Design(samples, formula, contrasts={"B_vs_A": "groupB - groupA"})
+    both = propeller(cube, design, f_tests=["group", "batch"])
+
+    assert both.f_tests == {"group": ("A", "B", "C"), "batch": ("x", "y")}
+    assert list(both.tables) == ["B_vs_A", "group", "batch"]
+    for factor in ("group", "batch"):
+        alone = propeller(cube, design, contrasts=[], f_tests=factor)
+        assert both.table(factor).equals(alone.table(factor))
+        assert both.tables[factor].equals(alone.table())
+    assert both.table("B_vs_A").equals(propeller(cube, design).table("B_vs_A"))
+    # An F-test is named by its factor, so a contrast of that name is refused.
+    named = Design(samples, formula, contrasts={"batch": "batchy"})
+    with pytest.raises(
+        ValueError, match="f_tests names 'batch', which is also the name of a contrast"
+    ):
+        propeller(cube, named, f_tests=["group", "batch"])
 
 
 def test_two_complementary_cell_types_have_opposite_statistics() -> None:
@@ -423,7 +459,7 @@ def test_two_complementary_cell_types_have_opposite_statistics() -> None:
                 table["p_value"][1], table["p_value"][0], rtol=1e-12
             )
         # limma does not moderate two variances.
-        assert result.summary["prior_df"].tolist() == [0.0, 0.0]
+        assert result.summary["df_prior"].tolist() == [0.0, 0.0]
 
 
 # Samples and cell types without cells, and other inputs.
@@ -439,7 +475,7 @@ def test_a_cell_type_without_cells_is_left_out_and_changes_nothing() -> None:
     assert summary["group_id"].tolist() == ["T", "B", "NK", "DC"]
     assert summary["tested"].tolist() == [True, True, True, False]
     assert summary["reason"].tolist()[3] == "no cells in the samples used"
-    assert np.isnan(summary["prior_df"][3])
+    assert np.isnan(summary["df_prior"][3])
     assert result.provenance["groups_left_out"] == {
         "DC": "no cells in the samples used"
     }
@@ -529,7 +565,7 @@ def test_a_table_of_cell_numbers_gives_the_result_of_the_cube() -> None:
 def test_the_result_records_the_cube_and_settings_and_pickles() -> None:
     cube = fixture_cube("covariate")
     result = propeller(
-        cube, covariate_design(), f_test="group", transform="asin", trend=True
+        cube, covariate_design(), f_tests="group", transform="asin", trend=True
     )
 
     record = result.provenance
@@ -540,19 +576,19 @@ def test_the_result_records_the_cube_and_settings_and_pickles() -> None:
         "transform": "asin",
         "robust": True,
         "trend": True,
-        "f_test": "group",
+        "f_tests": ["group"],
         "logit_offset": 0.5,
         "winsor_tail_p": None,
         "p_value_adjustment": "BH",
     }
-    assert record["f_test"]["levels"] == ["A", "B", "C"]
+    assert record["f_tests"]["group"]["levels"] == ["A", "B", "C"]
     assert record["design"]["formula"] == "~ 0 + group + age"
     assert record["samples"] == cube.samples["sample_id"].tolist()
     copy = pickle.loads(pickle.dumps(result))
     assert copy.provenance == record
     assert copy.table("B_vs_A").equals(result.table("B_vs_A"))
-    assert copy.f_test is not None and result.f_test is not None
-    assert copy.f_test.equals(result.f_test)
+    assert copy.f_tests == result.f_tests == {"group": ("A", "B", "C")}
+    assert copy.table("group").equals(result.table("group"))
     with pytest.raises(AttributeError, match="immutable"):
         result.settings = {}  # type: ignore[misc]
     with pytest.raises(
@@ -652,14 +688,14 @@ def bulk_cube() -> Cube:
         (
             lambda: CELLS,
             two_group_design,
-            {"f_test": 1},
+            {"f_tests": 1},
             TypeError,
-            "f_test must be the name of a factor",
+            "f_tests must be the name of a factor",
         ),
         (
             lambda: CELLS,
             two_group_design,
-            {"f_test": "donor"},
+            {"f_tests": "donor"},
             ValueError,
             "not a variable of the formula",
         ),
@@ -703,12 +739,12 @@ def test_invalid_input_is_refused(
 def test_f_test_needs_a_factor_that_is_a_main_effect_only() -> None:
     cube = fixture_cube("covariate")
     with pytest.raises(ValueError, match="'age', a covariate"):
-        propeller(cube, covariate_design(), f_test="age")
+        propeller(cube, covariate_design(), f_tests="age")
     samples = {**fixture_cube("covariate").samples.to_dict()}
     samples["sex"] = np.array(["F", "M", "F"] * 3, dtype=object)
     design = Design(samples, "~ group * sex", contrasts={"B": "groupB"})
     with pytest.raises(ValueError, match="in the interaction group:sex"):
-        propeller(cube, design, f_test="group")
+        propeller(cube, design, f_tests="group")
     with pytest.raises(ValueError, match="random effects? \\(1 \\| sex\\)"):
         propeller(
             cube,

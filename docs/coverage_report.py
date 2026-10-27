@@ -4,10 +4,10 @@
 imports when it is installed.)
 
 Every public name must earn a place in a page, or be listed with the reason it needs
-none. The public names are those the API reference must document (a module's
-``__all__``, or else the public functions and classes it defines, as
-``tests/test_documentation.py`` defines them) and the public methods of their
-classes. A name is covered when a guide or tutorial uses it (its code imports it, or
+none. The public names are those the API reference must document (the names of the
+top level, ``cytepool.__all__``, and of a module's ``__all__``, or else the public
+functions and classes it defines, as ``tests/test_documentation.py`` defines them) and
+the public methods of their classes. A name is covered when a guide or tutorial uses it (its code imports it, or
 its prose links to it) or an explanation links to it (``page_index.py``); index
 pages, such as the capability matrix and the glossary, do not count.
 
@@ -54,23 +54,23 @@ def public_names() -> set[str]:
     methods of the public classes."""
     modules = _modules()
 
+    def exported(package: ModuleType) -> set[str]:
+        # The names a package re-exports, and those of the top level.
+        return set(getattr(package, "__all__", ())) | set(cytepool.__all__)
+
     def implements(module: ModuleType, package: ModuleType) -> bool:
-        exported = set(getattr(package, "__all__", ()))
-        return package is not cytepool and bool(
-            set(page_index.public_names(module)) & exported
-        )
+        return bool(set(page_index.public_names(module)) & exported(package))
 
     public_modules = {
         module.__name__
         for module, package in modules
         if page_index.public_names(module) and not implements(module, package)
     }
-    names = set()
+    names = {f"cytepool.{name}" for name in cytepool.__all__}
     for module, package in modules:
-        exported = set(getattr(package, "__all__", ()))
         for name in page_index.public_names(module):
             if module.__name__ in public_modules or (
-                implements(module, package) and name not in exported
+                implements(module, package) and name not in exported(package)
             ):
                 names.add(f"{module.__name__}.{name}")
     for name in list(names):

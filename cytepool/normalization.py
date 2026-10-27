@@ -19,7 +19,7 @@ or NaN. The functions reproduce edgeR and DESeq2:
   :func:`median_ratio_size_factors`, the median-of-ratios method of Anders and
   Huber (2010);
 - counts per million and log counts per million as edgeR's ``cpm`` computes
-  them: :func:`cpm` and :func:`log_cpm`;
+  them: :func:`cpm` and :func:`log2_cpm`;
 - edgeR's ``filterByExpr`` (Chen, Lun and Smyth 2016): :func:`filter_by_expression`.
 
 The routines repeat R's floating-point operations wherever an operation
@@ -75,7 +75,7 @@ __all__ = [
     "cpm",
     "filter_by_expression",
     "library_sizes",
-    "log_cpm",
+    "log2_cpm",
     "median_ratio_size_factors",
     "rle_factors",
     "tmm_factors",
@@ -373,7 +373,7 @@ def cpm(
         ) from None
 
 
-def log_cpm(
+def log2_cpm(
     counts: npt.ArrayLike,
     *,
     library_sizes: npt.ArrayLike | None = None,
@@ -416,8 +416,8 @@ def log_cpm(
 def filter_by_expression(
     counts: npt.ArrayLike,
     *,
-    group: npt.ArrayLike | None = None,
     design: object | None = None,
+    sample_groups: npt.ArrayLike | None = None,
     library_sizes: npt.ArrayLike | None = None,
     norm_factors: npt.ArrayLike | None = None,
     min_count: float = 10,
@@ -435,12 +435,11 @@ def filter_by_expression(
     of the design with an intercept column added, as R's ``hat()`` adds it
     (found by probing); the two agree for a one-way design. When n exceeds
     ``large_n`` it is relaxed to ``large_n + (n - large_n) * min_prop``.
-    Without group and design all samples form one group, as in edgeR, with a
+    Without groups and design all samples form one group, as in edgeR, with a
     warning.
 
     Args:
         counts: Counts, samples x features.
-        group: Group label of each sample; labels must not be missing.
         design: Design matrix, samples x coefficients, or any object with a
             ``matrix`` attribute holding one, such as a ``Design``. With the
             intercept column added, its rank is decided as R's ``qr()`` decides
@@ -449,7 +448,9 @@ def filter_by_expression(
             effects. Leaving them out can only raise n, and so keep fewer
             features. When a random effect separates groups whose expression may
             differ, such as the tissues of a variance partition, pass those
-            groups as ``group`` instead.
+            groups as ``sample_groups`` instead.
+        sample_groups: The group of each sample, such as its condition (edgeR's
+            ``group``), in place of the design; labels must not be missing.
         library_sizes: Library size of each sample; defaults to the total
             counts. Must be positive.
         norm_factors: Normalization factor of each sample, multiplied into the
@@ -466,9 +467,9 @@ def filter_by_expression(
 
     Raises:
         TypeError: If an argument has the wrong type, or is a numpy masked array.
-        ValueError: If an argument is out of range, both group and design are
-            given (edgeR silently ignores the design then), or a sample has
-            library size zero.
+        ValueError: If an argument is out of range, both ``sample_groups`` and
+            ``design`` are given (edgeR silently ignores the design then), or a
+            sample has library size zero.
         OverflowError: If a library size, or the total count of a feature,
             exceeds the float64 range.
     """
@@ -481,17 +482,17 @@ def filter_by_expression(
     min_prop = real_number(min_prop, "min_prop", finite=True)
     if not 0.0 <= min_prop <= 1.0:
         raise ValueError(f"min_prop must be in [0, 1], got {min_prop}")
-    if group is not None and design is not None:
-        raise ValueError("pass group or design, not both")
-    if group is not None:
-        min_samples = float(_smallest_group_size(group, n_samples))
+    if sample_groups is not None and design is not None:
+        raise ValueError("pass sample_groups or design, not both")
+    if sample_groups is not None:
+        min_samples = float(_smallest_group_size(sample_groups, n_samples))
     elif design is not None:
         matrix = _design_matrix(design, n_samples)
         leverages = _leverages(np.column_stack([np.ones(n_samples), matrix]))
         min_samples = 1.0 / float(np.max(leverages))
     else:
         warnings.warn(
-            "no group or design given, so all samples are treated as one group",
+            "no sample_groups or design given, so all samples are treated as one group",
             UserWarning,
             stacklevel=2,
         )
@@ -530,17 +531,18 @@ def _sample_index(value: object, n_samples: int) -> int:
 
 
 def _smallest_group_size(group: npt.ArrayLike, n_samples: int) -> int:
-    labels = unmasked_array(group, "group")
+    labels = unmasked_array(group, "sample_groups")
     if labels.ndim != 1 or labels.shape[0] != n_samples:
         raise ValueError(
-            f"group must have one label per sample ({n_samples}), "
+            f"sample_groups must have one label per sample ({n_samples}), "
             f"got shape {labels.shape}"
         )
     values = labels.tolist()
     for i, value in enumerate(values):
         if value is None or value != value:
             raise ValueError(
-                f"group labels must not be missing; sample {i} has {value}"
+                f"the labels of sample_groups must not be missing; sample {i} has "
+                f"{value}"
             )
     return min(Counter(values).values())
 

@@ -14,8 +14,8 @@ Satterthwaite or Kenward-Roger t-tests of
 {func}`~cytepool.stats.mixed_models.fixed_effect_tests` by empirical Bayes, as
 variancePartition's `eBayes` does for `dream` fits, adds `topTable`'s z-statistic, and
 tests the contrasts at once by the moderated F-statistic.
-{func}`~cytepool.differential_expression.dream_voom` runs these steps on every cell
-type of a cube, with dream's choice of the degrees of freedom.
+{func}`~cytepool.dream_voom` runs these steps on every cell type of a cube, with
+dream's choice of the degrees of freedom.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.dream

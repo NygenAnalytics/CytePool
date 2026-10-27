@@ -294,7 +294,9 @@ def test_invalid_arguments_are_rejected() -> None:
         ):
             adjust_p_values([0.1, bad])
     for values in (["0.1"], [0.1 + 0j], [True, False]):
-        with pytest.raises(TypeError, match="p must hold real numbers, got dtype"):
+        with pytest.raises(
+            TypeError, match="p_values must hold real numbers, got dtype"
+        ):
             adjust_p_values(values)
     with pytest.raises(TypeError, match="n must be an integer, got float"):
         adjust_p_values([0.1], n=2.0)  # type: ignore[arg-type]

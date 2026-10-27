@@ -20,13 +20,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.gene_sets import GeneSets
-from cytepool.over_representation import over_representation
+from cytepool import Cube, Design, GeneSets, Table, limma_voom, over_representation
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "gene_set_files_and_ora"
 EXACT = 1e-10

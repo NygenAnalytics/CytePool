@@ -9,20 +9,37 @@ myst:
 A cube holds additive statistics of the cells of each sample and group (such as a
 cell type), for every feature: counts, detected cells, and sums of normalized and
 log-normalized expression. Because the statistics add up, groups can be merged and
-samples pooled without going back to the cells. {func}`~cytepool.cube.from_cells`
-pools a cell-level count matrix in one pass, and {func}`~cytepool.cube.from_bulk`
-wraps a samples x features count matrix as a cube with one group. Sample, group and
-feature metadata are {class}`~cytepool.table.Table` objects.
-{class}`~cytepool.cube.CubeCollection` aligns the cubes of several studies by sample,
-gene and cell type, with what each study measured, for analyses of each study and for
-one cube of them all.
+samples pooled without going back to the cells. {func}`~cytepool.from_cells` pools a
+cell-level count matrix in one pass, and {func}`~cytepool.from_bulk` wraps a samples x
+features count matrix as a cube with one group. Sample, group and feature metadata are
+{class}`~cytepool.Table` objects. {class}`~cytepool.CubeCollection` aligns the cubes of
+several studies by sample, gene and cell type, with what each study measured, for
+analyses of each study and for one cube of them all.
 
 ```{eval-rst}
-.. automodule:: cytepool.cube
+.. autoclass:: cytepool.Cube
+
+.. automodule:: cytepool.cube.pool
+   :no-members:
+   :no-index:
+
+.. autofunction:: cytepool.from_cells
+
+.. autofunction:: cytepool.from_bulk
+
+.. automodule:: cytepool.cube.collection
+   :no-members:
+   :no-index:
+
+.. autoclass:: cytepool.CubeCollection
 ```
 
 ```{eval-rst}
 .. automodule:: cytepool.table
+   :no-members:
+   :no-index:
+
+.. autoclass:: cytepool.Table
 ```
 
 ## Fingerprints and provenance
@@ -31,8 +48,8 @@ A cube's fingerprint identifies its values, tables and cell numbers included, so
 result can name the cube it was computed from, and its provenance records how the cube
 was made: the caller's record of the source, the settings of the function that built
 it, and every operation that derived it, with what it kept or pooled and the
-fingerprint of the cube it was applied to. {meth}`~cytepool.cube.Cube.history` reads
-the record back in plain terms.
+fingerprint of the cube it was applied to. {meth}`~cytepool.Cube.history` reads the
+record back in plain terms.
 
 ```{eval-rst}
 .. automodule:: cytepool.cube.fingerprints

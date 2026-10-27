@@ -1,4 +1,4 @@
-"""Check meta_analysis and differential_expression_meta_analysis against metafor.
+"""Check fit_meta_analysis and meta_analysis against metafor.
 
 Simulates the effects of many features in several studies, with their standard errors,
 from fixed seeds (in ``main``), and meta-analyses every feature with CytePool and with
@@ -41,7 +41,7 @@ the changes differ between cohorts. ``limma_voom`` tests the stimulation in ever
 cohort. R reads the log2 fold changes and standard errors of each cohort's tables,
 merges them by feature id, meta-analyses every feature that at least ``min_studies``
 cohorts tested and adjusts the p-values by ``p.adjust(method = "BH")``. Each row
-compares the features and every column of ``differential_expression_meta_analysis``
+compares the features and every column of ``meta_analysis``
 for one setting and cell type, in the tiers above. Behaviour rows: one study with the
 Knapp-Hartung adjustment (metafor falls back to a z-test, as CytePool does); a
 Paule-Mandel estimate above metafor's search interval; and zero and infinite standard
@@ -68,10 +68,8 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.meta_analysis import differential_expression_meta_analysis, meta_analysis
+from cytepool import Cube, Design, limma_voom, meta_analysis
+from cytepool.stats.meta_analysis import fit_meta_analysis
 
 FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[1] / "tests" / "data" / "meta_analysis"
@@ -320,9 +318,7 @@ def cohort_analyses(built):
     results = {name: limma_voom(cube, design) for name, (cube, design) in built.items()}
     analyses = []
     for method, test, fewest in SETTINGS:
-        meta = differential_expression_meta_analysis(
-            results, method=method, test=test, min_studies=fewest
-        )
+        meta = meta_analysis(results, method=method, test=test, min_studies=fewest)
         for key, table in meta.tables.items():
             tables = {
                 name: r.tables[key] for name, r in results.items() if key in r.tables
@@ -346,7 +342,7 @@ def run_metafor(cases, analyses):
             (directory / "shape.txt").write_text(f"{y.shape[0]}\n{y.shape[1]}\n")
             write_binary(directory / "y.bin", y.T)  # R reads columns: features
             write_binary(directory / "se.bin", se.T)
-            write_binary(directory / "reml.bin", meta_analysis(y, se).tau_squared)
+            write_binary(directory / "reml.bin", fit_meta_analysis(y, se).tau_squared)
             for method in METHODS.values():
                 runs += [f"case{c}\t{method}\t{test}\ttight" for test in TESTS.values()]
             runs += [f"case{c}\t{method}\tz\tdefault" for method in ("REML", "PM")]
@@ -458,7 +454,7 @@ def compare_cases(cases, outputs, likelihoods):
                 if retried:
                     label += f" (metafor needed stepadj = 0.5 for {retried})"
             for test, test_code in TESTS.items():
-                fit = meta_analysis(y, se, method=method, test=test)
+                fit = fit_meta_analysis(y, se, method=method, test=test)
                 theirs = outputs[name, code, test_code, "tight"]
                 for field, ours, reference in zip(
                     FIELDS, ours_as_metafor(fit), theirs[:12], strict=True
@@ -471,7 +467,7 @@ def compare_cases(cases, outputs, likelihoods):
             if method == "reml" and higher.any():
                 rows.append(maxima_row(name, int(np.count_nonzero(higher)), gain))
         for method, compared in (("reml", ~higher), ("pm", ~np.zeros_like(higher))):
-            fit = meta_analysis(y, se, method=method)
+            fit = fit_meta_analysis(y, se, method=method)
             theirs = outputs[name, METHODS[method], "z", "default"]
             pairs = zip(FIELDS, ours_as_metafor(fit), theirs[:12], strict=True)
             largest = max(difference(o[compared], r[compared], f) for f, o, r in pairs)
@@ -516,7 +512,7 @@ def compare_probes(probes):
         pairs = zip(FIELDS, ours_as_metafor(fit), values, strict=True)
         return max(difference(o, r, f) for f, o, r in pairs)
 
-    one = meta_analysis([0.5], [0.2], test="knapp_hartung")
+    one = fit_meta_analysis([0.5], [0.2], test="knapp_hartung")
     theirs = probes["one_study_knha"]
     agree = "values" in theirs and largest(one, theirs["values"]) <= EXACT
     rows = [
@@ -526,7 +522,7 @@ def compare_probes(probes):
         )
         + ("n/a", "pass" if agree else "FAIL")
     ]
-    far = meta_analysis([-40.0, 0.0, 0.0, 0.0, 40.0], np.ones(5), method="pm")
+    far = fit_meta_analysis([-40.0, 0.0, 0.0, 0.0, 40.0], np.ones(5), method="pm")
     value = largest(far, probes["pm_interval_raised"]["values"])
     check = "Paule-Mandel above metafor's interval, against tau2.max = 1e6"
     rows.append(row(check, "rma.uni", value, CLOSE))
@@ -542,7 +538,7 @@ def compare_probes(probes):
         ("infinite standard error", [0.2, np.inf, 0.22, 0.45], ("REML",)),
     ):
         try:
-            meta_analysis(y, se)
+            fit_meta_analysis(y, se)
             refused = False
         except ValueError:
             refused = True

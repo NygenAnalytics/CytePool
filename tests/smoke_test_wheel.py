@@ -37,7 +37,7 @@ COLUMNS = (
     "t",
     "p_value",
     "adjusted_p_value",
-    "b_statistic",
+    "log_odds",
     "standard_error",
 )
 
@@ -51,9 +51,7 @@ def analyse() -> None:
     """
     import numpy as np
 
-    from cytepool.cube import from_cells
-    from cytepool.design import Design
-    from cytepool.differential_expression import limma_voom
+    from cytepool import Design, from_cells, limma_voom
 
     with np.load(DATA / "cells.npz") as data:
         cells = {key: data[key] for key in data.files}
@@ -66,9 +64,9 @@ def analyse() -> None:
     }
     cube = from_cells(
         cells["counts"],
-        samples=cells["samples"],
-        groups=cells["groups"],
-        sample_table=sample_table,
+        sample_labels=cells["samples"],
+        group_labels=cells["groups"],
+        samples=sample_table,
         layers="counts",
     )
     design = Design(

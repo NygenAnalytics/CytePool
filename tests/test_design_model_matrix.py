@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
+from cytepool import Table
 from cytepool.design import INTERCEPT, ModelMatrix, model_matrix
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "design"
 

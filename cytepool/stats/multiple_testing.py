@@ -116,7 +116,7 @@ _PROCEDURES = {
 
 
 def adjust_p_values(
-    p: ArrayLike,
+    p_values: ArrayLike,
     method: str = "bh",
     *,
     n: int | None = None,
@@ -143,7 +143,7 @@ def adjust_p_values(
     Every method takes O(m log m) time for m p-values, Hommel's included.
 
     Args:
-        p: p-values in [0, 1]. NaN marks a missing value; it stays NaN and is
+        p_values: p-values in [0, 1]. NaN marks a missing value; it stays NaN and is
             not counted as a test.
         method: The procedure, case-insensitive: ``"bonferroni"``, ``"holm"``,
             ``"hochberg"``, ``"hommel"``, ``"bh"`` (also ``"fdr"`` and
@@ -159,18 +159,18 @@ def adjust_p_values(
             of features by contrasts, ``axis=0`` adjusts each column.
 
     Returns:
-        The adjusted p-values as float64, with the shape of ``p``.
+        The adjusted p-values as float64, with the shape of ``p_values``.
 
     Raises:
-        TypeError: If ``p`` is not real-valued, ``method`` is not a string, ``n``
-            or ``axis`` is not an integer, or ``p``, ``n`` or ``axis`` is a numpy
+        TypeError: If ``p_values`` is not real-valued, ``method`` is not a string, ``n``
+            or ``axis`` is not an integer, or ``p_values``, ``n`` or ``axis`` is a numpy
             masked array.
         ValueError: If a p-value is outside [0, 1], ``method`` is unknown,
             ``n`` is smaller than the number of non-missing p-values in a
             family or larger than 2**53, or ``axis`` is out of range.
     """
     procedure = _procedure(method)
-    values = _p_value_array(p)
+    values = _p_value_array(p_values)
     if n is not None:
         n = _integer(n, "n")
     if axis is None:
@@ -194,9 +194,9 @@ def _procedure(method: str) -> str:
 
 
 def _p_value_array(p: ArrayLike) -> np.ndarray:
-    values = unmasked_array(p, "p", missing="NaN")
+    values = unmasked_array(p, "p_values", missing="NaN")
     if values.dtype.kind not in "iuf":
-        raise TypeError(f"p must hold real numbers, got dtype {values.dtype}")
+        raise TypeError(f"p_values must hold real numbers, got dtype {values.dtype}")
     values = values.astype(np.float64, copy=False)
     outside = ~((values >= 0.0) & (values <= 1.0)) & ~np.isnan(values)
     if outside.any():
@@ -425,7 +425,7 @@ class TrueNullProportion:
 
 
 def proportion_of_true_nulls(
-    p: ArrayLike,
+    p_values: ArrayLike,
     *,
     lambdas: ArrayLike | None = None,
     method: str = "smoother",
@@ -443,8 +443,8 @@ def proportion_of_true_nulls(
     those genes with an effect in it (Storey and Tibshirani 2003).
 
     Args:
-        p: p-values in [0, 1]; NaN marks a missing one, which is left out, as qvalue
-            leaves out NA.
+        p_values: p-values in [0, 1]; NaN marks a missing one, which is left out, as
+            qvalue leaves out NA.
         lambdas: One value of lambda in [0, 1), or at least four distinct values, in
             any order; by default 0.05, 0.10, ..., 0.95 (qvalue's ``lambda``).
         method: ``"smoother"`` (qvalue's default) or ``"bootstrap"``
@@ -457,8 +457,8 @@ def proportion_of_true_nulls(
         The estimate, with pi0(lambda) at every lambda and the smoother's values.
 
     Raises:
-        TypeError: If ``p`` or ``lambdas`` does not hold real numbers or is a numpy
-            masked array, or an option has the wrong type.
+        TypeError: If ``p_values`` or ``lambdas`` does not hold real numbers or is a
+            numpy masked array, or an option has the wrong type.
         ValueError: If a p-value lies outside [0, 1], there is none, ``lambdas`` are
             outside [0, 1), repeated, or two or three, ``method`` is unknown,
             ``smooth_df`` is out of range, or ``smooth_log`` meets a lambda that no
@@ -474,11 +474,13 @@ def proportion_of_true_nulls(
     """
     chosen = checked_choice(method, "method", _PI0_METHODS)
     log_scale = checked_flag(smooth_log, "smooth_log")
-    values = _p_value_array(p)
+    values = _p_value_array(p_values)
     values = np.sort(values[~np.isnan(values)].reshape(-1))
     m = values.size
     if m == 0:
-        raise ValueError("there are no p-values: p is empty or every value is NaN")
+        raise ValueError(
+            "there are no p-values: p_values is empty or every value is NaN"
+        )
     grid = _lambdas(lambdas)
     df = real_number(smooth_df, "smooth_df", finite=True)
     if grid.size > 1 and chosen == "smoother" and not 1.0 < df <= grid.size:
