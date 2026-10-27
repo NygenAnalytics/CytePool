@@ -162,7 +162,7 @@ F-tests:
 
 Limits of this version:
     Random slopes are not implemented yet.
-    :mod:`cytepool.variance_partitioning` partitions the variance of these fits.
+    :mod:`cytepool.stats.variance_fractions` partitions the variance of these fits.
     Every feature needs a value for every sample, with a positive weight. Designs
     whose fixed and random effects together span every sample, and so reproduce
     every feature exactly, are refused, although their criterion can have a minimum
@@ -334,7 +334,7 @@ class MixedModelFit:
         fitted_values: ``(n_samples, n_features)`` fitted values X beta + Z b, with
             the random effects b at their best linear unbiased predictions,
             gamma_k Z_k' P y (lme4's ``fitted``, which includes them).
-        residual_df: ``(n_features,)`` approximate residual degrees of freedom,
+        df_residual: ``(n_features,)`` approximate residual degrees of freedom,
             tr((I - H)' (I - H)) for the matrix H that maps the weighted values to
             the weighted fitted values (variancePartition's ``rdf.merMod``). It is
             n - p when every variance component is zero, and falls towards n minus
@@ -366,7 +366,7 @@ class MixedModelFit:
     method: str
     log_likelihood: FloatArray
     fitted_values: FloatArray
-    residual_df: FloatArray
+    df_residual: FloatArray
     mean_weights: FloatArray
     mean_expression: FloatArray
     weights: FloatArray | None
@@ -620,7 +620,7 @@ def _fit(
         converged,
         iterations,
         random_effects,
-        residual_df,
+        df_residual,
     ) = outputs
 
     # Back to the coefficients of x: beta = r^-1 (beta_q + projection).
@@ -658,7 +658,7 @@ def _fit(
         method="ml" if ml else "reml",
         log_likelihood=_frozen(-0.5 * criterion),
         fitted_values=_frozen(fitted),
-        residual_df=_frozen(residual_df),
+        df_residual=_frozen(df_residual),
         mean_weights=_frozen(mean_weights),
         mean_expression=_frozen(observed_means(values)),
         weights=None if given_weights is None else _frozen(given_weights),
@@ -1101,7 +1101,7 @@ def _fit_features(
     converged: BoolArray,
     iterations: IntArray,
     random_effects: FloatArray,
-    residual_df: FloatArray,
+    df_residual: FloatArray,
 ) -> None:
     """Fit features ``start:stop`` into the outputs, with work arrays of their own.
 
@@ -1198,7 +1198,7 @@ def _fit_features(
             work,
             random_effects[g],
         )
-        residual_df[g] = _approximate_residual_df(ratio, n_samples, p, work)
+        df_residual[g] = _approximate_residual_df(ratio, n_samples, p, work)
 
 
 @jit(no_cpython_wrapper=True)

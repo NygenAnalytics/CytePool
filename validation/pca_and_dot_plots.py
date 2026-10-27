@@ -52,10 +52,8 @@ from typing import Any
 import numpy as np
 from matplotlib.figure import Figure
 
-from cytepool import plotting
-from cytepool.cube import Cube, from_cells
-from cytepool.normalization import log_cpm, tmm_factors
-from cytepool.principal_components import principal_components
+from cytepool import Cube, from_cells, plotting, principal_components
+from cytepool.normalization import log2_cpm, tmm_factors
 
 FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[1] / "tests" / "data" / "pca_and_dot_plots"
@@ -86,6 +84,8 @@ DOT_CASES: dict[str, dict[str, Any]] = {
     },
     "genes in groups": {"genes": MARKERS},
 }
+# The cases' standard_scale, as the scanpy program reads it, and plot_dotplot's.
+STANDARD_SCALE = {"gene": "feature", "group": "group", None: None}
 
 R_PROGRAM = r"""
 suppressPackageStartupMessages({
@@ -231,7 +231,7 @@ def pca_data() -> dict[str, np.ndarray]:
     effects[1::2, rng.choice(n_genes, 30, replace=False)] += 0.7  # batch y
     mu = means * np.exp(effects) * rng.uniform(0.6, 1.6, (12, 1))
     counts = rng.negative_binomial(8.0, 8.0 / (8.0 + mu)).astype(np.float64)
-    values = log_cpm(counts, norm_factors=tmm_factors(counts))
+    values = log2_cpm(counts, norm_factors=tmm_factors(counts))
     # 18 genes of distinct, large variance, then 4 of variance 12 (permutations of
     # one profile, whose variances are equal to the last bit), then 6 small ones.
     base = np.array([0.0, 1.0, 3.0, 4.0, 7.0, 9.0] * 2)
@@ -281,10 +281,10 @@ def dot_data() -> dict[str, np.ndarray]:
 def dot_cube(data: dict[str, np.ndarray]) -> Cube:
     return from_cells(
         data["counts"],
-        samples=data["samples"],
-        groups=data["groups"],
-        sample_table={"sample_id": CELL_SAMPLES},
-        group_table={"group_id": GROUPS},
+        sample_labels=data["samples"],
+        group_labels=data["groups"],
+        samples={"sample_id": CELL_SAMPLES},
+        groups={"group_id": GROUPS},
         features=data["genes"].tolist(),
         layers=["counts", "detected", "log_sum"],
     )
@@ -436,7 +436,7 @@ def pca_rows(data: dict[str, np.ndarray], r: dict[str, Any]) -> list[tuple]:
     theirs = np.column_stack([r["ties"]["x"], r["ties"]["y"]])
     difference, flips = up_to_sign(result.coordinates[:, :2], theirs)
     flipped += flips
-    keeps_first = result.genes.tolist()[-2:] == [18, 19]
+    keeps_first = result.features["position"].tolist()[-2:] == [18, 19]
     rows.append(
         row(
             "Genes 19 to 22 of equal variance, the 20 of largest variance: the first "
@@ -525,7 +525,7 @@ def dot_rows(cube: Cube, scanpy: dict[str, Any]) -> list[tuple]:
             case["genes"],
             groups=case["groups"],
             samples=case["samples"],
-            standard_scale=case["standard_scale"],
+            standard_scale=STANDARD_SCALE[case["standard_scale"]],
             mean_only_expressed=case["mean_only_expressed"],
             ax=axes(),
         )

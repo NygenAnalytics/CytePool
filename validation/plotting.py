@@ -37,12 +37,12 @@ with an outlying count.
   for information.
 - ``plot_forest`` against metafor's ``forest``: three studies of 4, 5 and 6 donors,
   tested by ``limma_voom`` (the third does not measure 5 genes) and meta-analysed by
-  ``differential_expression_meta_analysis`` by REML with z-tests and by
-  DerSimonian-Laird with the Knapp-Hartung adjustment. For three genes, one tested by
-  two studies, R refits ``rma.uni`` on the studies' log2 fold changes and standard
-  errors (REML to convergence, ``control = list(threshold = 1e-13)``); the studies'
-  intervals are compared with those forest draws, and the pooled estimate and interval
-  with those it writes beside its diamond, which it clips at the axis limits.
+  ``meta_analysis`` by REML with z-tests and by DerSimonian-Laird with the
+  Knapp-Hartung adjustment. For three genes, one tested by two studies, R refits
+  ``rma.uni`` on the studies' log2 fold changes and standard errors (REML to
+  convergence, ``control = list(threshold = 1e-13)``); the studies' intervals are
+  compared with those forest draws, and the pooled estimate and interval with those it
+  writes beside its diamond, which it clips at the axis limits.
 - ``plot_composition`` against speckle's ``plotCellTypeProps``, and
   ``plot_proportions`` against the proportions, ``PropMean`` and ``FDR`` of
   ``propeller``, on the cell numbers of 5 cell types in 12 samples of two conditions.
@@ -78,13 +78,16 @@ from pathlib import Path
 import numpy as np
 from matplotlib.figure import Figure
 
-from cytepool import plotting
-from cytepool.composition import propeller
-from cytepool.cube import Cube, from_bulk
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.meta_analysis import differential_expression_meta_analysis
-from cytepool.normalization import log_cpm, tmm_factors
+from cytepool import (
+    Cube,
+    Design,
+    from_bulk,
+    limma_voom,
+    meta_analysis,
+    plotting,
+    propeller,
+)
+from cytepool.normalization import log2_cpm, tmm_factors
 from cytepool.stats.deseq2 import fit_deseq2
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import fit_linear_model
@@ -747,11 +750,11 @@ def check_count_models(ref, counts, design, factors):
     return rows
 
 
-def check_forests(ref, results, metas, features):
+def check_forests(ref, metas, features):
     rows = []
     for (method, test), meta in zip(FOREST_CASES, metas, strict=True):
         for feature in features:
-            ax = plotting.plot_forest(meta, results, feature, ax=axes())
+            ax = plotting.plot_forest(meta, feature, ax=axes())
             segments = sorted(
                 artists(ax, "intervals")[0].get_segments(), key=lambda s: -s[0, 1]
             )
@@ -869,7 +872,7 @@ def main():
         levels={"condition": ["ctrl", "stim"]},
         contrasts={"stim": "conditionstim"},
     )
-    E = log_cpm(counts)
+    E = log2_cpm(counts)
     noise = rng.normal(0.0, 1.5, (8, 6))
     noisy = E.copy()
     noisy[:, 10:16] += noise
@@ -908,7 +911,7 @@ def main():
     by_study = study_counts(rng, counts)
     results = study_results(by_study)
     metas = [
-        differential_expression_meta_analysis(results, method=method, test=test)
+        meta_analysis(results, method=method, test=test)
         for method, test in FOREST_CASES
     ]
     features = forest_features(metas[0].table("bulk", "stim"))
@@ -937,7 +940,7 @@ def main():
     rows += check_tests(ref, table)
     rows += check_barcodes(ref, t, members, members_span)
     rows += check_count_models(ref, counts, design, factors)
-    rows += check_forests(ref, results, metas, features)
+    rows += check_forests(ref, metas, features)
     rows += check_composition(ref, composition_data)
     print("| check | reference | metric | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- | --- |")

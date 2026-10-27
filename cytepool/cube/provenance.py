@@ -28,10 +28,10 @@ other key that a caller gives (``Cube(provenance=...)``) is kept as it is.
     - ``library_sizes``: ``"cell_totals"`` (the total count of each cell) or
       ``"given"`` (the ``library_sizes`` argument), as in the normalization;
     - ``samples`` and ``groups``: ``{"order": ..., "labels": ...}``, where
-      ``order`` is ``"sample_table"`` or ``"group_table"`` (the rows of that table)
-      or ``"sorted_labels"`` (the distinct labels, text sorted by code point and
-      integers numerically), and ``labels`` is ``"text"`` or ``"integers"``
-      (integer labels became their decimal text);
+      ``order`` is ``"sample_table"`` or ``"group_table"`` (the rows of the sample
+      or group table given) or ``"sorted_labels"`` (the distinct labels, text
+      sorted by code point and integers numerically), and ``labels`` is ``"text"``
+      or ``"integers"`` (integer labels became their decimal text);
     - ``features``: where the feature ids came from: ``"table"``, ``"ids"`` (a
       sequence), ``"data_frame_columns"`` or ``"positions"`` (``feature_0``,
       ``feature_1``, ...).
@@ -127,8 +127,8 @@ _SHOWN_IDS = 10  # ids listed before a list is shortened
 _SHOWN_MEMBERS = 20  # merged groups or pooled samples listed in full
 _SHOWN_CHARACTERS = 200  # of the JSON of one value of a record shown as it is
 _ORDERS = {
-    "sample_table": "the rows of sample_table",
-    "group_table": "the rows of group_table",
+    "sample_table": "the rows of the sample table given",
+    "group_table": "the rows of the group table given",
     "sorted_labels": "the sorted distinct labels",
 }
 _ORIGINS = {

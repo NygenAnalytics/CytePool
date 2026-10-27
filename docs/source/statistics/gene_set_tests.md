@@ -18,10 +18,15 @@ genes respond too: in a response that touches thousands of genes, many sets are.
 competitive test asks whether a set stands out from the other genes, and so suits
 ranking many sets, such as a pathway collection. The five tests of limma work on the
 linear model, so they allow any design and contrast and do not permute samples; all but
-romer take voom's precision weights. Gene set enrichment analysis needs only a statistic
-of every gene, and over-representation analysis only the genes that an analysis called
-significant. [Gene sets and pathways](../guides/gene_sets.ipynb) and [Pathway and
-regulator activity](../guides/pathway_activity.ipynb) run these methods on published data.
+romer take voom's precision weights. Each tests a cell type of a result of
+{api}`limma_voom` or {api}`limma_trend`, whose fit it computes again
+({api}`DifferentialExpressionResult.fit`), or values with a design and a contrast;
+romer, which takes sample weights only, tests a result of limma-trend. Gene set
+enrichment analysis needs only a statistic of every gene, and over-representation
+analysis only the genes that an analysis called significant.
+[Gene sets and pathways](../guides/gene_sets.ipynb) and
+[Pathway and regulator activity](../guides/pathway_activity.ipynb) run these methods on
+published data.
 
 ## The effects of each gene
 
@@ -194,13 +199,13 @@ The random sets come from seeds that `rng` draws, through the Mersenne Twister
 The tests above ask one question of a contrast. A pathway score instead turns the
 expression of a set's genes in each sample into one number, so that pathways can be
 compared across samples, drawn as a heatmap, correlated with other measurements, and
-tested with the same designs and contrasts as genes [@haenzelmann2013].
-{api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores` and {api}`plage` compute the four
-methods of the GSVA package, from a samples x genes matrix or a cell type of a cube,
-whose log-CPM after TMM normalization (or counts, for GSVA's Poisson kernel) they score
-over the genes that `filterByExpr` keeps. They return a {api}`PathwayScores`, samples x
-sets, with the samples' table and the genes each set used; {api}`PathwayScores.table`
-lists the scores one per row.
+tested with the same designs and contrasts as genes [@haenzelmann2013]. {api}`gsva`,
+{api}`ssgsea`, {api}`combined_z_scores` and {api}`plage` compute the four methods of the
+GSVA package, from a samples x genes matrix or a cell type of a cube, whose log-CPM
+after TMM normalization (or counts, for GSVA's Poisson kernel) they score over the genes
+that `filterByExpr` keeps. They return a {api}`PathwayScores`, profiles x sets, with the
+table of the profiles (the samples scored) and the genes each set used;
+{api}`PathwayScores.table` lists the scores one per row.
 
 **GSVA** first puts each gene on a common scale: the probability of a value at most as
 high under the gene's distribution across the $n$ samples, estimated by a kernel,
@@ -238,9 +243,9 @@ the other genes of the sample. Combined z-scores and PLAGE also set each gene ag
 itself across samples, but do not compare it with other genes. GSVA's guide notes that
 the scores of larger sets vary less; to test them, fit the design to the scores and let
 the prior variance follow the set sizes, as its guide does with limma-trend:
-`moderated_statistics(fit_linear_model(scores.scores, Design(scores.samples, "~
-condition")), trend=scores.n_genes)`. {api}`plot_pathway_scores` draws the scores as a
-heatmap, with the samples grouped by a variable.
+`limma(scores, design, trend=scores.n_genes)`, with the design built for the cube.
+{api}`plot_pathway_scores` draws the scores as a heatmap, with the samples grouped by a
+variable.
 
 The scores agree with GSVA's to rounding, except where CytePool differs on purpose:
 PLAGE's sign, GSVA's walk in samples with missing values, and inputs on which GSVA
@@ -255,18 +260,18 @@ from GSVA's.
 A transcription factor raises some of its target genes and lowers others, and a
 signalling pathway leaves a footprint of genes that respond to it. A network gives each
 such source signed weights on its targets: 1 for a target that a transcription factor
-activates and -1 for one it represses in CollecTRI's regulons [@muellerdott2023], and
-in PROGENy the z-scores with which genes responded to the perturbation of each of 14
+activates and -1 for one it represses in CollecTRI's regulons [@muellerdott2023], and in
+PROGENy the z-scores with which genes responded to the perturbation of each of 14
 pathways in hundreds of experiments [@schubert2018; @holland2020b]. A source is active
 in a profile, the expression of a sample or the statistics of a contrast, when its
 targets are high where their weights are positive and low where they are negative.
-{api}`ulm`, {api}`mlm` and {api}`weighted_aggregate` score every source in every
-profile as decoupler does [@badiaimompel2022], from a samples x genes matrix, a cell
-type of a cube (its log-CPM, as for the pathway scores) or a differential-expression
-result, one profile per group and contrast, by default of its moderated t-statistics.
-They return an {api}`Activities`, profiles x sources, which
-{api}`fit_linear_model` takes with a design built from its profiles, as it takes
-pathway scores; {api}`Activities.table` lists the scores one per row.
+{api}`ulm`, {api}`mlm` and {api}`weighted_aggregate` score every source in every profile
+as decoupler does [@badiaimompel2022], from a samples x genes matrix, a cell type of a
+cube (its log-CPM, as for the pathway scores) or a differential-expression result, one
+profile per group and contrast, by default of its moderated t-statistics. They return an
+{api}`Activities`, profiles x sources, which {api}`limma` tests with the design built
+for the cube, as it tests pathway scores; {api}`Activities.table` lists the scores one
+per row.
 
 **ULM**, the univariate linear model, fits for each source a line through the values
 of the profile's $n$ genes against the source's weights $x_g$, zero for the genes that

@@ -176,7 +176,7 @@ def write_cube(
     path: str | os.PathLike[str],
     *,
     compression: str | None = "gzip",
-    level: int | None = None,
+    compression_level: int | None = None,
     overwrite: bool = False,
 ) -> None:
     """Save a cube as a cube file, a Zarr v3 group (see the module documentation).
@@ -193,8 +193,8 @@ def write_cube(
             parent must exist.
         compression: ``"gzip"`` (the default), ``"zstd"`` (Python 3.14 or newer) or
             None for no compression.
-        level: The compression level: 0 to 9 for gzip (default 4), -131072 to 22 for
-            zstd (default 3); None without compression.
+        compression_level: The compression level: 0 to 9 for gzip (default 4),
+            -131072 to 22 for zstd (default 3); None without compression.
         overwrite: Replace what is at ``path``, the whole directory, if it is a cube
             file (a Zarr group whose ``format`` is ``"cytepool.cube"``) or an empty
             directory. Nothing else is ever replaced, nor the working directory or
@@ -202,8 +202,8 @@ def write_cube(
 
     Raises:
         TypeError: If ``cube`` is not a Cube, or an argument has the wrong type.
-        ValueError: If ``compression`` or ``level`` is invalid, ``path`` is a URL,
-            or a lazy layer gives a value that breaks a constraint.
+        ValueError: If ``compression`` or ``compression_level`` is invalid, ``path``
+            is a URL, or a lazy layer gives a value that breaks a constraint.
         OverflowError: If a sum of a derived lazy layer does not fit (see "Sums" in
             ``Cube``).
         FileExistsError: If ``path`` exists and ``overwrite`` is False, or it is not
@@ -214,7 +214,7 @@ def write_cube(
         raise TypeError(f"write_cube() saves a Cube, got {type(cube).__name__}")
     if not isinstance(overwrite, bool):
         raise TypeError(f"overwrite must be True or False, got {overwrite!r}")
-    level = check_compression(compression, level)
+    level = check_compression(compression, compression_level)
     target = local_path(path)
     if not target.parent.is_dir():
         raise FileNotFoundError(f"the directory {target.parent} does not exist")
@@ -410,7 +410,7 @@ def _write_store(
             n_cells,
             chunks=(max(rows, 1), max(cube.n_groups, 1)),
             compression=compression,
-            level=level,
+            compression_level=level,
             dimension_names=["samples", "groups"],
         )
     write_group(root / "layers")
@@ -424,7 +424,7 @@ def _write_store(
                 cube.n_samples, cube.n_features, groups.dtype.itemsize
             ),
             compression=compression,
-            level=level,
+            compression_level=level,
             dimension_names=list(AXES),
         )
         digests[name] = groups.digests()
@@ -471,7 +471,7 @@ def _write_table(
                 column,
                 chunks=chunks,
                 compression=compression,
-                level=level,
+                compression_level=level,
                 attributes=attributes,
                 dimension_names=[axis],
             )

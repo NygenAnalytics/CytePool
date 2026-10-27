@@ -21,17 +21,22 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool import activity
-from cytepool.activity import Activities, mlm, ulm, weighted_aggregate
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.gene_sets import GeneSets
-from cytepool.networks import Network
-from cytepool.normalization import filter_by_expression, log_cpm, tmm_factors
+from cytepool import (
+    Activities,
+    Cube,
+    Design,
+    GeneSets,
+    Network,
+    Table,
+    activity,
+    limma_voom,
+    mlm,
+    ulm,
+    weighted_aggregate,
+)
+from cytepool.normalization import filter_by_expression, log2_cpm, tmm_factors
 from cytepool.plotting import plot_activities, plot_top_activities
 from cytepool.stats.linear_models import fit_linear_model
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "activity"
 FIXTURE = json.loads((DATA / "decoupler.json").read_text())
@@ -82,7 +87,7 @@ def _run(case: dict) -> tuple[Activities, list[int], list[int]]:
     result = function(
         values,
         _network(case["network"]),
-        gene_ids=genes,
+        feature_ids=genes,
         sample_ids=profiles,
         min_targets=case["tmin"],
     )
@@ -115,16 +120,16 @@ def test_the_linear_models_are_those_of_decoupler(case: dict) -> None:
     assert _scaled(result.scores[pick], ARRAYS[f"{name}/raw_scores"]) < EXACT
     assert _scaled(result.estimates[pick], ARRAYS[f"{name}/estimates"]) < EXACT
     if case["method"] == "ulm":
-        assert _relative(result.p_values[pick], ARRAYS[f"{name}/raw_p"]) < EXACT
+        assert _relative(result.p_value[pick], ARRAYS[f"{name}/raw_p"]) < EXACT
         # Benjamini and Hochberg's over the sources of each profile, by scipy.
         bh = ARRAYS[f"{name}/bh"]
-        assert _relative(result.adjusted_p_values[pick], bh) < EXACT
+        assert _relative(result.adjusted_p_value[pick], bh) < EXACT
         # decoupler keeps them in single precision.
-        single = result.adjusted_p_values[pick].astype(np.float32)
+        single = result.adjusted_p_value[pick].astype(np.float32)
         assert_array_equal(single, ARRAYS[f"{name}/padj"].astype(np.float32))
     else:
         # decoupler's own are 1 - cdf; scipy's upper tail of its t-statistics.
-        assert _relative(result.p_values[pick], ARRAYS[f"{name}/t_sf"]) < EXACT
+        assert _relative(result.p_value[pick], ARRAYS[f"{name}/t_sf"]) < EXACT
 
 
 @pytest.mark.parametrize("name", ["weighted mean", "weighted sum"])
@@ -135,14 +140,14 @@ def test_the_weighted_aggregate_is_that_of_decoupler(name: str) -> None:
     result = weighted_aggregate(
         values,
         _network(case["network"]),
-        gene_ids=genes,
+        feature_ids=genes,
         statistic=statistic,
         n_permutations=0,
     )
     columns = [result.sources.index(s) for s in FIXTURE["found"][name]["sources"]]
     assert _scaled(result.scores[:, columns], ARRAYS[f"{name}/raw_scores"]) < EXACT
     assert_array_equal(result.scores, result.estimates)
-    assert np.isnan(result.p_values).all()
+    assert np.isnan(result.p_value).all()
 
 
 class _Replay(np.random.Generator):
@@ -167,14 +172,14 @@ def test_normalized_scores_are_decouplers_given_its_permutations() -> None:
     result = weighted_aggregate(
         values[:, order],
         _network(case["network"]),
-        gene_ids=found["genes"],
+        feature_ids=found["genes"],
         n_permutations=permutations.shape[0],
         rng=_Replay(permutations),
     )
     columns = [result.sources.index(s) for s in found["sources"]]
     assert _scaled(result.scores[:, columns], ARRAYS[f"{name}/raw_scores"]) < EXACT
     # The p-values differ from decoupler's on purpose (see the module docstring).
-    assert np.all((result.p_values > 0.0) & (result.p_values <= 1.0))
+    assert np.all((result.p_value > 0.0) & (result.p_value <= 1.0))
 
 
 def test_the_bar_plot_is_decouplers() -> None:
@@ -207,21 +212,21 @@ def test_ulm_of_a_source_with_two_targets_on_three_samples() -> None:
     # The second sample is 2y + 7, which doubles the slope and keeps t; the third,
     # -y, negates both.
     values = np.array([Y, 2.0 * Y + 7.0, -Y])
-    result = ulm(values, PAIR, gene_ids=FOUR, min_targets=2)
+    result = ulm(values, PAIR, feature_ids=FOUR, min_targets=2)
 
     t = -13.0 / math.sqrt(108.0)
     assert_allclose(result.scores[:, 0], [t, t, -t], rtol=1e-14)
     assert_allclose(result.estimates[:, 0], [-13 / 11, -26 / 11, 13 / 11], rtol=1e-14)
     p = 1.0 - 13.0 / math.sqrt(385.0)
-    assert_allclose(result.p_values[:, 0], [p, p, p], rtol=1e-13)
+    assert_allclose(result.p_value[:, 0], [p, p, p], rtol=1e-13)
     # One source per profile: nothing to adjust.
-    assert_allclose(result.adjusted_p_values, result.p_values, rtol=0)
+    assert_allclose(result.adjusted_p_value, result.p_value, rtol=0)
     assert_array_equal(result.n_targets, [[2], [2], [2]])
 
 
 def test_mlm_of_a_network_of_one_source_is_ulm() -> None:
     values = np.array([Y, 2.0 * Y + 7.0, -Y])
-    single = mlm(values, PAIR, gene_ids=FOUR, min_targets=2)
+    single = mlm(values, PAIR, feature_ids=FOUR, min_targets=2)
     assert_allclose(single.scores[:, 0], -13.0 / math.sqrt(108.0) * np.array(
         [1.0, 1.0, -1.0]), rtol=1e-13)  # fmt: skip
     assert_allclose(single.estimates[:, 0], [-13 / 11, -26 / 11, 13 / 11], rtol=1e-13)
@@ -229,9 +234,9 @@ def test_mlm_of_a_network_of_one_source_is_ulm() -> None:
 
 def test_the_weighted_mean_and_sum_by_hand() -> None:
     values = np.array([Y])
-    mean = weighted_aggregate(values, PAIR, gene_ids=FOUR, min_targets=2,
+    mean = weighted_aggregate(values, PAIR, feature_ids=FOUR, min_targets=2,
                               n_permutations=0)  # fmt: skip
-    total = weighted_aggregate(values, PAIR, gene_ids=FOUR, min_targets=2,
+    total = weighted_aggregate(values, PAIR, feature_ids=FOUR, min_targets=2,
                                statistic="sum", n_permutations=0)  # fmt: skip
     # (1 * 1 + 2 * 2) / (|1| + |2|) and 1 * 1 + 2 * 2.
     assert_allclose(mean.scores, [[5.0 / 3.0]], rtol=1e-15)
@@ -245,7 +250,7 @@ def test_ulm_with_weights_of_one_sign_is_the_two_sample_t_test() -> None:
     y = rng.normal(size=(2, 30))
     genes = [f"g{j}" for j in range(30)]
     targets = genes[:7]
-    result = ulm(y, {"set": targets}, gene_ids=genes)
+    result = ulm(y, {"set": targets}, feature_ids=genes)
     inside, outside = y[:, :7], y[:, 7:]
     pooled = np.sqrt(
         (((inside - inside.mean(axis=1, keepdims=True)) ** 2).sum(axis=1)
@@ -256,7 +261,7 @@ def test_ulm_with_weights_of_one_sign_is_the_two_sample_t_test() -> None:
     )
     assert_allclose(result.scores[:, 0], t, rtol=1e-12)
     # A GeneSets is a network of the same sets.
-    as_sets = ulm(y, GeneSets({"set": targets}), gene_ids=genes)
+    as_sets = ulm(y, GeneSets({"set": targets}), feature_ids=genes)
     assert_array_equal(as_sets.scores, result.scores)
 
 
@@ -274,12 +279,12 @@ def test_permutations_estimate_the_exact_null_distribution() -> None:
     observed = (0.3 - 1.0) / 1.5
     exact = (observed - nulls.mean()) / nulls.std(ddof=0)
     tails = min(np.mean(nulls >= observed), np.mean(nulls <= observed))
-    result = weighted_aggregate(y, network, gene_ids=genes, min_targets=2,
+    result = weighted_aggregate(y, network, feature_ids=genes, min_targets=2,
                                 n_permutations=5000, rng=1)  # fmt: skip
     assert_allclose(result.estimates, [[observed]], rtol=1e-15)
     # Monte Carlo error: the mean and sd of 5,000 draws, about 2% of the score.
     assert_allclose(result.scores[0, 0], exact, rtol=0.05)
-    assert abs(result.p_values[0, 0] - min(1.0, 2 * tails)) < 0.03
+    assert abs(result.p_value[0, 0] - min(1.0, 2 * tails)) < 0.03
 
 
 # Invariants.
@@ -306,17 +311,19 @@ FUNCTIONS = [
 
 @pytest.mark.parametrize("function", FUNCTIONS)
 def test_the_order_of_genes_sources_and_samples_does_not_matter(function) -> None:
-    base = function(VALUES, NETWORK, gene_ids=GENES)
+    base = function(VALUES, NETWORK, feature_ids=GENES)
     genes = RNG.permutation(60)
-    shuffled = function(VALUES[:, genes], NETWORK, gene_ids=[GENES[j] for j in genes])
+    shuffled = function(
+        VALUES[:, genes], NETWORK, feature_ids=[GENES[j] for j in genes]
+    )
     assert_allclose(shuffled.scores, base.scores, rtol=1e-12, atol=1e-13)
     # The sources keep the order of the network.
     reversed_network = Network(NETWORK.edges.take(np.arange(len(NETWORK.edges))[::-1]))
-    flipped = function(VALUES, reversed_network, gene_ids=GENES)
+    flipped = function(VALUES, reversed_network, feature_ids=GENES)
     assert flipped.sources == base.sources[::-1]
     assert_allclose(flipped.scores[:, ::-1], base.scores, rtol=1e-12, atol=1e-13)
     rows = [2, 0, 3, 1]
-    by_rows = function(VALUES[rows], NETWORK, gene_ids=GENES)
+    by_rows = function(VALUES[rows], NETWORK, feature_ids=GENES)
     assert_allclose(by_rows.scores, base.scores[rows], rtol=1e-12, atol=1e-13)
 
 
@@ -325,8 +332,8 @@ def test_negating_a_sources_weights_negates_its_activity(function) -> None:
     edges = NETWORK.edges
     weights = np.where(edges["source"] == "S2", -edges["weight"], edges["weight"])
     negated = Network(edges.with_columns({"weight": weights}))
-    base = function(VALUES, NETWORK, gene_ids=GENES)
-    flipped = function(VALUES, negated, gene_ids=GENES)
+    base = function(VALUES, NETWORK, feature_ids=GENES)
+    flipped = function(VALUES, negated, feature_ids=GENES)
     column = base.sources.index("S2")
     assert_allclose(flipped.scores[:, column], -base.scores[:, column], rtol=1e-12)
     assert_allclose(flipped.estimates[:, column], -base.estimates[:, column],
@@ -337,11 +344,11 @@ def test_negating_a_sources_weights_negates_its_activity(function) -> None:
 
 
 def test_scaling_a_profile_scales_ulms_estimates_and_keeps_its_t() -> None:
-    base = ulm(VALUES, NETWORK, gene_ids=GENES)
-    scaled = ulm(3.0 * VALUES - 5.0, NETWORK, gene_ids=GENES)
+    base = ulm(VALUES, NETWORK, feature_ids=GENES)
+    scaled = ulm(3.0 * VALUES - 5.0, NETWORK, feature_ids=GENES)
     assert_allclose(scaled.estimates, 3.0 * base.estimates, rtol=1e-12)
     assert_allclose(scaled.scores, base.scores, rtol=1e-11)
-    assert_allclose(scaled.p_values, base.p_values, rtol=1e-10)
+    assert_allclose(scaled.p_value, base.p_value, rtol=1e-10)
 
 
 def test_min_targets_and_missing_values() -> None:
@@ -349,26 +356,26 @@ def test_min_targets_and_missing_values() -> None:
     targets = list(NETWORK["S0"])
     values = VALUES.copy()
     values[0, [GENES.index(gene) for gene in targets[:3]]] = np.nan
-    result = ulm(values, NETWORK, gene_ids=GENES, min_targets=6)
+    result = ulm(values, NETWORK, feature_ids=GENES, min_targets=6)
     column = result.sources.index("S0")
     assert result.n_targets[0, column] == 5 and result.n_targets[1, column] == 8
     assert np.isnan(result.scores[0, column]) and np.isfinite(result.scores[1, column])
     # The first sample scored alone over its observed genes gives the same score.
     alone = ulm(values[:1, ~np.isnan(values[0])], NETWORK,
-                gene_ids=[g for g, v in zip(GENES, values[0], strict=True)
+                feature_ids=[g for g, v in zip(GENES, values[0], strict=True)
                           if not np.isnan(v)], min_targets=5)  # fmt: skip
-    again = ulm(values, NETWORK, gene_ids=GENES, min_targets=5)
+    again = ulm(values, NETWORK, feature_ids=GENES, min_targets=5)
     assert_allclose(again.scores[0], alone.scores[0], rtol=1e-12)
     with pytest.raises(ValueError, match="no source of the network has 9 targets"):
-        ulm(values, NETWORK, gene_ids=GENES, min_targets=9)
+        ulm(values, NETWORK, feature_ids=GENES, min_targets=9)
 
 
 def test_genes_zero_everywhere_and_without_ids_are_left_out() -> None:
     values = np.hstack([VALUES, np.zeros((4, 3))])
     genes = [*GENES, "Z1", "Z2", None]
     zeros = ulm(values, Network({**NETWORK, "Z": {"Z1": 1.0, "Z2": 1.0}}),
-                gene_ids=genes)  # fmt: skip
-    base = ulm(VALUES, NETWORK, gene_ids=GENES)
+                feature_ids=genes)  # fmt: skip
+    base = ulm(VALUES, NETWORK, feature_ids=GENES)
     assert "Z" not in zeros.sources
     assert_allclose(zeros.scores, base.scores, rtol=1e-12)
 
@@ -384,8 +391,8 @@ def test_edges_of_weight_zero_are_not_targets() -> None:
             }
         )
     )
-    base = ulm(VALUES, NETWORK, gene_ids=GENES)
-    padded_result = ulm(VALUES, padded, gene_ids=GENES)
+    base = ulm(VALUES, NETWORK, feature_ids=GENES)
+    padded_result = ulm(VALUES, padded, feature_ids=GENES)
     assert_allclose(padded_result.scores, base.scores, rtol=1e-12)
     assert_array_equal(padded_result.n_targets, base.n_targets)
 
@@ -408,15 +415,15 @@ def _cube() -> Cube:
     )  # fmt: skip
 
 
-def test_a_cubes_group_is_scored_as_its_log_cpm() -> None:
+def test_a_cubes_group_is_scored_as_its_log2_cpm() -> None:
     cube = _cube()
     result = ulm(cube, NETWORK, group="B")
     # Its samples with at least 10 cells, over the genes filterByExpr keeps.
     counts = cube.layer("counts", "B")[:5]
-    keep = filter_by_expression(counts, group=np.zeros(5))
-    values = log_cpm(counts[:, keep], norm_factors=tmm_factors(counts[:, keep]),
+    keep = filter_by_expression(counts, sample_groups=np.zeros(5))
+    values = log2_cpm(counts[:, keep], norm_factors=tmm_factors(counts[:, keep]),
                      prior_count=2.0)  # fmt: skip
-    expected = ulm(values, NETWORK, gene_ids=np.array(GENES)[keep].tolist())
+    expected = ulm(values, NETWORK, feature_ids=np.array(GENES)[keep].tolist())
     assert_allclose(result.scores, expected.scores, rtol=1e-12)
     assert result.profiles["profile_id"].tolist() == [f"S{i}" for i in range(5)]
     assert result.profiles["condition"].tolist() == ["ctrl", "stim"] * 2 + ["ctrl"]
@@ -463,7 +470,7 @@ def test_activities_of_a_cube_record_the_cube_they_read() -> None:
     assert json.loads(json.dumps(record)) == record
     assert mlm(cube, NETWORK, group="B").provenance["method"] == "mlm"
     # Activities of values or of statistics name no cube.
-    of_values = ulm(VALUES, NETWORK, gene_ids=GENES)
+    of_values = ulm(VALUES, NETWORK, feature_ids=GENES)
     assert of_values.provenance is None
     tested = limma_voom(cube, Design(cube.samples, "~ condition"),
                         contrasts={"stim": "conditionstim"}, min_cells=0)  # fmt: skip
@@ -503,11 +510,11 @@ def test_each_group_and_contrast_of_a_result_is_a_profile() -> None:
 
 
 def test_the_record_and_its_table() -> None:
-    result = ulm(VALUES, NETWORK, gene_ids=GENES, sample_ids=["a", "b", "c", "d"])
+    result = ulm(VALUES, NETWORK, feature_ids=GENES, sample_ids=["a", "b", "c", "d"])
     assert repr(result) == "Activities(method='ulm', n_profiles=4, n_sources=6)"
     assert result.sources == NETWORK.sources
-    for array in (result.scores, result.estimates, result.p_values,
-                  result.adjusted_p_values, result.n_targets):  # fmt: skip
+    for array in (result.scores, result.estimates, result.p_value,
+                  result.adjusted_p_value, result.n_targets):  # fmt: skip
         assert not array.flags.writeable
     table = result.table()
     assert table.columns == ("source", "profile_id", "n_targets", "score",
@@ -523,34 +530,34 @@ def test_mlm_refuses_sources_it_cannot_tell_apart() -> None:
     twins = Network({**{s: dict(NETWORK[s]) for s in NETWORK},
                      "TWIN": dict(NETWORK["S1"])})  # fmt: skip
     with pytest.raises(ValueError, match="cannot tell the sources 'TWIN' apart"):
-        mlm(VALUES, twins, gene_ids=GENES)
+        mlm(VALUES, twins, feature_ids=GENES)
     # Three sources of one target each and an intercept use up four genes.
     with pytest.raises(ValueError, match="more genes than sources"):
-        mlm(np.array([Y]), {"A": ["g1"], "B": ["g2"], "C": ["g3"]}, gene_ids=FOUR,
+        mlm(np.array([Y]), {"A": ["g1"], "B": ["g2"], "C": ["g3"]}, feature_ids=FOUR,
             min_targets=1)  # fmt: skip
 
 
 def test_messages() -> None:
     with pytest.raises(ValueError, match="no target of the network is among the genes"):
-        ulm(VALUES, {"A": ["X1", "X2"]}, gene_ids=GENES)
+        ulm(VALUES, {"A": ["X1", "X2"]}, feature_ids=GENES)
     with pytest.raises(TypeError, match="network must be a Network"):
-        ulm(VALUES, 3, gene_ids=GENES)
-    with pytest.raises(ValueError, match="gene_ids is needed with an array"):
+        ulm(VALUES, 3, feature_ids=GENES)
+    with pytest.raises(ValueError, match="feature_ids is needed with an array"):
         ulm(VALUES, NETWORK)
     with pytest.raises(ValueError, match="contrast applies to the statistics"):
-        ulm(VALUES, NETWORK, gene_ids=GENES, contrast="stim")
-    with pytest.raises(ValueError, match="gene_ids applies to an array or a cube"):
-        ulm({"G1": 1.0, "G2": 2.0}, NETWORK, gene_ids=GENES)
+        ulm(VALUES, NETWORK, feature_ids=GENES, contrast="stim")
+    with pytest.raises(ValueError, match="feature_ids applies to an array or a cube"):
+        ulm({"G1": 1.0, "G2": 2.0}, NETWORK, feature_ids=GENES)
     with pytest.raises(ValueError, match="min_targets must be at least 1"):
-        ulm(VALUES, NETWORK, gene_ids=GENES, min_targets=0)
+        ulm(VALUES, NETWORK, feature_ids=GENES, min_targets=0)
     with pytest.raises(ValueError, match="n_permutations must be 0, for no"):
-        weighted_aggregate(VALUES, NETWORK, gene_ids=GENES, n_permutations=1)
+        weighted_aggregate(VALUES, NETWORK, feature_ids=GENES, n_permutations=1)
     with pytest.raises(ValueError, match="statistic must be one of 'mean', 'sum'"):
-        weighted_aggregate(VALUES, NETWORK, gene_ids=GENES, statistic="median")
+        weighted_aggregate(VALUES, NETWORK, feature_ids=GENES, statistic="median")
     with pytest.raises(ValueError, match="To score a samples x genes table"):
         ulm(Table({"G1": [1.0, 2.0], "G2": [3.0, 4.0]}), NETWORK)
     with pytest.raises(ValueError, match="data holds infinite values"):
-        ulm(np.where(VALUES > 2, np.inf, VALUES), NETWORK, gene_ids=GENES)
+        ulm(np.where(VALUES > 2, np.inf, VALUES), NETWORK, feature_ids=GENES)
 
 
 # The heatmap.
@@ -560,7 +567,7 @@ def test_the_heatmap_draws_the_scores_of_the_top_sources() -> None:
     pytest.importorskip("matplotlib")
     import matplotlib.figure
 
-    result = ulm(VALUES, NETWORK, gene_ids=GENES, sample_ids=["a", "b", "c", "d"])
+    result = ulm(VALUES, NETWORK, feature_ids=GENES, sample_ids=["a", "b", "c", "d"])
     ax = plot_activities(result, top=3, color_by=["x", "y", "x", "y"],
                          ax=matplotlib.figure.Figure().subplots())  # fmt: skip
     cells = next(image for image in ax.get_images() if image.get_gid() == "scores")

@@ -58,8 +58,15 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from cytepool.cube import Cube, from_bulk, from_cells
-from cytepool.io.anndata import from_anndata, from_mudata, to_anndata, to_mudata
+from cytepool import (
+    Cube,
+    from_anndata,
+    from_bulk,
+    from_cells,
+    from_mudata,
+    to_anndata,
+    to_mudata,
+)
 
 SEED = 20261025
 EXACT = 1e-10
@@ -221,14 +228,14 @@ def pooled(cells: Any, layers: Any = None, metadata: str | None = None) -> Cube:
     ):
         if metadata == "both" or (metadata == "samples" and kind == "sample"):
             values = obs.groupby(labels, observed=True)[column].first()
-            tables[f"{kind}_table"] = {
+            tables[f"{kind}s"] = {
                 f"{kind}_id": list(values.index),
                 column: list(values),
             }
     return from_cells(
         cells.X,
-        samples=obs["sample"],
-        groups=obs["group"],
+        sample_labels=obs["sample"],
+        group_labels=obs["group"],
         features={
             "feature_id": list(cells.var_names),
             "symbol": list(cells.var["symbol"]),
@@ -299,9 +306,9 @@ def exotic_cube() -> Cube:
     samples = rng.choice(["A", "B", "C"], 80)
     return from_cells(
         counts,
-        samples=samples,
-        groups=rng.choice(["T", "NK"], 80),
-        sample_table={
+        sample_labels=samples,
+        group_labels=rng.choice(["T", "NK"], 80),
+        samples={
             "sample_id": ["A", "B", "C", "D"],
             "collected": np.array(
                 ["2024-01-05", "NaT", "2024-03-01", "2024-04-11"], "datetime64[D]"
@@ -312,7 +319,7 @@ def exotic_cube() -> Cube:
             "notes": [None] * 4,
             "..": [1, 2, 3, 4],
         },
-        group_table={
+        groups={
             "group_id": ["T", "NK", "empty"],
             "parent/lineage": ["L", None, "M"],
             "since": np.full(3, "NaT", dtype="datetime64[s]"),
@@ -382,7 +389,9 @@ def checks(directory: Path, cells: Any, cubes: dict[str, Cube]) -> list[tuple]:
         return anndata.read_h5ad(directory / name)
 
     def by_label(name: str, **options: Any) -> Cube:
-        return from_anndata(read(name), sample="sample", group="group", **options)
+        return from_anndata(
+            read(name), sample_column="sample", group_column="group", **options
+        )
 
     cube = cubes["all five layers"]
     integer = ("counts", "detected")
@@ -403,8 +412,8 @@ def checks(directory: Path, cells: Any, cubes: dict[str, Cube]) -> list[tuple]:
     sources |= {name: name for name in ("log_sum", "log_sum_sq", "linear_sum")}
     scanpy_all = from_anndata(
         normalized,
-        sample="sample",
-        group="group",
+        sample_column="sample",
+        group_column="group",
         layers=sources,
         normalization=cube.normalization,
     )

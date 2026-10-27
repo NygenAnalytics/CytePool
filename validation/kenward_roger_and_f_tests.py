@@ -69,9 +69,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import dream_voom
+from cytepool import Cube, Design, dream_voom
 from cytepool.normalization import filter_by_expression, library_sizes, tmm_factors
 from cytepool.stats.distributions import f_sf
 from cytepool.stats.dream import moderated_fixed_effect_tests, voom_with_dream_weights
@@ -625,7 +623,7 @@ def ours_study(case: dict[str, Any], method: str) -> tuple[Any, Any, Any]:
     coefficient and contrast, and the moderated F-test of time."""
     design = Design(case["samples"], FIXED, random=RANDOM)
     voom = voom_with_dream_weights(case["counts"], design, span=0.5)
-    fit = fit_mixed_model(voom.log_cpm, design, weights=voom.weights)
+    fit = fit_mixed_model(voom.log2_cpm, design, weights=voom.weights)
     tests = fixed_effect_tests(fit, CONTRASTS, df_method=method)
     time = fixed_effect_tests(
         fit, {k: CONTRASTS[k] for k in ("timet1", "timet2")}, df_method=method
@@ -706,7 +704,7 @@ def compare_study(
             f"t, B, z: {SCALED}; df.total: {RELATIVE}; p: {P_VALUE}",
             max(
                 relative(moderated.t, pick["t"], 1.0),
-                relative(moderated.lods, pick["lods"], 1.0),
+                relative(moderated.log_odds, pick["lods"], 1.0),
                 relative(moderated.z, pick["z"], 1.0),
                 relative(moderated.df_total, pick["df_total"]),
                 p_value_difference(moderated.p_value, pick["p"]),
@@ -857,7 +855,7 @@ def compare_cube(
             table, k = result.table(group, name), r["names"].index(name)
             for column, key, floor in (
                 ("t", "t", 1.0),
-                ("b_statistic", "lods", 1.0),
+                ("log_odds", "lods", 1.0),
                 ("z_statistic", "z", 1.0),
                 ("df", "df_total", 0.0),
             ):

@@ -1,14 +1,14 @@
 """Differential expression between samples, one group (cell type) of a cube at a time.
 
-:func:`limma_voom` and :func:`limma_trend` run the limma workflows for RNA-seq counts
-(Ritchie et al. 2015) on the pseudobulk counts of each group of a cube: limma-voom,
-which gives every observation a precision weight from the mean-variance trend of the
-log counts per million (Law et al. 2014), and limma-trend, which lets the prior
-variance of the empirical Bayes moderation follow that trend instead.
-:func:`dream_voom` runs variancePartition's dream (Hoffman and Roussos 2021),
-limma-voom with a linear mixed model in place of the linear model, for designs with
-random effects such as several samples of each donor. Each tests the named contrasts
-of a :class:`~cytepool.design.Design` and returns, for every group and contrast, a
+:func:`~cytepool.limma_voom` and :func:`~cytepool.limma_trend` run the limma workflows
+for RNA-seq counts (Ritchie et al. 2015) on the pseudobulk counts of each group of a
+cube: limma-voom, which gives every observation a precision weight from the
+mean-variance trend of the log counts per million (Law et al. 2014), and limma-trend,
+which lets the prior variance of the empirical Bayes moderation follow that trend
+instead. :func:`~cytepool.dream_voom` runs variancePartition's dream (Hoffman and
+Roussos 2021), limma-voom with a linear mixed model in place of the linear model, for
+designs with random effects such as several samples of each donor. Each tests the named
+contrasts of a :class:`~cytepool.Design` and returns, for every group and contrast, a
 table of the tested features with ``topTable``'s statistics, together with a summary,
 the samples behind every fit and a provenance record.
 
@@ -36,7 +36,7 @@ The design of a group:
     estimable from the group's samples when it is orthogonal to the null space of the
     group's design matrix (Searle 1971): when its weight on every aliased column is the
     sum of its weights on the kept columns, weighted by that column's combination.
-    This is the rule of :meth:`Design.check <cytepool.design.Design.check>`. ``c``
+    This is the rule of :meth:`Design.check <cytepool.Design.check>`. ``c``
     applied to the coefficients then equals its weights on the kept columns applied to
     the fit on the kept columns, whatever the coefficients that the samples cannot
     separate, so its estimate and its exact standard error are those of any full-rank
@@ -117,23 +117,23 @@ Sample weights:
       matter: weights that are all ten times larger give the same results.
 
 dream:
-    :func:`dream_voom` takes the steps of limma-voom up to the normalization, then
-    those of variancePartition's ``voomWithDreamWeights``, ``dream``, ``eBayes`` and
-    ``topTable``: precision weights from the mean-variance trend of the design's
+    :func:`~cytepool.dream_voom` takes the steps of limma-voom up to the normalization,
+    then those of variancePartition's ``voomWithDreamWeights``, ``dream``, ``eBayes``
+    and ``topTable``: precision weights from the mean-variance trend of the design's
     mixed model, fitted to every feature by maximum likelihood
     (:func:`~cytepool.stats.dream.voom_with_dream_weights`); the mixed model of every
     feature fitted by REML with those weights
     (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); t-tests of the estimable
-    contrasts (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`) with the
-    degrees of freedom dream chooses by default (``ddf = "adaptive"``), Kenward and
-    Roger's (1997) in a group of fewer than 20 samples and Satterthwaite's (1946)
-    otherwise; F-tests of sets of contrasts; and their empirical Bayes moderation
+    contrasts (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`) with the degrees
+    of freedom dream chooses by default (``ddf = "adaptive"``), Kenward and Roger's
+    (1997) in a group of fewer than 20 samples and Satterthwaite's (1946) otherwise;
+    F-tests of sets of contrasts; and their empirical Bayes moderation
     (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The random effects of
-    a group are those of its samples: a grouping factor's levels without samples in
-    the group drop out. :mod:`cytepool.stats.dream` documents the conventions found by
-    probing variancePartition and the deliberate differences from it. Prior weights
-    from the number of cells are divided by their mean in each group, as
-    variancePartition divides prior weights, which changes no test.
+    a group are those of its samples: a grouping factor's levels without samples in the
+    group drop out. :mod:`cytepool.stats.dream` documents the conventions found by
+    probing variancePartition and the deliberate differences from it. Prior weights from
+    the number of cells are divided by their mean in each group, as variancePartition
+    divides prior weights, which changes no test.
 
 P-values adjusted across groups:
     ``adjusted_p_value`` adjusts the p-values of one group and contrast, as limma's
@@ -160,20 +160,19 @@ Deliberate differences from limma:
       ``~ donor + condition``, limma reports for the coefficient ``donorD2`` (donor D2
       against D1) the difference between donor D2 and the last donor.
     - With ``contrast_standard_errors="exact"``, the default of
-      :func:`limma_voom`, the standard errors of contrasts that combine several
-      coefficients are exact; limma's ``contrasts.fit`` approximates them when
+      :func:`~cytepool.limma_voom`, the standard errors of contrasts that combine
+      several coefficients are exact; limma's ``contrasts.fit`` approximates them when
       weights differ between features, and ``"limma"`` reproduces it. limma's
       approximation, unlike the exact value, depends on the parametrisation, so only
-      exact standard errors are the same in every parametrisation of a group's
-      design.
+      exact standard errors are the same in every parametrisation of a group's design.
 
 Memory:
     One group is in memory at a time: its counts layer, read from the cube when the
     group is fitted, and the fit of its features. A cube opened with
-    :func:`~cytepool.io.read_cube` therefore stays on disk except for the group
+    :func:`~cytepool.read_cube` therefore stays on disk except for the group
     being fitted. Results hold one table per group and contrast, and a record that
     identifies the cube by its fingerprint, which costs no read for a cube file
-    ("Provenance" in :func:`limma_voom`).
+    ("Provenance" in :func:`~cytepool.limma_voom`).
 
 References:
     Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
@@ -297,7 +296,7 @@ from ._options import (
 from .cube import Cube
 from .design import Contrasts, Design, make_contrasts
 from .design._design_matrices import is_random_intercept, refuse_random_effects
-from .normalization import log_cpm
+from .normalization import log2_cpm
 from .stats._fixed_effect_inference import (
     InferenceParts,
     chosen_parts,
@@ -424,7 +423,7 @@ class DifferentialExpressionResult:
       standard deviation times the feature's posterior standard deviation (limma's
       ``stdev.unscaled * sqrt(s2.post)``), so that ``t`` is
       ``log2_fold_change / standard_error``; it is what a meta-analysis of studies
-      reads (:func:`~cytepool.meta_analysis.differential_expression_meta_analysis`);
+      reads (:func:`~cytepool.meta_analysis`);
     - ``average_log2_cpm``: the mean log2 count per million over the group's samples
       (``AveExpr``);
     - ``t`` and ``p_value``: the moderated t-statistic and its two-sided p-value;
@@ -433,13 +432,13 @@ class DifferentialExpressionResult:
     - ``adjusted_p_value_across_groups``, with ``adjust_across_groups`` only:
       Benjamini-Hochberg over the tested features of every group that tests the
       contrast;
-    - ``b_statistic``: the log-odds that the feature is differentially expressed
-      (``B``).
+    - ``log_odds``: the log-odds that the feature is differentially expressed
+      (limma's B-statistic, ``B``).
 
     Tables from :func:`dream_voom` also give ``df``, the degrees of freedom of each
     test (Satterthwaite's or Kenward and Roger's plus the prior's, ``df.total``),
     after ``t``, and ``z_statistic``, the z-statistic with the test's p-value
-    (``topTable``'s ``z.std``), after ``b_statistic``; a feature whose mixed model has
+    (``topTable``'s ``z.std``), after ``log_odds``; a feature whose mixed model has
     no minimum has NaN statistics. Its F-tests have tables of their own, whose
     columns :func:`dream_voom` lists.
 
@@ -451,7 +450,7 @@ class DifferentialExpressionResult:
     ``n_samples_used`` and ``n_samples_left_out``; ``n_features_tested``;
     ``df_residual``, for dream the median over the features of their approximate
     residual degrees of freedom (in a group not fitted, the residual degrees of
-    freedom of the fixed effects, as for limma); ``prior_df``, the prior degrees of
+    freedom of the fixed effects, as for limma); ``df_prior``, the prior degrees of
     freedom (their median over features with robust moderation, where each feature
     has its own); for dream, ``df_method``, the degrees of freedom of the group's
     tests (``"satterthwaite"`` or ``"kenward_roger"``; empty where the group was not
@@ -710,7 +709,7 @@ class DifferentialExpressionResult:
             contrast,
             [*self._contrasts.names, *self.f_tests],
             "contrast",
-            "contrasts and F-tests",
+            "contrasts and F-tests" if self.f_tests else "contrasts",
         )
         found = self._tables.get((group, contrast))
         if found is not None:
@@ -876,7 +875,7 @@ def limma_voom(
         The result records the cube's fingerprint, the digests it is built from and
         the cube's provenance (``Cube.fingerprint``, ``Cube.digests``,
         ``Cube.provenance``), computed after the fits. For a cube opened with
-        :func:`~cytepool.io.read_cube` this reads nothing: the file stores the
+        :func:`~cytepool.read_cube` this reads nothing: the file stores the
         digests, and each group the fits read whole is checked against its digest.
         A cube in memory hashes its layers once, at about 1 s per GB of values
         where the processor has SHA instructions. A lazy cube derived from a cube
@@ -887,8 +886,8 @@ def limma_voom(
 
     Args:
         cube: A cube with a ``counts`` layer, such as one from
-            :func:`~cytepool.cube.from_cells` or :func:`~cytepool.io.read_cube`.
-        design: A :class:`~cytepool.design.Design` whose sample table has a
+            :func:`~cytepool.from_cells` or :func:`~cytepool.read_cube`.
+        design: A :class:`~cytepool.Design` whose sample table has a
             ``sample_id`` column with cube sample ids; its rows may be some of the
             cube's samples, in any order. A design with random effects is refused:
             these fits have fixed effects only, and :func:`dream_voom` fits random
@@ -1036,7 +1035,7 @@ def limma_trend(
 
     Args:
         cube: A cube with a ``counts`` layer.
-        design: A :class:`~cytepool.design.Design` matched to the cube by
+        design: A :class:`~cytepool.Design` matched to the cube by
             ``sample_id``, as for :func:`limma_voom`.
         groups: A group id or a list of them; all groups by default.
         contrasts: The contrasts to test; by default the design's named contrasts.
@@ -1185,7 +1184,7 @@ def dream_voom(
 
     Args:
         cube: A cube with a ``counts`` layer.
-        design: A :class:`~cytepool.design.Design` whose random effects are random
+        design: A :class:`~cytepool.Design` whose random effects are random
             intercepts, such as ``random="(1 | donor)"``, matched to the cube by
             ``sample_id`` as for :func:`limma_voom`.
         groups: A group id or a list of them; all groups by default.
@@ -1283,7 +1282,7 @@ def dream_voom(
 class _GroupFit(GroupRecord):
     """What happened in one group, and its tables; with ``keep``, its fit."""
 
-    prior_df: float = float("nan")
+    df_prior: float = float("nan")
     quality_weights: np.ndarray | None = None
     tables: dict[str, Table] = field(default_factory=dict)
     df_method: str = ""  # dream: the degrees of freedom of the group's tests
@@ -1505,7 +1504,7 @@ def _fit_group(
         fit.voom_span = weighted.span
         quality = weighted.sample_weights
         model = fit_linear_model(
-            weighted.log_cpm,
+            weighted.log2_cpm,
             x_kept,
             weights=weighted.weights,
             coefficient_names=columns,
@@ -1513,7 +1512,7 @@ def _fit_group(
         )
         method = settings["contrast_standard_errors"]
     else:
-        values = log_cpm(y, norm_factors=factors, prior_count=settings["prior_count"])
+        values = log2_cpm(y, norm_factors=factors, prior_count=settings["prior_count"])
         quality = None
         if quality_settings is not None:
             try:
@@ -1554,7 +1553,7 @@ def _fit_group(
     adjusted = adjust_p_values(moderated.p_value, "bh", axis=0)
 
     fit.df_residual = float(model.df_residual[0])
-    fit.prior_df = float(np.median(moderated.prior_df))
+    fit.df_prior = float(np.median(moderated.df_prior))
     fit.library_sizes = sizes
     fit.norm_factors = np.ones(n_used) if factors is None else factors
     fit.prior_weights = prior
@@ -1562,7 +1561,7 @@ def _fit_group(
     if keep:
         if inputs.method == "limma_voom":
             fit.values, fit.weights, fit.voom = (
-                weighted.log_cpm,
+                weighted.log2_cpm,
                 weighted.weights,
                 weighted,
             )
@@ -1590,7 +1589,7 @@ def _fit_group(
                 "t": moderated.t[:, column],
                 "p_value": moderated.p_value[:, column],
                 "adjusted_p_value": adjusted[:, column],
-                "b_statistic": moderated.lods[:, column],
+                "log_odds": moderated.log_odds[:, column],
             }
         )
     return fit
@@ -1623,7 +1622,7 @@ def _fit_dream_group(
             weighted = _dream_weights(y, sizes, fraction, data.mixed, prior, True)
         except ValueError as error:  # the trend cannot give weights for these data
             return fit.stop("failed", f"voom with dream weights: {error}")
-        model = _fit_mixed_model(weighted.log_cpm, weighted.weights, False, data.mixed)
+        model = _fit_mixed_model(weighted.log2_cpm, weighted.weights, False, data.mixed)
     fit.voom_span = weighted.span
     fitted = np.isfinite(model.residual_variance)
     # Differential expression always has contrasts to test.
@@ -1649,13 +1648,13 @@ def _fit_dream_group(
 
     fit.features_not_fitted = int(np.count_nonzero(~fitted))
     fit.features_not_converged = int(np.count_nonzero(fitted & ~model.converged))
-    fit.df_residual = float(np.median(model.residual_df[fitted]))
-    fit.prior_df = float(np.median(moderated.prior_df))
+    fit.df_residual = float(np.median(model.df_residual[fitted]))
+    fit.df_prior = float(np.median(moderated.df_prior))
     fit.library_sizes = data.sizes
     fit.norm_factors = np.ones(n_used) if data.factors is None else data.factors
     fit.prior_weights = data.prior
     if keep:
-        fit.values, fit.weights = weighted.log_cpm, weighted.weights
+        fit.values, fit.weights = weighted.log2_cpm, weighted.weights
         fit.voom, fit.moderated = weighted, moderated
     features = cube.features
     identity = {"feature_id": features["feature_id"][fit.tested]}
@@ -1671,7 +1670,7 @@ def _fit_dream_group(
                 "df": moderated.df_total[:, column],
                 "p_value": moderated.p_value[:, column],
                 "adjusted_p_value": adjusted[:, column],
-                "b_statistic": moderated.lods[:, column],
+                "log_odds": moderated.log_odds[:, column],
                 "z_statistic": moderated.z[:, column],
             }
         )
@@ -1994,7 +1993,7 @@ def _summary_table(fits: list[_GroupFit], dream: bool) -> Table:
             dtype=np.int64,
         ),
         "df_residual": np.array([fit.df_residual for fit in fits], dtype=float),
-        "prior_df": np.array([fit.prior_df for fit in fits], dtype=float),
+        "df_prior": np.array([fit.df_prior for fit in fits], dtype=float),
     }
     if dream:
         # The degrees of freedom of the group's tests; empty where none were made.

@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
@@ -119,7 +119,7 @@ def assert_moderated_statistics_agree(
     """result -> fit_linear_model -> contrasts_fit -> moderated_statistics, as the
     fixture's lmFit -> contrasts.fit -> eBayes."""
     design = design_of(case)
-    fit = fit_linear_model(result.log_cpm, design, weights=result.weights)
+    fit = fit_linear_model(result.log2_cpm, design, weights=result.weights)
     if len(design.contrasts):
         # limma's contrasts.fit approximates the standard errors of contrasts of
         # correlated coefficients in a weighted fit; method="limma" reproduces it.
@@ -152,7 +152,7 @@ def test_voom_with_prior_weights_matches_limma(case: str) -> None:
     result = run_case(case)
     n_samples = data["data"].shape[0]
     np.testing.assert_allclose(
-        result.log_cpm, limma(case, "E", n_samples), rtol=EXACT, atol=EXACT
+        result.log2_cpm, limma(case, "E", n_samples), rtol=EXACT, atol=EXACT
     )
     np.testing.assert_allclose(
         result.weights, limma(case, "weights", n_samples), rtol=EXACT
@@ -181,7 +181,7 @@ def test_voom_with_quality_weights_matches_limma(case: str) -> None:
     result = run_case(case)
     n_samples = data["data"].shape[0]
     np.testing.assert_allclose(
-        result.log_cpm, limma(case, "E", n_samples), rtol=EXACT, atol=EXACT
+        result.log2_cpm, limma(case, "E", n_samples), rtol=EXACT, atol=EXACT
     )
     np.testing.assert_allclose(
         result.sample_weights, data["limma sample.weights"], rtol=CLOSE
@@ -538,7 +538,7 @@ def test_zero_weights_that_leave_coefficients_inestimable() -> None:
     result = voom(COUNTS, TWO_GROUPS, span=0.5, weights=weights)
     np.testing.assert_array_equal(result.weights[:4, 0], 0.0)
     prior = weights[4:, 0]
-    fitted = np.sum(prior * result.log_cpm[4:, 0]) / prior.sum()
+    fitted = np.sum(prior * result.log2_cpm[4:, 0]) / prior.sum()
     sizes = result.effective_library_sizes[4:]
     fitted_log_count = np.log2(2.0**fitted * (sizes + 1.0) * 1e-6)
     in_trend = ~np.isnan(result.sqrt_sd)
@@ -604,12 +604,12 @@ def test_quality_weights_combine_voom_and_sample_weights_in_limmas_steps() -> No
     counts = fixture("quality_gene_by_gene")["data"]
     first = voom(counts, TWO_GROUPS, span=0.5)
     quality = sample_quality_weights(
-        first.log_cpm, TWO_GROUPS, weights=first.weights, method="gene_by_gene"
+        first.log2_cpm, TWO_GROUPS, weights=first.weights, method="gene_by_gene"
     )
     second = voom(counts, TWO_GROUPS, span=0.5, weights=quality)
     trend = second.weights / quality[:, np.newaxis]
     final = sample_quality_weights(
-        second.log_cpm, TWO_GROUPS, weights=trend, method="gene_by_gene"
+        second.log2_cpm, TWO_GROUPS, weights=trend, method="gene_by_gene"
     )
     result = voom_with_quality_weights(counts, TWO_GROUPS, span=0.5)
     np.testing.assert_allclose(result.sample_weights, final, rtol=1e-12)

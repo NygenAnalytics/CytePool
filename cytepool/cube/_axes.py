@@ -280,12 +280,15 @@ def axis_codes(
     table_name: str,
     id_column: str,
     unit: str = "cell",
+    axis: str | None = None,
 ) -> tuple[np.ndarray, Table, bool]:
     """Return the position of every cell's label on an axis, the axis table, and
     whether the labels were integers.
 
-    ``unit`` names what holds the labels in messages: a cell, or a row of a table
-    of profiles that already pools cells.
+    ``name`` names the labels in messages, and ``table_name`` the table; ``unit``
+    names what holds the labels: a cell, or a row of a table of profiles that
+    already pools cells. ``axis`` is the axis whose table is read (``"samples"`` or
+    ``"groups"``), ``name`` by default.
     """
     codes, distinct, integers = _factorize(labels, name, n_cells, unit)
     if table is None:
@@ -293,7 +296,9 @@ def axis_codes(
         ids[:] = distinct
         return codes, Table({id_column: ids}), integers
     reject_masked_table(table, table_name, id_column)
-    axis_table, index = checked_axis_table(table, name, id_column)
+    axis_table, index = checked_axis_table(
+        table, name if axis is None else axis, id_column
+    )
     positions = np.empty(len(distinct), dtype=np.int64)
     for code, label in enumerate(distinct):
         position = index.get(label)

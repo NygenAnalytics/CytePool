@@ -1,30 +1,30 @@
 """Gene set enrichment analysis (GSEA) of genes ranked by a statistic, as fgsea computes
 it.
 
-:func:`gsea` asks of each gene set whether its genes gather at the top or at the
-bottom of a ranking of all genes by a statistic, such as the moderated t-statistic of
-a contrast: preranked GSEA (Subramanian et al. 2005) as fgsea 1.32.2 computes it
+:func:`~cytepool.gsea` asks of each gene set whether its genes gather at the top or at
+the bottom of a ranking of all genes by a statistic, such as the moderated t-statistic
+of a contrast: preranked GSEA (Subramanian et al. 2005) as fgsea 1.32.2 computes it
 (Korotkevich et al. 2021), with p-values by fgsea's default multilevel method
 (``fgseaMultilevel``) or by permutations of the genes (``fgseaSimple``). Results match
 fgsea's exactly when CytePool is given the random seeds that fgsea draws, and within
 Monte Carlo error otherwise, except where noted under "Deliberate differences". The
 routines port fgsea's (MIT licence), as ``THIRD_PARTY_NOTICES.md`` records.
-:func:`~cytepool.plotting.plot_enrichment` and :func:`~cytepool.plotting.plot_gsea_table`
-draw its figures.
+:func:`~cytepool.plotting.plot_enrichment` and
+:func:`~cytepool.plotting.plot_gsea_table` draw its figures.
 
 The genes and the sets:
     The statistics come from a group and contrast of a
-    :class:`~cytepool.differential_expression.DifferentialExpressionResult`, from a
-    table of results or from a mapping of gene id to statistic. Genes are ranked by
-    decreasing statistic, and genes with equal statistics keep the order in which they
-    are given, as in fgsea: the score of a set whose genes tie with other genes
-    depends on that order, and a warning says how many statistics tie. Rows without a
-    gene id or without a statistic (NaN) are left out, where fgsea refuses them;
-    infinite statistics and ids on two rows are refused. Each set's genes are matched
-    to the ranked genes, and a set is tested when ``min_size`` to ``max_size`` of its
-    genes are ranked (fgsea's ``minSize`` and ``maxSize``); a set of every ranked gene
-    is never tested, as its score is not defined. The table keeps the order of
-    ``gene_sets``, where fgsea orders the sets by name.
+    :class:`~cytepool.DifferentialExpressionResult`, from a table of results or from a
+    mapping of gene id to statistic. Genes are ranked by decreasing statistic, and genes
+    with equal statistics keep the order in which they are given, as in fgsea: the score
+    of a set whose genes tie with other genes depends on that order, and a warning says
+    how many statistics tie. Rows without a gene id or without a statistic (NaN) are
+    left out, where fgsea refuses them; infinite statistics and ids on two rows are
+    refused. Each set's genes are matched to the ranked genes, and a set is tested when
+    ``min_size`` to ``max_size`` of its genes are ranked (fgsea's ``minSize`` and
+    ``maxSize``); a set of every ranked gene is never tested, as its score is not
+    defined. The table keeps the order of ``gene_sets``, where fgsea orders the sets by
+    name.
 
 The enrichment score:
     With weights |r|^p of the statistics r, p the ``exponent`` (fgsea's
@@ -254,13 +254,13 @@ def gsea(
 
     Args:
         statistics: The statistics that rank the genes: a
-            :class:`~cytepool.differential_expression.DifferentialExpressionResult`,
-            with ``group`` and ``contrast``; a table of results, a ``Table`` or a
-            pandas DataFrame, with a column of gene ids and a column of statistics;
-            or a pandas Series of statistics indexed by gene id, or a mapping of gene
-            id to statistic. NaN marks a gene without a statistic.
-        gene_sets: A :class:`~cytepool.gene_sets.GeneSets`, such as one read by
-            :func:`~cytepool.gene_sets.read_gmt`, or a mapping of set name to gene ids.
+            :class:`~cytepool.DifferentialExpressionResult`, with ``group`` and
+            ``contrast``; a table of results, a ``Table`` or a pandas DataFrame, with a
+            column of gene ids and a column of statistics; or a pandas Series of
+            statistics indexed by gene id, or a mapping of gene id to statistic. NaN
+            marks a gene without a statistic.
+        gene_sets: A :class:`~cytepool.GeneSets`, such as one read by
+            :func:`~cytepool.read_gmt`, or a mapping of set name to gene ids.
         group: The group (cell type) of a ``DifferentialExpressionResult``; it may be
             left out when the result has one.
         contrast: The contrast of a ``DifferentialExpressionResult``; it may be left

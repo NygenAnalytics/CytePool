@@ -1,6 +1,6 @@
 """Check the rotation gene-set tests roast, mroast and romer against limma.
 
-Compares ``cytepool.stats.rotation_gene_set_tests`` with limma's ``roast``, ``mroast``
+Compares ``cytepool.rotation_gene_set_tests`` with limma's ``roast``, ``mroast``
 and ``romer`` on log-expression of 1,500 genes simulated from fixed seeds, with gene
 sets that change up, down, in both directions or not at all, share random sample
 effects, overlap, hold one to five genes or 40% of the genes, or carry contribution
@@ -47,10 +47,8 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.design import Design
-from cytepool.stats.gene_set_tests import fry
+from cytepool import Design, fry, mroast, roast, romer
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.stats.rotation_gene_set_tests import mroast, roast, romer
 from cytepool.stats.voom import voom
 
 FIXTURE_DIRECTORY = (
@@ -229,7 +227,7 @@ def make_cases(rng, n_genes):
     expression, sets = simulate(rng, design.matrix, n_genes, 1)
     counts = rng.poisson(np.exp2(expression.T) * rng.uniform(0.5, 2.0, 12)[:, None])
     voomed = voom(counts, design)
-    add("voom", design, voomed.log_cpm.T, sets, "conditionstim",
+    add("voom", design, voomed.log2_cpm.T, sets, "conditionstim",
         runs("roast", ["mean", "msq"], 50) + calibrated("mroast", "mean50", 52, 1999),
         weights=voomed.weights)  # fmt: skip
     paired = Design({"donor": np.repeat([f"D{i}" for i in range(6)], 2),
@@ -298,8 +296,17 @@ def gene_set(rows, w):
 
 
 def common(case):
-    return {"y": case["y"].T, "design": case["design"], "contrast": case["contrast"],
+    return {"data": case["y"].T, "design": case["design"], "contrast": case["contrast"],
             "weights": case["weights"]}  # fmt: skip
+
+
+def limma_rows(ours):
+    """roast's row as limma's four rows (down, up, up or down, mixed): the p-values
+    and the active proportions, that of up or down the larger of down and up."""
+    columns = ("down_p_value", "up_p_value", "p_value", "mixed_p_value")
+    down, up, mixed = (ours[f"proportion_{c}"][0] for c in ("down", "up", "mixed"))
+    p = np.array([ours[column][0] for column in columns], dtype=float)
+    return p, np.array([down, up, max(down, up), mixed])
 
 
 def expected_roast(stat, z, rows, w, reference):
@@ -351,10 +358,10 @@ def check_roast(case, run, table):
         sets.values(), case["sets"].values(), limma["sets"], strict=True
     ):
         ours = roast(**common(case), gene_set=genes, rng=Replay(draws), **options)
-        p, ref = ours["p_value"], np.asarray(reference["p"], float)
+        (p, active), ref = limma_rows(ours), np.asarray(reference["p"], float)
         expected, compared, minimum = expected_roast(stat, z, rows, w, reference)
         worst = max(worst, float(np.max(np.abs(p - expected)[compared], initial=0.0)),
-                    float(np.max(np.abs(ours["active_proportion"] - reference["active"]))))  # fmt: skip
+                    float(np.max(np.abs(active - reference["active"]))))  # fmt: skip
         deliberate["minimum"] += np.abs(p - ref)[minimum & compared].tolist()
         if stat == "msq" and not compared[0]:
             deliberate["signs"].append(float(np.max(np.abs(p - ref)[:3])))

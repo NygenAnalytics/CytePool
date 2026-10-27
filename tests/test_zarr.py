@@ -388,7 +388,7 @@ def test_fill_value_and_byte_order_metadata(
 def test_gzip_chunks_are_reproducible_gzip_members(tmp_path: Path) -> None:
     values = np.arange(12, dtype=np.float64).reshape(3, 4)
     for name, level in (("default", None), ("best", 9)):
-        write_array(tmp_path / name, values, chunks=(3, 4), level=level)
+        write_array(tmp_path / name, values, chunks=(3, 4), compression_level=level)
         data = (tmp_path / name / "c" / "0" / "0").read_bytes()
         # RFC 1952: magic bytes, deflate, and a zero modification time, so that the
         # same array gives the same bytes on every run.
@@ -405,7 +405,9 @@ def test_gzip_chunks_are_reproducible_gzip_members(tmp_path: Path) -> None:
 @needs_zstd
 def test_zstd_chunks_are_frames_with_checksums(tmp_path: Path) -> None:
     values = np.arange(12, dtype=np.int32)
-    write_array(tmp_path / "a", values, chunks=(12,), compression="zstd", level=-5)
+    write_array(
+        tmp_path / "a", values, chunks=(12,), compression="zstd", compression_level=-5
+    )
     data = (tmp_path / "a" / "c" / "0").read_bytes()
     assert data[:4] == b"\x28\xb5\x2f\xfd"  # RFC 8878 magic number
     assert data[4] & 0x04  # the frame header's content checksum flag
@@ -1246,11 +1248,11 @@ def test_check_compression() -> None:
         assert check_compression("zstd", None) == 3
         assert check_compression("zstd", -131072) == -131072
     for compression, level, error, message in [
-        (None, 1, ValueError, "level applies only with compression"),
+        (None, 1, ValueError, "compression_level applies only with compression"),
         ("gzip", 10, ValueError, "the gzip level must be from 0 to 9, got 10"),
         ("gzip", -1, ValueError, "from 0 to 9"),
-        ("gzip", 1.0, TypeError, "level must be an integer, got float"),
-        ("gzip", True, TypeError, "level must be an integer, got bool"),
+        ("gzip", 1.0, TypeError, "compression_level must be an integer, got float"),
+        ("gzip", True, TypeError, "compression_level must be an integer, got bool"),
         (
             "GZIP",
             None,

@@ -41,6 +41,9 @@ VARIABLES = ("Y", "L", "g", "X", "X0", "nf", "ac", "mp")
 TMM_KWARGS = "reference log_ratio_trim sum_trim weighted a_cutoff library_sizes".split()
 METRICS = {"logcpm": "max abs diff of log2", "filter": "features that differ"}
 METRICS["proportional"] = "max rel spread of the ratio"
+# calls.json, which the tests read, names the function log2_cpm and the argument
+# sample_groups of filter_by_expression as they were named when it was written.
+FIXTURE_NAMES = {"log2_cpm": "log_cpm", "sample_groups": "group"}
 
 # kind | check | R call | CytePool function and keyword arguments ($v: case variable v)
 PER_DATASET = """
@@ -54,18 +57,18 @@ proportional | DESeq2 estimateSizeFactorsForMatrix poscounts, up to one factor |
 cpm | CPM | cpm(Y) | cpm
 cpm | CPM, normalization factors | cpm(DGEList(Y, norm.factors=nf)) | cpm norm_factors=$nf
 cpm | CPM, library sizes given | cpm(Y, lib.size=L) | cpm library_sizes=$L
-logcpm | logCPM, prior count 2 | cpm(Y, log=TRUE, prior.count=2) | log_cpm prior_count=2
-logcpm | logCPM, prior count 0.5 | cpm(Y, log=TRUE, prior.count=0.5) | log_cpm prior_count=0.5
-logcpm | logCPM, prior count 5 | cpm(Y, log=TRUE, prior.count=5) | log_cpm prior_count=5
-logcpm | logCPM, prior count 2, normalization factors | cpm(DGEList(Y, norm.factors=nf), log=TRUE) | log_cpm norm_factors=$nf
-logcpm | logCPM, prior count 2, library sizes given | cpm(Y, lib.size=L, log=TRUE) | log_cpm library_sizes=$L
-filter | filterByExpr, group | filterByExpr(Y, group=factor(g)) | filter_by_expression group=$g
-filter | filterByExpr, group, min.count 5, min.total.count 10 | filterByExpr(Y, group=factor(g), min.count=5, min.total.count=10) | filter_by_expression group=$g min_count=5 min_total_count=10
-filter | filterByExpr, group, large.n 2, min.prop 0.5 | filterByExpr(Y, group=factor(g), large.n=2, min.prop=0.5) | filter_by_expression group=$g large_n=2 min_prop=0.5
+logcpm | logCPM, prior count 2 | cpm(Y, log=TRUE, prior.count=2) | log2_cpm prior_count=2
+logcpm | logCPM, prior count 0.5 | cpm(Y, log=TRUE, prior.count=0.5) | log2_cpm prior_count=0.5
+logcpm | logCPM, prior count 5 | cpm(Y, log=TRUE, prior.count=5) | log2_cpm prior_count=5
+logcpm | logCPM, prior count 2, normalization factors | cpm(DGEList(Y, norm.factors=nf), log=TRUE) | log2_cpm norm_factors=$nf
+logcpm | logCPM, prior count 2, library sizes given | cpm(Y, lib.size=L, log=TRUE) | log2_cpm library_sizes=$L
+filter | filterByExpr, group | filterByExpr(Y, group=factor(g)) | filter_by_expression sample_groups=$g
+filter | filterByExpr, group, min.count 5, min.total.count 10 | filterByExpr(Y, group=factor(g), min.count=5, min.total.count=10) | filter_by_expression sample_groups=$g min_count=5 min_total_count=10
+filter | filterByExpr, group, large.n 2, min.prop 0.5 | filterByExpr(Y, group=factor(g), large.n=2, min.prop=0.5) | filter_by_expression sample_groups=$g large_n=2 min_prop=0.5
 filter | filterByExpr, design with a covariate | filterByExpr(Y, design=X) | filter_by_expression design=$X
 filter | filterByExpr, design without an intercept | filterByExpr(Y, design=X0) | filter_by_expression design=$X0
 filter | filterByExpr, no group or design (one group) | filterByExpr(Y) | filter_by_expression
-filter | filterByExpr, normalization factors | filterByExpr(DGEList(Y, group=factor(g), norm.factors=nf)) | filter_by_expression group=$g norm_factors=$nf
+filter | filterByExpr, normalization factors | filterByExpr(DGEList(Y, group=factor(g), norm.factors=nf)) | filter_by_expression sample_groups=$g norm_factors=$nf
 """
 PER_SMALL_MATRIX = """
 factor | TMM factors, default reference, 300 small tie-heavy matrices | calcNormFactors(Y, lib.size=L) | tmm_factors library_sizes=$L
@@ -85,19 +88,19 @@ factor | sparse counts: reference by square-root counts | calcNormFactors(Y) | t
 factor | median upper quartile 1e-20: documented reference | calcNormFactors(Y, lib.size=L) | tmm_factors library_sizes=$L
 factor | median upper quartile below 1e-20: square-root reference | calcNormFactors(Y, lib.size=L) | tmm_factors library_sizes=$L
 factor | identical above the A cutoff only | calcNormFactors(Y, lib.size=L, refColumn=2, Acutoff=ac) | tmm_factors library_sizes=$L reference=1 a_cutoff=$ac
-filter | count at the CPM cutoff, L = 100036 | filterByExpr(Y, group=factor(g), lib.size=L) | filter_by_expression group=$g library_sizes=$L
-filter | count at the CPM cutoff, L = 100015 | filterByExpr(Y, group=factor(g), lib.size=L) | filter_by_expression group=$g library_sizes=$L
+filter | count at the CPM cutoff, L = 100036 | filterByExpr(Y, group=factor(g), lib.size=L) | filter_by_expression sample_groups=$g library_sizes=$L
+filter | count at the CPM cutoff, L = 100015 | filterByExpr(Y, group=factor(g), lib.size=L) | filter_by_expression sample_groups=$g library_sizes=$L
 filter | all-zero design, taken as an intercept | filterByExpr(Y, design=X) | filter_by_expression design=$X
 filter | near-collinear design, eps = 1.5e-07 | filterByExpr(Y, design=X) | filter_by_expression design=$X
 filter | near-collinear design, eps = 2.5e-07 | filterByExpr(Y, design=X) | filter_by_expression design=$X
-filter | sample threshold 2 + 8.9e-15 | filterByExpr(Y, group=factor(g), large.n=0, min.prop=mp) | filter_by_expression group=$g large_n=0 min_prop=$mp
-filter | sample threshold 2 + 1.1e-14 | filterByExpr(Y, group=factor(g), large.n=0, min.prop=mp) | filter_by_expression group=$g large_n=0 min_prop=$mp
+filter | sample threshold 2 + 8.9e-15 | filterByExpr(Y, group=factor(g), large.n=0, min.prop=mp) | filter_by_expression sample_groups=$g large_n=0 min_prop=$mp
+filter | sample threshold 2 + 1.1e-14 | filterByExpr(Y, group=factor(g), large.n=0, min.prop=mp) | filter_by_expression sample_groups=$g large_n=0 min_prop=$mp
 """
 # Inputs that CytePool rejects, where R returns values (deviation) or fails too (error).
 DEVIATIONS = """
 deviation | all-zero sample: edgeR TMM with refColumn gives it factor 1 | calcNormFactors(Y, refColumn=1) | tmm_factors
 deviation | upper quartile of zero: edgeR returns NaN factors | calcNormFactors(Y, method='upperquartile') | upper_quartile_factors
-deviation | group and design both given: edgeR ignores the design | filterByExpr(Y, group=factor(g), design=X) | filter_by_expression group=$g design=$X
+deviation | group and design both given: edgeR ignores the design | filterByExpr(Y, group=factor(g), design=X) | filter_by_expression sample_groups=$g design=$X
 error | negative count: edgeR normLibSizes rejects it too | normLibSizes(Y) | tmm_factors
 """
 
@@ -408,7 +411,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--write-fixtures", action="store_true")
     args = parser.parse_args()
-    warnings.simplefilter("ignore", UserWarning)  # filter_by_expression without a group
+    warnings.simplefilter("ignore", UserWarning)  # no sample_groups or design given
     data, small, edges = datasets(), small_matrices(), edge_cases()
     cases = {**data, **small, **edges, **deviation_cases()}
     rows = checks(data, small)
@@ -514,8 +517,12 @@ def write_fixtures(cases, rows, results, small, edges):
         if kind in ("cpm", "logcpm"):  # keep the first 40 features
             ref = ref.reshape(case["Y"].shape[0], -1)[:, :40]
         output = place("outputs", ref)
+        recorded = dict(
+            function=FIXTURE_NAMES.get(spec["function"], spec["function"]),
+            kwargs={FIXTURE_NAMES.get(k, k): v for k, v in spec["kwargs"].items()},
+        )
         records.append(
-            dict(check=check, case=name, kind=kind, r_call=r, output=output, **spec)
+            dict(check=check, case=name, kind=kind, r_call=r, output=output, **recorded)
         )
     FIXTURES.mkdir(parents=True, exist_ok=True)
     arrays = {name: np.concatenate(values) for name, values in stores.items()}

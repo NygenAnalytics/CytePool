@@ -6,35 +6,37 @@ so that pathways can be compared across samples, drawn as a heatmap
 (:func:`~cytepool.plotting.plot_pathway_scores`) and tested with the designs and
 contrasts of the linear models, as GSVA's guide tests its scores with limma. They
 compute the four methods of GSVA 2.0.0 (Haenzelmann, Castelo and Guinney 2013) with its
-options and defaults: :func:`gsva`, the method of that paper; :func:`ssgsea`, single
-sample GSEA (Barbie et al. 2009); :func:`combined_z_scores` (Lee et al. 2008); and
-:func:`plage` (Tomfohr, Lu and Kepler 2005). ``validation/pathway_scores.py`` compares
-them with GSVA run as a black box. GSVA is licensed under the GPL: the methods are
-implemented from the papers and GSVA's documentation, and what these leave open was
-found by running GSVA on chosen inputs, as marked "found by probing" below.
+options and defaults: :func:`~cytepool.gsva`, the method of that paper;
+:func:`~cytepool.ssgsea`, single sample GSEA (Barbie et al. 2009);
+:func:`~cytepool.combined_z_scores` (Lee et al. 2008); and :func:`~cytepool.plage`
+(Tomfohr, Lu and Kepler 2005). ``validation/pathway_scores.py`` compares them with GSVA
+run as a black box. GSVA is licensed under the GPL: the methods are implemented from the
+papers and GSVA's documentation, and what these leave open was found by running GSVA on
+chosen inputs, as marked "found by probing" below.
 
 The data:
     Values are samples x genes: a 2-D array with one gene id per column, or a group
-    (cell type) of a :class:`~cytepool.cube.Cube`, of which the samples with at least
+    (cell type) of a :class:`~cytepool.Cube`, of which the samples with at least
     ``min_cells`` cells and some counts are scored, over the genes that edgeR's
     ``filterByExpr`` keeps (:func:`~cytepool.normalization.filter_by_expression`),
-    as log2 counts per million after TMM normalization (``values="log_cpm"``,
+    as log2 counts per million after TMM normalization (``values="log2_cpm"``,
     edgeR's ``cpm(log = TRUE)``) or as counts (``values="counts"``), the values GSVA's
     guide passes. NaN marks a missing value; infinite values are refused. Each
     method's docstring says how it treats missing values.
 
-    :func:`gsva`, :func:`combined_z_scores` and :func:`plage` leave out the genes whose
-    values are all equal (constant), before the sets are matched, as GSVA does;
-    :func:`ssgsea` keeps them, as GSVA does (found by probing).
+    :func:`~cytepool.gsva`, :func:`~cytepool.combined_z_scores` and
+    :func:`~cytepool.plage` leave out the genes whose values are all equal (constant),
+    before the sets are matched, as GSVA does; :func:`~cytepool.ssgsea` keeps them, as
+    GSVA does (found by probing).
 
 Gene sets:
-    The sets are a :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to
-    gene ids, matched to the genes' ids exactly. A set is scored when ``min_size`` to
-    ``max_size`` of its genes are among the genes scored (GSVA's ``minSize`` and
-    ``maxSize``, counted after matching); the others are left out, as GSVA leaves
-    them out. The result keeps the order of the sets.
+    The sets are a :class:`~cytepool.GeneSets` or a mapping of set name to gene ids,
+    matched to the genes' ids exactly. A set is scored when ``min_size`` to ``max_size``
+    of its genes are among the genes scored (GSVA's ``minSize`` and ``maxSize``, counted
+    after matching); the others are left out, as GSVA leaves them out. The result keeps
+    the order of the sets.
 
-GSVA (:func:`gsva`):
+GSVA (:func:`~cytepool.gsva`):
     1. Each gene's values are turned into the probability of a value at most as
        high under the gene's distribution across samples, estimated by a kernel
        (Haenzelmann, Castelo and Guinney 2013): for gene i in sample j,
@@ -75,7 +77,7 @@ GSVA (:func:`gsva`):
     of the sample's observed genes outside the set, with p_j and k_j counting the
     genes observed in sample j.
 
-ssGSEA (:func:`ssgsea`):
+ssGSEA (:func:`~cytepool.ssgsea`):
     Each sample ranks its genes by their values, and the walk down the ranking rises
     at each gene of a set by its rank to the power alpha (``exponent``), as a share
     of the set's total, and falls at each other gene by 1/(p - k) (Barbie et al.
@@ -90,13 +92,13 @@ ssGSEA (:func:`ssgsea`):
     did and GSVA does by default. Missing values are left out of each sample's
     ranking, as GSVA's ``use = "na.rm"`` does.
 
-Combined z-scores (:func:`combined_z_scores`):
+Combined z-scores (:func:`~cytepool.combined_z_scores`):
     Each gene is standardized across samples, z = (x - mean) / sd, and a set's score
     in a sample is sum_{g in G} z_g / sqrt(k) (Lee et al. 2008). A missing value
     leaves its gene out of the mean and standard deviation, and makes the score of
     every set that holds the gene NaN in that sample, as in GSVA.
 
-PLAGE (:func:`plage`):
+PLAGE (:func:`~cytepool.plage`):
     The standardized values of a set's k genes form a k x n matrix, and the set's
     scores are the first right singular vector of that matrix: the samples'
     coordinates on the direction along which the set's genes vary most together
@@ -189,7 +191,13 @@ from ._analysis_records import (
     restore_provenance,
 )
 from ._columns import text_column
-from ._expression_values import MIN_CELLS, ExpressionValues, expression_values
+from ._expression_values import (
+    MIN_CELLS,
+    PROFILE_ID,
+    ExpressionValues,
+    expression_values,
+    profile_table,
+)
 from ._jit import by_chunks, jit, thread_limit
 from ._masked_arrays import read_only, reject_masked
 from ._messages import quoted
@@ -225,18 +233,20 @@ _ZERO_SUM = 1e-10
 
 @dataclass(frozen=True, eq=False, repr=False)
 class PathwayScores:
-    """Scores of gene sets in every sample.
+    """Scores of gene sets in every profile: every sample of an array, or of a
+    cube's group.
 
-    Rows of ``scores`` are samples, in the order of ``samples``, and columns are the
-    sets scored, in the order of ``gene_sets``, so that
-    :func:`~cytepool.stats.linear_models.fit_linear_model` takes ``scores`` as its
-    values, with a design built from ``samples``. The arrays are read-only.
+    Rows of ``scores`` are profiles, in the order of ``profiles``, and columns are
+    the sets scored, in the order of ``gene_sets``, so that :func:`~cytepool.limma`
+    tests them with a design of the samples, matched by ``sample_id``. The arrays are
+    read-only.
 
     Attributes:
-        scores: ``(n_samples, n_sets)`` float64 scores; NaN where a set has none in
-            a sample.
-        samples: One row per sample: ``sample_id`` and, for a cube's group, the
-            columns of the cube's sample table.
+        scores: ``(n_profiles, n_sets)`` float64 scores; NaN where a set has none in
+            a profile.
+        profiles: One row per profile: ``profile_id``, the sample's id, then
+            ``sample_id`` and, for a cube's group, the other columns of the cube's
+            sample table, as :class:`~cytepool.Activities` names its profiles.
         gene_sets: The sets scored, each with the genes that were used, in the order
             given, with the description and source of the collection.
         method: ``"gsva"``, ``"ssgsea"``, ``"combined_z_scores"`` or ``"plage"``.
@@ -245,7 +255,7 @@ class PathwayScores:
     """
 
     scores: FloatArray
-    samples: Table
+    profiles: Table
     gene_sets: GeneSets
     method: str
     settings: Mapping[str, Any]
@@ -257,7 +267,7 @@ class PathwayScores:
             _restored_scores,
             (
                 self.scores,
-                self.samples,
+                self.profiles,
                 self.gene_sets,
                 self.method,
                 dict(self.settings),
@@ -272,7 +282,7 @@ class PathwayScores:
         the cube's fingerprint, the digests it is built from and its provenance
         (``"cube"``), the layer read and the settings; None for scores of values
         given as an array. The cube's record costs what it costs for
-        :func:`~cytepool.differential_expression.limma_voom` ("Provenance")."""
+        :func:`~cytepool.limma_voom` ("Provenance")."""
         return provenance_of(self)
 
     @property
@@ -283,36 +293,36 @@ class PathwayScores:
         return read_only(np.array(sizes, dtype=np.int64))
 
     def table(self) -> Table:
-        """Return the scores as a table with one row per set and sample.
+        """Return the scores as a table with one row per set and profile.
 
         Returns:
-            A table with ``gene_set``, ``n_genes``, ``sample_id`` and ``score``, the
-            rows of each set together, in the order of ``gene_sets``, and its samples
-            in the order of ``samples``.
+            A table with ``gene_set``, ``n_genes``, ``profile_id`` and ``score``, the
+            rows of each set together, in the order of ``gene_sets``, and its
+            profiles in the order of ``profiles``.
         """
-        n_samples, n_sets = self.scores.shape
+        n_profiles, n_sets = self.scores.shape
         names = list(self.gene_sets)
-        ids = self.samples["sample_id"].tolist()
+        ids = self.profiles[PROFILE_ID].tolist()
         return Table(
             {
                 "gene_set": text_column([name for name in names for _ in ids]),
-                "n_genes": np.repeat(self.n_genes, n_samples),
-                "sample_id": text_column(ids * n_sets),
+                "n_genes": np.repeat(self.n_genes, n_profiles),
+                "profile_id": text_column(ids * n_sets),
                 "score": self.scores.T.ravel().copy(),
             }
         )
 
     def __repr__(self) -> str:
-        n_samples, n_sets = self.scores.shape
+        n_profiles, n_sets = self.scores.shape
         return (
-            f"PathwayScores(method={self.method!r}, n_samples={n_samples}, "
+            f"PathwayScores(method={self.method!r}, n_profiles={n_profiles}, "
             f"n_sets={n_sets})"
         )
 
 
 def _restored_scores(
     scores: FloatArray,
-    samples: Table,
+    profiles: Table,
     gene_sets: GeneSets,
     method: str,
     settings: dict[str, Any],
@@ -321,7 +331,7 @@ def _restored_scores(
     """Pathway scores unpickled: read-only again, with their provenance."""
     restored = PathwayScores(
         read_only(np.asarray(scores)),
-        samples,
+        profiles,
         gene_sets,
         method,
         MappingProxyType(settings),
@@ -333,10 +343,11 @@ def gsva(
     data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
-    values: str = "log_cpm",
+    values: str = "log2_cpm",
     min_cells: int = MIN_CELLS,
     expression_filter: bool | Mapping[str, Any] = True,
     kernel: str = "auto",
@@ -360,28 +371,27 @@ def gsva(
     Args:
         data: ``(n_samples, n_genes)`` expression values, such as log-CPM or, for the
             Poisson kernel, counts; NaN marks a missing value. Or a
-            :class:`~cytepool.cube.Cube`, whose ``group`` is scored.
-        gene_sets: A :class:`~cytepool.gene_sets.GeneSets`, such as one read by
-            :func:`~cytepool.gene_sets.read_gmt`, or a mapping of set name to gene
-            ids.
-        gene_ids: The genes' ids, which the sets name: one per column of an array
-            (None, NaN or an empty string for a gene without one); for a cube, the
-            name of a column of its features table, ``"feature_id"`` by default or
-            ``"symbol"``, or one id per feature.
+            :class:`~cytepool.Cube`, whose ``group`` is scored.
+        gene_sets: A :class:`~cytepool.GeneSets`, such as one read by
+            :func:`~cytepool.read_gmt`, or a mapping of set name to gene ids.
+        id_column: For a cube, the column of its features table with the genes'
+            ids, which the sets name: ``"feature_id"`` by default, or ``"symbol"``.
+        feature_ids: For an array, the genes' ids, one per column (None, NaN or an
+            empty string for a gene without one).
         sample_ids: For an array, one id per row; by default ``"1"``, ``"2"``, ...
         group: The group (cell type) of a cube to score; it may be left out when the
             cube has one.
-        values: For a cube, the values scored: ``"log_cpm"``, log2 counts per million
+        values: For a cube, the values scored: ``"log2_cpm"``, log2 counts per million
             after TMM normalization, or ``"counts"``.
         min_cells: For a cube, the fewest cells a sample needs in the group to be
             scored, at least 0, as for
-            :func:`~cytepool.differential_expression.limma_voom`.
+            :func:`~cytepool.limma_voom`.
         expression_filter: For a cube, whether to score only the genes that
             :func:`~cytepool.normalization.filter_by_expression` keeps, with the
             samples as one group; or a mapping of its settings, which may name a
             column of the cube's samples whose values group them, such as
             ``{"sample_groups": "condition"}``, as
-            :func:`~cytepool.differential_expression.limma_voom` takes it.
+            :func:`~cytepool.limma_voom` takes it.
         kernel: How each gene's distribution is estimated (GSVA's ``kcdf``):
             ``"gaussian"`` for continuous values, ``"poisson"`` for counts (whole
             numbers of at least 0), ``"none"`` for the empirical distribution
@@ -419,7 +429,8 @@ def gsva(
         >>> y = rng.normal(size=(6, 40))
         >>> y[3:, :5] += 2.0  # the first five genes are higher in the last samples
         >>> genes = [f"g{j}" for j in range(40)]
-        >>> result = gsva(y, {"up": genes[:5], "other": genes[20:30]}, gene_ids=genes)
+        >>> sets = {"up": genes[:5], "other": genes[20:30]}
+        >>> result = gsva(y, sets, feature_ids=genes)
         >>> result.scores[:, 0].round(2).tolist()
         [-0.54, -0.82, -0.69, 0.78, 0.34, 0.77]
     """
@@ -432,7 +443,14 @@ def gsva(
     score = _SCORE_TYPES.index(checked_choice(score_type, "score_type", _SCORE_TYPES))
     collection = _collection(gene_sets)
     expression = expression_values(
-        data, gene_ids, sample_ids, group, values, min_cells, expression_filter
+        data,
+        id_column,
+        feature_ids,
+        sample_ids,
+        group,
+        values,
+        min_cells,
+        expression_filter,
     )
     n_samples = expression.values.shape[0]
     if kind == "auto":
@@ -472,10 +490,11 @@ def ssgsea(
     data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
-    values: str = "log_cpm",
+    values: str = "log2_cpm",
     min_cells: int = MIN_CELLS,
     expression_filter: bool | Mapping[str, Any] = True,
     exponent: float = 0.25,
@@ -496,13 +515,14 @@ def ssgsea(
     Args:
         data: ``(n_samples, n_genes)`` expression values; NaN marks a missing value,
             which is left out of its sample's ranking. Or a
-            :class:`~cytepool.cube.Cube`, whose ``group`` is scored.
-        gene_sets: A :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to
+            :class:`~cytepool.Cube`, whose ``group`` is scored.
+        gene_sets: A :class:`~cytepool.GeneSets` or a mapping of set name to
             gene ids.
-        gene_ids: The genes' ids, as for :func:`gsva`.
+        id_column: For a cube, the column of its gene ids, as for :func:`gsva`.
+        feature_ids: For an array, the genes' ids, as for :func:`gsva`.
         sample_ids: For an array, one id per row, as for :func:`gsva`.
         group: The group of a cube, as for :func:`gsva`.
-        values: For a cube, ``"log_cpm"`` or ``"counts"``, as for :func:`gsva`; both
+        values: For a cube, ``"log2_cpm"`` or ``"counts"``, as for :func:`gsva`; both
             rank the genes of a sample alike.
         min_cells: For a cube, as for :func:`gsva`.
         expression_filter: For a cube, as for :func:`gsva`.
@@ -534,7 +554,14 @@ def ssgsea(
     scaled = checked_flag(normalize, "normalize")
     collection = _collection(gene_sets)
     expression = expression_values(
-        data, gene_ids, sample_ids, group, values, min_cells, expression_filter
+        data,
+        id_column,
+        feature_ids,
+        sample_ids,
+        group,
+        values,
+        min_cells,
+        expression_filter,
     )
     kept = np.arange(expression.values.shape[1])
     members, names = _matched_sets(collection, expression.gene_ids, kept, checked)
@@ -566,10 +593,11 @@ def combined_z_scores(
     data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
-    values: str = "log_cpm",
+    values: str = "log2_cpm",
     min_cells: int = MIN_CELLS,
     expression_filter: bool | Mapping[str, Any] = True,
     min_size: int = 1,
@@ -585,14 +613,15 @@ def combined_z_scores(
 
     Args:
         data: ``(n_samples, n_genes)`` expression values on a log scale; NaN marks a
-            missing value. Or a :class:`~cytepool.cube.Cube`, whose ``group`` is
+            missing value. Or a :class:`~cytepool.Cube`, whose ``group`` is
             scored.
-        gene_sets: A :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to
+        gene_sets: A :class:`~cytepool.GeneSets` or a mapping of set name to
             gene ids.
-        gene_ids: The genes' ids, as for :func:`gsva`.
+        id_column: For a cube, the column of its gene ids, as for :func:`gsva`.
+        feature_ids: For an array, the genes' ids, as for :func:`gsva`.
         sample_ids: For an array, one id per row, as for :func:`gsva`.
         group: The group of a cube, as for :func:`gsva`.
-        values: For a cube, ``"log_cpm"`` or ``"counts"``, as for :func:`gsva`.
+        values: For a cube, ``"log2_cpm"`` or ``"counts"``, as for :func:`gsva`.
         min_cells: For a cube, as for :func:`gsva`.
         expression_filter: For a cube, as for :func:`gsva`.
         min_size: The fewest of a set's genes among the genes for the set to be
@@ -615,7 +644,14 @@ def combined_z_scores(
     checked = _checked_size(min_size, max_size)
     collection = _collection(gene_sets)
     expression = expression_values(
-        data, gene_ids, sample_ids, group, values, min_cells, expression_filter
+        data,
+        id_column,
+        feature_ids,
+        sample_ids,
+        group,
+        values,
+        min_cells,
+        expression_filter,
     )
     kept = _varying_genes(expression.values)
     members, names = _matched_sets(collection, expression.gene_ids, kept, checked)
@@ -641,10 +677,11 @@ def plage(
     data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
-    values: str = "log_cpm",
+    values: str = "log2_cpm",
     min_cells: int = MIN_CELLS,
     expression_filter: bool | Mapping[str, Any] = True,
     min_size: int = 1,
@@ -663,14 +700,15 @@ def plage(
 
     Args:
         data: ``(n_samples, n_genes)`` expression values on a log scale, without
-            missing values. Or a :class:`~cytepool.cube.Cube`, whose ``group`` is
+            missing values. Or a :class:`~cytepool.Cube`, whose ``group`` is
             scored.
-        gene_sets: A :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to
+        gene_sets: A :class:`~cytepool.GeneSets` or a mapping of set name to
             gene ids.
-        gene_ids: The genes' ids, as for :func:`gsva`.
+        id_column: For a cube, the column of its gene ids, as for :func:`gsva`.
+        feature_ids: For an array, the genes' ids, as for :func:`gsva`.
         sample_ids: For an array, one id per row, as for :func:`gsva`.
         group: The group of a cube, as for :func:`gsva`.
-        values: For a cube, ``"log_cpm"`` or ``"counts"``, as for :func:`gsva`.
+        values: For a cube, ``"log2_cpm"`` or ``"counts"``, as for :func:`gsva`.
         min_cells: For a cube, as for :func:`gsva`.
         expression_filter: For a cube, as for :func:`gsva`.
         min_size: The fewest of a set's genes among the genes for the set to be
@@ -693,7 +731,8 @@ def plage(
     collection = _collection(gene_sets)
     expression = expression_values(
         data,
-        gene_ids,
+        id_column,
+        feature_ids,
         sample_ids,
         group,
         values,
@@ -804,8 +843,8 @@ def _matched_sets(
         examples = [gene for genes in collection.values() for gene in genes[:3]][:3]
         ids = [gene for gene in gene_ids if gene is not None][:3]
         raise ValueError(
-            "no gene of any set is among the genes scored; the sets and gene_ids "
-            "must name genes the same way (for example both by symbol, or both by "
+            "no gene of any set is among the genes scored; the sets and the genes' "
+            "ids must name genes the same way (for example both by symbol, or both by "
             f"Ensembl id): the sets name genes such as {quoted(examples)}, the data "
             f"genes such as {quoted(ids)}"
         )
@@ -835,7 +874,7 @@ def _result(
             for name, positions in zip(names, members, strict=True)
         },
         descriptions={name: collection.descriptions[name] for name in names},
-        source=collection.source,
+        name=collection.name,
         version=collection.version,
         licence=collection.licence,
         file=collection.file,
@@ -843,7 +882,7 @@ def _result(
     )
     result = PathwayScores(
         read_only(np.ascontiguousarray(scores, dtype=np.float64)),
-        expression.samples,
+        profile_table(expression.samples, "the scores"),
         used,
         method,
         MappingProxyType(dict(settings)),

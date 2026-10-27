@@ -64,7 +64,7 @@ import numpy as np
 from cytepool.normalization import tmm_factors
 from cytepool.stats.empirical_bayes import squeeze_variances
 from cytepool.stats.quasi_likelihood import (
-    average_log_cpm,
+    average_log2_cpm,
     common_dispersion,
     fit_quasi_likelihood,
     negative_binomial_unit_deviance_moments,
@@ -488,7 +488,7 @@ def compare_case(name, case, table):
         tolerance,
         True,
     )
-    value = relative(np.broadcast_to(fit.prior_df, n_genes), edger["df.prior"])
+    value = relative(np.broadcast_to(fit.df_prior, n_genes), edger["df.prior"])
     check("prior df", FIT, MAX_RELATIVE, value, PRIOR_DF, True)
     # The moderation of edgeR's own adjusted deviances: only the moments differ above.
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -503,7 +503,7 @@ def compare_case(name, case, table):
     )
     value = max(
         relative(np.broadcast_to(squeezed.prior_variance, n_genes), edger["s2.prior"]),
-        relative(np.broadcast_to(squeezed.prior_df, n_genes), edger["df.prior"]),
+        relative(np.broadcast_to(squeezed.df_prior, n_genes), edger["df.prior"]),
         relative(squeezed.posterior_variance, edger["s2.post"]),
     )
     label = "the same from edgeR's adjusted deviances"
@@ -537,7 +537,7 @@ def compare_case(name, case, table):
             for k, v in edger.items()
             if k.startswith(f"test{i}_")
         }
-        logcpm = np.asarray(result.average_log_cpm)
+        logcpm = np.asarray(result.average_log2_cpm)
         if not genes[0]:
             value = abs(logcpm[0] - e["logCPM"][0])
             check(f"{label}: logCPM of the first gene", TEST, "difference", value, None)
@@ -547,7 +547,7 @@ def compare_case(name, case, table):
         tolerance = SEARCH_LOG_CPM if estimated else CLOSE
         check(f"{label}: logCPM", TEST, "max difference", value, tolerance)
         lfc = e["logFC"].reshape(-1, n_genes).T
-        value = float(np.max(np.abs(result.log_fold_change - lfc)))
+        value = float(np.max(np.abs(result.log2_fold_change - lfc)))
         check(
             f"{label}: logFC",
             TEST,
@@ -585,7 +585,7 @@ def compare_case(name, case, table):
 
 
 def compare_direct(case, direct, table):
-    """common_dispersion and average_log_cpm against edgeR's functions."""
+    """common_dispersion and average_log2_cpm against edgeR's functions."""
     y, x, lib = case["counts"], case["design"], case["library_sizes"]
     w = DIRECT_WEIGHTS
     reference = direct["common"]
@@ -623,10 +623,10 @@ def compare_direct(case, direct, table):
     )
     mine = np.column_stack(
         [
-            average_log_cpm(y, library_sizes=lib),
-            average_log_cpm(y, library_sizes=lib, prior_count=0.5, dispersion=0.3),
-            average_log_cpm(y, library_sizes=lib, weights=w, dispersion=0.0),
-            average_log_cpm(y + 0.5, offsets=np.log(lib), prior_count=0.0),
+            average_log2_cpm(y, library_sizes=lib),
+            average_log2_cpm(y, library_sizes=lib, prior_count=0.5, dispersion=0.3),
+            average_log2_cpm(y, library_sizes=lib, weights=w, dispersion=0.0),
+            average_log2_cpm(y + 0.5, offsets=np.log(lib), prior_count=0.0),
         ]
     )
     value = float(np.max(np.abs(mine - direct["abundance"].reshape(4, -1).T)))

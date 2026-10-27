@@ -1,8 +1,8 @@
 """Check variance partitioning against variancePartition's fitExtractVarPartModel.
 
-Compares ``variance_fractions`` and ``variance_partitioning`` (cytepool.
-variance_partitioning) with variancePartition's ``fitExtractVarPartModel`` and
-``calcVarPart``, and ``plot_variance_fractions`` and ``plot_gene_variance_fractions``
+Compares ``variance_fractions`` (cytepool.stats.variance_fractions) and
+``variance_partitioning`` with variancePartition's ``fitExtractVarPartModel`` and
+``calcVarPart``, and ``plot_variance_fractions`` and ``plot_feature_variance_fractions``
 (cytepool.plotting) with its ``plotVarPart`` and ``plotPercentBars``, on data
 simulated from fixed seeds (20261101 to 20261108), 60 genes each:
 
@@ -69,12 +69,10 @@ from typing import Any
 import numpy as np
 from matplotlib.figure import Figure
 
-from cytepool import plotting
-from cytepool.cube import Cube
-from cytepool.design import Design
+from cytepool import Cube, Design, plotting, variance_partitioning
 from cytepool.normalization import filter_by_expression, library_sizes, tmm_factors
 from cytepool.stats.dream import voom_with_dream_weights
-from cytepool.variance_partitioning import variance_fractions, variance_partitioning
+from cytepool.stats.variance_fractions import variance_fractions
 
 FIXTURES = (
     Path(__file__).resolve().parents[1] / "tests" / "data" / "variance_partitioning"
@@ -351,7 +349,7 @@ def ours(case: dict[str, Any]) -> Any:
     if "counts" in case:
         voom = voom_with_dream_weights(case["counts"], design, span=0.5)
         return variance_fractions(
-            voom.log_cpm, design, weights=voom.weights, method=method
+            voom.log2_cpm, design, weights=voom.weights, method=method
         )
     return variance_fractions(
         case["values"], design, weights=case["weights"], method=method
@@ -603,7 +601,7 @@ def compare_figures(fractions: Any, ref: dict[str, Any], results: Results) -> No
     )
 
     names = [f"g{i + 1}" for i in range(fractions.fractions.shape[0])]
-    ax = plotting.plot_gene_variance_fractions(
+    ax = plotting.plot_feature_variance_fractions(
         fractions, BAR_GENES, labels=names, ax=Figure().subplots()
     )
     segments = {}

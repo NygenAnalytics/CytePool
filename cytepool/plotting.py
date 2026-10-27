@@ -61,8 +61,8 @@ The figures:
 - Variance partitioning: :func:`plot_variance_fractions`, the violins (Hintze and
   Nelson 1998) of the fractions of variance of every variable over the genes, as
   variancePartition's ``plotVarPart`` draws them (Hoffman and Schadt 2016);
-  :func:`plot_gene_variance_fractions`, the fractions of chosen genes as stacked
-  bars, as its ``plotPercentBars`` draws them.
+  :func:`plot_feature_variance_fractions`, the fractions of chosen features as
+  stacked bars, as its ``plotPercentBars`` draws them.
 
 ``validation/plotting.py`` compares what each figure shows with what the R function it
 follows draws for the same data, where one exists, and
@@ -227,25 +227,23 @@ from .composition import CompositionResult
 from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
 from .gene_sets import GeneSets
-from .held_out_prediction import HeldOutPrediction
-from .meta_analysis import MetaAnalysisResult
-from .normalization import filter_by_expression, log_cpm, tmm_factors
+from .held_out_studies import HeldOutPrediction
+from .meta_analysis_of_studies import MetaAnalysisResult
+from .normalization import filter_by_expression, log2_cpm, tmm_factors
 from .pathway_scores import PathwayScores
-from .principal_components import PrincipalComponents, principal_components
-from .replication import ReplicationResult
+from .principal_component_analysis import PrincipalComponents, principal_components
+from .replication_across_studies import ReplicationResult
 from .stats.deseq2 import DESeq2Dispersions, DESeq2Fit, DESeq2Results
 from .stats.distributions import f_cdf, f_sf, norm_isf
 from .stats.empirical_bayes import ModeratedFit, TreatFit
 from .stats.multiple_testing import adjust_p_values
 from .stats.quasi_likelihood import QuasiLikelihoodFit, QuasiLikelihoodTest
+from .stats.variance_fractions import RESIDUALS, VarianceFractions
 from .stats.voom import VoomResult
-from .sumrank import SumRankResult
+from .study_results import StudyResults
+from .sumrank_across_studies import SumRankResult
 from .table import Table
-from .variance_partitioning import (
-    RESIDUALS,
-    VarianceFractions,
-    VariancePartitioningResult,
-)
+from .variance_components import VariancePartitioningResult
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -258,9 +256,9 @@ __all__ = [
     "plot_dispersions",
     "plot_dotplot",
     "plot_enrichment",
+    "plot_feature_variance_fractions",
     "plot_forest",
     "plot_gene_sets",
-    "plot_gene_variance_fractions",
     "plot_gsea_table",
     "plot_held_out_auc",
     "plot_md",
@@ -437,12 +435,13 @@ def _patch(label: str, color: str, **properties: Any) -> Any:
     )
 
 
-def _legend(ax: "Axes", handles: list[Any], *, inside: bool = False) -> None:
+def _legend(ax: "Axes", handles: list[Any], *, inside: bool = False) -> bool:
     """A legend to the right of the plot; with ``inside``, a legend of a few entries
     inside the plot instead, where it covers no point, line, bar or label at the size
     the figure is laid out at, so that panels side by side keep their width. Where
     every place inside would cover something, or the legend has more entries, it goes
-    beside the plot. Entries without a marker or line are headers, set in bold."""
+    beside the plot. Entries without a marker or line are headers, set in bold.
+    Returns whether the legend is inside the plot."""
     if inside and len(handles) <= _FEW_ENTRIES:
         legend = ax.legend(handles=handles, loc="best", framealpha=0.85)
         _bold_headers(handles, legend)
@@ -450,7 +449,7 @@ def _legend(ax: "Axes", handles: list[Any], *, inside: bool = False) -> None:
         for place in _INSIDE_PLACES:
             legend.set_loc(place)
             if not obstacles.covered_by(legend.get_window_extent()):
-                return
+                return True
         legend.remove()
     legend = ax.legend(
         handles=handles,
@@ -460,6 +459,7 @@ def _legend(ax: "Axes", handles: list[Any], *, inside: bool = False) -> None:
         frameon=False,
     )
     _bold_headers(handles, legend)
+    return False
 
 
 def _bold_headers(handles: list[Any], legend: Any) -> None:
@@ -740,21 +740,22 @@ def plot_mds(
     ``var.explained``. A dimension's sign is arbitrary; here its largest coordinate is
     positive.
 
-    A cube gives the pseudobulk samples of one group, prepared as the edgeR User's
-    Guide prepares counts for ``plotMDS``: samples with fewer than ``min_cells`` cells
-    or no counts are left out, as
-    :func:`~cytepool.differential_expression.limma_voom` leaves them out; genes are
-    kept by :func:`~cytepool.normalization.filter_by_expression` with the samples as
-    one group; and the log2 counts per million are those that edgeR's ``plotMDS``
-    takes of counts, with TMM normalization factors and an average count of 2 added
-    (:func:`~cytepool.normalization.log_cpm`).
+    A cube gives the pseudobulk samples of one group, prepared as the edgeR User's Guide
+    prepares counts for ``plotMDS``: samples with fewer than ``min_cells`` cells or no
+    counts are left out, as :func:`~cytepool.limma_voom` leaves them out; genes are kept
+    by :func:`~cytepool.normalization.filter_by_expression` with the samples as one
+    group; and the log2 counts per million are those that edgeR's ``plotMDS`` takes of
+    counts, with TMM normalization factors and an average count of 2 added
+    (:func:`~cytepool.normalization.log2_cpm`).
 
     Draws the samples as points (gid ``"samples"``), coloured by ``color_by`` and
     marked by ``marker_by``, with a legend of their levels, and labels the samples
-    (gid ``"sample labels"``) when asked.
+    (gid ``"sample labels"``) when asked: each label above its point, moved inside the
+    frame where it would cross it and up where it would overlap another, with a line
+    to its point when it moved.
 
     Args:
-        data: A :class:`~cytepool.cube.Cube`; a
+        data: A :class:`~cytepool.Cube`; a
             :class:`~cytepool.stats.voom.VoomResult`, whose log2 counts per million are
             used; or ``(n_samples, n_genes)`` log-expression values, finite.
         group: The group (cell type) of a cube to plot; it may be left out when the
@@ -813,6 +814,7 @@ def plot_mds(
     axis = "Leading log2 fold change, dimension" if pairwise else "Principal component"
     ax.set_xlabel(f"{axis} {first} ({100 * share[first - 1]:.0f}%)")
     ax.set_ylabel(f"{axis} {second} ({100 * share[second - 1]:.0f}%)")
+    _label_and_key_samples(ax, x, y, styles)
     return ax
 
 
@@ -837,7 +839,7 @@ def _mds_values(data: Any, group: Any, min_cells: Any) -> tuple[FloatArray, _Sam
             raise ValueError(
                 f"{given} applies to a cube, and data is a {type(data).__name__}"
             )
-        source = data.log_cpm if isinstance(data, VoomResult) else data
+        source = data.log2_cpm if isinstance(data, VoomResult) else data
         values = real_array(unmasked_array(source, "data"), "data", boolean=False)
         if values.ndim != 2:
             raise ValueError(
@@ -873,14 +875,16 @@ def _mds_values(data: Any, group: Any, min_cells: Any) -> tuple[FloatArray, _Sam
             f"{fewest} cells; an MDS plot compares two or more"
         )
     kept = counts[rows]
-    keep = filter_by_expression(kept, group=np.zeros(rows.size))
+    keep = filter_by_expression(kept, sample_groups=np.zeros(rows.size))
     if not keep.any():
         raise ValueError(
             f"no gene of group {group!r} passes filter_by_expression, so no distance "
             "can be computed"
         )
     kept = kept[:, keep]
-    values = log_cpm(kept, norm_factors=tmm_factors(kept), prior_count=_MDS_PRIOR_COUNT)
+    values = log2_cpm(
+        kept, norm_factors=tmm_factors(kept), prior_count=_MDS_PRIOR_COUNT
+    )
     return values, _cube_samples(data, rows)
 
 
@@ -931,10 +935,9 @@ def plot_cell_numbers(
     """Plot the number of cells pooled into each sample and group of a cube.
 
     A heatmap of ``Cube.n_cells``, one column per sample and one row per group (cell
-    type) in the cube's order, shaded in blue on a logarithmic scale. Entries with
-    fewer than ``min_cells`` cells, which
-    :func:`~cytepool.differential_expression.limma_voom` leaves out of a group's fit
-    with the same ``min_cells``, and entries without cells are pale grey, as the end
+    type) in the cube's order, shaded in blue on a logarithmic scale. Entries with fewer
+    than ``min_cells`` cells, which :func:`~cytepool.limma_voom` leaves out of a group's
+    fit with the same ``min_cells``, and entries without cells are pale grey, as the end
     of the colour bar shows.
 
     Draws the image (gid ``"cell numbers"``) and, when asked, the number of each entry
@@ -1031,13 +1034,13 @@ def plot_composition(
 ) -> "Axes":
     """Plot the cell-type composition of every sample as stacked bars.
 
-    speckle's ``plotCellTypeProps``: one bar per sample, divided into the proportions
-    of its cells in each group (cell type), the first group on top. A cube gives the
+    speckle's ``plotCellTypeProps``: one bar per sample, divided into the proportions of
+    its cells in each group (cell type), the first group on top. A cube gives the
     proportions ``n_cells`` over each sample's cells in all groups, without the samples
-    that have no cells; a :class:`~cytepool.composition.CompositionResult` gives those
-    that :func:`~cytepool.composition.propeller` tested, of its samples used and groups
-    tested. ``by`` groups the bars by a sample variable, such as the condition, whose
-    levels are written above their bars.
+    that have no cells; a :class:`~cytepool.CompositionResult` gives those that
+    :func:`~cytepool.propeller` tested, of its samples used and groups tested. ``by``
+    groups the bars by a sample variable, such as the condition, whose levels are
+    written above their bars.
 
     Draws the segments (gid ``"proportions"``), with a legend of the groups.
 
@@ -1194,7 +1197,7 @@ def plot_proportions(
     """Plot the proportion of every cell type in every sample, by condition, with the
     adjusted p-values of propeller.
 
-    The figure of a :func:`~cytepool.composition.propeller` result (Phipson et al.
+    The figure of a :func:`~cytepool.propeller` result (Phipson et al.
     2022): for every group (cell type) tested, the proportion of its cells in each
     sample used, as a point, side by side for the levels of ``by``, with a bar at the
     mean proportion of each level (speckle's ``PropMean``); above each group, the
@@ -1208,8 +1211,9 @@ def plot_proportions(
         result: The result of ``propeller``.
         by: A variable of the result's design, such as the condition, or one label per
             sample of the result's sample table.
-        contrast: The contrast whose adjusted p-values are shown. By default, the
-            F-test's when the result has one, else those of its only contrast.
+        contrast: The contrast, or F-test, whose adjusted p-values are shown. By
+            default, the F-test's when the result has one, else those of its only
+            contrast.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
@@ -1219,7 +1223,8 @@ def plot_proportions(
         TypeError: If ``result`` is not a CompositionResult, or ``by`` or ``contrast``
             has the wrong type or is a numpy masked array.
         ValueError: If ``by`` has the wrong length, a missing label or more than eight
-            levels, or no contrast is named and the result has several and no F-test.
+            levels, or no contrast is named and the result has several and no F-test,
+            or several F-tests.
         KeyError: If ``by`` names no variable of the design, or ``contrast`` was not
             tested.
     """
@@ -1230,16 +1235,18 @@ def plot_proportions(
         )
     _check_variable(by, "by")
     name = _optional_text(contrast, "contrast")
+    f_tests = list(result.f_tests)
     if name is not None:
         tests = result.table(name)
-    elif result.f_test is not None:
-        tests = result.f_test
-    elif len(result.tables) == 1:
+    elif len(f_tests) == 1:
+        tests = result.tables[f_tests[0]]
+    elif not f_tests and len(result.tables) == 1:
         tests = next(iter(result.tables.values()))
     else:
+        kind = "F-tests" if f_tests else "contrasts and no F-test"
         raise ValueError(
-            "the result tests several contrasts and no F-test; name one with contrast, "
-            f"one of {quoted(list(result.tables))}"
+            f"the result tests several {kind}; name one with contrast, one of "
+            f"{quoted(list(result.tables))}"
         )
     proportions, samples, group_ids = _composition(result)
     labels, levels = samples.labels(by, "by")
@@ -1327,16 +1334,14 @@ def plot_mean_variance(
     which the precision weights are read (``sqrt_sd_trend``). Genes left out of the
     trend, such as those without counts, are not drawn. Of a differential-expression
     result, the trend of one group, which
-    :meth:`~cytepool.differential_expression.DifferentialExpressionResult.fit`
-    computes again.
+    :meth:`~cytepool.DifferentialExpressionResult.fit` computes again.
 
     Draws the genes (gid ``"points"``) and the trend (gid ``"trend"``).
 
     Args:
         result: The result of :func:`~cytepool.stats.voom.voom` or
             :func:`~cytepool.stats.voom.voom_with_quality_weights`, or of
-            :func:`~cytepool.differential_expression.limma_voom` or
-            :func:`~cytepool.differential_expression.dream_voom`.
+            :func:`~cytepool.limma_voom` or :func:`~cytepool.dream_voom`.
         group: The group of a differential-expression result; it may be left out
             when the result has one group.
         ax: The Axes to draw into, or None for a new figure.
@@ -1433,10 +1438,9 @@ def plot_residual_variances(
     whose two-sided p-value as a variance of the prior, from the F distribution on the
     gene's residual and the prior's degrees of freedom (those of the genes that are not
     outliers), is below 0.5 once adjusted by Benjamini and Hochberg (1995), as limma
-    marks them (found by probing). Of a differential-expression result, the
-    moderation of one group, which
-    :meth:`~cytepool.differential_expression.DifferentialExpressionResult.fit`
-    computes again.
+    marks them (found by probing). Of a differential-expression result, the moderation
+    of one group, which :meth:`~cytepool.DifferentialExpressionResult.fit` computes
+    again.
 
     Draws the genes (gid ``"points"``), the outliers (gid ``"outliers"``) and the prior
     (gid ``"prior"``).
@@ -1444,8 +1448,7 @@ def plot_residual_variances(
     Args:
         fit: The result of :func:`~cytepool.stats.empirical_bayes.moderated_statistics`
             or :func:`~cytepool.stats.empirical_bayes.treat`, or of
-            :func:`~cytepool.differential_expression.limma_voom` or
-            :func:`~cytepool.differential_expression.limma_trend`.
+            :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend`.
         group: The group of a differential-expression result; it may be left out
             when the result has one group.
         ax: The Axes to draw into, or None for a new figure.
@@ -1492,10 +1495,10 @@ def plot_residual_variances(
         np.asarray(fit.prior_variance, dtype=np.float64), sigma.shape
     )
     outlier = np.zeros(sigma.shape, dtype=bool)
-    robust = np.ndim(fit.prior_df) == 1
+    robust = np.ndim(fit.df_prior) == 1
     if robust:
         ratio = np.where(shown, sigma**2 / prior, np.nan)
-        dfd = float(np.max(np.asarray(fit.prior_df)[shown]))
+        dfd = float(np.max(np.asarray(fit.df_prior)[shown]))
         lower, upper = f_cdf(ratio, df, dfd), f_sf(ratio, df, dfd)
         tails = np.where(shown, np.minimum(1.0, 2.0 * np.minimum(lower, upper)), np.nan)
         with np.errstate(invalid="ignore"):
@@ -1564,8 +1567,8 @@ def plot_sample_weights(
         weights: The ``sample_weights`` of a :class:`~cytepool.stats.voom.VoomResult`
             from :func:`~cytepool.stats.voom.voom_with_quality_weights`; the quality
             weights, or prior weights, of the samples used in one group of a
-            :class:`~cytepool.differential_expression.DifferentialExpressionResult`;
-            or the weights, positive and finite, such as those of
+            :class:`~cytepool.DifferentialExpressionResult`; or the weights, positive
+            and finite, such as those of
             :func:`~cytepool.stats.sample_weights.sample_quality_weights`.
         group: The group of a differential-expression result to plot; it may be left
             out when the result has one group.
@@ -1665,7 +1668,7 @@ def _weights_of_group(
 class _Tests:
     """The columns of a test that the figures of differential expression read."""
 
-    log_fold_change: FloatArray | None
+    log2_fold_change: FloatArray | None
     abundance: FloatArray | None
     abundance_label: str
     log_abundance: bool  # whether the abundance is drawn on a logarithmic axis
@@ -1724,8 +1727,8 @@ def _tests(result: Any, coefficient: Any) -> _Tests:
     if isinstance(result, QuasiLikelihoodTest):
         j = _coefficient(coefficient, result.names)
         return _Tests(
-            np.asarray(result.log_fold_change[:, j], dtype=np.float64),
-            np.asarray(result.average_log_cpm, dtype=np.float64),
+            np.asarray(result.log2_fold_change[:, j], dtype=np.float64),
+            np.asarray(result.average_log2_cpm, dtype=np.float64),
             "Average log2 CPM",
             False,
             np.asarray(result.p_value, dtype=np.float64),
@@ -1788,13 +1791,13 @@ def _require(values: FloatArray | None, column: str, function: str) -> FloatArra
 
 
 def _directions(
-    log_fold_change: FloatArray, adjusted: FloatArray, alpha: float
+    log2_fold_change: FloatArray, adjusted: FloatArray, alpha: float
 ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
     """The genes significant up and down at ``alpha``."""
     with np.errstate(invalid="ignore"):
         significant = adjusted < alpha
-        return significant & (log_fold_change > 0.0), significant & (
-            log_fold_change < 0.0
+        return significant & (log2_fold_change > 0.0), significant & (
+            log2_fold_change < 0.0
         )
 
 
@@ -1836,7 +1839,7 @@ def plot_md(
     whose adjusted p-value is below ``alpha`` coloured by direction, as
     ``plotMD(fit, status = decideTests(fit))`` colours them. The average expression is
     the average log2 counts per million of a table of
-    :class:`~cytepool.differential_expression.DifferentialExpressionResult` or of a
+    :class:`~cytepool.DifferentialExpressionResult` or of a
     :class:`~cytepool.stats.quasi_likelihood.QuasiLikelihoodTest`, the average
     log-expression of a fit, or, for
     :class:`~cytepool.stats.deseq2.DESeq2Results`, the mean of the normalized counts
@@ -1869,7 +1872,7 @@ def plot_md(
     _check_axes(ax)
     tests = _tests(result, coefficient)
     level = _fraction(alpha, "alpha")
-    y = _require(tests.log_fold_change, "log2_fold_change", "plot_md")
+    y = _require(tests.log2_fold_change, "log2_fold_change", "plot_md")
     x = _require(tests.abundance, "average_log2_cpm", "plot_md")
     adjusted = _require(tests.adjusted_p_value, "adjusted_p_value", "plot_md")
     shown = np.isfinite(x) & np.isfinite(y)
@@ -1942,7 +1945,7 @@ def plot_volcano(
         raise ValueError(f"top must be at least 0, got {count}")
     if labels is not None:
         reject_masked(labels, "labels")
-    x = _require(tests.log_fold_change, "log2_fold_change", "plot_volcano")
+    x = _require(tests.log2_fold_change, "log2_fold_change", "plot_volcano")
     p = _require(tests.p_value, "p_value", "plot_volcano")
     adjusted = _require(tests.adjusted_p_value, "adjusted_p_value", "plot_volcano")
     names = tests.names if labels is None else _gene_labels(labels, x.size)
@@ -2029,15 +2032,14 @@ def plot_significant_genes(
     """Plot how many genes go up and down in every group of a differential-expression
     result.
 
-    For every group (cell type) of a
-    :class:`~cytepool.differential_expression.DifferentialExpressionResult`, in its
-    order from the top, the genes whose adjusted p-value for ``contrast`` is below
+    For every group (cell type) of a :class:`~cytepool.DifferentialExpressionResult`, in
+    its order from the top, the genes whose adjusted p-value for ``contrast`` is below
     ``alpha``: a bar to the right for those up and to the left for those down, each
     labelled with its number. A group that was not fitted, or cannot estimate the
     contrast, has no bars, and its label says so. ``across_groups`` counts by the
     p-values adjusted over every group (``adjusted_p_value_across_groups``, which
-    :func:`~cytepool.differential_expression.limma_voom` adds with
-    ``adjust_across_groups=True``) instead of within each group.
+    :func:`~cytepool.limma_voom` adds with ``adjust_across_groups=True``) instead of
+    within each group.
 
     Draws the bars of genes up (gid ``"up"``) and down (gid ``"down"``), and their
     numbers (gid ``"numbers"``).
@@ -2258,7 +2260,7 @@ def plot_barcode(
     statistics: Any,
     gene_set: Any,
     *,
-    gene_ids: Any = None,
+    feature_ids: Any = None,
     span: float = _WORM_SPAN,
     ax: "Axes | None" = None,
 ) -> "Axes":
@@ -2283,11 +2285,12 @@ def plot_barcode(
         statistics: A table of a differential-expression result, whose ``t`` column
             (or ``statistic``, for a meta-analysis) ranks its genes, named by its
             ``feature_id``; or one statistic per gene, finite.
-        gene_set: The genes of the set: ids (of the table's genes, or of ``gene_ids``),
-            0-based positions, or a boolean mask over the genes. Ids that are not
-            among the genes are left out, as limma's ``ids2indices`` leaves them.
-        gene_ids: One id per gene, unique, to name the genes of ``gene_set`` by id when
-            ``statistics`` is not a table.
+        gene_set: The genes of the set: ids (of the table's genes, or of
+            ``feature_ids``), 0-based positions, or a boolean mask over the genes.
+            Ids that are not among the genes are left out, as limma's
+            ``ids2indices`` leaves them.
+        feature_ids: One id per gene, unique, to name the genes of ``gene_set`` by
+            id when ``statistics`` is not a table.
         span: The share of the genes in each window of the worm, in (0, 1].
         ax: The Axes to draw into, or None for a new figure.
 
@@ -2308,9 +2311,9 @@ def plot_barcode(
     reject_masked(gene_set, "gene_set")
     label = "Statistic"
     if isinstance(statistics, Table):
-        if gene_ids is not None:
-            reject_masked(gene_ids, "gene_ids")
-            raise ValueError("gene_ids applies to statistics given as an array")
+        if feature_ids is not None:
+            reject_masked(feature_ids, "feature_ids")
+            raise ValueError("feature_ids applies to statistics given as an array")
         column = "t" if "t" in statistics else "statistic"
         if column not in statistics or "feature_id" not in statistics:
             raise ValueError(
@@ -2325,7 +2328,9 @@ def plot_barcode(
             unmasked_array(statistics, "statistics"), "statistics", boolean=False
         )
         ids = (
-            None if gene_ids is None else unmasked_array(gene_ids, "gene_ids").tolist()
+            None
+            if feature_ids is None
+            else unmasked_array(feature_ids, "feature_ids").tolist()
         )
     if values.ndim != 1 or values.size < 2 or not np.isfinite(values).all():
         raise ValueError("the statistics must be 1-D, finite and at least two")
@@ -2395,10 +2400,10 @@ def _set_members(gene_set: Any, ids: list[Any] | None, n: int) -> npt.NDArray[np
         found = np.flatnonzero(members)
     elif members.size and all(isinstance(v, str) for v in members.tolist()):
         if ids is None:
-            raise ValueError("gene_set names genes by id; give gene_ids too")
+            raise ValueError("gene_set names genes by id; give feature_ids too")
         if len(ids) != n:
             raise ValueError(
-                f"gene_ids must have one id per gene ({n}), got {len(ids)}"
+                f"feature_ids must have one id per gene ({n}), got {len(ids)}"
             )
         position = {str(value): i for i, value in enumerate(ids)}
         if len(position) != n:
@@ -2460,11 +2465,10 @@ def plot_gene_sets(
     """Plot the most significant gene sets of a gene-set test, by direction.
 
     For the ``top`` sets with the smallest p-values of a table of
-    :func:`~cytepool.stats.gene_set_tests.camera` (Wu and Smyth 2012),
-    :func:`~cytepool.stats.gene_set_tests.fry` or
-    :func:`~cytepool.stats.rotation_gene_set_tests.mroast`, a bar of length -log10 of
-    the adjusted p-value, to the right for sets up and to the left for sets down,
-    with dashed lines at ``alpha``. Each set is named with its number of genes.
+    :func:`~cytepool.camera` (Wu and Smyth 2012), :func:`~cytepool.fry` or
+    :func:`~cytepool.mroast`, a bar of length -log10 of the adjusted p-value, to the
+    right for sets up and to the left for sets down, with dashed lines at ``alpha``.
+    Each set is named with its number of genes.
 
     Draws the bars (gid ``"gene sets"``) and the lines (gid ``"alpha"``).
 
@@ -2547,15 +2551,14 @@ def plot_over_representation(
     """Plot the most over-represented gene sets, a dot for each list of genes.
 
     For the ``top`` sets with the smallest p-value in any list of a table of
-    :func:`~cytepool.over_representation.over_representation`, most significant at
-    the top, a dot in the column of each list of selected genes (up, down and either,
-    or the genes given), as clusterProfiler draws the lists of genes it compares (Yu
-    et al. 2012). The area of a dot is proportional to the overlap, the number of the
-    set's genes among the selected genes, and its colour gives the adjusted p-value
-    as -log10, darker for smaller; a dot whose adjusted p-value is not below
-    ``alpha`` is pale grey, and a list that holds none of the set's genes has no dot.
-    Each set is named with its number of genes in the universe, and each list with
-    its number of selected genes.
+    :func:`~cytepool.over_representation`, most significant at the top, a dot in the
+    column of each list of selected genes (up, down and either, or the genes given), as
+    clusterProfiler draws the lists of genes it compares (Yu et al. 2012). The area of a
+    dot is proportional to the overlap, the number of the set's genes among the selected
+    genes, and its colour gives the adjusted p-value as -log10, darker for smaller; a
+    dot whose adjusted p-value is not below ``alpha`` is pale grey, and a list that
+    holds none of the set's genes has no dot. Each set is named with its number of genes
+    in the universe, and each list with its number of selected genes.
 
     Draws the dots (gid ``"gene sets"``).
 
@@ -2702,7 +2705,7 @@ def plot_enrichment(
 
     GSEA's enrichment plot (Subramanian et al. 2005) as fgsea's ``plotEnrichment``
     draws it (Korotkevich et al. 2021): the genes ranked by decreasing statistic, as
-    :func:`~cytepool.gsea.gsea` ranks them, along the x-axis, from rank 0 to N + 1;
+    :func:`~cytepool.gsea` ranks them, along the x-axis, from rank 0 to N + 1;
     the walk that rises at each gene of the set by its share of the set's weight
     |r|^p and falls at each other gene, drawn through its values just before and at
     each gene of the set; a tick at the rank of each gene of the set, spanning a
@@ -2714,7 +2717,7 @@ def plot_enrichment(
     lines (gid ``"extremes"``).
 
     Args:
-        statistics: The statistics, in any form :func:`~cytepool.gsea.gsea` takes.
+        statistics: The statistics, in any form :func:`~cytepool.gsea` takes.
         gene_set: The genes of the set, as gene ids, such as ``gene_sets[name]``;
             ids that are not ranked are left out.
         group: The group of a ``DifferentialExpressionResult``, as for ``gsea``.
@@ -2802,7 +2805,7 @@ def plot_gsea_table(
 
     The table of fgsea's ``plotGseaTable`` (Korotkevich et al. 2021): a row for each
     of the ``top`` sets with a positive enrichment score and the smallest p-values
-    of a table of :func:`~cytepool.gsea.gsea`, most significant first, followed by
+    of a table of :func:`~cytepool.gsea`, most significant first, followed by
     the ``top`` with a negative score, most significant last, as fgsea's guide
     chooses them; the ties of p-values in the order of the table. Each row shows the
     set's name, its genes as bars at their ranks among the genes ranked by
@@ -2814,10 +2817,9 @@ def plot_gsea_table(
 
     Args:
         statistics: The statistics that ``table`` was computed from, in any form
-            :func:`~cytepool.gsea.gsea` takes.
+            :func:`~cytepool.gsea` takes.
         gene_sets: The gene sets of ``table``: a
-            :class:`~cytepool.gene_sets.GeneSets` or a mapping of set name to gene
-            ids.
+            :class:`~cytepool.GeneSets` or a mapping of set name to gene ids.
         table: The table of ``gsea``, with the columns ``gene_set``,
             ``enrichment_score``, ``normalized_enrichment_score``, ``p_value`` and
             ``adjusted_p_value``.
@@ -2980,13 +2982,13 @@ def plot_pathway_scores(
     ``"groups"``) and the lines between groups (gid ``"group boundaries"``).
 
     Args:
-        scores: The scores of :func:`~cytepool.pathway_scores.gsva`,
-            :func:`~cytepool.pathway_scores.ssgsea`,
-            :func:`~cytepool.pathway_scores.combined_z_scores` or
-            :func:`~cytepool.pathway_scores.plage`.
+        scores: The scores of :func:`~cytepool.gsva`,
+            :func:`~cytepool.ssgsea`, :func:`~cytepool.combined_z_scores` or
+            :func:`~cytepool.plage`.
         sets: The sets to show, top to bottom; by default every set, in order.
-        color_by: A column of ``scores.samples``, such as ``"condition"`` for the
-            scores of a cube's group, or one label per sample, at most eight levels.
+        color_by: A column of ``scores.profiles``, such as ``"condition"`` for the
+            scores of a cube's group, or one label per profile, at most eight
+            levels.
         standardize: Whether to standardize each set's scores across the samples.
         ax: The Axes to draw into, or None for a new figure.
 
@@ -3025,14 +3027,14 @@ def plot_pathway_scores(
         if not chosen:
             raise ValueError("sets is empty; name at least one set")
     values = scores.scores[:, [names.index(name) for name in chosen]].T
-    table = scores.samples
+    table = scores.profiles
     n_samples = values.shape[1]
     samples = _Samples(
-        ids=[str(value) for value in table["sample_id"].tolist()],
+        ids=[str(value) for value in table["profile_id"].tolist()],
         rows=list(range(n_samples)),
         n_rows=n_samples,
         variables={name: table[name] for name in table.columns},
-        source="the scores' sample table",
+        source="the scores' profiles",
     )
     order = np.arange(n_samples)
     groups = None
@@ -3185,9 +3187,8 @@ def plot_activities(
     ``"groups"``) and the lines between groups (gid ``"group boundaries"``).
 
     Args:
-        activities: The activities of :func:`~cytepool.activity.ulm`,
-            :func:`~cytepool.activity.mlm` or
-            :func:`~cytepool.activity.weighted_aggregate`.
+        activities: The activities of :func:`~cytepool.ulm`,
+            :func:`~cytepool.mlm` or :func:`~cytepool.weighted_aggregate`.
         sources: The sources to show, top to bottom; by default the ``top``
             sources.
         top: When ``sources`` is None, how many sources to show, at least 1; None
@@ -3280,9 +3281,8 @@ def plot_top_activities(
     Draws the bars (gid ``"activities"``).
 
     Args:
-        activities: The activities of :func:`~cytepool.activity.ulm`,
-            :func:`~cytepool.activity.mlm` or
-            :func:`~cytepool.activity.weighted_aggregate`.
+        activities: The activities of :func:`~cytepool.ulm`,
+            :func:`~cytepool.mlm` or :func:`~cytepool.weighted_aggregate`.
         profile: The ``profile_id`` of the profile to show; it may be left out when
             the activities have one profile.
         top: How many sources to show, at least 1.
@@ -3513,7 +3513,7 @@ def plot_quasi_dispersions(
             f"{type(fit).__name__}"
         )
     trended = fit.covariate is not None
-    x = np.asarray(fit.covariate if trended else fit.average_log_cpm, dtype=np.float64)
+    x = np.asarray(fit.covariate if trended else fit.average_log2_cpm, dtype=np.float64)
     raw = np.asarray(fit.quasi_dispersion, dtype=np.float64)
     squeezed = np.asarray(fit.posterior_quasi_dispersion, dtype=np.float64)
     prior = np.broadcast_to(
@@ -3575,7 +3575,6 @@ def plot_quasi_dispersions(
 
 def plot_forest(
     meta: MetaAnalysisResult,
-    studies: Mapping[str, DifferentialExpressionResult],
     feature: str,
     *,
     group: str | None = None,
@@ -3587,23 +3586,24 @@ def plot_forest(
 
     The forest plot (Lewis and Clarke 2001) that metafor's ``forest`` draws for a model
     without moderators (Viechtbauer 2010), of one gene of a
-    :func:`~cytepool.meta_analysis.differential_expression_meta_analysis`: a row per
-    study, in the order of ``studies``, with its log2 fold change as a square and the
-    interval y_i +/- z s_i, z the normal quantile of the meta-analysis's confidence
-    level and s_i the study's standard error, as metafor draws it whatever the test;
-    and at the bottom the pooled estimate as a diamond spanning its confidence
-    interval. A square's area grows with the study's weight in the pooled estimate,
-    1 / (s_i^2 + tau^2), scaled as metafor scales it. A study that did not test the
-    gene keeps its row, marked "not tested". The estimates and intervals are written
-    to the right of the plot, and the pooled row is named with the estimator of
-    tau^2 and I^2.
+    :func:`~cytepool.meta_analysis`: a row per study, in the order of the studies'
+    results that the meta-analysis keeps (``meta.study_results``), with its log2 fold
+    change as a square and the interval y_i +/- z s_i, z the normal quantile of the
+    meta-analysis's confidence level and s_i the study's standard error, as metafor
+    draws it whatever the test; and at the bottom the pooled estimate as a diamond
+    spanning its confidence interval. A square's area grows with the study's weight
+    in the pooled estimate, 1 / (s_i^2 + tau^2), scaled as metafor scales it. A study
+    without an estimate of the gene keeps its row, marked "not measured" when the
+    meta-analysis combined a :class:`~cytepool.StudyResults` whose collection says
+    the study did not measure it, and "not tested" otherwise. The estimates and
+    intervals are written to the right of the plot, and the pooled row is named with
+    the estimator of tau^2 and I^2.
 
     Draws the intervals (gid ``"intervals"``), the squares (gid ``"estimates"``), the
     diamond (gid ``"pooled"``) and a dotted line at zero.
 
     Args:
-        meta: The meta-analysis.
-        studies: The differential-expression results it combined, by study name.
+        meta: The meta-analysis, which keeps the studies' results it combined.
         feature: The id of the gene.
         group: The group (cell type) of the meta-analysis; it may be left out when the
             meta-analysis has one group, or one with ``contrast``.
@@ -3616,21 +3616,19 @@ def plot_forest(
     Raises:
         TypeError: If an argument has the wrong type, or is a numpy masked array.
         ValueError: If the group and contrast are not given and the meta-analysis has
-            several, or ``studies`` is empty.
+            several, or the meta-analysis keeps no study results (it was built
+            without them).
         KeyError: If the group and contrast, or the gene, were not meta-analysed.
     """
     _check_axes(ax)
     if not isinstance(meta, MetaAnalysisResult):
         raise TypeError(f"meta must be a MetaAnalysisResult, got {type(meta).__name__}")
-    if not isinstance(studies, Mapping) or not all(
-        isinstance(result, DifferentialExpressionResult) for result in studies.values()
-    ):
-        raise TypeError(
-            "studies must map study names to DifferentialExpressionResult, the "
-            "results the meta-analysis combined"
-        )
+    studies = meta.study_results
     if not studies:
-        raise ValueError("studies holds no study")
+        raise ValueError(
+            "this meta-analysis keeps no study results, so its studies' estimates "
+            "cannot be drawn: it was built without them; meta_analysis keeps them"
+        )
     if not isinstance(feature, str):
         reject_masked(feature, "feature")
         raise TypeError(
@@ -3648,7 +3646,7 @@ def plot_forest(
         )
     row = int(found[0])
     settings = meta.settings
-    z = float(norm_isf((1.0 - settings["level"]) / 2.0))
+    z = float(norm_isf((1.0 - settings["confidence_level"]) / 2.0))
     tau2 = float(pooled["tau_squared"][row])
     names = [str(name) for name in studies]
     estimates = np.full(len(names), np.nan)
@@ -3661,6 +3659,11 @@ def plot_forest(
                 estimates[i] = float(table["log2_fold_change"][hit[0]])
                 errors[i] = float(table["standard_error"][hit[0]])
     tested = np.isfinite(estimates) & np.isfinite(errors)
+    measured = np.ones(len(names), dtype=bool)
+    if isinstance(studies, StudyResults):
+        ids = studies.collection.features["feature_id"].tolist()
+        if feature in ids:
+            measured = np.asarray(studies.collection.measured)[:, ids.index(feature)]
     lows, highs = estimates - z * errors, estimates + z * errors
     weight = np.sqrt(1.0 / (errors**2 + tau2))
     spread = np.nanmax(weight) - np.nanmin(weight) if tested.any() else 0.0
@@ -3717,6 +3720,8 @@ def plot_forest(
         f"{estimates[i]:.2f} [{lows[i]:.2f}, {highs[i]:.2f}]"
         if tested[i]
         else "not tested"
+        if measured[i]
+        else "not measured"
         for i in range(k)
     ]
     for y, text in zip(
@@ -3767,14 +3772,13 @@ def plot_study_agreement(
 ) -> "Axes":
     """Plot how well each study replicates the genes that each other study finds.
 
-    A heatmap of the pairs of studies of a
-    :func:`~cytepool.replication.differential_expression_replication`: a row per
+    A heatmap of the pairs of studies of a :func:`~cytepool.replication`: a row per
     discovery study and a column per replication study, in the collection's order,
     shaded from 0 to 1 by ``measure`` of the genes the discovery study finds and the
     replication study tested (``study_pairs``): pi1, Storey's estimate of the share of
     them with an effect in the replication study (Storey and Tibshirani 2003), or the
-    share whose log2 fold changes have the same sign.
-    A pair without such genes, and the diagonal, are pale.
+    share whose log2 fold changes have the same sign. A pair without such genes, and the
+    diagonal, are pale.
 
     Draws the image (gid ``"agreement"``) and, when asked, each entry's value with the
     number of genes it covers (gid ``"numbers"``).
@@ -3819,7 +3823,7 @@ def plot_study_agreement(
         pairs["discovery"].tolist(),
         pairs["replication"].tolist(),
         pairs[chosen].tolist(),
-        pairs["n_found"].tolist(),
+        pairs["n_features_found"].tolist(),
         strict=True,
     ):
         shown[index[discovery], index[replication]] = value
@@ -3870,12 +3874,12 @@ def plot_replicated_genes(
 ) -> "Axes":
     """Plot how many genes each number of studies finds.
 
-    For every k from 1 to the number of studies that analysed the group and contrast
-    of a :func:`~cytepool.replication.differential_expression_replication`, a bar of
-    the genes that exactly k studies find (adjusted p-value below its ``alpha`` in
-    each), split into those that every one of them finds in the same direction and
-    those found up in some and down in others, with the numbers above. Most genes
-    that one study finds are usually found by no other (Nakatsuka et al. 2025).
+    For every k from 1 to the number of studies that analysed the group and contrast of
+    a :func:`~cytepool.replication`, a bar of the genes that exactly k studies find
+    (adjusted p-value below its ``alpha`` in each), split into those that every one of
+    them finds in the same direction and those found up in some and down in others, with
+    the numbers above. Most genes that one study finds are usually found by no other
+    (Nakatsuka et al. 2025).
 
     Draws the bars of genes found in one direction (gid ``"same direction"``) and in
     both (gid ``"both directions"``), and their totals (gid ``"numbers"``).
@@ -3895,9 +3899,9 @@ def plot_replicated_genes(
         raise TypeError(
             f"result must be a ReplicationResult, got {type(result).__name__}"
         )
-    genes = result.genes
-    found = np.asarray(genes["n_found"], dtype=np.int64)
-    one_way = np.maximum(genes["n_found_up"], genes["n_found_down"]) == found
+    features = result.features
+    found = np.asarray(features["n_found"], dtype=np.int64)
+    one_way = np.maximum(features["n_found_up"], features["n_found_down"]) == found
     k = len(result.found_in)
     studies = np.arange(1, k + 1)
     same = np.array([np.count_nonzero((found == j) & one_way) for j in studies])
@@ -3987,9 +3991,10 @@ def plot_variance_fractions(
     per variable).
 
     Args:
-        data: The fractions: a :class:`~cytepool.variance_partitioning.VarianceFractions`,
-            a :class:`~cytepool.variance_partitioning.VariancePartitioningResult`
-            (with ``group``), or a table of one.
+        data: The fractions: a
+            :class:`~cytepool.stats.variance_fractions.VarianceFractions`, a
+            :class:`~cytepool.VariancePartitioningResult` (with ``group``), or a table
+            of one.
         group: The group (cell type) of a result; it may be left out when one group
             was fitted.
         sort: Whether to order the variables by their median, the residuals last;
@@ -4042,35 +4047,36 @@ def plot_variance_fractions(
     return ax
 
 
-def plot_gene_variance_fractions(
+def plot_feature_variance_fractions(
     data: Any,
-    genes: Any,
+    features: Any,
     *,
     group: str | None = None,
     labels: Sequence[Any] | None = None,
     sort: bool = True,
     ax: "Axes | None" = None,
 ) -> "Axes":
-    """Plot the fractions of variance of chosen genes as stacked bars.
+    """Plot the fractions of variance of chosen features, such as genes, as stacked
+    bars.
 
-    variancePartition's ``plotPercentBars``: one horizontal bar per gene, the first
-    at the top, divided into the percentage of the gene's variance that each
-    variable explains, the residuals last. The variables are in the order of
+    variancePartition's ``plotPercentBars``: one horizontal bar per feature, the
+    first at the top, divided into the percentage of the feature's variance that
+    each variable explains, the residuals last. The variables are in the order of
     :func:`plot_variance_fractions`: with ``sort``, in decreasing order of their
-    median over every gene of the data, as ``plotPercentBars(sortCols(x)[genes, ])``
-    orders them.
+    median over every feature of the data, as
+    ``plotPercentBars(sortCols(x)[genes, ])`` orders them.
 
     Draws the segments of each variable (gid ``"fractions"``, one bar container per
     variable, labelled with it), with a legend of the variables.
 
     Args:
         data: The fractions, as for :func:`plot_variance_fractions`.
-        genes: The genes: feature ids, or symbols, of a table or result; names given
-            in ``labels``; or positions among the features.
+        features: The features: feature ids, or symbols, of a table or result;
+            names given in ``labels``; or positions among the features.
         group: The group (cell type) of a result; it may be left out when one group
             was fitted.
-        labels: One name per feature of the data, to find and label the genes by;
-            a table's genes are named by their symbol, or else their id.
+        labels: One name per feature of the data, to find and label the features
+            by; a table's features are named by their symbol, or else their id.
         sort: Whether to order the variables by their median, the residuals last.
         ax: The Axes to draw into, or None for a new figure.
 
@@ -4078,17 +4084,17 @@ def plot_gene_variance_fractions(
         The Axes.
 
     Raises:
-        TypeError: If an argument has the wrong type, or ``genes`` or ``labels`` is
-            or holds a numpy masked array.
-        ValueError: As :func:`plot_variance_fractions`, or if ``genes`` is empty or
-            names a gene twice, a symbol names several genes, a gene has no
-            fractions, or ``labels`` has the wrong length.
-        KeyError: If a gene is not among the data's, or ``group`` was not analysed
-            or not fitted.
+        TypeError: If an argument has the wrong type, or ``features`` or ``labels``
+            is or holds a numpy masked array.
+        ValueError: As :func:`plot_variance_fractions`, or if ``features`` is empty
+            or names a feature twice, a symbol names several features, a feature
+            has no fractions, or ``labels`` has the wrong length.
+        KeyError: If a feature is not among the data's, or ``group`` was not
+            analysed or not fitted.
         IndexError: If a position is out of range.
     """
     _check_axes(ax)
-    reject_masked(genes, "genes")
+    reject_masked(features, "features")
     if labels is not None:
         reject_masked(labels, "labels")
     name = _optional_text(group, "group")
@@ -4096,7 +4102,7 @@ def plot_gene_variance_fractions(
     partition = _partition(data, name)
     n = partition.fractions.shape[0]
     given = None if labels is None else _gene_labels(labels, n)
-    rows, shown = _chosen_genes(genes, partition, given)
+    rows, shown = _chosen_features(features, partition, given)
     chosen = partition.fractions[rows]
     missing = [shown[i] for i in range(len(rows)) if not np.all(np.isfinite(chosen[i]))]
     if missing:
@@ -4212,20 +4218,20 @@ def _variable_label(variable: str) -> str:
     return "Residuals" if variable == RESIDUALS else variable
 
 
-def _chosen_genes(
+def _chosen_features(
     genes: Any, partition: _Partition, labels: list[str] | None
 ) -> tuple[list[int], list[str]]:
-    """The rows of the genes asked for, and the names to show for them."""
+    """The rows of the features asked for, and the names to show for them."""
     n = partition.fractions.shape[0]
     if isinstance(genes, str | numbers.Integral):
         genes = [genes]
     if not isinstance(genes, Sequence | np.ndarray):
         raise TypeError(
-            "genes must be a list of gene ids, symbols or positions, got "
+            "features must be a list of feature ids, symbols or positions, got "
             f"{type(genes).__name__}"
         )
     if len(genes) == 0:
-        raise ValueError("genes is empty; give at least one gene")
+        raise ValueError("features is empty; give at least one feature")
     names: list[str] | None = labels
     if names is None and partition.ids is not None:
         symbols = partition.symbols or [None] * n
@@ -4236,7 +4242,9 @@ def _chosen_genes(
     rows: list[int] = []
     for gene in list(genes):
         if isinstance(gene, bool | np.bool_):
-            raise TypeError("genes must be gene ids, symbols or positions, not bool")
+            raise TypeError(
+                "features must be feature ids, symbols or positions, not bool"
+            )
         if isinstance(gene, numbers.Integral):
             position = int(gene)
             if not -n <= position < n:
@@ -4248,7 +4256,7 @@ def _chosen_genes(
             row = _gene_row(gene, partition, labels)
         else:
             raise TypeError(
-                f"genes must be gene ids, symbols or positions, got "
+                f"features must be feature ids, symbols or positions, got "
                 f"{type(gene).__name__} {gene!r}"
             )
         if row in rows:
@@ -4381,7 +4389,7 @@ def plot_sumrank(
     *,
     direction: str = "up",
     alpha: float = 0.05,
-    n_labels: int = 20,
+    top: int = 20,
     ax: "Axes | None" = None,
 ) -> "Axes":
     """Plot the SumRank p-value of every gene, the genes in alphabetical order.
@@ -4391,7 +4399,7 @@ def plot_sumrank(
     its p-value (``up_p_value`` or ``down_p_value``, from permutations when they were
     run), the genes in alphabetical order of their symbol, or of their id without
     one. The genes whose adjusted p-value is below ``alpha`` are coloured, red for
-    genes up and blue for genes down, the ``n_labels`` with the smallest p-values are
+    genes up and blue for genes down, the ``top`` with the smallest p-values are
     named, and a dotted line lies at the largest -log10 p-value of the other genes,
     where the authors draw it, when some gene passes.
 
@@ -4399,11 +4407,11 @@ def plot_sumrank(
     line (gid ``"threshold"``) and the names (gid ``"labels"``).
 
     Args:
-        result: The result of
-            :func:`~cytepool.sumrank.differential_expression_sumrank`.
+        result: The result of :func:`~cytepool.sumrank`.
         direction: ``"up"`` or ``"down"``.
         alpha: The adjusted p-value below which genes pass, in (0, 1).
-        n_labels: The most genes named, at least 0.
+        top: The most genes named, at least 0, as :func:`plot_volcano` names
+            them.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
@@ -4419,11 +4427,11 @@ def plot_sumrank(
         raise TypeError(f"result must be a SumRankResult, got {type(result).__name__}")
     side = checked_choice(direction, "direction", ("up", "down"))
     level = _fraction(alpha, "alpha")
-    reject_masked(n_labels, "n_labels")
-    named = integral_number(n_labels, "n_labels")
+    reject_masked(top, "top")
+    named = integral_number(top, "top")
     if named < 0:
-        raise ValueError(f"n_labels must be at least 0, got {named}")
-    table = result.table
+        raise ValueError(f"top must be at least 0, got {named}")
+    table = result.features
     ids = [str(value) for value in table["feature_id"].tolist()]
     names = ids
     if "symbol" in table:
@@ -4493,17 +4501,23 @@ def _label_above(
     y: FloatArray,
     names: list[str],
     chosen: Any,
-    color: str,
+    color: str | None,
+    *,
+    fontsize: float = 7.0,
+    gid: str = "labels",
+    in_order: bool = False,
 ) -> None:
     """Label points from above, at the size the figure is laid out at. A label that
     would cross the side of the frame moves in, one that would overlap a label placed
     before it moves up, and a moved label has a line to its point; the top of the plot
-    is raised to show the highest label."""
+    is raised to show the highest label. The labels are placed from the highest point
+    down, and added to the plot in that order, or in the order of ``chosen`` with
+    ``in_order``; ``color`` None is the default colour of text."""
     textpath = _module("matplotlib.textpath")
     root = ax.figure.figure  # the Figure, also of Axes in a subfigure
     if root is not None:
         root.draw_without_rendering()
-    fontsize = 7.0  # points
+    chosen = list(chosen)
     order = sorted(chosen, key=lambda i: (-y[i], x[i]))
     widths = [
         textpath.TextPath((0.0, 0.0), names[i], size=fontsize).get_extents().width
@@ -4520,8 +4534,13 @@ def _label_above(
         if highest <= top:
             break
         ax.set_ylim(bottom, highest)
+        if _widen_to_keep_aspect(ax) and root is not None:
+            # The new limits change the ticks, and with them the layout.
+            root.draw_without_rendering()
         places = _label_places(ax, x, y, order, widths, fontsize)
-    for i, (center, level, moved) in zip(order, places, strict=True):
+    place_of = dict(zip(order, places, strict=True))
+    for i in chosen if in_order else order:
+        center, level, moved = place_of[i]
         ax.annotate(
             names[i],
             (x[i], y[i]),
@@ -4534,8 +4553,26 @@ def _label_above(
             arrowprops=(
                 {"arrowstyle": "-", "color": _GREY, "linewidth": 0.6} if moved else None
             ),
-            gid="labels",
+            gid=gid,
         )
+
+
+def _widen_to_keep_aspect(ax: "Axes") -> bool:
+    """Widen the x-axis of a plot of fixed aspect, such as a principal component plot,
+    whose top was raised for labels, so that its limits keep the aspect. Otherwise
+    matplotlib keeps the aspect by narrowing the y-axis about its middle, which hides
+    the lowest points. Returns whether the plot has a fixed aspect."""
+    aspect = ax.get_aspect()
+    if isinstance(aspect, str) or ax.get_adjustable() != "datalim":
+        return False
+    low, high = ax.get_xlim()
+    bottom, top = ax.get_ylim()
+    # A fixed aspect a gives a unit of y a times the length of a unit of x.
+    width = (top - bottom) * float(aspect) * ax.bbox.width / ax.bbox.height
+    if width > high - low:
+        middle = (low + high) / 2.0
+        ax.set_xlim(middle - width / 2.0, middle + width / 2.0)
+    return True
 
 
 def _label_places(
@@ -4586,20 +4623,20 @@ def plot_held_out_auc(
 ) -> "Axes":
     """Plot the AUC of every held-out study, by the method that chose its genes.
 
-    A row per study of a :func:`~cytepool.held_out_prediction.held_out_prediction`,
-    in the collection's order from the top, with a point for each method at the AUC
-    of the study's cases against its controls, scored by the genes that the method
-    chose from the other studies; the legend gives each method's mean AUC, and a
-    dotted line marks 0.5, the AUC of a score that does not separate them, as the
-    paper compares its methods (Nakatsuka et al. 2025, Table 1). A study without an
-    AUC keeps its row, marked "no AUC".
+    A row per study of a :func:`~cytepool.held_out_prediction`, in the collection's
+    order from the top, with a point for each method at the AUC of the study's cases
+    against its controls, scored by the genes that the method chose from the other
+    studies; the legend gives each method's mean AUC, and a dotted line marks 0.5, the
+    AUC of a score that does not separate them, as the paper compares its methods
+    (Nakatsuka et al. 2025, Table 1). A study without an AUC keeps its row, marked "no
+    AUC".
 
     Draws the points of each method (gid its name, ``"sumrank"`` or
     ``"meta_analysis"``) and the line (gid ``"chance"``).
 
     Args:
         prediction: The result of
-            :func:`~cytepool.held_out_prediction.held_out_prediction`.
+            :func:`~cytepool.held_out_prediction`.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
@@ -4662,7 +4699,7 @@ _PCA_TOP = 500
 # and the power of the fraction that sets a dot's area.
 _DOT_AREA = 200.0
 _DOT_EXPONENT = 1.5
-_DOT_SCALES = ("gene", "group")
+_DOT_SCALES = ("feature", "group")
 
 
 def plot_pca(
@@ -4680,23 +4717,24 @@ def plot_pca(
     """Plot samples on two principal components of their most variable genes.
 
     DESeq2's ``plotPCA`` (Love et al. 2014): the samples' coordinates on two components
-    of :func:`~cytepool.principal_components.principal_components`, which takes the
-    ``top`` genes of largest variance over the samples, centres each on its mean, and
-    decomposes them by singular values (Pearson 1901); the sign of each component makes
-    its largest coordinate positive. The axes are labelled as ``plotPCA`` labels them,
-    with each component's share of the variance rounded to a whole percent, as in
-    "PC1: 45% variance", and drawn to the same scale, as ``plotPCA`` draws them, so that
-    the distances between samples are drawn true. The coordinates are those of
-    ``principal_components``; pass its result as ``data`` to draw the components it
-    holds.
+    of :func:`~cytepool.principal_components`, which takes the ``top`` genes of largest
+    variance over the samples, centres each on its mean, and decomposes them by singular
+    values (Pearson 1901); the sign of each component makes its largest coordinate
+    positive. The axes are labelled as ``plotPCA`` labels them, with each component's
+    share of the variance rounded to a whole percent, as in "PC1: 45% variance", and
+    drawn to the same scale, as ``plotPCA`` draws them, so that the distances between
+    samples are drawn true. The coordinates are those of ``principal_components``; pass
+    its result as ``data`` to draw the components it holds.
 
     Draws the samples as points (gid ``"samples"``), coloured by ``color_by`` and
     marked by ``marker_by`` as :func:`plot_mds` draws them, with a legend of their
-    levels, and labels the samples (gid ``"sample labels"``) when asked.
+    levels, and labels the samples (gid ``"sample labels"``) when asked, placed as
+    :func:`plot_mds` places them; the plot widens where the labels need room above,
+    so that its scale stays the same along both axes.
 
     Args:
-        data: A :class:`~cytepool.principal_components.PrincipalComponents`, or what
-            ``principal_components`` takes: a :class:`~cytepool.cube.Cube`, a
+        data: A :class:`~cytepool.PrincipalComponents`, or what
+            ``principal_components`` takes: a :class:`~cytepool.Cube`, a
             :class:`~cytepool.stats.voom.VoomResult`, or ``(n_samples, n_genes)``
             log-expression values, finite.
         group: The group (cell type) of a cube to plot; it may be left out when the
@@ -4767,6 +4805,7 @@ def plot_pca(
     ax.set_xlabel(f"PC{first}: {100 * share[first - 1]:.0f}% variance")
     ax.set_ylabel(f"PC{second}: {100 * share[second - 1]:.0f}% variance")
     ax.set_aspect("equal", adjustable="datalim")
+    _label_and_key_samples(ax, x, y, styles)
     return ax
 
 
@@ -4864,9 +4903,7 @@ def _sample_styles(
 def _draw_styled_samples(
     ax: "Axes", x: FloatArray, y: FloatArray, styles: _SampleStyles
 ) -> None:
-    """Samples as points of their colours and markers, labelled when asked, with a
-    legend of their levels: inside the plot where a short one covers nothing, and
-    beside it otherwise."""
+    """Samples as points of their colours and markers."""
     n_samples = x.size
     for marker in dict.fromkeys(styles.markers):
         rows = [i for i in range(n_samples) if styles.markers[i] == marker]
@@ -4881,23 +4918,35 @@ def _draw_styled_samples(
             zorder=3,
             gid="samples",
         )
+
+
+def _label_and_key_samples(
+    ax: "Axes", x: FloatArray, y: FloatArray, styles: _SampleStyles
+) -> None:
+    """The samples' labels, when asked, and the legend of their levels, once the
+    plot has its axis labels. The labels go above their points, inside the frame and
+    apart, in the samples' order; the legend inside the plot where a short one covers
+    no point or label, and beside it otherwise, after which the labels are placed again
+    at the plot's new size."""
+
+    def label() -> None:
+        _label_above(
+            ax, x, y, list(styles.texts or ()), range(x.size), None,
+            fontsize=8.0, gid="sample labels", in_order=True,
+        )  # fmt: skip
+
     if styles.texts is not None:
-        for i, text in enumerate(styles.texts):
-            ax.annotate(
-                text,
-                (x[i], y[i]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize=8,
-                gid="sample labels",
-            )
-    if styles.handles:
-        _legend(ax, styles.handles, inside=True)
+        label()
+    if styles.handles and not _legend(ax, styles.handles, inside=True):
+        if styles.texts is not None:
+            for text in [t for t in ax.texts if t.get_gid() == "sample labels"]:
+                text.remove()
+            label()
 
 
 def plot_dotplot(
     cube: Cube,
-    genes: Any,
+    features: Any,
     *,
     groups: Sequence[str] | None = None,
     samples: Any = None,
@@ -4923,32 +4972,32 @@ def plot_dotplot(
     smallest to the largest value shown, or from ``vmin`` to ``vmax``, scanpy's
     names, which put several dot plots on one scale.
 
-    ``standard_scale`` scales the means of each gene over the groups (``"gene"``,
-    scanpy's ``"var"``), or of each group over the genes (``"group"``), to run from 0
-    to 1, (m - min) / (max - min), 0 where they are all equal, as scanpy does.
+    ``standard_scale`` scales the means of each feature over the groups
+    (``"feature"``, scanpy's ``"var"``), or of each group over the features
+    (``"group"``), to run from 0 to 1, (m - min) / (max - min), 0 where they are all
+    equal, as scanpy does.
     ``mean_only_expressed`` takes the mean over the cells that express the gene,
     ``log_sum`` over ``detected`` (0 where none does), as scanpy's option of that name;
     it needs a cube whose transform maps a zero count to zero, one whose normalization
-    records a pseudocount of 1, as :func:`~cytepool.cube.from_cells` records it. Genes
-    given as a mapping are
-    drawn in groups, under a bracket labelled with the group's name, as scanpy draws
-    ``var_names`` given as a dict.
+    records a pseudocount of 1, as :func:`~cytepool.from_cells` records it. Features
+    given as a mapping are drawn in groups, under a bracket labelled with the group's
+    name, as scanpy draws ``var_names`` given as a dict.
 
     Draws the dots (gid ``"dots"``: their sizes are the areas, and their array the
-    values that the colours show) and, for genes in groups, the brackets (gid
+    values that the colours show) and, for features in groups, the brackets (gid
     ``"gene groups"``) and their names (gid ``"gene group names"``).
 
     Args:
         cube: A cube with cell numbers and the layers ``detected`` and ``log_sum``,
-            as :func:`~cytepool.cube.from_cells` builds it.
-        genes: The genes, the columns from left to right: feature ids or symbols of
-            the cube's features; or a mapping of names to such lists, for groups of
-            genes.
+            as :func:`~cytepool.from_cells` builds it.
+        features: The features, such as genes, the columns from left to right:
+            feature ids or symbols of the cube's features; or a mapping of names to
+            such lists, for groups of features.
         groups: The groups, the rows from the top; by default every group, in the
             cube's order.
         samples: The samples whose cells are pooled: sample ids, or a boolean mask
             over the cube's samples; by default every sample.
-        standard_scale: ``"gene"``, ``"group"`` or None.
+        standard_scale: ``"feature"``, ``"group"`` or None.
         mean_only_expressed: Whether the mean is taken over the cells that express
             the gene only.
         vmin: The value of the lightest colour; the smallest value shown by default.
@@ -4965,11 +5014,11 @@ def plot_dotplot(
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
             array.
         ValueError: If the cube lacks cell numbers, ``detected`` or ``log_sum``, a
-            group has no cells in the samples pooled, ``genes``, ``groups`` or
-            ``samples`` is empty or names one twice, a symbol names several genes,
+            group has no cells in the samples pooled, ``features``, ``groups`` or
+            ``samples`` is empty or names one twice, a symbol names several features,
             ``mean_only_expressed`` is asked of a cube without a pseudocount of 1,
             ``vmin`` is not below ``vmax``, or an option is out of range.
-        KeyError: If a gene, group or sample is not in the cube.
+        KeyError: If a feature, group or sample is not in the cube.
     """
     _check_axes(ax)
     if not isinstance(cube, Cube):
@@ -4995,7 +5044,7 @@ def plot_dotplot(
             f"the cube lacks {what}; a dot plot needs cell numbers and the layers "
             "'detected' and 'log_sum', as from_cells computes them"
         )
-    columns, names, gene_groups = _dot_genes(cube, genes)
+    columns, names, gene_groups = _dot_features(cube, features)
     rows = _chosen_ids(groups, cube.groups["group_id"].tolist(), "groups", "group")
     pooled = _pooled_samples(cube, samples)
     if expressed_only:
@@ -5008,7 +5057,9 @@ def plot_dotplot(
             )
     fractions, means = _dot_values(cube, rows, columns, pooled, expressed_only)
     shown = (
-        means if scale is None else _min_max_scaled(means, 0 if scale == "gene" else 1)
+        means
+        if scale is None
+        else _min_max_scaled(means, 0 if scale == "feature" else 1)
     )
 
     largest = float(fractions.max())
@@ -5090,12 +5141,12 @@ def plot_dotplot(
     return ax
 
 
-def _dot_genes(
+def _dot_features(
     cube: Cube, genes: Any
 ) -> tuple[list[int], list[str], list[tuple[str, int, int]]]:
-    """The cube's features of the genes asked for, the names shown, and the groups of
-    genes as (name, first column, last column)."""
-    reject_masked(genes, "genes")
+    """The cube's features asked for, the names shown, and the groups of features
+    as (name, first column, last column)."""
+    reject_masked(genes, "features")
     if isinstance(genes, str):
         named: dict[str, Any] = {"": [genes]}
     elif isinstance(genes, Mapping):
@@ -5115,20 +5166,21 @@ def _dot_genes(
     for label, members in named.items():
         if not isinstance(label, str):
             raise TypeError(
-                f"the names of groups of genes must be text, got {type(label).__name__}"
+                f"the names of groups of features must be text, got "
+                f"{type(label).__name__}"
             )
         if isinstance(members, str):
             members = [members]
         if not isinstance(members, Sequence | np.ndarray):
             raise TypeError(
-                "genes must be feature ids or symbols, or a mapping of names to them, "
-                f"got {type(members).__name__}"
+                "features must be feature ids or symbols, or a mapping of names to "
+                f"them, got {type(members).__name__}"
             )
         start = len(columns)
         for gene in list(members):
             if not isinstance(gene, str):
                 raise TypeError(
-                    f"genes must be feature ids or symbols (str), got "
+                    f"features must be feature ids or symbols (str), got "
                     f"{type(gene).__name__} {gene!r}"
                 )
             if gene in index:
@@ -5137,21 +5189,21 @@ def _dot_genes(
                 found = by_symbol[gene]
                 if len(found) > 1:
                     raise ValueError(
-                        f"the symbol {gene!r} names {len(found)} genes, "
+                        f"the symbol {gene!r} names {len(found)} features, "
                         f"{quoted([ids[j] for j in found])}; give their feature ids"
                     )
                 columns.append(found[0])
             else:
                 raise KeyError(
-                    f"no gene {gene!r} among the cube's {len(ids):,} features, by "
+                    f"no feature {gene!r} among the cube's {len(ids):,} features, by "
                     "feature_id or symbol"
                 )
             names.append(gene)
         if len(columns) == start:
             raise ValueError(
-                "genes is empty; give at least one gene"
+                "features is empty; give at least one feature"
                 if not label
-                else f"the group of genes {label!r} is empty"
+                else f"the group of features {label!r} is empty"
             )
         if label:
             gene_groups.append((label, start, len(columns) - 1))

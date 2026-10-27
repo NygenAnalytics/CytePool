@@ -34,8 +34,9 @@ On Windows, activate the environment with `.venv\Scripts\activate` instead.
 
 ## Optional integrations
 
-Converting cubes to and from AnnData and MuData (`cytepool.io.anndata`) needs anndata,
-and mudata for MuData. Install them with CytePool's `anndata` or `mudata` extra:
+Converting cubes to and from AnnData and MuData ({api}`to_anndata`, {api}`from_anndata`,
+{api}`to_mudata`, {api}`from_mudata`) needs anndata, and mudata for MuData. Install them
+with CytePool's `anndata` or `mudata` extra:
 
 ```bash
 uv pip install "cytepool[mudata] @ git+https://github.com/NygenAnalytics/CytePool.git"

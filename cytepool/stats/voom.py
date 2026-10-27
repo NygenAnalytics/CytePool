@@ -142,7 +142,7 @@ _NO_RESIDUAL_DF = (
 class VoomResult:
     """Log2 counts per million and their precision weights, from :func:`voom`.
 
-    Fit a linear model with ``fit_linear_model(result.log_cpm, design,
+    Fit a linear model with ``fit_linear_model(result.log2_cpm, design,
     weights=result.weights)``, or, for the weights of
     :func:`~cytepool.stats.dream.voom_with_dream_weights`, a mixed model with
     ``fit_mixed_model``. Arrays with a sample axis have one row per sample;
@@ -150,7 +150,7 @@ class VoomResult:
     counts. The arrays are read-only views; the constructor does not copy them.
 
     Attributes:
-        log_cpm: ``(n_samples, n_features)`` log2 counts per million,
+        log2_cpm: ``(n_samples, n_features)`` log2 counts per million,
             ``log2((r + 0.5) / (R + 1) * 1e6)`` with R the effective library size.
         weights: ``(n_samples, n_features)`` precision weights: the inverse of each
             observation's variance predicted by the trend, times the prior weights
@@ -184,7 +184,7 @@ class VoomResult:
             finite.
     """
 
-    log_cpm: FloatArray
+    log2_cpm: FloatArray
     weights: FloatArray
     effective_library_sizes: FloatArray
     mean_log_count: FloatArray
@@ -194,7 +194,12 @@ class VoomResult:
     sample_weights: FloatArray | None = None
 
     def __post_init__(self) -> None:
-        for name in ("log_cpm", "weights", "effective_library_sizes", "sample_weights"):
+        for name in (
+            "log2_cpm",
+            "weights",
+            "effective_library_sizes",
+            "sample_weights",
+        ):
             reject_masked(getattr(self, name), name)
         # NaN marks the features that the trend leaves out.
         for name in ("mean_log_count", "sqrt_sd", "sqrt_sd_trend"):
@@ -207,16 +212,16 @@ class VoomResult:
                 f"span must be in (0, 1], or NaN when no trend is fitted, got {span}"
             )
         object.__setattr__(self, "span", float(span))
-        log_cpm = np.asarray(self.log_cpm, dtype=np.float64)
-        if log_cpm.ndim != 2:
+        log2_cpm = np.asarray(self.log2_cpm, dtype=np.float64)
+        if log2_cpm.ndim != 2:
             raise ValueError(
-                f"log_cpm must be a 2-D array (samples x features), got shape "
-                f"{log_cpm.shape}"
+                f"log2_cpm must be a 2-D array (samples x features), got shape "
+                f"{log2_cpm.shape}"
             )
-        n_samples, n_features = log_cpm.shape
+        n_samples, n_features = log2_cpm.shape
         shapes = {
-            "log_cpm": log_cpm.shape,
-            "weights": log_cpm.shape,
+            "log2_cpm": log2_cpm.shape,
+            "weights": log2_cpm.shape,
             "effective_library_sizes": (n_samples,),
             "mean_log_count": (n_features,),
             "sqrt_sd": (n_features,),
@@ -237,7 +242,7 @@ class VoomResult:
             object.__setattr__(self, name, view)
 
     def __repr__(self) -> str:
-        n_samples, n_features = self.log_cpm.shape
+        n_samples, n_features = self.log2_cpm.shape
         in_trend = int(np.count_nonzero(~np.isnan(self.sqrt_sd)))
         quality = "" if self.sample_weights is None else ", with sample weights"
         return (
@@ -262,7 +267,7 @@ def voom(
     which checks it. Filter out features with very low counts first, for example
     with :func:`~cytepool.normalization.filter_by_expression`, as limma advises.
 
-    Continue with ``fit_linear_model(result.log_cpm, design,
+    Continue with ``fit_linear_model(result.log2_cpm, design,
     weights=result.weights)`` and
     :func:`~cytepool.stats.empirical_bayes.moderated_statistics`. With observation
     weights, limma's ``contrasts.fit`` approximates the standard errors of contrasts
@@ -275,7 +280,7 @@ def voom(
             by library size, such as CPM or TPM: voom needs the library sizes.
         design: ``(n_samples, n_coefficients)`` design matrix of full column rank,
             or anything else that ``fit_linear_model`` accepts, such as a
-            :class:`~cytepool.design.Design`.
+            :class:`~cytepool.Design`.
         library_sizes: Library size of each sample; defaults to the total counts.
             Must be positive.
         norm_factors: Normalization factor of each sample, such as TMM factors from
@@ -329,7 +334,7 @@ def voom(
         message = _NO_REPLICATION if prior is None else _NO_RESIDUAL_DF
         warnings.warn(message, RuntimeWarning, stacklevel=2)
     return VoomResult(
-        log_cpm=trend.log_cpm,
+        log2_cpm=trend.log2_cpm,
         weights=_times_prior(trend.weights, prior),
         effective_library_sizes=sizes,
         mean_log_count=trend.mean_log_count,
@@ -360,7 +365,7 @@ def voom_with_quality_weights(
     the sample weights. Samples that follow the model less closely, such as
     pseudobulk samples pooled from few cells or from an outlying donor, get lower
     weights instead of being removed. Continue as after :func:`voom`, with
-    ``fit_linear_model(result.log_cpm, design, weights=result.weights)``.
+    ``fit_linear_model(result.log2_cpm, design, weights=result.weights)``.
 
     Args:
         counts: ``(n_samples, n_features)`` counts, as for :func:`voom`.
@@ -446,15 +451,15 @@ def _quality_weighted_voom(
         notes.append(_too_few_df_message(y.shape[0] - x.shape[1]))
         second, quality = first, np.ones(y.shape[0])
     else:
-        log_variances, first_notes = _estimate(first.log_cpm, x, first.weights, model)
+        log_variances, first_notes = _estimate(first.log2_cpm, x, first.weights, model)
         second, _ = _voom_trend(y, design, sizes, fraction, _weights_of(log_variances))
         log_variances, second_notes = _estimate(
-            second.log_cpm, x, second.weights, model
+            second.log2_cpm, x, second.weights, model
         )
         notes += list(dict.fromkeys(first_notes + second_notes))
         quality = _weights_of(log_variances)
     result = VoomResult(
-        log_cpm=second.log_cpm,
+        log2_cpm=second.log2_cpm,
         weights=second.weights * quality[:, np.newaxis],
         effective_library_sizes=sizes,
         mean_log_count=second.mean_log_count,
@@ -482,14 +487,14 @@ def _voom_trend(
         fraction: The span.
         prior: Prior weights from ``_prior_weights``, or None.
     """
-    log_cpm = voom_log_cpm(y, sizes)
-    fit = fit_linear_model(log_cpm, design, weights=prior)
+    log2_cpm = voom_log_cpm(y, sizes)
+    fit = fit_linear_model(log2_cpm, design, weights=prior)
     mean_log_count = voom_mean_log_count(fit.mean_expression, sizes, y)
     if not np.any(fit.df_residual > 0.0):
         # limma returns no span then (found by probing).
         nan = np.full(y.shape[1], np.nan)
         unit = Trend(
-            log_cpm, np.ones_like(log_cpm), mean_log_count, nan, nan.copy(), math.nan
+            log2_cpm, np.ones_like(log2_cpm), mean_log_count, nan, nan.copy(), math.nan
         )
         return unit, False
     in_trend = (y > 0.0).any(axis=0) & (fit.df_residual > 0.0)
@@ -497,11 +502,11 @@ def _voom_trend(
         np.ones(y.shape, dtype=bool) if prior is None else _positive(prior, y.shape)
     )
     trend = trend_weights(
-        log_cpm,
+        log2_cpm,
         mean_log_count,
         fit.sigma,
         in_trend,
-        _fitted_values(fit, log_cpm, prior),
+        _fitted_values(fit, log2_cpm, prior),
         sizes,
         fraction,
         weighted,
@@ -511,7 +516,7 @@ def _voom_trend(
 
 
 def _fitted_values(
-    fit: LinearModelFit, log_cpm: FloatArray, prior: FloatArray | None
+    fit: LinearModelFit, log2_cpm: FloatArray, prior: FloatArray | None
 ) -> FloatArray:
     """Fitted log2 CPM of every observation, NaN where it is not determined.
 
@@ -532,7 +537,7 @@ def _fitted_values(
             root = np.sqrt(weights[rows])
             design = fit.design[rows]
             solution = np.linalg.lstsq(
-                design * root[:, np.newaxis], log_cpm[rows, g] * root, rcond=None
+                design * root[:, np.newaxis], log2_cpm[rows, g] * root, rcond=None
             )[0]
             fitted[rows, g] = design @ solution
     return fitted

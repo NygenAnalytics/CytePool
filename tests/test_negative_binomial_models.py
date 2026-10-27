@@ -22,7 +22,7 @@ import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 from scipy.optimize import brentq
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.stats import negative_binomial_models
 from cytepool.stats.negative_binomial_models import (
     NegativeBinomialFit,

@@ -69,14 +69,20 @@ from pathlib import Path
 import matplotlib.figure
 import numpy as np
 
-from cytepool.activity import mlm, ulm, weighted_aggregate
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.networks import Network, collectri, progeny
-from cytepool.normalization import filter_by_expression, log_cpm, tmm_factors
+from cytepool import (
+    Cube,
+    Design,
+    Network,
+    Table,
+    collectri,
+    limma_voom,
+    mlm,
+    progeny,
+    ulm,
+    weighted_aggregate,
+)
+from cytepool.normalization import filter_by_expression, log2_cpm, tmm_factors
 from cytepool.plotting import plot_top_activities
-from cytepool.table import Table
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests/data/activity"
 EXACT = 1e-10
@@ -292,9 +298,9 @@ def cube_and_result(rng, genes, data, cases):
         n_cells=np.full((8, 2), 40),
     )  # fmt: skip
     kept = counts[0]
-    keep = filter_by_expression(kept, group=np.zeros(8))
-    values = log_cpm(kept[:, keep], norm_factors=tmm_factors(kept[:, keep]),
-                     prior_count=2.0)  # fmt: skip
+    keep = filter_by_expression(kept, sample_groups=np.zeros(8))
+    values = log2_cpm(kept[:, keep], norm_factors=tmm_factors(kept[:, keep]),
+                      prior_count=2.0)  # fmt: skip
     data["cube"] = (values, [f"S{i}" for i in range(8)],
                     [g for g, k in zip(genes, keep, strict=True) if k])  # fmt: skip
     cases.append(("ulm, a cube's cell type", "cube", "collectri", "ulm", 5, {}))
@@ -394,10 +400,10 @@ def run_case(case, data, nets, special):
         return found, [0]
     if case["data"].startswith("missing_"):
         everything = data["samples"]
-        found = function(special["missing"], network, gene_ids=everything[2],
+        found = function(special["missing"], network, feature_ids=everything[2],
                          sample_ids=everything[1], **options)  # fmt: skip
         return found, [int(case["data"].removeprefix("missing_"))]
-    found = function(values, network, gene_ids=genes, sample_ids=profiles, **options)
+    found = function(values, network, feature_ids=genes, sample_ids=profiles, **options)
     return found, list(range(values.shape[0]))
 
 
@@ -423,7 +429,7 @@ def check_case(case, found, arrays, data, nets, special, table):
         order = [position[gene] for gene in reference["genes"]]
         result = weighted_aggregate(
             values[:, order], Network(Table(nets[case["network"]])),
-            gene_ids=reference["genes"], sample_ids=profiles,
+            feature_ids=reference["genes"], sample_ids=profiles,
             n_permutations=case["options"]["times"], rng=case["options"]["seed"],
         )  # fmt: skip
         rows = list(range(values.shape[0]))
@@ -457,7 +463,7 @@ def check_case(case, found, arrays, data, nets, special, table):
             raw = arrays[f"{name}/raw_p"]
             table.append((f"{name}: p-values", "decoupler `mt.waggr`",
                           "largest difference",
-                          float(np.max(np.abs(result.p_values[pick] - raw))),
+                          float(np.max(np.abs(result.p_value[pick] - raw))),
                           "deliberate"))  # fmt: skip
         return
     family = f"decoupler `mt.{method}`"
@@ -470,16 +476,16 @@ def check_case(case, found, arrays, data, nets, special, table):
     p_reference = arrays[f"{name}/raw_p"] if method == "ulm" else arrays[f"{name}/t_sf"]
     table.append((f"{name}: p-values", "decoupler" if method == "ulm" else
                   "scipy `t.sf` of decoupler's t", "max relative difference",
-                  relative_difference(result.p_values[pick], p_reference), EXACT))  # fmt: skip
+                  relative_difference(result.p_value[pick], p_reference), EXACT))  # fmt: skip
     bh = arrays.get(f"{name}/bh") if method == "ulm" else None
     if bh is not None and bh.shape[1] > 1:
         table.append((f"{name}: adjusted p-values", "scipy's Benjamini-Hochberg",
                       "max relative difference",
-                      relative_difference(result.adjusted_p_values[pick], bh),
+                      relative_difference(result.adjusted_p_value[pick], bh),
                       EXACT))  # fmt: skip
         table.append((f"{name}: adjusted p-values", "decoupler (single precision)",
                       "max relative difference",
-                      single_difference(result.adjusted_p_values[pick],
+                      single_difference(result.adjusted_p_value[pick],
                                         arrays[f"{name}/padj"]), SINGLE))  # fmt: skip
     if "bar_names" in reference:
         ax = plot_top_activities(result, case["bar"], top=15,
@@ -594,7 +600,7 @@ def check_files(table):
 
 
 def check_progeny_scores(r_found, values, genes, network, table):
-    result = weighted_aggregate(values, network, gene_ids=genes, statistic="sum",
+    result = weighted_aggregate(values, network, feature_ids=genes, statistic="sum",
                                 n_permutations=0, min_targets=1)  # fmt: skip
     theirs = np.array(r_found["scores"]).reshape(values.shape[0], -1)
     columns = [list(result.sources).index(s) for s in r_found["score_pathways"]]

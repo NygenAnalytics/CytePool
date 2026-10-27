@@ -1,23 +1,19 @@
 """Collections of gene sets, read from and written to GMT files.
 
-A :class:`GeneSets` maps the name of each gene set to its genes, named by gene id, and
-keeps the description of each set and where the collection comes from: its source,
-version and licence, as the user states them from what the provider of the
-collection documents, and, for a collection read from a file, the name of the file
-and its SHA-256 digest. CytePool bundles no collection: MSigDB (Liberzon et al.
-2011), Reactome, WikiPathways and the Gene Ontology distribute their sets under their
-own terms, and :func:`read_gmt` reads the files that users download from them.
+A :class:`~cytepool.GeneSets` maps the name of each gene set to its genes, named by gene
+id, and keeps the description of each set and where the collection comes from: its name,
+version and licence, as the user states them from what the provider of the collection
+documents, and, for a collection read from a file, the name of the file and its SHA-256
+digest. CytePool bundles no collection: MSigDB (Liberzon et al. 2011), Reactome,
+WikiPathways and the Gene Ontology distribute their sets under their own terms, and
+:func:`~cytepool.read_gmt` reads the files that users download from them.
 
-A ``GeneSets`` is a mapping of set name to genes, so every gene-set function of
-CytePool takes it as it is: as ``gene_sets`` of
-:func:`~cytepool.stats.gene_set_tests.camera`,
-:func:`~cytepool.stats.gene_set_tests.fry`,
-:func:`~cytepool.stats.rotation_gene_set_tests.mroast`,
-:func:`~cytepool.stats.rotation_gene_set_tests.romer` and
-:func:`~cytepool.over_representation.over_representation`, and one of its sets, as
-``gene_sets[name]``, as ``gene_set`` of
-:func:`~cytepool.stats.rotation_gene_set_tests.roast`. The tests of a linear model
-match the ids to their ``gene_ids``.
+A ``GeneSets`` is a mapping of set name to genes, so every gene-set function of CytePool
+takes it as it is: as ``gene_sets`` of :func:`~cytepool.camera`, :func:`~cytepool.fry`,
+:func:`~cytepool.mroast`, :func:`~cytepool.romer` and
+:func:`~cytepool.over_representation`, and one of its sets, as ``gene_sets[name]``, as
+``gene_set`` of :func:`~cytepool.roast`. The tests match the genes of each set to the
+column ``id_column`` of a result's features, or to the ``feature_ids`` of an array.
 
 Genes and sets:
     A set's genes are a tuple of gene ids (non-empty strings, compared exactly, case
@@ -27,20 +23,20 @@ Genes and sets:
     which GSEA writes for a set without one, or an empty description, is None.
 
 Matching and filtering:
-    :meth:`GeneSets.restrict_to` keeps the genes of each set that an analysis measured
-    and drops the sets left without genes, as limma's ``ids2indices`` does by default,
-    and refuses ids that match no gene at all, as when the sets name genes by symbol
-    and the analysis by Ensembl id. :meth:`GeneSets.filter_by_size` keeps the sets of a
-    range of sizes; restricted first, the sizes are those within the analysis, as
-    GSEA counts them before it leaves out sets of fewer than 15 or more than 500
-    genes, its defaults (GSEA team 2026). :meth:`GeneSets.select` takes sets by name.
-    Each returns a new ``GeneSets`` with the descriptions and the record of the
-    source.
+    :meth:`~cytepool.GeneSets.restrict_to` keeps the genes of each set that an analysis
+    measured and drops the sets left without genes, as limma's ``ids2indices`` does by
+    default, and refuses ids that match no gene at all, as when the sets name genes by
+    symbol and the analysis by Ensembl id. :meth:`~cytepool.GeneSets.filter_by_size`
+    keeps the sets of a range of sizes; restricted first, the sizes are those within the
+    analysis, as GSEA counts them before it leaves out sets of fewer than 15 or more
+    than 500 genes, its defaults (GSEA team 2026). :meth:`~cytepool.GeneSets.select`
+    takes sets by name. Each returns a new ``GeneSets`` with the descriptions and the
+    record of the collection.
 
 GMT files:
     The GMT (gene matrix transposed) format of GSEA (Subramanian et al. 2005; GSEA
     team 2026) holds one gene set per line, in fields separated by tabs: the set's
-    name, a description, and the set's genes. :func:`read_gmt` reads:
+    name, a description, and the set's genes. :func:`~cytepool.read_gmt` reads:
 
     - fields separated by tabs only, so that names with spaces, such as Reactome's
       pathway names, are read whole;
@@ -52,11 +48,11 @@ GMT files:
     - UTF-8 text, with or without a byte-order mark, compressed by gzip or not
       (recognised by the first bytes of the file, whatever its name).
 
-    A line with one field, a set without a name, or a name used for two sets is
-    refused, with the number of the line. :func:`write_gmt` writes the same format,
-    with ``"na"`` for a set without a description, so that :func:`read_gmt` reads
-    back the same sets and descriptions. A GMT file holds no source, version or
-    licence; they are given again when the file is read.
+    A line with one field, a set without a name, or a name used for two sets is refused,
+    with the number of the line. :func:`~cytepool.write_gmt` writes the same format,
+    with ``"na"`` for a set without a description, so that :func:`~cytepool.read_gmt`
+    reads back the same sets and descriptions. A GMT file holds no name, version or
+    licence of the collection; they are given again when the file is read.
 
 References:
     Subramanian A, Tamayo P, Mootha VK, Mukherjee S, Ebert BL, Gillette MA, Paulovich
@@ -102,7 +98,7 @@ _SETS_SHOWN = 3  # the sets that a repr names
 
 
 class GeneSets(Mapping[str, tuple[str, ...]]):
-    """Named gene sets, with their descriptions and the source of the collection.
+    """Named gene sets, with their descriptions and where the collection comes from.
 
     A read-only mapping of set name to the set's genes, a tuple of gene ids, so that
     the gene-set functions of CytePool take it as their ``gene_sets``. The module
@@ -114,7 +110,8 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
             tuple, set or 1-D array of them. A gene listed twice counts once.
         descriptions: Mapping of set name to the set's description (a string), for
             some or all of the sets; the others have None.
-        source: Where the sets come from, such as ``"MSigDB hallmark gene sets"``.
+        name: The name of the collection, which says where the sets come from,
+            such as ``"MSigDB hallmark gene sets"``.
         version: The version or release of the collection, such as
             ``"2024.1.Hs"``.
         licence: The terms under which the provider distributes the sets, such as
@@ -130,7 +127,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
             is not in ``sets``, or ``sha256`` is not a SHA-256 digest.
 
     Example:
-        >>> sets = GeneSets({"interferon": ["ISG15", "IFIT1", "MX1"]}, source="my lab")
+        >>> sets = GeneSets({"interferon": ["ISG15", "IFIT1", "MX1"]}, name="my lab")
         >>> sets["interferon"]
         ('ISG15', 'IFIT1', 'MX1')
     """
@@ -138,7 +135,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
     __slots__ = (
         "_sets",
         "_descriptions",
-        "_source",
+        "_name",
         "_version",
         "_licence",
         "_file",
@@ -147,7 +144,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
 
     _sets: dict[str, tuple[str, ...]]
     _descriptions: dict[str, str | None]
-    _source: str | None
+    _name: str | None
     _version: str | None
     _licence: str | None
     _file: str | None
@@ -158,7 +155,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
         sets: Mapping[str, Any],
         *,
         descriptions: Mapping[str, Any] | None = None,
-        source: str | None = None,
+        name: str | None = None,
         version: str | None = None,
         licence: str | None = None,
         file: str | None = None,
@@ -166,6 +163,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
     ) -> None:
         reject_masked(sets, "sets")
         reject_masked(descriptions, "descriptions")
+        collection_name = name
         if not isinstance(sets, Mapping):
             raise TypeError(
                 "sets must be a mapping of set name to genes, such as "
@@ -190,7 +188,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
                     )
                 texts[name] = _description(text, f"the description of {name!r}")
         record = {
-            "source": _text(source, "source"),
+            "name": _text(collection_name, "name"),
             "version": _text(version, "version"),
             "licence": _text(licence, "licence"),
             "file": _text(file, "file"),
@@ -252,9 +250,10 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
         return MappingProxyType(self._descriptions)
 
     @property
-    def source(self) -> str | None:
-        """Where the sets come from, as stated; None when not stated."""
-        return self._source
+    def name(self) -> str | None:
+        """The name of the collection, which says where the sets come from, as
+        stated; None when not stated."""
+        return self._name
 
     @property
     def version(self) -> str | None:
@@ -397,7 +396,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
         stated = [
             f"{label}: {value if value is not None else 'not stated'}"
             for label, value in (
-                ("source", self._source),
+                ("name", self._name),
                 ("version", self._version),
                 ("licence", self._licence),
             )
@@ -419,7 +418,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
 
     def _record(self) -> dict[str, str | None]:
         return {
-            "source": self._source,
+            "name": self._name,
             "version": self._version,
             "licence": self._licence,
             "file": self._file,
@@ -437,7 +436,7 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
 def read_gmt(
     path: str | os.PathLike[str],
     *,
-    source: str | None = None,
+    name: str | None = None,
     version: str | None = None,
     licence: str | None = None,
 ) -> GeneSets:
@@ -446,13 +445,13 @@ def read_gmt(
     One set per line: its name, a description and its genes, separated by tabs, as
     MSigDB, Reactome, WikiPathways and the GMT exports of the Gene Ontology write
     them; the module docstring says what is read and how. The collection records the
-    name of the file and the SHA-256 digest of its bytes, and the source, version and
+    name of the file and the SHA-256 digest of its bytes, and the name, version and
     licence given here, which the file cannot hold: state them as the provider
     documents them, so that results can say which sets they used.
 
     Args:
         path: The GMT file, compressed by gzip or not.
-        source: Where the sets come from, such as ``"MSigDB hallmark gene sets"``.
+        name: The name of the collection, such as ``"MSigDB hallmark gene sets"``.
         version: The version or release of the collection, such as ``"2024.1.Hs"``.
         licence: The terms under which the provider distributes the sets, such as
             ``"CC BY 4.0"``.
@@ -470,7 +469,7 @@ def read_gmt(
     """
     location = _file_path(path)
     record = {
-        "source": _text(source, "source"),
+        "name": _text(name, "name"),
         "version": _text(version, "version"),
         "licence": _text(licence, "licence"),
     }
@@ -539,7 +538,7 @@ def write_gmt(
     One line per set, in order: its name, its description (``"na"`` without one) and
     its genes, separated by tabs, in UTF-8 with line feeds, compressed by gzip when
     the name of the file ends in ``.gz``. :func:`read_gmt` reads back the same sets
-    and descriptions. The source, version and licence of a ``GeneSets`` are not
+    and descriptions. The name, version and licence of a ``GeneSets`` are not
     written: GMT has no place for them.
 
     Args:
@@ -585,7 +584,7 @@ def _initialize(
 ) -> None:
     object.__setattr__(collection, "_sets", sets)
     object.__setattr__(collection, "_descriptions", descriptions)
-    for key in ("source", "version", "licence", "file", "sha256"):
+    for key in ("name", "version", "licence", "file", "sha256"):
         object.__setattr__(collection, f"_{key}", record[key])
 
 

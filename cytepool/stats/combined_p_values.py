@@ -53,7 +53,7 @@ One-sided and two-sided p-values:
     into one-sided ones, as metap's ``two2one``: p / 2 for an effect above zero and
     1 - p / 2 for one below, and 1/2 for an effect of exactly zero, for the effects
     above zero; their complements, for the effects below. Each direction is
-    combined, giving ``p_value_up`` and ``p_value_down``, and the p-value is
+    combined, giving ``up_p_value`` and ``down_p_value``, and the p-value is
     min(1, 2 min(p_up, p_down)), the Bonferroni bound over the two directions (Owen
     2009): for Stouffer's method it is the two-sided p-value of Z, 2 (1 - Phi(|Z|)),
     and effects in opposite directions cancel. The one-sided p-value near 0 is kept
@@ -190,11 +190,12 @@ class CombinedPValues:
             method's t, or the Simes p-value; of the n - u + 1 largest p-values for a
             partial conjunction; with ``directions``, that of the effects above zero,
             so that Stouffer's Z is positive for effects mostly up.
-        p_value_up: With ``directions``, the combined one-sided p-value for effects
+        up_p_value: With ``directions``, the combined one-sided p-value for effects
             above zero; None without.
-        p_value_down: Likewise, for effects below zero.
-        direction: With ``directions``, 1 where ``p_value_up`` is the smaller, -1
-            where ``p_value_down`` is, and 0 where they are equal; None without.
+        down_p_value: Likewise, for effects below zero.
+        sign: With ``directions``, the sign of the combined effect: 1 where
+            ``up_p_value`` is the smaller, -1 where ``down_p_value`` is, and 0 where
+            they are equal; None without.
         n_studies: The number of studies that tested each feature (whose p-value is
             not NaN).
         method: The method, such as ``"fisher"``.
@@ -205,9 +206,9 @@ class CombinedPValues:
 
     p_value: FloatArray
     statistic: FloatArray
-    p_value_up: FloatArray | None
-    p_value_down: FloatArray | None
-    direction: FloatArray | None
+    up_p_value: FloatArray | None
+    down_p_value: FloatArray | None
+    sign: FloatArray | None
     n_studies: IntArray
     method: str
     at_least: int
@@ -216,7 +217,7 @@ class CombinedPValues:
     def __repr__(self) -> str:
         studies = self.n_studies[self.n_studies > 0]
         span = f"{studies.min()} to {studies.max()}" if studies.size else "none"
-        signed = ", with directions" if self.direction is not None else ""
+        signed = ", with directions" if self.sign is not None else ""
         return (
             f"CombinedPValues(n_features={self.p_value.size}, method={self.method!r}, "
             f"at_least={self.at_least}{signed}, studies per feature: {span})"
@@ -285,7 +286,7 @@ def combine_p_values(
         >>> signed = combine_p_values(
         ...     two_sided, method="stouffer", directions=[[1.0, 1.0], [1.0, -1.0]]
         ... )
-        >>> signed.direction.tolist(), signed.p_value.round(4).tolist()
+        >>> signed.sign.tolist(), signed.p_value.round(4).tolist()
         ([1.0, 1.0], [0.0011, 0.712])
     """
     chosen = checked_choice(method, "method", _METHODS)
@@ -486,9 +487,9 @@ def _combination(
     return CombinedPValues(
         p_value=shaped(p_value),
         statistic=shaped(statistic),
-        p_value_up=None if up is None else shaped(up),
-        p_value_down=None if down is None else shaped(down),
-        direction=None if direction is None else shaped(direction),
+        up_p_value=None if up is None else shaped(up),
+        down_p_value=None if down is None else shaped(down),
+        sign=None if direction is None else shaped(direction),
         n_studies=read_only(tested.reshape(shape)),
         method=method,
         at_least=at_least,

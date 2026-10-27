@@ -8,8 +8,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
-from cytepool.design import Design
-from cytepool.table import Table
+from cytepool import Design, Table
 
 
 @pytest.fixture(scope="module")

@@ -25,18 +25,18 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.cube import Cube, from_bulk
-from cytepool.design import Design
-from cytepool.normalization import filter_by_expression, tmm_factors
-from cytepool.stats.dream import voom_with_dream_weights
-from cytepool.stats.voom import voom
-from cytepool.table import Table
-from cytepool.variance_partitioning import (
-    VarianceFractions,
+from cytepool import (
+    Cube,
+    Design,
+    Table,
     VariancePartitioningResult,
-    variance_fractions,
+    from_bulk,
     variance_partitioning,
 )
+from cytepool.normalization import filter_by_expression, tmm_factors
+from cytepool.stats.dream import voom_with_dream_weights
+from cytepool.stats.variance_fractions import VarianceFractions, variance_fractions
+from cytepool.stats.voom import voom
 
 DATA = Path(__file__).parent / "data" / "variance_partitioning"
 # lme4's fits stop at about 1e-8 of the optimum (see the validation script); closed
@@ -460,7 +460,7 @@ def test_groups_that_cannot_be_partitioned_say_why_and_the_rest_are_fitted() -> 
         norm_factors=tmm_factors(counts),
         weights=cube.n_cells[:, 0].astype(float),
     )
-    direct = variance_fractions(weighted.log_cpm, design, weights=weighted.weights)
+    direct = variance_fractions(weighted.log2_cpm, design, weights=weighted.weights)
     assert_allclose(fractions, direct.fractions, rtol=EXACT, atol=EXACT)
     assert result.summary["n_features"].tolist() == [30, 0, 0, 0]
     assert int(result.summary["n_samples_left_out"][1]) == 16
@@ -474,7 +474,7 @@ def test_a_design_without_random_effects_is_fitted_after_voom() -> None:
     )
     counts = np.asarray(cube.layer("counts", 0), dtype=float)
     weighted = voom(counts, design.matrix)
-    direct = variance_fractions(weighted.log_cpm, design, weights=weighted.weights)
+    direct = variance_fractions(weighted.log2_cpm, design, weights=weighted.weights)
     table = result.table("fine")
 
     assert result.table().equals(table)  # the only group needs no name
@@ -503,7 +503,7 @@ def test_a_filter_by_sample_groups_keeps_the_genes_of_any_one_group() -> None:
     by_donor = variance_partitioning(
         cube, design, expression_filter={"sample_groups": "donor"}, normalization=None
     )
-    keep = filter_by_expression(counts, group=cube.samples["donor"])
+    keep = filter_by_expression(counts, sample_groups=cube.samples["donor"])
     tested = by_donor.table()["feature_id"].tolist()
     assert tested == cube.features["feature_id"][keep].tolist()
     assert "g0" in tested and "g1" not in tested
@@ -618,7 +618,7 @@ def test_the_figures_draw_what_plotvarpart_and_plotpercentbars_draw() -> None:
         assert np.max(np.abs(drawn - 0.45 * data["violin_width"][rows])) <= 0.45e-3
 
     genes = data["bar_genes"].tolist()
-    ax = plotting.plot_gene_variance_fractions(
+    ax = plotting.plot_feature_variance_fractions(
         table, genes, ax=figure.Figure().subplots()
     )
     segments = {
@@ -657,12 +657,12 @@ def test_figures_take_fractions_results_and_tables_and_say_what_is_wrong() -> No
         "rin",
         "Residuals",
     ]
-    ax = plotting.plot_gene_variance_fractions(
+    ax = plotting.plot_feature_variance_fractions(
         fractions, [2, 0], ax=figure.Figure().subplots()
     )
     widths = np.array([[patch.get_width() for patch in c] for c in ax.containers]).T
     assert_allclose(widths.sum(axis=1), 100.0, rtol=EXACT)
-    labelled = plotting.plot_gene_variance_fractions(
+    labelled = plotting.plot_feature_variance_fractions(
         fractions,
         ["x2"],
         labels=[f"x{i}" for i in range(20)],
@@ -684,15 +684,15 @@ def test_figures_take_fractions_results_and_tables_and_say_what_is_wrong() -> No
     with pytest.raises(TypeError, match="data must be"):
         plotting.plot_variance_fractions(np.ones((3, 2)))
     with pytest.raises(KeyError, match="no gene 'g99'"):
-        plotting.plot_gene_variance_fractions(table, ["g99"])
+        plotting.plot_feature_variance_fractions(table, ["g99"])
     with pytest.raises(KeyError, match="name no genes"):
-        plotting.plot_gene_variance_fractions(fractions, ["g1"])
+        plotting.plot_feature_variance_fractions(fractions, ["g1"])
     with pytest.raises(ValueError, match="more than once"):
-        plotting.plot_gene_variance_fractions(table, ["g1", "g1"])
-    with pytest.raises(ValueError, match="genes is empty"):
-        plotting.plot_gene_variance_fractions(table, [])
+        plotting.plot_feature_variance_fractions(table, ["g1", "g1"])
+    with pytest.raises(ValueError, match="features is empty"):
+        plotting.plot_feature_variance_fractions(table, [])
     with pytest.raises(IndexError, match="out of range"):
-        plotting.plot_gene_variance_fractions(fractions, [20])
+        plotting.plot_feature_variance_fractions(fractions, [20])
     many = Table(
         {f"v{i}": np.full(3, 0.1) for i in range(9)} | {"residuals": np.full(3, 0.1)}
     )
@@ -702,4 +702,4 @@ def test_figures_take_fractions_results_and_tables_and_say_what_is_wrong() -> No
     with pytest.raises(ValueError, match="no gene has fractions"):
         plotting.plot_variance_fractions(unfitted)
     with pytest.raises(ValueError, match="'a' has no fractions"):
-        plotting.plot_gene_variance_fractions(unfitted, ["a"])
+        plotting.plot_feature_variance_fractions(unfitted, ["a"])

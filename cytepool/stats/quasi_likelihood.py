@@ -16,7 +16,7 @@ is silent, as found by running edgeR 4.4.0 as a black box ("found by probing").
 
 The steps:
 
-1. Abundance. :func:`average_log_cpm` is edgeR's ``aveLogCPM``: the log2 of the mean
+1. Abundance. :func:`average_log2_cpm` is edgeR's ``aveLogCPM``: the log2 of the mean
    count per million of a gene, fitted as one group of samples by a NB model after a
    prior count of 2, scaled by library size, is added to every count (edgeR's
    ``addPriorCount``). ``glmQLFit`` computes it once, at the given NB dispersion, or
@@ -230,7 +230,7 @@ __all__ = [
     "QuasiLikelihoodFit",
     "QuasiLikelihoodTest",
     "UnitDevianceMoments",
-    "average_log_cpm",
+    "average_log2_cpm",
     "common_dispersion",
     "fit_quasi_likelihood",
     "negative_binomial_unit_deviance_moments",
@@ -981,7 +981,7 @@ def _average_quasi_dispersion(
 # ---------------------------------------------------------------------------------------
 
 
-def average_log_cpm(
+def average_log2_cpm(
     counts: npt.ArrayLike,
     *,
     library_sizes: npt.ArrayLike | None = None,
@@ -1164,7 +1164,7 @@ def _common_dispersion(
             "dispersion can be estimated"
         )
     if keep.size > most:
-        abundance = average_log_cpm(
+        abundance = average_log2_cpm(
             y[:, keep],
             offsets=_by_samples(log_sizes, keep),
             weights=_by_samples(w, keep),
@@ -1353,7 +1353,7 @@ class QuasiLikelihoodFit:
             (``df.residual.adj``), fractional; zero for a gene without counts.
         quasi_dispersion: ``(n_features,)`` quasi-dispersions, the ratio of the two;
             NaN where the degrees of freedom are zero.
-        prior_df: The prior degrees of freedom (``df.prior``): a float, or one value
+        df_prior: The prior degrees of freedom (``df.prior``): a float, or one value
             per gene from a robust fit that finds outliers.
         prior_quasi_dispersion: The prior quasi-dispersion (``s2.prior``): one value
             per gene with a trend, a float otherwise.
@@ -1363,7 +1363,7 @@ class QuasiLikelihoodFit:
             default the average log CPM that also ranks the genes, at the given NB
             dispersion or at 0.05 when the dispersion is estimated (edgeR's
             abundance); None without a trend.
-        average_log_cpm: ``(n_features,)`` average log2 counts per million at the
+        average_log2_cpm: ``(n_features,)`` average log2 counts per million at the
             negative binomial dispersion, the ``logCPM`` of the tests.
         robust: Whether the prior was estimated robustly.
         counts: ``(n_samples, n_features)`` the counts fitted (``counts``).
@@ -1380,11 +1380,11 @@ class QuasiLikelihoodFit:
     deviance_adjusted: FloatArray
     df_residual_adjusted: FloatArray
     quasi_dispersion: FloatArray
-    prior_df: float | FloatArray
+    df_prior: float | FloatArray
     prior_quasi_dispersion: float | FloatArray
     posterior_quasi_dispersion: FloatArray
     covariate: FloatArray | None
-    average_log_cpm: FloatArray
+    average_log2_cpm: FloatArray
     robust: bool
     counts: FloatArray
     max_iterations: int
@@ -1401,7 +1401,7 @@ class QuasiLikelihoodFit:
             f"coefficient_names={self.coefficient_names!r}, "
             f"dispersion={value_range(self.dispersion)}, "
             f"average_quasi_dispersion={self.average_quasi_dispersion:.6g}, "
-            f"prior_df={value_range(self.prior_df)}, robust={self.robust})"
+            f"df_prior={value_range(self.df_prior)}, robust={self.robust})"
         )
 
 
@@ -1527,7 +1527,7 @@ def fit_quasi_likelihood(
         if dispersion is None:
             # The genes are ranked, and the trends follow, by the average log CPM at
             # aveLogCPM's default dispersion (found by probing).
-            abundance = average_log_cpm(
+            abundance = average_log2_cpm(
                 y,
                 **given,
                 prior_count=_ABUNDANCE_PRIOR_COUNT,
@@ -1552,7 +1552,7 @@ def fit_quasi_likelihood(
             phi = np.array([[value]])
             reported: float | FloatArray = value
             # The logCPM of the tests is at the dispersion of the fit.
-            log_cpm = average_log_cpm(
+            log2_cpm = average_log2_cpm(
                 y,
                 **given,
                 prior_count=_ABUNDANCE_PRIOR_COUNT,
@@ -1564,13 +1564,13 @@ def fit_quasi_likelihood(
             reported = _as_given(_argument(phi))
             # With a dispersion given, the trends follow the average log CPM at that
             # dispersion, which is also the logCPM of the tests (found by probing).
-            abundance = average_log_cpm(
+            abundance = average_log2_cpm(
                 y,
                 **given,
                 prior_count=_ABUNDANCE_PRIOR_COUNT,
                 dispersion=_argument(phi),
             )
-            log_cpm = abundance
+            log2_cpm = abundance
         weights_by_sample = np.broadcast_to(w.T, y.shape)
         average = 1.0
         for _ in range(_AVERAGE_PASSES):
@@ -1620,7 +1620,7 @@ def fit_quasi_likelihood(
         deviance_adjusted=read_only(adjusted.deviance),
         df_residual_adjusted=read_only(df),
         quasi_dispersion=read_only(quasi),
-        prior_df=_frozen(squeezed.prior_df),
+        df_prior=_frozen(squeezed.df_prior),
         prior_quasi_dispersion=_frozen(squeezed.prior_variance),
         posterior_quasi_dispersion=read_only(
             np.asarray(squeezed.posterior_variance, dtype=np.float64)
@@ -1628,7 +1628,7 @@ def fit_quasi_likelihood(
         covariate=None
         if trend_values is False
         else read_only(np.asarray(trend_values, dtype=np.float64)),
-        average_log_cpm=read_only(log_cpm),
+        average_log2_cpm=read_only(log2_cpm),
         robust=bool(robust),
         # A copy: the tests refit the null model from these counts.
         counts=read_only(np.array(y)),
@@ -1645,8 +1645,8 @@ def fit_quasi_likelihood(
 class QuasiLikelihoodTest:
     """Quasi-likelihood F-tests of coefficients or contrasts, one per gene.
 
-    The columns of edgeR's ``topTags`` table are ``log_fold_change`` (``logFC``),
-    ``average_log_cpm`` (``logCPM``), ``f_statistic`` (``F``), ``p_value``
+    The columns of edgeR's ``topTags`` table are ``log2_fold_change`` (``logFC``),
+    ``average_log2_cpm`` (``logCPM``), ``f_statistic`` (``F``), ``p_value``
     (``PValue``) and ``adjusted_p_value`` (``FDR``). The arrays are read-only.
 
     Attributes:
@@ -1654,9 +1654,9 @@ class QuasiLikelihoodTest:
         names: Names of the coefficients or contrasts tested together.
         contrasts: ``(n_coefficients, n_tested)`` weights of each tested contrast on
             the coefficients; the columns of the identity for coefficients.
-        log_fold_change: ``(n_features, n_tested)`` log2 fold changes, each contrast
+        log2_fold_change: ``(n_features, n_tested)`` log2 fold changes, each contrast
             of the shrunk coefficients divided by log 2.
-        average_log_cpm: ``(n_features,)`` average log2 counts per million.
+        average_log2_cpm: ``(n_features,)`` average log2 counts per million.
         likelihood_ratio: ``(n_features,)`` likelihood ratio statistics: the
             deviance of the null fit less that of the full fit, both at the working
             dispersion; at least 0.
@@ -1675,8 +1675,8 @@ class QuasiLikelihoodTest:
     fit: QuasiLikelihoodFit
     names: tuple[str, ...]
     contrasts: FloatArray
-    log_fold_change: FloatArray
-    average_log_cpm: FloatArray
+    log2_fold_change: FloatArray
+    average_log2_cpm: FloatArray
     likelihood_ratio: FloatArray
     f_statistic: FloatArray
     p_value: FloatArray
@@ -1688,12 +1688,12 @@ class QuasiLikelihoodTest:
         """Return the tests as a table, one row per gene in the order of the counts.
 
         edgeR's ``topTags(sort.by = "none")``, with the columns of the tables of
-        :func:`~cytepool.differential_expression.limma_voom`: ``feature_id``;
-        ``log2_fold_change`` (``logFC``), or, for several coefficients or contrasts
-        tested together, ``log2_fold_change_<name>`` for each, as the F-tests of
-        :func:`~cytepool.differential_expression.dream_voom` name them;
-        ``average_log2_cpm`` (``logCPM``); ``f_statistic`` (``F``); ``p_value``
-        (``PValue``); and ``adjusted_p_value`` (``FDR``).
+        :func:`~cytepool.limma_voom`: ``feature_id``; ``log2_fold_change`` (``logFC``),
+        or, for several coefficients or contrasts tested together,
+        ``log2_fold_change_<name>`` for each, as the F-tests of
+        :func:`~cytepool.dream_voom` name them; ``average_log2_cpm`` (``logCPM``);
+        ``f_statistic`` (``F``); ``p_value`` (``PValue``); and ``adjusted_p_value``
+        (``FDR``).
 
         Args:
             feature_ids: One id per gene, as text, such as the gene ids of the
@@ -1708,12 +1708,12 @@ class QuasiLikelihoodTest:
             "feature_id": feature_id_column(feature_ids, self.f_statistic.size)
         }
         if len(self.names) == 1:
-            columns["log2_fold_change"] = self.log_fold_change[:, 0]
+            columns["log2_fold_change"] = self.log2_fold_change[:, 0]
         else:
             for j, name in enumerate(self.names):
-                columns[f"log2_fold_change_{name}"] = self.log_fold_change[:, j]
+                columns[f"log2_fold_change_{name}"] = self.log2_fold_change[:, j]
         columns |= {
-            "average_log2_cpm": self.average_log_cpm,
+            "average_log2_cpm": self.average_log2_cpm,
             "f_statistic": self.f_statistic,
             "p_value": self.p_value,
             "adjusted_p_value": self.adjusted_p_value,
@@ -1819,17 +1819,17 @@ def quasi_likelihood_f_test(
     n_samples, n_features = model.fitted_values.shape
     cap = float(n_features * (n_samples - n_coefficients))
     df_total = np.minimum(
-        np.asarray(fit.prior_df) + np.asarray(fit.df_residual_adjusted), cap
+        np.asarray(fit.df_prior) + np.asarray(fit.df_residual_adjusted), cap
     )
     df_total = np.broadcast_to(df_total, (n_features,)).astype(np.float64)
     p_value = np.asarray(f_sf(f_statistic, float(rank), df_total), dtype=np.float64)
-    log_fold_change = np.asarray(model.shrunk_coefficients) @ matrix / _LOG_TWO
+    log2_fold_change = np.asarray(model.shrunk_coefficients) @ matrix / _LOG_TWO
     return QuasiLikelihoodTest(
         fit=fit,
         names=tuple(tested),
         contrasts=read_only(np.array(matrix, dtype=np.float64)),
-        log_fold_change=read_only(np.ascontiguousarray(log_fold_change)),
-        average_log_cpm=fit.average_log_cpm,
+        log2_fold_change=read_only(np.ascontiguousarray(log2_fold_change)),
+        average_log2_cpm=fit.average_log2_cpm,
         likelihood_ratio=read_only(likelihood_ratio),
         f_statistic=read_only(np.asarray(f_statistic, dtype=np.float64)),
         p_value=read_only(p_value),

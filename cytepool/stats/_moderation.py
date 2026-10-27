@@ -37,7 +37,7 @@ def posterior_variances(
     x: FloatArray,
     d: float | FloatArray,
     prior_variance: float | FloatArray,
-    prior_df: float | FloatArray,
+    df_prior: float | FloatArray,
 ) -> FloatArray:
     """Posterior variances (d0 s0^2 + d s^2) / (d0 + d), as in Smyth (2004).
 
@@ -45,7 +45,7 @@ def posterior_variances(
     df d is zero.
     """
     s0 = np.broadcast_to(prior_variance, x.shape)
-    d0 = np.broadcast_to(prior_df, x.shape)
+    d0 = np.broadcast_to(df_prior, x.shape)
     with np.errstate(invalid="ignore", divide="ignore"):
         weighted = np.where(d > 0.0, d * x, 0.0)
         posterior = (weighted + np.where(np.isinf(d0), 0.0, d0 * s0)) / (d + d0)

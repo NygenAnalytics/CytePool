@@ -1,31 +1,31 @@
 """Over-representation analysis: gene sets among the genes called significant.
 
-:func:`over_representation` asks of each gene set whether the genes called significant
-in an analysis hold more of its genes than chance would give, by the one-sided
-hypergeometric test against a universe of genes, as limma's ``kegga`` and ``goana``
-compute it with their defaults (Young et al. 2010). From a differential-expression
-result it tests the genes that go up and the genes that go down separately, as
-``kegga`` and ``goana`` test a fit of limma, and the genes that change in either
-direction together. Results match limma 3.62.1 except where noted under "Deliberate
-differences".
+:func:`~cytepool.over_representation` asks of each gene set whether the genes called
+significant in an analysis hold more of its genes than chance would give, by the
+one-sided hypergeometric test against a universe of genes, as limma's ``kegga`` and
+``goana`` compute it with their defaults (Young et al. 2010). From a
+differential-expression result it tests the genes that go up and the genes that go down
+separately, as ``kegga`` and ``goana`` test a fit of limma, and the genes that change in
+either direction together. Results match limma 3.62.1 except where noted under
+"Deliberate differences".
 
 The test:
     The universe holds the N genes that could have been called significant. Of a gene
     set, K genes are in the universe; n genes of the universe are selected, and k of
     them are in the set. Were the n genes drawn at random from the universe, without
-    regard to the set, k would follow the hypergeometric distribution of n draws
-    without replacement from N genes of which K are in the set, whose mean K n / N is
-    the expected overlap. The p-value is P(X >= k), the one-sided p-value of Fisher's
-    (1922) exact test of the 2 x 2 table of the genes of the universe, in the set or
-    not and selected or not (Rivals et al. 2007); the hypergeometric test of
-    functional categories goes back to Tavazoie et al. (1999). It is computed by
+    regard to the set, k would follow the hypergeometric distribution of n draws without
+    replacement from N genes of which K are in the set, whose mean K n / N is the
+    expected overlap. The p-value is P(X >= k), the one-sided p-value of Fisher's (1922)
+    exact test of the 2 x 2 table of the genes of the universe, in the set or not and
+    selected or not (Rivals et al. 2007); the hypergeometric test of functional
+    categories goes back to Tavazoie et al. (1999). It is computed by
     :func:`~cytepool.stats.distributions.hypergeom_sf`, which keeps its relative
-    accuracy far into the tail. The adjusted p-values are Benjamini and Hochberg's (1995), over
-    the sets of each list of selected genes; limma's ``kegga`` and ``goana`` report
-    p-values only.
+    accuracy far into the tail. The adjusted p-values are Benjamini and Hochberg's
+    (1995), over the sets of each list of selected genes; limma's ``kegga`` and
+    ``goana`` report p-values only.
 
 The genes and the universe:
-    - From a :class:`~cytepool.differential_expression.DifferentialExpressionResult`
+    - From a :class:`~cytepool.DifferentialExpressionResult`
       (one group and contrast) or any table of results, the genes whose adjusted
       p-value is below ``alpha`` are selected, as ``kegga`` selects the genes of a fit
       whose adjusted p-value is below its ``FDR`` (strictly, found by probing): up
@@ -48,15 +48,14 @@ The genes and the universe:
     2022). The default, the genes tested, is the universe that the test assumes.
 
 What the test assumes:
-    The test takes genes as independent draws. The genes of a set are often
-    correlated, as co-regulated genes are, which makes its p-values too small
-    (Goeman and Buehlmann 2007); :func:`~cytepool.stats.gene_set_tests.camera` allows
-    for the correlation. The test also depends on the cutoff ``alpha`` and ignores the
-    size of each change. In RNA-seq data, long and highly expressed genes are called
-    significant more often, which biases the test towards sets of such genes (Young et
-    al. 2010); the adjustment of ``kegga`` and ``goana`` for such a trend
-    (``trend``, Wallenius' noncentral hypergeometric distribution) is not
-    implemented.
+    The test takes genes as independent draws. The genes of a set are often correlated,
+    as co-regulated genes are, which makes its p-values too small (Goeman and Buehlmann
+    2007); :func:`~cytepool.camera` allows for the correlation. The test also depends on
+    the cutoff ``alpha`` and ignores the size of each change. In RNA-seq data, long and
+    highly expressed genes are called significant more often, which biases the test
+    towards sets of such genes (Young et al. 2010); the adjustment of ``kegga`` and
+    ``goana`` for such a trend (``trend``, Wallenius' noncentral hypergeometric
+    distribution) is not implemented.
 
 Deliberate differences from limma:
     - A set without genes in the universe has a row with no p-value (NaN), which the
@@ -147,13 +146,13 @@ def over_representation(
 
     Args:
         genes: The genes to test: a
-            :class:`~cytepool.differential_expression.DifferentialExpressionResult`,
-            with ``group`` and ``contrast``; a table of results, a ``Table`` or a
-            pandas DataFrame, with a column of gene ids, a column of adjusted p-values
-            and, for directions, a column of fold changes; or a list of the ids of the
-            selected genes, with ``universe``.
-        gene_sets: A :class:`~cytepool.gene_sets.GeneSets`, such as one read by
-            :func:`~cytepool.gene_sets.read_gmt`, or a mapping of set name to gene ids.
+            :class:`~cytepool.DifferentialExpressionResult`, with ``group`` and
+            ``contrast``; a table of results, a ``Table`` or a pandas DataFrame, with a
+            column of gene ids, a column of adjusted p-values and, for directions, a
+            column of fold changes; or a list of the ids of the selected genes, with
+            ``universe``.
+        gene_sets: A :class:`~cytepool.GeneSets`, such as one read by
+            :func:`~cytepool.read_gmt`, or a mapping of set name to gene ids.
         group: The group (cell type) of a ``DifferentialExpressionResult``; it may be
             left out when the result has one.
         contrast: The contrast of a ``DifferentialExpressionResult``; it may be left

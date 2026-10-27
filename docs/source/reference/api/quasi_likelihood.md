@@ -13,12 +13,13 @@ dispersion is the Cox-Reid common dispersion of the most highly expressed genes
 ({func}`~cytepool.stats.quasi_likelihood.common_dispersion`), each gene's
 quasi-dispersion comes from deviances adjusted for small counts, and limma's prior for
 unequal degrees of freedom moderates them, towards a trend in the average log CPM
-({func}`~cytepool.stats.quasi_likelihood.average_log_cpm`). The tests give edgeR's
+({func}`~cytepool.stats.quasi_likelihood.average_log2_cpm`). The tests give edgeR's
 columns logFC, logCPM, F, PValue and FDR for coefficients or named contrasts of a
 design.
 
 ```python
-from cytepool.design import Design, make_contrasts
+from cytepool import Design
+from cytepool.design import make_contrasts
 from cytepool.normalization import tmm_factors
 from cytepool.stats.quasi_likelihood import (
     fit_quasi_likelihood,
@@ -29,7 +30,7 @@ design = Design(samples, "~ 0 + group")
 fit = fit_quasi_likelihood(counts, design, norm_factors=tmm_factors(counts))
 contrasts = make_contrasts({"b_vs_a": "groupB - groupA"}, design)
 test = quasi_likelihood_f_test(fit, contrasts=contrasts)
-test.log_fold_change, test.p_value, test.adjusted_p_value
+test.log2_fold_change, test.p_value, test.adjusted_p_value
 ```
 
 ```{eval-rst}

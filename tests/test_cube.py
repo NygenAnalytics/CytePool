@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.cube import Cube
+from cytepool import Cube
 
 SCANPY_FIXTURE = Path(__file__).parent / "data" / "cube" / "scanpy_aggregate.npz"
 TARGET_SUM = 1e4

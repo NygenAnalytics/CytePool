@@ -62,13 +62,9 @@ import matplotlib.colors
 import matplotlib.figure
 import numpy as np
 
-from cytepool import plotting
-from cytepool.gene_sets import read_gmt, write_gmt
-from cytepool.over_representation import over_representation
+from cytepool import Table, camera, over_representation, plotting, read_gmt, write_gmt
 from cytepool.stats.distributions import hypergeom_sf
-from cytepool.stats.gene_set_tests import camera
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.table import Table
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests/data/gene_set_files_and_ora"
 EXACT = 1e-10
@@ -498,7 +494,7 @@ def check_matching(root, matching, reference, table):
     table.append((check, "ids2indices", "differences", int(not same), 0))
     kept = restricted.filter_by_size(15, 200)
     design = np.column_stack([np.ones(8), np.repeat([0.0, 1.0], 4)])
-    tested = camera(y.T, design, 1, kept, gene_ids=identifiers)
+    tested = camera(y.T, kept, design=design, contrast=1, feature_ids=identifiers)
     value = relative(tested["p_value"], reference["camera"])
     value = value if list(kept) == reference["camera names"] else np.inf
     check = f"filter_by_size(15, 200), then camera of the {len(kept)} sets"

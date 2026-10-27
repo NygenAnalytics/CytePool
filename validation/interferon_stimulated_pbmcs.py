@@ -78,9 +78,7 @@ import scipy.io
 import scipy.sparse
 
 import cytepool
-from cytepool.cube import from_cells
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
+from cytepool import Design, from_cells, limma_voom
 
 SOURCE = "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE96nnn/GSE96583/suppl/"
 FILES = {  # bytes and SHA-256, as downloaded on 2026-10-25
@@ -147,7 +145,7 @@ COLUMNS = {
     "t": "t",
     "P.Value": "p_value",
     "adj.P.Val": "adjusted_p_value",
-    "B": "b_statistic",
+    "B": "log_odds",
 }
 
 R_SCRIPT = r"""
@@ -324,9 +322,9 @@ def make_cube(cells, labels, genes):
     }
     return from_cells(
         cells,
-        samples=labels["sample"],
-        groups=labels["group"],
-        sample_table=samples,
+        sample_labels=labels["sample"],
+        group_labels=labels["group"],
+        samples=samples,
         features={"feature_id": [g[0] for g in genes], "symbol": [g[1] for g in genes]},
         layers="counts",
     )
@@ -450,7 +448,7 @@ def compare(label, cube, result, limma):
         used = result.samples["used"][result.samples["group_id"] == group]
         tested = np.isin(cube.features["feature_id"], table["feature_id"])
         # Equal, also when both are infinite, or close; a NaN is a mismatch.
-        prior, limma_prior = result.summary["prior_df"][k], theirs["df"][1]
+        prior, limma_prior = result.summary["df_prior"][k], theirs["df"][1]
         same_prior = prior == limma_prior or difference(prior, limma_prior) <= EXACT
         span = voom_span(result, group)
         mismatches = (

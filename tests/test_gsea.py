@@ -22,15 +22,11 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool import gsea as module
+import cytepool.gene_set_enrichment as module
+from cytepool import Cube, Design, Table, gsea, limma_voom
 from cytepool._ranked_genes import running_sum
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.gsea import gsea
 from cytepool.plotting import plot_enrichment, plot_gsea_table
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "gsea"
 EXACT = 1e-10

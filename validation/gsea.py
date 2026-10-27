@@ -61,8 +61,7 @@ from pathlib import Path
 import matplotlib.figure
 import numpy as np
 
-from cytepool import plotting
-from cytepool.gsea import gsea
+from cytepool import gsea, plotting
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests/data/gsea"
 EXACT = 1e-10

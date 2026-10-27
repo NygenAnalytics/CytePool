@@ -23,18 +23,21 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.cube import Cube, from_bulk, from_cells
-from cytepool.design import Contrasts, Design
-from cytepool.differential_expression import (
+from cytepool import (
+    Cube,
+    Design,
     DifferentialExpressionResult,
+    Table,
+    from_bulk,
+    from_cells,
     limma_trend,
     limma_voom,
 )
-from cytepool.normalization import log_cpm
+from cytepool.design import Contrasts
+from cytepool.normalization import log2_cpm
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.voom import voom, voom_with_quality_weights
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "differential_expression_options"
 EXACT = 1e-10
@@ -47,7 +50,7 @@ STATISTICS = (
     "t",
     "p_value",
     "adjusted_p_value",
-    "b_statistic",
+    "log_odds",
 )
 ACROSS = "adjusted_p_value_across_groups"
 CONTRASTS = {"stim_vs_ctrl": "conditionstim", "D3_vs_D2": "donorD3 - donorD2"}
@@ -101,9 +104,9 @@ def cells_cube() -> Cube:
     }
     return from_cells(
         data["counts"],
-        samples=data["samples"],
-        groups=data["groups"],
-        sample_table=table,
+        sample_labels=data["samples"],
+        group_labels=data["groups"],
+        samples=table,
         layers="counts",
     )
 
@@ -172,7 +175,7 @@ def test_options_match_limma(name: str) -> None:
         )
         assert result.summary["df_residual"][k] == limma[f"{key} df_residual"][0]
         prior = float(np.median(limma[f"{key} df_prior"]))
-        assert result.summary["prior_df"][k] == pytest.approx(prior, rel=tolerance)
+        assert result.summary["df_prior"][k] == pytest.approx(prior, rel=tolerance)
         # The sample weights: limma's quality weights, or the number of cells.
         weights = record.get("quality_weights") or record["prior_weights"]
         np.testing.assert_allclose(weights, limma[f"{key} weights"], rtol=tolerance)
@@ -250,9 +253,9 @@ def test_the_record_holds_the_weights_that_reproduce_a_table() -> None:
             assert weighted.sample_weights is not None
             np.testing.assert_array_equal(weighted.sample_weights, weights)
         if name.startswith("voom"):
-            values, weights, method = weighted.log_cpm, weighted.weights, "limma"
+            values, weights, method = weighted.log2_cpm, weighted.weights, "limma"
         else:
-            values = log_cpm(counts, norm_factors=factors, prior_count=3.0)
+            values = log2_cpm(counts, norm_factors=factors, prior_count=3.0)
             method = "exact"
         model = fit_linear_model(
             values, x, weights=weights, coefficient_names=design.columns

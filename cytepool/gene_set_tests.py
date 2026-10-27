@@ -1,14 +1,15 @@
 """Gene-set tests of one contrast of a linear model: limma's camera and fry.
 
 A gene set, such as a pathway, is tested as a unit for one contrast of the linear model
-fitted to every gene. :func:`camera` is competitive: it asks whether the genes of a set
-are more differentially expressed than the other genes, allowing for the correlation
-between the genes of the set (Wu and Smyth 2012). :func:`fry` is self-contained: it asks
-whether the genes of a set are differentially expressed at all, as the rotation test of
-Wu et al. (2010) with the mean statistic does, without drawing rotations (Giner and
-Smyth 2016). Results match limma 3.62.1 except where noted under "Deliberate
-differences". The rotation tests, which draw rotations (limma's roast, mroast and
-romer), are in :mod:`cytepool.stats.rotation_gene_set_tests`.
+fitted to every gene. :func:`~cytepool.camera` is competitive: it asks whether the genes
+of a set are more differentially expressed than the other genes, allowing for the
+correlation between the genes of the set (Wu and Smyth 2012). :func:`~cytepool.fry` is
+self-contained: it asks whether the genes of a set are differentially expressed at all,
+as the rotation test of Wu et al. (2010) with the mean statistic does, without drawing
+rotations (Giner and Smyth 2016). Results match limma 3.62.1 except where noted under
+"Deliberate differences". The rotation tests, which draw rotations (limma's roast,
+mroast and romer), are :func:`~cytepool.roast`, :func:`~cytepool.mroast` and
+:func:`~cytepool.romer`.
 
 Effects:
     Both tests work with the effects of each gene's least squares fit (Wu et al. 2010,
@@ -166,12 +167,12 @@ import numpy.typing as npt
 from cytepool._options import checked_flag
 from cytepool._ranks import average_ranks
 from cytepool._summation import observed_means
-from cytepool.stats._gene_sets import (
+from cytepool._gene_sets import (
     check_matched,
     checked_gene_sets,
     contrast_design,
-    expression_values,
     gene_effects,
+    gene_set_data,
     set_label,
     set_positions,
 )
@@ -201,18 +202,20 @@ _NODES, _WEIGHTS = np.polynomial.legendre.leggauss(16)
 
 
 def camera(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: npt.ArrayLike | None = None,
+    group: str | None = None,
+    contrast: Any = None,
+    design: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: npt.ArrayLike | None = None,
     weights: npt.ArrayLike | None = None,
     inter_gene_correlation: float | None = 0.01,
     allow_negative_correlation: bool = False,
     use_ranks: bool = False,
-    trend: bool = False,
-    robust: bool = False,
+    trend: bool | None = None,
+    robust: bool | None = None,
 ) -> Table:
     """Competitive test of gene sets for one contrast, allowing for their correlation.
 
@@ -224,31 +227,46 @@ def camera(
     it ranks co-regulated, interpretable sets higher than a correlation estimated for
     each set, whose error rate control is strict.
 
+    A result of :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested
+    as limma's camera tests the fit of one group: its values and weights, the design
+    rows of its samples and the contrast's weights on them, as
+    :meth:`~cytepool.DifferentialExpressionResult.fit` gives them, and the moderation
+    the result used. ``camera(result, sets, id_column="symbol")`` names the genes by
+    the symbols of the result's features.
+
     Args:
-        y: ``(n_samples, n_genes)`` log-expression values, finite, or a
-            :class:`~cytepool.stats.voom.VoomResult`, whose log-CPM values are tested
-            with its weights.
-        design: ``(n_samples, n_coefficients)`` design matrix of full column rank, or
-            anything else that ``fit_linear_model`` accepts, such as a
-            :class:`~cytepool.design.Design`. It needs residual degrees of freedom.
-        contrast: The contrast to test: the name of a named contrast of a ``Design``,
-            the name or 0-based position of a design column (a coefficient; negative
-            positions count from the last column), or weights on the design columns: a
-            vector in their order, a mapping of column name to weight (columns left out
-            weigh 0), a pandas Series indexed by them, or a ``Contrasts`` holding one
+        data: A :class:`~cytepool.DifferentialExpressionResult` of limma-voom or
+            limma-trend; a :class:`~cytepool.stats.voom.VoomResult`, whose log2-CPM
+            values are tested with its weights; or ``(n_samples, n_genes)``
+            log-expression values, finite.
+        gene_sets: Mapping of set name to its genes: gene ids (matched to the ids of
+            the data; ids not among them are left out, as limma's ``ids2indices``
+            does), 0-based positions of columns of an array when ``feature_ids`` is
+            not given, or a boolean mask over the genes. A gene listed twice counts
+            once. A :class:`~cytepool.GeneSets`, such as one read from a GMT file by
+            :func:`~cytepool.read_gmt`, is such a mapping, of gene ids.
+        group: For a result, the group (cell type) whose fit is tested; it may be
+            left out when the result has one.
+        contrast: The contrast to test. For a result, a contrast name of the result,
+            which may be left out when it tests one. For an array or a VoomResult:
+            the name of a named contrast of a ``Design``, the name or 0-based
+            position of a design column (a coefficient; negative positions count
+            from the last column), or weights on the design columns: a vector in
+            their order, a mapping of column name to weight (columns left out weigh
+            0), a pandas Series indexed by them, or a ``Contrasts`` holding one
             contrast.
-        gene_sets: Mapping of set name to its genes: gene ids (matched to
-            ``gene_ids``; ids not among them are left out, as limma's ``ids2indices``
-            does), 0-based positions of columns of ``y`` when ``gene_ids`` is not
-            given, or a boolean mask over the genes. A gene listed twice counts once.
-            A :class:`~cytepool.gene_sets.GeneSets`, such as one read from a GMT file
-            by :func:`~cytepool.gene_sets.read_gmt`, is such a mapping, of gene ids.
-        gene_ids: One id per gene (column of ``y``), unique, to name genes in
-            ``gene_sets`` by id.
-        weights: Precision weights, positive and finite: ``(n_samples,)`` for sample
-            weights or ``(n_samples, n_genes)`` for observation weights. Not with a
-            ``VoomResult``, which carries its own. limma's per-gene weights (a vector
-            of one weight per gene) have no counterpart.
+        design: For an array or a VoomResult, ``(n_samples, n_coefficients)``
+            design matrix of full column rank, or anything else that
+            ``fit_linear_model`` accepts, such as a :class:`~cytepool.Design`. It
+            needs residual degrees of freedom.
+        id_column: For a result, the column of its features whose ids the sets name,
+            such as ``"feature_id"`` (the default) or ``"symbol"``.
+        feature_ids: For an array or a VoomResult, one id per gene (column),
+            unique, to name genes in ``gene_sets`` by id.
+        weights: For an array, precision weights, positive and finite:
+            ``(n_samples,)`` for sample weights or ``(n_samples, n_genes)`` for
+            observation weights. limma's per-gene weights (a vector of one weight
+            per gene) have no counterpart.
         inter_gene_correlation: The correlation between the genes of every set, in
             (-1, 1), or None to estimate it for each set from its residuals.
         allow_negative_correlation: Whether a negative correlation, given or
@@ -257,9 +275,11 @@ def camera(
         use_ranks: Whether to test the ranks of the z-scores (a correlation-adjusted
             Wilcoxon-Mann-Whitney test) rather than their values.
         trend: Whether the prior variance of the moderation follows the mean
-            log-expression of the genes (limma's ``trend.var``).
+            log-expression of the genes (limma's ``trend.var``); None takes the
+            moderation of a result (limma-trend's trend), and False otherwise.
         robust: Whether to moderate the variances with the robust estimator, which
-            limma's camera does not offer.
+            limma's camera does not offer; None takes the result's setting, and
+            False otherwise.
 
     Returns:
         A table with one row per gene set, in the order of ``gene_sets``: ``gene_set``;
@@ -273,28 +293,43 @@ def camera(
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
             array.
-        ValueError: If ``y`` is not finite or has fewer than three genes, the design
-            does not have one row per sample, is not of full column rank or leaves no
-            residual degrees of freedom, the contrast or a gene set is invalid, a weight
-            is not positive and finite, or no gene id of any set is among ``gene_ids``.
+        ValueError: If the values are not finite or have fewer than three genes, the
+            design is missing for an array, does not have one row per sample, is not
+            of full column rank or leaves no residual degrees of freedom, the
+            contrast or a gene set is invalid, a weight is not positive and finite,
+            no gene id of any set is among the data's ids, an argument applies to
+            another kind of data, or the result is from ``dream_voom``.
+        KeyError: If a result has no such group, contrast or column of its features,
+            or the group cannot estimate the contrast.
     """
     rho = _correlation_option(inter_gene_correlation)
     allow_negative = checked_flag(
         allow_negative_correlation, "allow_negative_correlation", expected="a bool"
     )
     ranks = checked_flag(use_ranks, "use_ranks", expected="a bool")
-    with_trend = checked_flag(trend, "trend", expected="a bool")
-    with_robust = checked_flag(robust, "robust", expected="a bool")
-    values, precision = expression_values(y, weights)
+    read = gene_set_data(
+        data,
+        group=group,
+        contrast=contrast,
+        design=design,
+        id_column=id_column,
+        feature_ids=feature_ids,
+        weights=weights,
+        trend=trend,
+        robust=robust,
+        function="camera",
+    )
+    values, precision = read.values, read.precision
+    with_trend, with_robust = bool(read.trend), bool(read.robust)
     n_genes = values.shape[1]
     if n_genes < 3:
         raise ValueError(
             "camera compares the genes of each set with the other genes and needs at "
             f"least 3 genes, got {n_genes}"
         )
-    members = _gene_set_members(gene_sets, gene_ids, n_genes)
+    members = _gene_set_members(gene_sets, read.ids, n_genes, read.ids_name)
     effects, mean_expression, d = _contrast_effects(
-        values, design, contrast, precision, "camera"
+        values, read.design, read.contrast, precision, "camera"
     )
     residual = effects[:, 1:]
     variances = np.sum(residual**2, axis=1) / d
@@ -304,8 +339,8 @@ def camera(
         covariate=mean_expression if with_trend else None,
         robust=with_robust,
     )
-    prior_df = np.broadcast_to(squeezed.prior_df, variances.shape)
-    df_total = np.minimum(d + prior_df, float(d * n_genes))
+    df_prior = np.broadcast_to(squeezed.df_prior, variances.shape)
+    df_total = np.minimum(d + df_prior, float(d * n_genes))
     with np.errstate(divide="ignore", invalid="ignore"):
         t = effects[:, 0] / np.sqrt(squeezed.posterior_variance)
     z = _hill_z_scores(t, df_total)
@@ -346,16 +381,18 @@ def camera(
 
 
 def fry(
-    y: Any,
-    design: Any,
-    contrast: Any,
+    data: Any,
     gene_sets: Mapping[str, Any],
     *,
-    gene_ids: npt.ArrayLike | None = None,
+    group: str | None = None,
+    contrast: Any = None,
+    design: Any = None,
+    id_column: str = "feature_id",
+    feature_ids: npt.ArrayLike | None = None,
     weights: npt.ArrayLike | None = None,
     standardize: str = "posterior_sd",
-    trend: bool = False,
-    robust: bool = False,
+    trend: bool | None = None,
+    robust: bool | None = None,
 ) -> Table:
     """Self-contained test of gene sets for one contrast, without rotations.
 
@@ -365,17 +402,21 @@ def fry(
     et al. (2010) with the mean statistic over infinitely many rotations. The module
     docstring gives the method and the deliberate differences from limma. limma's
     gene contribution weights (``gene.weights``, or weights inside a set), which give
-    genes signs and sizes in the set statistic, are not implemented.
+    genes signs and sizes in the set statistic, are not implemented. A result of
+    :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested as for
+    :func:`camera`.
 
     Args:
-        y: ``(n_samples, n_genes)`` log-expression values, finite, or a
-            :class:`~cytepool.stats.voom.VoomResult`, whose log-CPM values are tested
-            with its weights.
-        design: The design, as for :func:`camera`.
-        contrast: The contrast to test, as for :func:`camera`.
+        data: A differential-expression result, a VoomResult or log-expression
+            values, as for :func:`camera`.
         gene_sets: Mapping of set name to its genes, as for :func:`camera`.
-        gene_ids: One id per gene, unique, to name genes in ``gene_sets`` by id.
-        weights: Precision weights, as for :func:`camera`.
+        group: For a result, the group whose fit is tested, as for :func:`camera`.
+        contrast: The contrast to test, as for :func:`camera`.
+        design: For an array or a VoomResult, the design, as for :func:`camera`.
+        id_column: For a result, the column of its features whose ids the sets name.
+        feature_ids: For an array or a VoomResult, one id per gene, unique, to name
+            genes in ``gene_sets`` by id.
+        weights: For an array, precision weights, as for :func:`camera`.
         standardize: How each gene's effects are scaled before they are averaged:
             ``"posterior_sd"``, by the square root of a posterior variance that combines
             the prior of the empirical Bayes moderation with the mean square of the
@@ -384,16 +425,18 @@ def fry(
             ``"residual.sd"``); or ``"none"``, unscaled, which suits genes of equal
             variance.
         trend: Whether the prior variance follows the mean log-expression of the
-            genes. Only with ``standardize="posterior_sd"``.
+            genes. Only with ``standardize="posterior_sd"``; None takes the
+            moderation of a result, and False otherwise.
         robust: Whether to estimate the prior robustly. Only with
-            ``standardize="posterior_sd"``.
+            ``standardize="posterior_sd"``; None takes the result's setting, and
+            False otherwise.
 
     Returns:
         A table with one row per gene set, in the order of ``gene_sets``: ``gene_set``;
         ``n_genes``; ``direction``, ``"up"`` or ``"down"`` (None where the p-value is
         NaN); ``p_value``, the two-sided directional p-value; ``adjusted_p_value``,
         Benjamini-Hochberg over the sets; ``mixed_p_value``, the non-directional
-        p-value; and ``adjusted_mixed_p_value``. A set with no genes has NaN p-values,
+        p-value; and ``mixed_adjusted_p_value``. A set with no genes has NaN p-values,
         and so, with ``standardize="residual_sd"``, has a set containing a gene whose
         d + 1 effects are zero but for at most one, which cannot be scaled.
 
@@ -403,23 +446,44 @@ def fry(
         ValueError: As :func:`camera` (one gene suffices), if ``standardize`` is
             unknown, or if ``trend`` or ``robust`` is given with another
             standardization, which has no prior.
+        KeyError: As :func:`camera`.
     """
     if not isinstance(standardize, str) or standardize not in _STANDARDIZATIONS:
         raise ValueError(
             "standardize must be one of "
             f"{', '.join(map(repr, _STANDARDIZATIONS))}, got {standardize!r}"
         )
-    with_trend = checked_flag(trend, "trend", expected="a bool")
-    with_robust = checked_flag(robust, "robust", expected="a bool")
-    if (with_trend or with_robust) and standardize != "posterior_sd":
+    given_trend = (
+        None if trend is None else checked_flag(trend, "trend", expected="a bool")
+    )
+    given_robust = (
+        None if robust is None else checked_flag(robust, "robust", expected="a bool")
+    )
+    if (given_trend or given_robust) and standardize != "posterior_sd":
         raise ValueError(
             "trend and robust shape the prior of the posterior standard deviations, so "
             "they apply only with standardize='posterior_sd'"
         )
-    values, precision = expression_values(y, weights)
-    members = _gene_set_members(gene_sets, gene_ids, values.shape[1])
+    read = gene_set_data(
+        data,
+        group=group,
+        contrast=contrast,
+        design=design,
+        id_column=id_column,
+        feature_ids=feature_ids,
+        weights=weights,
+        trend=given_trend,
+        robust=given_robust,
+        function="fry",
+    )
+    values, precision = read.values, read.precision
+    # A result's moderation shapes the prior, which only posterior_sd has.
+    posterior = standardize == "posterior_sd"
+    with_trend = posterior and bool(read.trend)
+    with_robust = posterior and bool(read.robust)
+    members = _gene_set_members(gene_sets, read.ids, values.shape[1], read.ids_name)
     effects, mean_expression, d = _contrast_effects(
-        values, design, contrast, precision, "fry"
+        values, read.design, read.contrast, precision, "fry"
     )
     squares = effects**2
     # The mean square of the d + 1 effects without the largest (found by probing).
@@ -441,7 +505,7 @@ def fry(
                 trimmed / _trimmed_mean_square_expectation(d),
                 _TRIMMED_DF_FRACTION * d,
                 np.broadcast_to(squeezed.prior_variance, trimmed.shape),
-                np.broadcast_to(squeezed.prior_df, trimmed.shape),
+                np.broadcast_to(squeezed.df_prior, trimmed.shape),
             )
         )
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -471,7 +535,7 @@ def fry(
             "p_value": p_value,
             "adjusted_p_value": adjust_p_values(p_value, "bh"),
             "mixed_p_value": mixed,
-            "adjusted_mixed_p_value": adjust_p_values(mixed, "bh"),
+            "mixed_adjusted_p_value": adjust_p_values(mixed, "bh"),
         }
     )
 
@@ -714,17 +778,18 @@ def _two_sided(
 
 
 def _gene_set_members(
-    gene_sets: Any, gene_ids: Any, n_genes: int
+    gene_sets: Any, gene_ids: Any, n_genes: int, ids_name: str
 ) -> list[tuple[str, IntArray]]:
-    """Each set's name and the sorted positions of its genes among the columns of y."""
-    index = checked_gene_sets(gene_sets, gene_ids, n_genes)
+    """Each set's name and the sorted positions of its genes among the genes of the
+    data."""
+    index = checked_gene_sets(gene_sets, gene_ids, n_genes, ids_name)
     members: list[tuple[str, IntArray]] = []
     matched = 0
     for name, genes in gene_sets.items():
         positions, found = set_positions(genes, set_label(name), index, n_genes)
         matched += found
         members.append((name, positions))
-    check_matched(index, matched)
+    check_matched(index, matched, ids_name)
     return members
 
 

@@ -30,23 +30,31 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool import plotting
-from cytepool.composition import propeller
-from cytepool.cube import Cube, from_bulk
-from cytepool.design import Design
-from cytepool.differential_expression import DifferentialExpressionResult, limma_voom
-from cytepool.meta_analysis import differential_expression_meta_analysis
-from cytepool.normalization import log_cpm
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
+    DifferentialExpressionResult,
+    MetaAnalysisResult,
+    StudyResults,
+    Table,
+    analyse_each_study,
+    camera,
+    from_bulk,
+    limma_voom,
+    meta_analysis,
+    plotting,
+    propeller,
+)
+from cytepool.normalization import log2_cpm
 from cytepool.stats.deseq2 import deseq2_wald_test, fit_deseq2
 from cytepool.stats.empirical_bayes import moderated_statistics, treat
-from cytepool.stats.gene_set_tests import camera
 from cytepool.stats.linear_models import fit_linear_model
 from cytepool.stats.quasi_likelihood import (
     fit_quasi_likelihood,
     quasi_likelihood_f_test,
 )
 from cytepool.stats.voom import voom, voom_with_quality_weights
-from cytepool.table import Table
 
 matplotlib = pytest.importorskip("matplotlib")
 FIGURE = pytest.importorskip("matplotlib.figure")
@@ -152,7 +160,7 @@ def test_mds_coordinates_are_those_of_plotMDS_up_to_sign(case: str) -> None:
             f"S{i}" for i in range(1, 7)
         ]
     else:
-        ax = plotting.plot_mds(log_cpm(counts()), ax=axes(), **options[case])
+        ax = plotting.plot_mds(log2_cpm(counts()), ax=axes(), **options[case])
     ours = artists(ax, "samples")[0].get_offsets()
     theirs = reference[f"{case} points"]
     signs = np.sign(np.sum(ours * theirs, axis=0))
@@ -186,7 +194,7 @@ def test_sample_weights_are_the_bars_of_voomWithQualityWeights() -> None:
 @pytest.mark.parametrize("case", ["sa_robust", "sa_plain"])
 def test_residual_variances_are_plotSA(case: str) -> None:
     reference = fixture("limma")
-    values = log_cpm(counts())
+    values = log2_cpm(counts())
     options: dict[str, Any] = {}
     if case == "sa_robust":
         values[:, 10:16] += reference["noise"]
@@ -318,9 +326,9 @@ def test_forest_intervals_and_pooled_estimate_are_metafors(
     method: str, test: str
 ) -> None:
     data = fixture("metafor")
-    meta = differential_expression_meta_analysis(studies(), method=method, test=test)
+    meta = meta_analysis(studies(), method=method, test=test)
     for feature in data["forest features"].tolist():
-        ax = plotting.plot_forest(meta, studies(), feature, ax=axes())
+        ax = plotting.plot_forest(meta, feature, ax=axes())
         segments = sorted(
             artists(ax, "intervals")[0].get_segments(), key=lambda s: -s[0, 1]
         )
@@ -337,9 +345,9 @@ def test_forest_intervals_and_pooled_estimate_are_metafors(
 
 def test_a_study_that_did_not_test_the_gene_keeps_its_row() -> None:
     data = fixture("metafor")
-    meta = differential_expression_meta_analysis(studies())
+    meta = meta_analysis(studies())
     feature = str(data["forest features"][2])  # tested by two studies
-    ax = plotting.plot_forest(meta, studies(), feature, ax=axes())
+    ax = plotting.plot_forest(meta, feature, ax=axes())
 
     names = [label.get_text() for label in ax.get_yticklabels()]
     assert names[:3] == ["A", "B", "C"]
@@ -351,6 +359,62 @@ def test_a_study_that_did_not_test_the_gene_keeps_its_row() -> None:
     low, high = ax.get_xlim()
     ends = [s[:, 0] for s in artists(ax, "intervals")[0].get_segments()]
     assert low < min(0.0, np.min(ends)) and high > max(0.0, np.max(ends))
+
+
+@cache
+def collected_studies() -> StudyResults:
+    """The studies of the forest plots as the studies of a collection, each analysed
+    on its aligned cube; study C measured 295 of the 300 genes."""
+    cubes = {name: result.cube for name, result in studies().items()}
+    return analyse_each_study(
+        CubeCollection(cubes),
+        "~ donor + condition",
+        levels=LEVELS,
+        contrasts={"stim": "conditionstim"},
+    )
+
+
+def forest_rows(meta: Any, feature: str) -> list[str]:
+    """What the forest plot of a gene writes beside each study, A, B and C."""
+    ax = plotting.plot_forest(meta, feature, ax=axes())
+    assert [label.get_text() for label in ax.get_yticklabels()][:3] == ["A", "B", "C"]
+    return [text.get_text() for text in ax.texts][:3]
+
+
+def test_a_study_that_did_not_measure_the_gene_is_told_from_one_that_left_it_out() -> (
+    None
+):
+    collected = collected_studies()
+    collection = collected.collection
+    ids = collection.features["feature_id"].tolist()
+    measured = np.asarray(collection.measured)
+    tested = {
+        study: set(result.table("bulk", "stim")["feature_id"].tolist())
+        for study, result in collected.items()
+    }
+    # A gene that study C did not measure, which A and B tested; and a gene that every
+    # study measured, which B's expression filter left out.
+    unmeasured = next(
+        gene
+        for j, gene in enumerate(ids)
+        if not measured[2, j] and gene in tested["A"] and gene in tested["B"]
+    )
+    left_out = next(
+        gene
+        for j, gene in enumerate(ids)
+        if measured[:, j].all()
+        and gene in tested["A"]
+        and gene in tested["C"]
+        and gene not in tested["B"]
+    )
+    with_collection = meta_analysis(collected)
+    plain = meta_analysis(dict(collected))
+    first, second, third = forest_rows(with_collection, unmeasured)
+    assert third == "not measured" and "not" not in first + second
+    assert forest_rows(plain, unmeasured)[2] == "not tested"
+    for meta in (with_collection, plain):
+        rows = forest_rows(meta, left_out)
+        assert rows[1] == "not tested" and "not" not in rows[0] + rows[2]
 
 
 def composition_cube() -> Cube:
@@ -510,7 +574,7 @@ def test_a_legend_inside_a_plot_covers_nothing_and_a_long_one_goes_beside() -> N
         groups={"group_id": ["bulk"]},
         features={"feature_id": GENES},
     )
-    values = log_cpm(counts())
+    values = log2_cpm(counts())
     scatter = {
         "md": plotting.plot_md(table(), ax=axes()),
         "volcano": plotting.plot_volcano(table(), ax=axes()),
@@ -604,6 +668,40 @@ def test_mds_and_pca_draw_their_samples_alike() -> None:
     ]  # fmt: skip
     labels = [[t.get_text() for t in artists(ax, "sample labels")] for ax in (mds, pca)]
     assert labels[0] == labels[1] == SAMPLES["sample_id"]
+
+
+def test_sample_labels_stay_inside_the_frame_and_apart_after_the_final_draw() -> None:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.text import Text
+
+    # Each sample has a near copy, so that two labels above one place would overlap,
+    # and long names at the sides of a small plot, where a label centred on its
+    # point would cross the frame.
+    rng = np.random.default_rng(7)
+    first = rng.normal(5.0, 1.0, size=(4, 200))
+    values = np.concatenate([first, first + rng.normal(0.0, 0.01, size=first.shape)])
+    names = [f"a_long_sample_name_{i}" for i in range(8)]
+    for draw in (plotting.plot_mds, plotting.plot_pca):
+        figure = FIGURE.Figure(figsize=(4.0, 3.0), layout="constrained")
+        FigureCanvasAgg(figure)
+        ax = draw(values, labels=names, color_by=["a", "b"] * 4, ax=figure.subplots())
+        figure.savefig(io.BytesIO(), format="png")
+        renderer = figure.canvas.get_renderer()
+        frame = ax.get_window_extent(renderer)
+        labels = artists(ax, "sample labels")
+        assert [text.get_text() for text in labels] == names, draw.__name__
+        offsets = np.concatenate([c.get_offsets() for c in artists(ax, "samples")])
+        # Every sample is drawn inside the frame, below the room made for the labels.
+        assert all(frame.contains(*point) for point in ax.transData.transform(offsets))
+        boxes = [Text.get_window_extent(text, renderer) for text in labels]  # no line
+        for text, box in zip(labels, boxes, strict=True):
+            # Each label points at a sample, and lies inside the frame.
+            assert np.min(np.hypot(*(offsets - text.xy).T)) == 0.0
+            assert frame.x0 <= box.x0 and box.x1 <= frame.x1, text.get_text()
+            assert frame.y0 <= box.y0 and box.y1 <= frame.y1, text.get_text()
+        for i, box in enumerate(boxes):
+            for other in boxes[i + 1 :]:
+                assert not box.overlaps(other), draw.__name__
 
 
 @pytest.mark.parametrize(
@@ -797,7 +895,7 @@ def test_sample_weights_of_a_result_are_its_quality_weights() -> None:
 
 def test_fits_and_tests_are_drawn_from_their_own_columns() -> None:
     values = voom(counts(), design())
-    fit = fit_linear_model(values.log_cpm, design(), weights=values.weights)
+    fit = fit_linear_model(values.log2_cpm, design(), weights=values.weights)
     moderated = moderated_statistics(fit)
     ax = plotting.plot_md(moderated, coefficient="conditionstim", ax=axes())
     drawn = points(ax, "up", "down", "not significant")
@@ -835,7 +933,7 @@ def test_fits_and_tests_are_drawn_from_their_own_columns() -> None:
     drawn = points(ax, "up", "down", "not significant")
     assert_allclose(
         drawn,
-        pairs(test.log_fold_change[:, 0], -np.log10(test.p_value)),
+        pairs(test.log2_fold_change[:, 0], -np.log10(test.p_value)),
         rtol=1e-15,
     )
 
@@ -1042,10 +1140,12 @@ def test_barcode_takes_ids_positions_or_masks() -> None:
     mask = np.zeros(t.size, dtype=bool)
     mask[[3, 40]] = True
     by_mask = plotting.plot_barcode(t, mask, ax=axes())
-    by_gene_ids = plotting.plot_barcode(t, [ids[40], ids[3]], gene_ids=ids, ax=axes())
+    by_feature_ids = plotting.plot_barcode(
+        t, [ids[40], ids[3]], feature_ids=ids, ax=axes()
+    )
     worms = [
         artists(ax, "worm")[0].get_ydata()
-        for ax in (by_id, by_position, by_mask, by_gene_ids)
+        for ax in (by_id, by_position, by_mask, by_feature_ids)
     ]
     for worm in worms[1:]:
         assert_array_equal(worm, worms[0])
@@ -1058,12 +1158,12 @@ def test_barcode_takes_ids_positions_or_masks() -> None:
 @pytest.mark.parametrize(
     ("gene_set", "options", "message"),
     [
-        (["unknown"], {"gene_ids": list("abcde")}, "no gene of the set"),
+        (["unknown"], {"feature_ids": list("abcde")}, "no gene of the set"),
         (list(range(5)), {}, "holds every gene"),
         ([7], {}, "position outside 0 to 4"),
-        (["a"], {}, "give gene_ids too"),
+        (["a"], {}, "give feature_ids too"),
         ([0], {"span": 0.0}, r"span must be in \(0, 1\]"),
-        ([0], {"gene_ids": ["a", "a", "b", "c", "d"]}, None),
+        ([0], {"feature_ids": ["a", "a", "b", "c", "d"]}, None),
     ],
 )
 def test_barcode_refuses_sets_it_cannot_place(
@@ -1081,7 +1181,9 @@ def test_barcode_refuses_sets_it_cannot_place(
 def test_gene_sets_are_drawn_by_p_value_and_direction() -> None:
     values = voom(counts(), design())
     sets = {f"set{i}": GENES[10 * i : 10 * i + 15] for i in range(12)}
-    tested = camera(values, design(), "conditionstim", sets, gene_ids=GENES)
+    tested = camera(
+        values, sets, design=design(), contrast="conditionstim", feature_ids=GENES
+    )
     ax = plotting.plot_gene_sets(tested, top=5, ax=axes())
     bars = artists(ax, "gene sets")
     order = np.argsort(tested["p_value"], kind="stable")[:5]
@@ -1132,17 +1234,28 @@ def test_trend_figures_refuse_other_objects() -> None:
 
 
 def test_forest_refuses_what_it_cannot_find() -> None:
-    meta = differential_expression_meta_analysis(studies())
+    meta = meta_analysis(studies())
     with pytest.raises(KeyError, match="gene 'nothing' was not meta-analysed"):
-        plotting.plot_forest(meta, studies(), "nothing")
-    with pytest.raises(TypeError, match="studies must map study names"):
-        plotting.plot_forest(meta, {"A": table()}, "g001")
+        plotting.plot_forest(meta, "nothing")
+    # The studies' results are the meta-analysis's own, which keeps only results.
+    record = (meta.summary, meta.studies, meta.tables, meta.provenance)
+    with pytest.raises(
+        TypeError, match=r"study_results\['A'\] must be a DifferentialExpressionResult"
+    ):
+        MetaAnalysisResult(*record, study_results={"A": table()})  # type: ignore[dict-item]
     with pytest.raises(TypeError, match="feature must be a gene id"):
-        plotting.plot_forest(meta, studies(), 3)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="studies holds no study"):
-        plotting.plot_forest(meta, {}, "g001")
+        plotting.plot_forest(meta, 3)  # type: ignore[arg-type]
+    # A meta-analysis built without its studies' results, or with none, cannot draw
+    # their estimates.
+    message = "this meta-analysis keeps no study results, so its studies' estimates"
+    for without in (
+        MetaAnalysisResult(*record),
+        MetaAnalysisResult(*record, study_results={}),
+    ):
+        with pytest.raises(ValueError, match=message):
+            plotting.plot_forest(without, "g001")
     with pytest.raises(KeyError, match="no group 'T' was analysed"):
-        plotting.plot_forest(meta, studies(), "g001", group="T", contrast="stim")
+        plotting.plot_forest(meta, "g001", group="T", contrast="stim")
 
 
 # Colours, settings and imports.
@@ -1229,7 +1342,7 @@ def test_categorical_colours_stay_apart_under_colour_vision_deficiencies() -> No
 
 def test_drawing_changes_no_setting_of_matplotlib() -> None:
     before = dict(matplotlib.rcParams)
-    plotting.plot_mds(log_cpm(counts()), color_by=SAMPLES["condition"], ax=axes())
+    plotting.plot_mds(log2_cpm(counts()), color_by=SAMPLES["condition"], ax=axes())
     plotting.plot_md(table(), ax=axes())
     plotting.plot_cell_numbers(composition_cube(), ax=axes())
 

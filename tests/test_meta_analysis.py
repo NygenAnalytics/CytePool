@@ -24,21 +24,21 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import (
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
     DifferentialExpressionResult,
-    limma_voom,
-)
-from cytepool.meta_analysis import (
-    MetaAnalysisFit,
     MetaAnalysisResult,
-    differential_expression_meta_analysis,
+    StudyResults,
+    Table,
+    analyse_each_study,
+    limma_voom,
     meta_analysis,
 )
 from cytepool.stats.distributions import norm_isf, norm_sf, t_isf, t_sf
+from cytepool.stats.meta_analysis import MetaAnalysisFit, fit_meta_analysis
 from cytepool.stats.multiple_testing import adjust_p_values
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "meta_analysis"
 EXACT = 1e-10
@@ -116,7 +116,7 @@ def test_meta_analysis_matches_metafor(case: int) -> None:
     higher = data[f"case{case} reml higher"]
     for method in METHODS:
         for test in TESTS:
-            fit = meta_analysis(y, se, method=method, test=test)
+            fit = fit_meta_analysis(y, se, method=method, test=test)
             theirs = data[f"case{case} {method} {test}"]
             # Where the restricted likelihood has another maximum, REML's is the
             # higher one; metafor's is the other, compared below.
@@ -139,7 +139,7 @@ def test_reml_takes_the_higher_maximum_where_metafor_takes_the_other() -> None:
     higher = data[f"case{case} reml higher"]
     y, se = data[f"case{case} y"][:, higher], data[f"case{case} se"][:, higher]
     theirs = data[f"case{case} reml z"][FIELDS.index("tau_squared"), higher]
-    ours = meta_analysis(y, se).tau_squared
+    ours = fit_meta_analysis(y, se).tau_squared
 
     assert higher.any()
     gain = restricted_log_likelihood(y.T, se.T**2, ours) - restricted_log_likelihood(
@@ -156,7 +156,7 @@ def test_reml_estimates_maximize_the_restricted_likelihood() -> None:
     y = rng.normal(0.0, se) + rng.normal(0.0, 0.3, n)
     y[0] += rng.normal(0.0, 3.0, n)  # an imprecise outlying study: two maxima at times
     se[0] *= 5.0
-    fit = meta_analysis(y, se)
+    fit = fit_meta_analysis(y, se)
     grid = np.concatenate([[0.0], np.geomspace(1e-9, 1e3, 1500)])
     on_grid = restricted_log_likelihood(
         y.T[:, np.newaxis], se.T[:, np.newaxis] ** 2, grid
@@ -178,8 +178,8 @@ def test_paule_mandel_solves_its_estimating_equation() -> None:
     se = rng.uniform(0.1, 0.5, (k, n))
     y = rng.normal(0.0, 1.0, n) + rng.normal(0.0, rng.uniform(0, 0.6, n), (k, n))
     y = y + rng.normal(0.0, se)
-    fit = meta_analysis(y, se, method="pm")
-    adjusted = meta_analysis(y, se, method="pm", test="knapp_hartung")
+    fit = fit_meta_analysis(y, se, method="pm")
+    adjusted = fit_meta_analysis(y, se, method="pm", test="knapp_hartung")
     w = 1.0 / (se**2 + fit.tau_squared)
     mu = np.sum(w * y, axis=0) / np.sum(w, axis=0)
     generalized_q = np.sum(w * (y - mu) ** 2, axis=0)
@@ -212,8 +212,8 @@ def test_equal_standard_errors_give_the_closed_forms_of_every_estimator() -> Non
     tau2 = np.maximum(0.0, squares / (k - 1) - s**2)
     assert tau2[0] == pytest.approx(14 / 3 - 0.25) and tau2[1] == 0.0
     for method in ("dl", "reml", "pm"):
-        fit = meta_analysis(y, se, method=method)
-        adjusted = meta_analysis(y, se, method=method, test="knapp_hartung")
+        fit = fit_meta_analysis(y, se, method=method)
+        adjusted = fit_meta_analysis(y, se, method=method, test="knapp_hartung")
         error = np.sqrt((s**2 + tau2) / k)
         assert_allclose(fit.tau_squared, tau2, rtol=1e-13, atol=1e-15)
         assert_allclose(fit.estimate, mean, rtol=1e-14)
@@ -246,7 +246,7 @@ def test_two_studies_give_the_closed_form_of_every_estimator() -> None:
     expected = np.maximum(0.0, ((y[0] - y[1]) ** 2 - se[0] ** 2 - se[1] ** 2) / 2)
     assert expected[0] == pytest.approx(0.295) and expected[1] == 0.0
     for method in ("dl", "reml", "pm"):
-        fit = meta_analysis(y, se, method=method)
+        fit = fit_meta_analysis(y, se, method=method)
         w = 1.0 / (se**2 + expected)
         assert_allclose(fit.tau_squared, expected, rtol=1e-13, atol=1e-16)
         assert_allclose(fit.estimate, np.sum(w * y, axis=0) / w.sum(axis=0), rtol=1e-13)
@@ -256,7 +256,7 @@ def test_two_studies_give_the_closed_form_of_every_estimator() -> None:
 def test_one_study_is_its_own_estimate_with_metafors_conventions() -> None:
     for method in METHODS:
         for test in TESTS:
-            fit = meta_analysis([0.5], [0.2], method=method, test=test)
+            fit = fit_meta_analysis([0.5], [0.2], method=method, test=test)
             assert fit.estimate == 0.5 and fit.standard_error == 0.2
             # The z-test, also with Knapp-Hartung, which needs two studies.
             assert fit.statistic == pytest.approx(2.5, rel=1e-15)
@@ -271,7 +271,7 @@ def test_one_study_is_its_own_estimate_with_metafors_conventions() -> None:
 def test_fixed_effect_is_the_inverse_variance_weighted_mean() -> None:
     y = np.array([1.0, 2.0, 4.0])
     v = np.array([1.0, 0.5, 0.25])  # weights 1, 2 and 4
-    fit = meta_analysis(y, np.sqrt(v), method="fixed")
+    fit = fit_meta_analysis(y, np.sqrt(v), method="fixed")
     mean = (1 + 4 + 16) / 7  # 3
     q = (1 - 3) ** 2 + 2 * (2 - 3) ** 2 + 4 * (4 - 3) ** 2  # 10
 
@@ -282,15 +282,17 @@ def test_fixed_effect_is_the_inverse_variance_weighted_mean() -> None:
     assert fit.i_squared == pytest.approx((q - 2) / q, rel=1e-15)
     assert fit.h_squared == pytest.approx(q / 2, rel=1e-15)
     assert fit.tau_squared == 0.0
-    adjusted = meta_analysis(y, np.sqrt(v), method="fixed", test="knapp_hartung")
+    adjusted = fit_meta_analysis(y, np.sqrt(v), method="fixed", test="knapp_hartung")
     assert adjusted.standard_error == pytest.approx(math.sqrt(q / 2 / 7), rel=1e-15)
 
 
-def test_level_sets_the_quantile_of_the_intervals() -> None:
+def test_confidence_level_sets_the_quantile_of_the_intervals() -> None:
     y, se = np.array([0.2, 0.5, 0.9]), np.array([0.1, 0.2, 0.3])
     for level in (0.5, 0.99):
-        fit = meta_analysis(y, se, method="dl", level=level)
-        adjusted = meta_analysis(y, se, method="dl", test="knapp_hartung", level=level)
+        fit = fit_meta_analysis(y, se, method="dl", confidence_level=level)
+        adjusted = fit_meta_analysis(
+            y, se, method="dl", test="knapp_hartung", confidence_level=level
+        )
         alpha = (1 - level) / 2
         assert fit.ci_upper - fit.estimate == pytest.approx(
             float(norm_isf(alpha)) * fit.standard_error, rel=1e-14
@@ -298,7 +300,7 @@ def test_level_sets_the_quantile_of_the_intervals() -> None:
         assert adjusted.estimate - adjusted.ci_lower == pytest.approx(
             float(t_isf(alpha, 2)) * adjusted.standard_error, rel=1e-14
         )
-        assert fit.level == level
+        assert fit.confidence_level == level
 
 
 # Invariants.
@@ -326,8 +328,8 @@ def test_the_order_of_the_studies_does_not_matter(method: str) -> None:
     order = np.random.default_rng(6).permutation(y.shape[0])
     for test in TESTS:
         assert_fits_equal(
-            meta_analysis(y, se, method=method, test=test),
-            meta_analysis(y[order], se[order], method=method, test=test),
+            fit_meta_analysis(y, se, method=method, test=test),
+            fit_meta_analysis(y[order], se[order], method=method, test=test),
             rtol=1e-11,
         )
 
@@ -335,25 +337,25 @@ def test_the_order_of_the_studies_does_not_matter(method: str) -> None:
 @pytest.mark.parametrize("method", METHODS)
 def test_scaling_and_shifting_the_effects(method: str) -> None:
     y, se = random_studies(7)
-    fit = meta_analysis(y, se, method=method, test="knapp_hartung")
+    fit = fit_meta_analysis(y, se, method=method, test="knapp_hartung")
     unchanged = ("statistic", "p_value", "q_statistic", "q_p_value", "i_squared")
     unchanged += ("h_squared", "n_studies")
     # A power of two scales every number exactly.
-    scaled = meta_analysis(1024 * y, 1024 * se, method=method, test="knapp_hartung")
+    scaled = fit_meta_analysis(1024 * y, 1024 * se, method=method, test="knapp_hartung")
     for field in ("estimate", "standard_error", "ci_lower", "ci_upper"):
         assert_array_equal(getattr(scaled, field), 1024 * getattr(fit, field))
     assert_array_equal(scaled.tau_squared, 1024**2 * fit.tau_squared)
     for field in unchanged:
         assert_array_equal(getattr(scaled, field), getattr(fit, field))
     # Another factor, to rounding.
-    scaled = meta_analysis(-3.7 * y, 3.7 * se, method=method, test="knapp_hartung")
+    scaled = fit_meta_analysis(-3.7 * y, 3.7 * se, method=method, test="knapp_hartung")
     assert_allclose(scaled.estimate, -3.7 * fit.estimate, rtol=1e-11)
     assert_allclose(
         scaled.tau_squared, 3.7**2 * fit.tau_squared, rtol=1e-11, atol=1e-15
     )
     assert_allclose(scaled.statistic, -fit.statistic, rtol=1e-11)
     # A shift moves the estimate and its interval only.
-    shifted = meta_analysis(y + 2.5, se, method=method, test="knapp_hartung")
+    shifted = fit_meta_analysis(y + 2.5, se, method=method, test="knapp_hartung")
     for field in ("estimate", "ci_lower", "ci_upper"):
         assert_allclose(getattr(shifted, field), getattr(fit, field) + 2.5, rtol=1e-12)
     for field in ("standard_error", "q_statistic", "i_squared", "h_squared"):
@@ -368,14 +370,16 @@ def test_a_study_that_did_not_measure_a_feature_is_left_out(method: str) -> None
     se[3, 1] = np.nan  # a standard error missing
     y[[0, 2], 2] = np.nan
     se[[0, 2], 2] = np.nan
-    fit = meta_analysis(y, se, method=method)
+    fit = fit_meta_analysis(y, se, method=method)
     for feature, studies in ((0, [0, 2, 3, 4]), (1, [0, 1, 2, 4]), (2, [1, 3, 4])):
-        alone = meta_analysis(y[studies, feature], se[studies, feature], method=method)
+        alone = fit_meta_analysis(
+            y[studies, feature], se[studies, feature], method=method
+        )
         for field in FIELDS:
             assert getattr(fit, field)[feature] == getattr(alone, field), field
     assert_array_equal(fit.n_studies, [4, 4, 3, 5])
     # Each feature is analysed on its own.
-    single = meta_analysis(y[:, 3:], se[:, 3:], method=method)
+    single = fit_meta_analysis(y[:, 3:], se[:, 3:], method=method)
     for field in FIELDS:
         assert_array_equal(getattr(single, field), getattr(fit, field)[3:])
 
@@ -384,7 +388,7 @@ def test_features_of_no_study_and_identical_effects() -> None:
     y = np.array([[np.nan, 0.5], [np.nan, 0.5], [np.nan, 0.5]])
     se = np.array([[0.1, 0.1], [0.2, 0.2], [np.nan, 0.25]])
     for method in METHODS:
-        fit = meta_analysis(y, se, method=method)
+        fit = fit_meta_analysis(y, se, method=method)
         assert fit.n_studies[0] == 0
         assert all(np.isnan(getattr(fit, field)[0]) for field in FIELDS[:-1])
         # Identical effects: no heterogeneity at all.
@@ -399,7 +403,7 @@ def test_a_far_more_precise_study_dominates_without_cancellation() -> None:
     # weights of the other studies it does not, so DerSimonian-Laird keeps its digits.
     y = np.array([0.0, 1.0, 3.0])
     v = np.array([1e-10, 1.0, 1.0])
-    fit = meta_analysis(y, np.sqrt(v), method="dl")
+    fit = fit_meta_analysis(y, np.sqrt(v), method="dl")
     w = 1.0 / v
     total = w.sum()
     centre = np.sum(w * y) / total
@@ -419,7 +423,7 @@ def test_standard_errors_far_below_the_spread_of_the_effects() -> None:
         se = scale * rng.uniform(0.5, 1.5, y.shape)
         variance = np.var(y, axis=0, ddof=1)
         for method in ("reml", "pm"):
-            fit = meta_analysis(y, se, method=method)
+            fit = fit_meta_analysis(y, se, method=method)
             assert fit.converged.all()
             assert_allclose(fit.tau_squared, variance, rtol=1e-12)
     # One such feature, where REML once found no maximum: metafor gives 1.70706.
@@ -428,12 +432,14 @@ def test_standard_errors_far_below_the_spread_of_the_effects() -> None:
     se = np.array(
         [1.1163182354, 0.8131728389, 1.0605225626, 0.5383073261, 0.6153736126]
     )
-    fit = meta_analysis(y, 1e-8 * se)
+    fit = fit_meta_analysis(y, 1e-8 * se)
     assert fit.tau_squared == pytest.approx(np.var(y, ddof=1), rel=1e-12)
     assert fit.p_value == pytest.approx(0.455020, abs=1e-6)
     # Effects 1e100 times their standard errors: no square overflows or underflows.
     for method in ("reml", "pm", "dl"):
-        extreme = meta_analysis([1e100, -1e100, 0.0], [1.0, 1.0, 1.0], method=method)
+        extreme = fit_meta_analysis(
+            [1e100, -1e100, 0.0], [1.0, 1.0, 1.0], method=method
+        )
         assert extreme.tau_squared == pytest.approx(1e200, rel=1e-12)
 
 
@@ -460,28 +466,40 @@ def test_standard_errors_far_below_the_spread_of_the_effects() -> None:
         ([0.1, 0.2], ["a", "b"], {}, TypeError, "standard_errors must hold real"),
         ([0.1], [0.1], {"method": "REML"}, ValueError, "method must be one of"),
         ([0.1], [0.1], {"test": "knha"}, ValueError, "test must be one of"),
-        ([0.1], [0.1], {"level": 95}, ValueError, "such as 0.95"),
-        ([0.1], [0.1], {"level": 0.0}, ValueError, "level must be in \\(0, 1\\)"),
-        ([0.1], [0.1], {"level": True}, TypeError, "level must be a real number"),
+        ([0.1], [0.1], {"confidence_level": 95}, ValueError, "such as 0.95"),
+        (
+            [0.1],
+            [0.1],
+            {"confidence_level": 0.0},
+            ValueError,
+            "confidence_level must be in \\(0, 1\\)",
+        ),
+        (
+            [0.1],
+            [0.1],
+            {"confidence_level": True},
+            TypeError,
+            "confidence_level must be a real number",
+        ),
     ],
 )
 def test_invalid_arguments_are_refused(
     effects: Any, errors: Any, options: dict[str, Any], error: type, match: str
 ) -> None:
     with pytest.raises(error, match=match):
-        meta_analysis(effects, errors, **options)
+        fit_meta_analysis(effects, errors, **options)
 
 
 def test_features_and_their_shapes() -> None:
-    empty = meta_analysis(np.zeros((3, 0)), np.ones((3, 0)))
+    empty = fit_meta_analysis(np.zeros((3, 0)), np.ones((3, 0)))
     assert empty.estimate.shape == (0,) and empty.n_studies.dtype == np.int64
     y, se = random_studies(9, n=3)
-    fit = meta_analysis(y, se)
+    fit = fit_meta_analysis(y, se)
     assert fit.estimate.shape == (3,) and not fit.estimate.flags.writeable
-    assert fit.method == "reml" and fit.test == "z" and fit.level == 0.95
+    assert fit.method == "reml" and fit.test == "z" and fit.confidence_level == 0.95
     assert repr(fit).startswith("MetaAnalysisFit(n_features=3, method='reml'")
     # Integer effects are read as numbers.
-    assert meta_analysis([1, 2, 4], [1, 1, 1], method="fixed").estimate == 7 / 3
+    assert fit_meta_analysis([1, 2, 4], [1, 1, 1], method="fixed").estimate == 7 / 3
 
 
 # Differential expression of several cohorts.
@@ -520,9 +538,7 @@ COLUMNS = FIELDS[1:] + ("adjusted_p_value",)
 )
 def test_meta_analysis_of_cohorts_matches_metafor(method: str, test: str) -> None:
     data = fixture("cohorts")
-    meta = differential_expression_meta_analysis(
-        cohort_results(), method=method, test=test
-    )
+    meta = meta_analysis(cohort_results(), method=method, test=test)
     assert set(meta.tables) == {("T", "stim_vs_ctrl"), ("B", "stim_vs_ctrl")}
     for (group, contrast), table in meta.tables.items():
         prefix = f"{method} {test} 2 {group} {contrast}"
@@ -544,7 +560,7 @@ def test_meta_analysis_of_cohorts_matches_metafor(method: str, test: str) -> Non
 
 def test_features_are_matched_by_id_across_studies() -> None:
     results = cohort_results()
-    meta = differential_expression_meta_analysis(results, method="dl")
+    meta = meta_analysis(results, method="dl")
     table = meta.table("T", "stim_vs_ctrl")
     # Gather each feature's values by id, study by study, and meta-analyse them.
     by_id = {
@@ -565,7 +581,7 @@ def test_features_are_matched_by_id_across_studies() -> None:
         feature = table["feature_id"][row]
         values = [found[feature] for found in by_id.values() if feature in found]
         y, se = np.array(values).T
-        alone = meta_analysis(y, se, method="dl")
+        alone = fit_meta_analysis(y, se, method="dl")
         assert table["n_studies"][row] == len(values) >= 2
         assert table["log2_fold_change"][row] == pytest.approx(
             alone.estimate, rel=1e-14
@@ -579,8 +595,8 @@ def test_features_are_matched_by_id_across_studies() -> None:
 
 def test_the_order_of_the_studies_changes_no_number() -> None:
     results = cohort_results()
-    forward = differential_expression_meta_analysis(results)
-    backward = differential_expression_meta_analysis(dict(reversed(results.items())))
+    forward = meta_analysis(results)
+    backward = meta_analysis(dict(reversed(results.items())))
     for key, table in forward.tables.items():
         other = backward.tables[key]
         rows = [other["feature_id"].tolist().index(f) for f in table["feature_id"]]
@@ -594,9 +610,38 @@ def test_the_order_of_the_studies_changes_no_number() -> None:
             )
 
 
+@cache
+def cohort_studies() -> StudyResults:
+    """The cohorts as the studies of a collection, each analysed on its aligned cube
+    as cohort_results analyses it."""
+    cubes = {name: result.cube for name, result in cohort_results().items()}
+    return analyse_each_study(
+        CubeCollection(cubes, align_groups_by="group_id"),
+        "~ donor + condition",
+        levels={"condition": ["ctrl", "stim"]},
+        contrasts={"stim_vs_ctrl": "conditionstim"},
+    )
+
+
+def test_studies_with_their_collection_are_meta_analysed_as_their_results() -> None:
+    studies = cohort_studies()
+    meta = meta_analysis(studies, method="dl")
+    plain = meta_analysis(dict(studies), method="dl")
+    assert meta.tables and meta.tables.keys() == plain.tables.keys()
+    for key, table in plain.tables.items():
+        assert meta.tables[key].equals(table), key
+    assert meta.summary.equals(plain.summary) and meta.studies.equals(plain.studies)
+    # The result keeps the studies' results it combined, as given, and pickles them.
+    assert meta.study_results is studies
+    assert dict(plain.study_results or {}) == dict(studies)
+    copy = pickle.loads(pickle.dumps(meta))
+    assert isinstance(copy.study_results, StudyResults)
+    assert copy.study_results.studies == studies.studies
+
+
 def test_studies_left_out_and_features_tested_by_too_few() -> None:
     results = cohort_results()
-    meta = differential_expression_meta_analysis(results)
+    meta = meta_analysis(results)
     summary = meta.summary
     nk = summary.filter(summary["group_id"] == "NK")
     assert nk["status"].tolist() == ["too_few_studies"]
@@ -611,7 +656,7 @@ def test_studies_left_out_and_features_tested_by_too_few() -> None:
         meta.table()
     studies = meta.studies.filter(meta.studies["group_id"] == "NK")
     assert studies["study"].tolist() == ["A", "B", "C"]
-    assert studies["tested"].tolist() == [True, False, False]
+    assert studies["analysed"].tolist() == [True, False, False]
     # B fitted no NK cells, and C has none: the reasons are those of their results.
     assert "was not fitted (no_samples)" in studies["reason"][1]
     assert studies["reason"][2].startswith("no group 'NK' was analysed")
@@ -628,7 +673,7 @@ def test_studies_left_out_and_features_tested_by_too_few() -> None:
 
 def test_one_study_per_feature_gives_its_own_estimates() -> None:
     results = cohort_results()
-    meta = differential_expression_meta_analysis(results, min_studies=1)
+    meta = meta_analysis(results, min_studies=1)
     table = meta.table("NK", "stim_vs_ctrl")
     own = results["A"].table("NK", "stim_vs_ctrl")
     assert table["feature_id"].tolist() == own["feature_id"].tolist()
@@ -640,9 +685,9 @@ def test_one_study_per_feature_gives_its_own_estimates() -> None:
     # with Knapp-Hartung, as metafor gives it for one study; not the study's t-test.
     z = own["log2_fold_change"] / own["standard_error"]
     assert_allclose(table["p_value"], 2 * norm_sf(np.abs(z)), rtol=1e-13)
-    adjusted = differential_expression_meta_analysis(
-        results, min_studies=1, test="knapp_hartung"
-    ).table("NK", "stim_vs_ctrl")
+    adjusted = meta_analysis(results, min_studies=1, test="knapp_hartung").table(
+        "NK", "stim_vs_ctrl"
+    )
     assert_array_equal(adjusted["p_value"], table["p_value"])
     assert np.all(table["p_value"] <= own["p_value"])
     # min_studies=1 also keeps the genes of cohort B alone.
@@ -651,8 +696,12 @@ def test_one_study_per_feature_gives_its_own_estimates() -> None:
 
 def test_groups_and_contrasts_can_be_chosen() -> None:
     results = cohort_results()
-    meta = differential_expression_meta_analysis(
-        results, groups="B", contrasts=["stim_vs_ctrl"], method="fixed", level=0.9
+    meta = meta_analysis(
+        results,
+        groups="B",
+        contrasts=["stim_vs_ctrl"],
+        method="fixed",
+        confidence_level=0.9,
     )
     assert list(meta.tables) == [("B", "stim_vs_ctrl")]
     assert meta.summary["group_id"].tolist() == ["B"]
@@ -670,15 +719,13 @@ def test_groups_and_contrasts_can_be_chosen() -> None:
 
 def test_the_result_records_its_studies_and_settings() -> None:
     results = cohort_results()
-    meta = differential_expression_meta_analysis(
-        results, method="pm", test="knapp_hartung"
-    )
+    meta = meta_analysis(results, method="pm", test="knapp_hartung")
     record = meta.provenance
-    assert record["analysis"] == "differential_expression_meta_analysis"
+    assert record["analysis"] == "meta_analysis"
     assert meta.settings == {
         "method": "pm",
         "test": "knapp_hartung",
-        "level": 0.95,
+        "confidence_level": 0.95,
         "min_studies": 2,
         "p_value_adjustment": "BH",
     }
@@ -718,7 +765,7 @@ def renamed(result: DifferentialExpressionResult, prefix: str, **changes: Any) -
 
 def test_groups_and_contrasts_without_shared_features() -> None:
     results = cohort_results()
-    meta = differential_expression_meta_analysis(
+    meta = meta_analysis(
         {"A": results["A"], "other": renamed(results["B"], "x")}, groups="T"
     )
     assert meta.tables == {}
@@ -745,7 +792,7 @@ def test_a_value_the_meta_analysis_cannot_use_names_its_feature() -> None:
             f"standard_error 0.0 for feature '{feature}'; it must be positive and finite"
         ),
     ):
-        differential_expression_meta_analysis({"A": results["A"], "B": bad})
+        meta_analysis({"A": results["A"], "B": bad})
 
 
 def test_estimates_that_did_not_converge_are_reported(
@@ -753,9 +800,9 @@ def test_estimates_that_did_not_converge_are_reported(
 ) -> None:
     # The iterations converge on every input the other tests use; this checks how
     # the wrapper reports a feature whose estimate does not.
-    import cytepool.meta_analysis as module
+    import cytepool.meta_analysis_of_studies as module
 
-    original = module.meta_analysis
+    original = module.fit_meta_analysis
 
     def first_fails(*arguments: Any, **options: Any) -> MetaAnalysisFit:
         fit = original(*arguments, **options)
@@ -763,9 +810,9 @@ def test_estimates_that_did_not_converge_are_reported(
         flags[0] = False
         return dataclasses.replace(fit, converged=flags)
 
-    monkeypatch.setattr(module, "meta_analysis", first_fails)
+    monkeypatch.setattr(module, "fit_meta_analysis", first_fails)
     with pytest.warns(RuntimeWarning, match="did not converge for 1 feature, 'g0000'"):
-        meta = differential_expression_meta_analysis(cohort_results(), groups="T")
+        meta = meta_analysis(cohort_results(), groups="T")
     record = meta.provenance["analyses"][0]
     assert record["not_converged"] == ["g0000"]
 
@@ -773,32 +820,34 @@ def test_estimates_that_did_not_converge_are_reported(
 def test_invalid_studies_and_options_are_refused() -> None:
     results = cohort_results()
     a = results["A"]
-    with pytest.raises(TypeError, match="results must be a mapping of study names"):
-        differential_expression_meta_analysis([a, a])  # type: ignore[arg-type]
+    with pytest.raises(
+        TypeError, match="studies must be a StudyResults, or a mapping of study names"
+    ):
+        meta_analysis([a, a])  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="keyed by study names"):
-        differential_expression_meta_analysis({1: a, 2: a})  # type: ignore[dict-item]
-    with pytest.raises(TypeError, match=r"results\['x'\] must be a Differential"):
-        differential_expression_meta_analysis({"a": a, "x": a.summary})  # type: ignore[dict-item]
+        meta_analysis({1: a, 2: a})  # type: ignore[dict-item]
+    with pytest.raises(TypeError, match=r"studies\['x'\] must be a Differential"):
+        meta_analysis({"a": a, "x": a.summary})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="at least two studies, got 1"):
-        differential_expression_meta_analysis({"a": a})
+        meta_analysis({"a": a})
     with pytest.raises(KeyError, match="no study analysed the group 'DC'"):
-        differential_expression_meta_analysis(results, groups=["T", "DC"])
+        meta_analysis(results, groups=["T", "DC"])
     with pytest.raises(ValueError, match="groups lists 'T' more than once"):
-        differential_expression_meta_analysis(results, groups=["T", "T"])
+        meta_analysis(results, groups=["T", "T"])
     with pytest.raises(ValueError, match="contrasts is empty"):
-        differential_expression_meta_analysis(results, contrasts=[])
+        meta_analysis(results, contrasts=[])
     with pytest.raises(TypeError, match="contrasts must be contrast names"):
-        differential_expression_meta_analysis(results, contrasts=[1])
+        meta_analysis(results, contrasts=[1])
     with pytest.raises(ValueError, match="min_studies must be at least 1, got 0"):
-        differential_expression_meta_analysis(results, min_studies=0)
+        meta_analysis(results, min_studies=0)
     with pytest.raises(
         ValueError, match=r"min_studies \(4\) is larger than the number"
     ):
-        differential_expression_meta_analysis(results, min_studies=4)
+        meta_analysis(results, min_studies=4)
     with pytest.raises(TypeError, match="min_studies must be a whole number"):
-        differential_expression_meta_analysis(results, min_studies=True)
+        meta_analysis(results, min_studies=True)
     with pytest.raises(ValueError, match="method must be one of"):
-        differential_expression_meta_analysis(results, method="ML")
+        meta_analysis(results, method="ML")
     # A result whose tables lack the standard errors.
     table = a.table("T", "stim_vs_ctrl")
     bare = DifferentialExpressionResult(
@@ -810,6 +859,6 @@ def test_invalid_studies_and_options_are_refused() -> None:
         a.provenance,
     )
     with pytest.raises(ValueError, match="has no column 'standard_error'"):
-        differential_expression_meta_analysis({"a": a, "bare": bare})
+        meta_analysis({"a": a, "bare": bare})
     with pytest.raises(TypeError, match="tables must be keyed by"):
         MetaAnalysisResult(Table(), Table(), {"T": table}, {})  # type: ignore[dict-item]

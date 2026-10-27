@@ -194,8 +194,8 @@ def sample_quality_weights(
             counts per million of :func:`~cytepool.stats.voom.voom`. NaN marks a
             missing value; infinite values are rejected.
         design: ``(n_samples, n_coefficients)`` design matrix of full column rank,
-            or a :class:`~cytepool.design.Design` without random effects. A column
-            of ones treats the samples as replicates.
+            or a :class:`~cytepool.Design` without random effects. A column of ones
+            treats the samples as replicates.
         weights: Prior weights: ``(n_samples,)`` sample weights,
             ``(n_samples, n_features)`` observation weights (such as voom's), or
             ``(1, n_features)`` feature weights. Finite and non-negative where ``y``

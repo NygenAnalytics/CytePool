@@ -542,7 +542,7 @@ def write_array(
     *,
     chunks: Sequence[int],
     compression: str | None = "gzip",
-    level: int | None = None,
+    compression_level: int | None = None,
     attributes: Mapping[str, Any] | None = None,
     dimension_names: Sequence[str | None] | None = None,
 ) -> None:
@@ -559,7 +559,7 @@ def write_array(
             ``ZarrArray``. It is read one row of chunks at a time.
         chunks: The chunk shape: a positive length for each dimension.
         compression: ``"gzip"``, ``"zstd"`` or None (see ``check_compression``).
-        level: The compression level, or None for the default.
+        compression_level: The compression level, or None for the default.
         attributes: JSON-serialisable attributes.
         dimension_names: A name or None for each dimension.
 
@@ -611,7 +611,7 @@ def write_array(
             f"({MAX_CHUNK_BYTES:,} bytes), which open_array refuses; choose smaller "
             "chunks"
         )
-    level = check_compression(compression, level)
+    level = check_compression(compression, compression_level)
     document: dict[str, Any] = {
         "zarr_format": 3,
         "node_type": "array",
@@ -642,28 +642,34 @@ def write_array(
     _write_new_file(directory / METADATA_FILE, text)
 
 
-def check_compression(compression: str | None, level: int | None) -> int | None:
-    """Check a compression and level for ``write_array`` and return the level used.
+def check_compression(
+    compression: str | None, compression_level: int | None
+) -> int | None:
+    """Check a compression and its level for ``write_array`` and return the level
+    used.
 
     Args:
         compression: ``"gzip"``, ``"zstd"`` (Python 3.14 or newer) or None for no
             compression.
-        level: 0 to 9 for gzip, -131072 to 22 for zstd (0 asks zstd for its default),
-            or None for ``DEFAULT_LEVELS`` (4 for gzip, 3 for zstd). It must be None
-            without compression.
+        compression_level: 0 to 9 for gzip, -131072 to 22 for zstd (0 asks zstd for
+            its default), or None for ``DEFAULT_LEVELS`` (4 for gzip, 3 for zstd). It
+            must be None without compression.
 
     Returns:
         The compression level, or None without compression.
 
     Raises:
-        TypeError: If ``compression`` is not a string or None, or ``level`` is not an
-            integer.
-        ValueError: If ``compression`` is unknown or unavailable, or ``level`` is out
-            of range or given without compression.
+        TypeError: If ``compression`` is not a string or None, or
+            ``compression_level`` is not an integer.
+        ValueError: If ``compression`` is unknown or unavailable, or
+            ``compression_level`` is out of range or given without compression.
     """
+    level = compression_level
     if compression is None:
         if level is not None:
-            raise ValueError("level applies only with compression 'gzip' or 'zstd'")
+            raise ValueError(
+                "compression_level applies only with compression 'gzip' or 'zstd'"
+            )
         return None
     if not isinstance(compression, str):
         raise TypeError(
@@ -682,7 +688,9 @@ def check_compression(compression: str | None, level: int | None) -> int | None:
     if level is None:
         return DEFAULT_LEVELS[compression]
     if not isinstance(level, int | np.integer) or isinstance(level, bool):
-        raise TypeError(f"level must be an integer, got {type(level).__name__}")
+        raise TypeError(
+            f"compression_level must be an integer, got {type(level).__name__}"
+        )
     low, high = _LEVEL_RANGES[compression]
     if not low <= level <= high:
         raise ValueError(

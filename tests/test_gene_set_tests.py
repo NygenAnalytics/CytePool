@@ -5,7 +5,9 @@ Reference values in ``tests/data/gene_set_tests`` come from limma's ``camera`` a
 and ``rankSumTestWithCorrelation`` on limma's robust moderated z-scores);
 ``validation/gene_set_tests.py`` writes them. The other tests check properties that a
 wrong implementation would break: symmetries, invariances, closed forms, limits of the
-standardizations and the documented edge cases.
+standardizations and the documented edge cases. A differential-expression result is
+tested, bit for bit, as the voom values of its group's fit with the design rows and
+contrast weights fitted and the moderation the result used.
 """
 
 import math
@@ -18,14 +20,19 @@ import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 from scipy import stats
 
-from cytepool.design import Design
-from cytepool.stats.gene_set_tests import (
-    _trimmed_mean_square_expectation,
+from cytepool import (
+    Cube,
+    Design,
+    DifferentialExpressionResult,
+    Table,
     camera,
+    dream_voom,
     fry,
+    limma_trend,
+    limma_voom,
 )
+from cytepool.gene_set_tests import _trimmed_mean_square_expectation
 from cytepool.stats.voom import voom
-from cytepool.table import Table
 
 DATA = Path(__file__).parent / "data" / "gene_set_tests"
 EXACT = 1e-10
@@ -59,7 +66,7 @@ COLUMNS = {
     "PValue": "p_value",
     "FDR": "adjusted_p_value",
     "PValue.Mixed": "mixed_p_value",
-    "FDR.Mixed": "adjusted_mixed_p_value",
+    "FDR.Mixed": "mixed_adjusted_p_value",
 }
 CASES = (
     "groups",
@@ -98,7 +105,7 @@ def run(case: str, name: str, **changes: Any) -> Table:
     test, rho, ranks, negative, trend, standardize, robust = RUNS[name]
     data = fixture(case)
     arguments = {
-        "y": data["y"],
+        "data": data["y"],
         "design": data["design"],
         "contrast": contrast(case),
         "gene_sets": gene_sets(case),
@@ -185,7 +192,7 @@ def test_every_column_matches_limma(case: str, name: str) -> None:
             assert_p_values_agree(table[COLUMNS[column]], values, tolerance)
 
 
-def test_a_design_with_named_contrasts_and_gene_ids_gives_limmas_values() -> None:
+def test_a_design_with_named_contrasts_and_feature_ids_gives_limmas_values() -> None:
     # The weighted case rebuilt from its sample table, with genes named by id and the
     # contrast named in the design; and the unweighted case with a column by name.
     genes = np.array([f"gene{i}" for i in range(200)])
@@ -208,13 +215,23 @@ def test_a_design_with_named_contrasts_and_gene_ids_gives_limmas_values() -> Non
         data = fixture(case)
         assert_array_equal(design.matrix, data["design"])
         named = {name: genes[rows] for name, rows in gene_sets(case).items()}
-        common = {"gene_ids": genes, "weights": data.get("weights")}
+        common = {"feature_ids": genes, "weights": data.get("weights")}
 
         estimated = camera(
-            data["y"], design, contrast, named, inter_gene_correlation=None, **common
+            data["y"],
+            named,
+            design=design,
+            contrast=contrast,
+            inter_gene_correlation=None,
+            **common,
         )
         residual = fry(
-            data["y"], design, contrast, named, standardize="residual_sd", **common
+            data["y"],
+            named,
+            design=design,
+            contrast=contrast,
+            standardize="residual_sd",
+            **common,
         )
 
         assert_p_values_agree(
@@ -250,7 +267,9 @@ def test_a_set_and_its_complement_get_the_same_p_value_and_opposite_directions(
     y, x = three_groups(1)
     inside = np.arange(0, 25)
     sets = {"set": inside, "complement": np.arange(25, 60)}
-    table = camera(y, x, 1, sets, inter_gene_correlation=0.0, use_ranks=use_ranks)
+    table = camera(
+        y, sets, design=x, contrast=1, inter_gene_correlation=0.0, use_ranks=use_ranks
+    )
 
     assert_allclose(table["p_value"][0], table["p_value"][1], rtol=1e-12)
     assert set(table["direction"]) == {"up", "down"}
@@ -263,8 +282,10 @@ def test_the_order_of_the_genes_does_not_matter() -> None:
     order = np.random.default_rng(3).permutation(60)
 
     for test in (camera, fry):
-        original = test(y, x, 1, sets, gene_ids=genes)
-        shuffled = test(y[:, order], x, 1, sets, gene_ids=genes[order])
+        original = test(y, sets, design=x, contrast=1, feature_ids=genes)
+        shuffled = test(
+            y[:, order], sets, design=x, contrast=1, feature_ids=genes[order]
+        )
         for column in original.columns:
             if original[column].dtype.kind == "f":
                 assert_allclose(shuffled[column], original[column], rtol=1e-12)
@@ -286,8 +307,8 @@ def test_negating_the_contrast_flips_directions_and_keeps_p_values() -> None:
         {"standardize": "residual_sd"},
     ):
         test = fry if "standardize" in options else camera
-        plus = test(y, x, contrast, sets, weights=weights, **options)
-        minus = test(y, x, -contrast, sets, weights=weights, **options)
+        plus = test(y, sets, design=x, contrast=contrast, weights=weights, **options)
+        minus = test(y, sets, design=x, contrast=-contrast, weights=weights, **options)
         assert_allclose(minus["p_value"], plus["p_value"], rtol=1e-12)
         flipped = {"up": "down", "down": "up"}
         assert [flipped[v] for v in plus["direction"]] == list(minus["direction"])
@@ -302,8 +323,8 @@ def test_rescaling_and_shifting_the_values_changes_nothing() -> None:
         (camera, {"use_ranks": True, "trend": False}),
         (fry, {}),
     ):
-        original = test(y, x, 2, sets, **options)
-        changed = test(shifted, x, 2, sets, **options)
+        original = test(y, sets, design=x, contrast=2, **options)
+        changed = test(shifted, sets, design=x, contrast=2, **options)
         for column in ("p_value", "adjusted_p_value"):
             assert_allclose(changed[column], original[column], rtol=1e-10)
 
@@ -312,26 +333,32 @@ def test_a_column_named_or_counted_from_either_end_is_the_same_contrast() -> Non
     y, x = three_groups(7)
     design = Design({"group": np.repeat(["A", "B", "C"], 3)}, "~ group")
     sets = {"a": np.arange(12), "b": np.arange(12, 30)}
-    expected = camera(y, x, 2, sets, inter_gene_correlation=None)
+    expected = camera(y, sets, design=x, contrast=2, inter_gene_correlation=None)
     for given in ("groupC", -1, 2):
-        table = camera(y, design, given, sets, inter_gene_correlation=None)
+        table = camera(
+            y, sets, design=design, contrast=given, inter_gene_correlation=None
+        )
         assert_allclose(table["p_value"], expected["p_value"], rtol=1e-14)
     # Without observation weights the residual basis does not matter to camera, so
     # the column as weights gives the same test.
-    weights = camera(y, x, [0.0, 0.0, 1.0], sets, inter_gene_correlation=None)
+    weights = camera(
+        y, sets, design=x, contrast=[0.0, 0.0, 1.0], inter_gene_correlation=None
+    )
     assert_allclose(weights["p_value"], expected["p_value"], rtol=1e-12)
     assert_allclose(weights["correlation"], expected["correlation"], atol=1e-13)
 
 
-def test_a_voom_result_is_its_log_cpm_with_its_weights() -> None:
+def test_a_voom_result_is_its_log2_cpm_with_its_weights() -> None:
     rng = np.random.default_rng(8)
     counts = rng.poisson(rng.uniform(20, 500, 80), size=(8, 80))
     x = np.column_stack([np.ones(8), np.repeat([0.0, 1.0], 4)])
     result = voom(counts, x)
     sets = {"a": np.arange(10), "b": np.arange(5, 40)}
     for test in (camera, fry):
-        direct = test(result, x, 1, sets)
-        explicit = test(result.log_cpm, x, 1, sets, weights=result.weights)
+        direct = test(result, sets, design=x, contrast=1)
+        explicit = test(
+            result.log2_cpm, sets, design=x, contrast=1, weights=result.weights
+        )
         assert_array_equal(direct["p_value"], explicit["p_value"])
 
 
@@ -348,7 +375,7 @@ def test_a_set_of_one_gene_in_fry_is_that_genes_t_test() -> None:
     t = coefficients[1, 0] / (unscaled * math.sqrt(residuals[0] / d))
     expected = 2.0 * stats.t.sf(abs(t), d)
     for standardize in ("posterior_sd", "residual_sd", "none"):
-        table = fry(y, x, 1, {"one": [17]}, standardize=standardize)
+        table = fry(y, {"one": [17]}, design=x, contrast=1, standardize=standardize)
         assert_allclose(table["p_value"], [expected], rtol=1e-12)
         assert_allclose(table["mixed_p_value"], [expected], rtol=1e-12)
         assert table["direction"][0] == ("up" if t > 0 else "down")
@@ -367,7 +394,7 @@ def test_the_estimated_correlation_is_the_mean_pairwise_residual_correlation() -
     m = rows.size
     expected = (pairwise.sum() - np.trace(pairwise)) / (m * (m - 1))
 
-    table = camera(y, x, 1, {"set": rows}, inter_gene_correlation=None)
+    table = camera(y, {"set": rows}, design=x, contrast=1, inter_gene_correlation=None)
 
     assert_allclose(table["correlation"], [expected], rtol=1e-12)
 
@@ -394,8 +421,8 @@ def test_posterior_standardization_has_the_limits_of_its_prior() -> None:
     # genes, the prior has no weight: "residual_sd".
     y, x = three_groups(12, n_genes=2)
     sets = {"both": [0, 1]}
-    posterior = fry(y, x, 1, sets, standardize="posterior_sd")
-    residual = fry(y, x, 1, sets, standardize="residual_sd")
+    posterior = fry(y, sets, design=x, contrast=1, standardize="posterior_sd")
+    residual = fry(y, sets, design=x, contrast=1, standardize="residual_sd")
     assert_allclose(posterior["p_value"], residual["p_value"], rtol=1e-12)
     assert_allclose(posterior["mixed_p_value"], residual["mixed_p_value"], rtol=1e-12)
 
@@ -443,8 +470,8 @@ def test_a_gene_listed_twice_counts_once() -> None:
     once = {"a": [1, 2, 3, 8], "b": [10, 11]}
     twice = {"a": [3, 1, 2, 3, 8, 1], "b": [11, 10, 10]}
     for test in (camera, fry):
-        expected = test(y, x, 1, once)
-        table = test(y, x, 1, twice)
+        expected = test(y, once, design=x, contrast=1)
+        table = test(y, twice, design=x, contrast=1)
         assert_array_equal(table["n_genes"], [4, 2])
         assert_allclose(table["p_value"], expected["p_value"], rtol=1e-14)
 
@@ -453,15 +480,17 @@ def test_empty_sets_and_sets_of_every_gene_have_no_p_value() -> None:
     y, x = three_groups(15)
     genes = np.array([f"g{i}" for i in range(60)])
     sets = {"empty": ["not a gene"], "a": genes[:10], "all": genes, "b": genes[20:30]}
-    table = camera(y, x, 1, sets, gene_ids=genes)
+    table = camera(y, sets, design=x, contrast=1, feature_ids=genes)
     assert_array_equal(table["n_genes"], [0, 10, 60, 10])
     assert np.isnan(table["p_value"][[0, 2]]).all()
     assert table["direction"][0] is None and table["direction"][2] is None
     # The other sets are adjusted among themselves.
-    alone = camera(y, x, 1, {"a": genes[:10], "b": genes[20:30]}, gene_ids=genes)
+    alone = camera(
+        y, {"a": genes[:10], "b": genes[20:30]}, design=x, contrast=1, feature_ids=genes
+    )
     assert_allclose(table["adjusted_p_value"][[1, 3]], alone["adjusted_p_value"])
 
-    tested = fry(y, x, 1, sets, gene_ids=genes)
+    tested = fry(y, sets, design=x, contrast=1, feature_ids=genes)
     assert np.isnan(tested["p_value"][0]) and np.isnan(tested["mixed_p_value"][0])
     assert np.isfinite(tested["p_value"][2])  # fry's test is self-contained
 
@@ -470,10 +499,23 @@ def test_the_rank_test_p_value_is_at_most_one() -> None:
     # A set of the lowest and the highest z-score: its rank sum is centred, and with
     # the continuity correction both tails exceed 1/2. limma reports twice the smaller.
     y, x = three_groups(16)
-    t = camera(y, x, 1, {f"g{i}": [i] for i in range(60)}, inter_gene_correlation=0.0)
+    t = camera(
+        y,
+        {f"g{i}": [i] for i in range(60)},
+        design=x,
+        contrast=1,
+        inter_gene_correlation=0.0,
+    )
     signed = np.where(np.array(t["direction"]) == "up", 1.0, -1.0) * (1 - t["p_value"])
     ends = [int(np.argmin(signed)), int(np.argmax(signed))]
-    table = camera(y, x, 1, {"ends": ends}, inter_gene_correlation=0.0, use_ranks=True)
+    table = camera(
+        y,
+        {"ends": ends},
+        design=x,
+        contrast=1,
+        inter_gene_correlation=0.0,
+        use_ranks=True,
+    )
     assert table["p_value"][0] == 1.0
     assert table["direction"][0] == "up"
 
@@ -484,7 +526,7 @@ def test_camera_estimates_correlation_with_a_floor_on_tiny_variances() -> None:
     y, x = three_groups(17)
     y[:, 5] = x @ np.array([3.0, 1.0, -1.0])
     sets = {"with": [5, *range(20, 30)], "without": list(range(20, 30))}
-    table = camera(y, x, 1, sets, inter_gene_correlation=None)
+    table = camera(y, sets, design=x, contrast=1, inter_gene_correlation=None)
     m = 11
     vif_without = 1 + 9 * table["correlation"][1]
     expected = ((10 / m) ** 2 * m / 10 * vif_without - 1) / (m - 1)
@@ -504,10 +546,11 @@ def test_a_pivot_that_is_zero_up_to_rounding_counts_as_zero() -> None:
         (camera, {"inter_gene_correlation": None}),
         (fry, {"standardize": "residual_sd"}),
     ):
-        exact = test(data["y"], data["design"], data["contrast weights"], sets,
-                     weights=data["weights"], **options)  # fmt: skip
-        jittered = test(data["y"], data["design"], data["contrast weights"], sets,
-                        weights=data["weights"] * jitter, **options)  # fmt: skip
+        given = {"design": data["design"], "contrast": data["contrast weights"]}
+        exact = test(data["y"], sets, **given, weights=data["weights"], **options)
+        jittered = test(
+            data["y"], sets, **given, weights=data["weights"] * jitter, **options
+        )
         assert_allclose(jittered["p_value"], exact["p_value"], rtol=1e-9)
 
 
@@ -519,7 +562,14 @@ def test_genes_with_equal_residuals_have_a_correlation_of_one() -> None:
     y[:, 10:20] = y[:, [10]]
     sets = {"identical": np.arange(10, 20), "other": np.arange(30, 45)}
     for use_ranks in (False, True):
-        table = camera(y, x, 1, sets, inter_gene_correlation=None, use_ranks=use_ranks)
+        table = camera(
+            y,
+            sets,
+            design=x,
+            contrast=1,
+            inter_gene_correlation=None,
+            use_ranks=use_ranks,
+        )
         assert table["correlation"][0] == 1.0
         assert np.isfinite(table["p_value"]).all()
 
@@ -528,14 +578,21 @@ def test_a_contrast_can_name_its_columns_or_be_a_zero_dimensional_position() -> 
     y, x = three_groups(23)
     design = Design({"group": np.repeat(["A", "B", "C"], 3)}, "~ group")
     sets = {"a": np.arange(12), "b": np.arange(12, 30)}
-    vector = camera(y, design, [0.0, -1.0, 1.0], sets, inter_gene_correlation=None)
+    vector = camera(
+        y, sets, design=design, contrast=[0.0, -1.0, 1.0], inter_gene_correlation=None
+    )
     mapping = camera(
-        y, design, {"groupC": 1.0, "groupB": -1.0}, sets, inter_gene_correlation=None
+        y,
+        sets,
+        design=design,
+        contrast={"groupC": 1.0, "groupB": -1.0},
+        inter_gene_correlation=None,
     )
     assert_array_equal(mapping["p_value"], vector["p_value"])
-    column = camera(y, design, "groupC", sets)
+    column = camera(y, sets, design=design, contrast="groupC")
     assert_array_equal(
-        camera(y, design, np.array(2), sets)["p_value"], column["p_value"]
+        camera(y, sets, design=design, contrast=np.array(2))["p_value"],
+        column["p_value"],
     )
 
 
@@ -550,14 +607,14 @@ def test_invalid_arguments_are_refused_with_a_reason() -> None:
     nan = y.copy()
     nan[0, 0] = np.nan
     cases = [
-        ({"y": nan}, ValueError, "y must be finite"),
-        ({"y": y[:, :2]}, ValueError, "at least 3 genes"),
+        ({"data": nan}, ValueError, "data must be finite"),
+        ({"data": y[:, :2]}, ValueError, "at least 3 genes"),
         ({"weights": np.zeros(9)}, ValueError, "positive and finite"),
         ({"weights": np.ones(5)}, ValueError, r"shape \(9,\) for sample weights"),
-        ({"y": voomed, "weights": np.ones(9)}, ValueError, "carries the precision"),
+        ({"data": voomed, "weights": np.ones(9)}, ValueError, "carries the precision"),
         ({"design": x[:, [0, 1, 1]]}, ValueError, "not of full column rank"),
         ({"design": np.eye(9)}, ValueError, "no residual degrees of freedom"),
-        ({"design": x[:8]}, ValueError, "y has 9 rows but the design has 8"),
+        ({"design": x[:8]}, ValueError, "data has 9 rows but the design has 8"),
         ({"contrast": "groupD"}, ValueError, "neither a named contrast"),
         ({"contrast": 3}, ValueError, "positions 0 to 2"),
         ({"contrast": [0.0, 0.0, 0.0]}, ValueError, "zero on every column"),
@@ -574,15 +631,19 @@ def test_invalid_arguments_are_refused_with_a_reason() -> None:
         ({"gene_sets": {"": [0, 1]}}, ValueError, "must not be empty"),
         ({"contrast": {"x4": 1.0}}, ValueError, "not a design column"),
         ({"contrast": {"x2": "1"}}, TypeError, "one number per design column"),
-        ({"gene_ids": genes, "gene_sets": {"a": ["x"]}}, ValueError, "no gene of any"),
-        ({"gene_ids": ["g1"] * 60}, ValueError, "gene_ids must be unique"),
-        ({"gene_ids": genes[:3]}, ValueError, "one id per gene"),
+        (
+            {"feature_ids": genes, "gene_sets": {"a": ["x"]}},
+            ValueError,
+            "no gene of any",
+        ),
+        ({"feature_ids": ["g1"] * 60}, ValueError, "feature_ids must be unique"),
+        ({"feature_ids": genes[:3]}, ValueError, "one id per gene"),
         ({"inter_gene_correlation": 1.0}, ValueError, r"lie in \(-1, 1\)"),
         ({"inter_gene_correlation": True}, TypeError, "real number or None"),
         ({"use_ranks": 1}, TypeError, "use_ranks must be a bool"),
     ]
     for changes, error, message in cases:
-        arguments = {"y": y, "design": x, "contrast": 1, "gene_sets": sets} | changes
+        arguments = {"data": y, "design": x, "contrast": 1, "gene_sets": sets} | changes
         with pytest.raises(error, match=message):
             camera(**arguments)
 
@@ -591,11 +652,11 @@ def test_fry_refuses_options_without_effect_and_unknown_standardizations() -> No
     y, x = three_groups(19)
     sets = {"a": [0, 1, 2]}
     with pytest.raises(ValueError, match="only with standardize='posterior_sd'"):
-        fry(y, x, 1, sets, standardize="none", trend=True)
+        fry(y, sets, design=x, contrast=1, standardize="none", trend=True)
     with pytest.raises(ValueError, match="standardize must be one of"):
-        fry(y, x, 1, sets, standardize="posterior.sd")
+        fry(y, sets, design=x, contrast=1, standardize="posterior.sd")
     with pytest.raises(TypeError, match="robust must be a bool"):
-        fry(y, x, 1, sets, robust="yes")
+        fry(y, sets, design=x, contrast=1, robust="yes")
 
 
 def test_a_design_with_random_effects_is_refused() -> None:
@@ -610,4 +671,139 @@ def test_a_design_with_random_effects_is_refused() -> None:
     )
     for test in (camera, fry):
         with pytest.raises(ValueError, match="fits fixed effects only"):
-            test(y, design, "groupB", {"a": [0, 1]})
+            test(y, {"a": [0, 1]}, design=design, contrast="groupB")
+
+
+# Results of differential expression.
+
+CONTRASTS = {"stim_vs_ctrl": "conditionstim", "D2_vs_D1": "donorD2"}
+LEVELS = {"condition": ["ctrl", "stim"]}
+# Sets of the simulated genes, named by symbol: up, down, both and unchanged.
+SYMBOL_SETS = {
+    "up": [f"G{j}" for j in range(15)],
+    "down": [f"G{j}" for j in range(15, 25)],
+    "both": [f"G{j}" for j in range(5, 20)],
+    "null": [f"G{j}" for j in range(40, 70)],
+}
+
+
+@cache
+def two_groups_of_six_donors() -> Cube:
+    """Negative binomial counts of 120 genes, with ids and symbols, in two groups of
+    6 donors x 2 conditions; genes G0 to G14 go up and G15 to G24 down."""
+    rng = np.random.default_rng(31)
+    condition = np.tile(["ctrl", "stim"], 6)
+    change = np.zeros(120)
+    change[:15], change[15:25] = 1.0, -1.0
+    mean = np.exp(rng.normal(4.0, 1.0, size=(2, 1, 120)))
+    mean = mean * np.where(condition[None, :, None] == "stim", 2.0**change, 1.0)
+    return Cube(
+        {"counts": rng.negative_binomial(10, 10 / (10 + mean))},
+        samples={
+            "sample_id": [f"S{i}" for i in range(12)],
+            "condition": condition,
+            "donor": np.repeat([f"D{i}" for i in range(1, 7)], 2),
+        },
+        groups={"group_id": ["B", "T"]},
+        features={
+            "feature_id": [f"ENSG{j:05d}" for j in range(120)],
+            "symbol": [f"G{j}" for j in range(120)],
+        },
+        n_cells=rng.integers(20, 60, size=(12, 2)),
+    )
+
+
+@cache
+def results() -> dict[str, DifferentialExpressionResult]:
+    """The cube's limma-voom, with robust moderation; its limma-trend, with the cell
+    numbers as prior weights; and its dream-voom of group B."""
+    cube = two_groups_of_six_donors()
+    paired = Design(
+        cube.samples, "~ donor + condition", levels=LEVELS, contrasts=CONTRASTS
+    )
+    mixed = Design(
+        cube.samples,
+        "~ condition",
+        random="(1 | donor)",
+        levels=LEVELS,
+        contrasts={"stim_vs_ctrl": "conditionstim"},
+    )
+    return {
+        "limma_voom": limma_voom(cube, paired, robust=True),
+        "limma_trend": limma_trend(cube, paired, prior_weights="n_cells"),
+        "dream_voom": dream_voom(cube, mixed, groups=["B"]),
+    }
+
+
+def fitted(
+    result: DifferentialExpressionResult, group: str, contrast: str
+) -> tuple[Any, dict[str, Any]]:
+    """A group's fit, and what a gene-set test of the result reads from it: the
+    design rows and contrast weights fitted and the symbols of the features tested."""
+    fit = result.fit(group)
+    linear = fit.moderated.fit
+    column = linear.coefficient_names.index(contrast)
+    return fit, {
+        "design": linear.design,
+        "contrast": linear.contrasts[:, column],
+        "feature_ids": fit.features["symbol"],
+    }
+
+
+@pytest.mark.parametrize("contrast", list(CONTRASTS))
+@pytest.mark.parametrize("test", [camera, fry])
+def test_a_limma_voom_result_is_tested_as_the_voom_values_of_its_groups_fit(
+    test: Any, contrast: str
+) -> None:
+    # Group B's filter leaves a gene out, so its ids are those of its fit.
+    result = results()["limma_voom"]
+    fit, read = fitted(result, "B", contrast)
+    assert len(fit.features) < result.cube.n_features and fit.voom is not None
+    assert result.settings["robust"]
+    table = test(result, SYMBOL_SETS, group="B", contrast=contrast, id_column="symbol")
+    expected = test(fit.voom, SYMBOL_SETS, **read, trend=False, robust=True)
+    assert table.equals(expected)
+    # The sets named by feature id, the default column, are the same sets.
+    symbols = result.cube.features["symbol"].tolist()
+    ids = result.cube.features["feature_id"]
+    by_id = {
+        name: [ids[symbols.index(gene)] for gene in genes]
+        for name, genes in SYMBOL_SETS.items()
+    }
+    assert test(result, by_id, group="B", contrast=contrast).equals(table)
+
+
+def test_a_result_gives_the_design_weights_and_ids_of_its_fit() -> None:
+    result = results()["limma_voom"]
+    fit, read = fitted(result, "B", "stim_vs_ctrl")
+    tested = {"group": "B", "contrast": "stim_vs_ctrl", "id_column": "symbol"}
+    for test in (camera, fry):
+        for name, value, owner in (
+            ("design", read["design"], "the design of its group's fit"),
+            ("feature_ids", read["feature_ids"], "the ids of the column id_column"),
+            ("weights", fit.weights, "the weights of its group's fit"),
+        ):
+            message = (
+                f"{name} applies to an array or a VoomResult; a "
+                f"differential-expression result gives {owner}"
+            )
+            with pytest.raises(ValueError, match=message):
+                test(result, SYMBOL_SETS, **tested, **{name: value})
+        # A group names a group of a result, not of an array.
+        with pytest.raises(
+            ValueError,
+            match="group names a group of a differential-expression result, and data "
+            "is a ndarray",
+        ):
+            test(fit.log2_cpm, SYMBOL_SETS, group="B", **read)
+
+
+def test_a_result_of_dream_voom_is_refused() -> None:
+    result = results()["dream_voom"]
+    for test in (camera, fry):
+        with pytest.raises(
+            ValueError,
+            match=f"{test.__name__} tests the contrast and residual effects of a "
+            "linear model, and this result is from dream_voom",
+        ):
+            test(result, SYMBOL_SETS, contrast="stim_vs_ctrl", id_column="symbol")

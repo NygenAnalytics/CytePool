@@ -39,7 +39,7 @@ the credit for the methods belongs to their authors.
 | {api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores`, {api}`plage` | the GSVA package [@haenzelmann2013], and the paper of the method you chose: GSVA [@haenzelmann2013], ssGSEA [@barbie2009], combined z-scores [@lee2008] or PLAGE [@tomfohr2005] |
 | {api}`read_gmt` | the collection you read, as its provider asks; for MSigDB, [@subramanian2005; @liberzon2011] |
 | {api}`propeller` | [@phipson2022] |
-| {api}`meta_analysis`, {api}`differential_expression_meta_analysis` | metafor [@viechtbauer2010]; the estimator of the between-study variance you chose: REML [@viechtbauer2005], DerSimonian-Laird [@dersimonian1986] or Paule-Mandel [@paule1982]; Knapp-Hartung [@knapp2003] |
+| {api}`meta_analysis`, {api}`fit_meta_analysis` | metafor [@viechtbauer2010]; the estimator of the between-study variance you chose: REML [@viechtbauer2005], DerSimonian-Laird [@dersimonian1986] or Paule-Mandel [@paule1982]; Knapp-Hartung [@knapp2003] |
 | {api}`adjust_p_values` | the method you chose: [@benjamini1995], [@benjamini2001], [@holm1979], [@hochberg1988] or [@hommel1988] |
 
 Each module's documentation lists, under References, every work it implements; the

@@ -223,7 +223,9 @@ def prepare_group(
             if name != SAMPLE_GROUPS
         }
         labels = design.samples[filter_settings[SAMPLE_GROUPS]]
-        keep = filter_by_expression(y, group=labels[inputs.model_rows[used]], **numbers)
+        keep = filter_by_expression(
+            y, sample_groups=labels[inputs.model_rows[used]], **numbers
+        )
     else:
         keep = filter_by_expression(y, design=x_kept, **filter_settings)
     fit.tested = np.flatnonzero(keep)

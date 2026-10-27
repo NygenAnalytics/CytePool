@@ -1,13 +1,13 @@
 """Principal components of samples, as DESeq2's ``plotPCA`` computes them.
 
-:func:`principal_components` places the samples of a matrix of log-expression values, or
-of one group (cell type) of a cube, on their principal components (Pearson 1901), as
-DESeq2's ``plotPCA`` does for its transformed values (Love et al. 2014): from the
-``top`` genes of largest variance over the samples, each centred on its mean, by the
-singular value decomposition of that samples x genes matrix, X = U S V'. The
-coordinates of the samples are U S, the loadings of the genes are V, and the share of
-the variance that each component explains is its squared singular value over their
-sum, DESeq2's ``percentVar``. :func:`~cytepool.plotting.plot_pca` draws them.
+:func:`~cytepool.principal_components` places the samples of a matrix of log-expression
+values, or of one group (cell type) of a cube, on their principal components (Pearson
+1901), as DESeq2's ``plotPCA`` does for its transformed values (Love et al. 2014): from
+the ``top`` genes of largest variance over the samples, each centred on its mean, by the
+singular value decomposition of that samples x genes matrix, X = U S V'. The coordinates
+of the samples are U S, the loadings of the genes are V, and the share of the variance
+that each component explains is its squared singular value over their sum, DESeq2's
+``percentVar``. :func:`~cytepool.plotting.plot_pca` draws them.
 
 What DESeq2's help page leaves open was found by running ``plotPCA`` 1.46.0 as a black
 box: it ranks the genes by their variance over the samples, keeps genes of equal
@@ -19,17 +19,17 @@ coordinate positive (of near ties, within a relative 1e-9, the first), as
 not depend on the order of the genes or the sign of the values.
 
 The values:
-    A matrix holds one row per sample and one column per gene, finite, such as
-    log-CPM values or the variance-stabilized values that DESeq2's guide takes. A
-    :class:`~cytepool.stats.voom.VoomResult` gives its log-CPM values. A cube gives
-    one group's samples prepared as :func:`~cytepool.plotting.plot_mds` prepares them,
-    as the edgeR User's Guide prepares counts for ``plotMDS``: the samples with fewer
-    than ``min_cells`` cells or no counts are left out, as
-    :func:`~cytepool.differential_expression.limma_voom` leaves them out; the genes are
-    kept by :func:`~cytepool.normalization.filter_by_expression` (Chen, Lun and Smyth
-    2016) with the samples as one group; and the values are their log2 counts per
-    million with TMM normalization factors and an average count of 2 added
-    (:func:`~cytepool.normalization.log_cpm`).
+    A matrix holds one row per sample and one column per gene, finite, such as log-CPM
+    values or the variance-stabilized values that DESeq2's guide takes. A
+    :class:`~cytepool.stats.voom.VoomResult` gives its log-CPM values. A cube gives one
+    group's samples prepared as :func:`~cytepool.plotting.plot_mds` prepares them, as
+    the edgeR User's Guide prepares counts for ``plotMDS``: the samples with fewer than
+    ``min_cells`` cells or no counts are left out, as :func:`~cytepool.limma_voom`
+    leaves them out; the genes are kept by
+    :func:`~cytepool.normalization.filter_by_expression` (Chen, Lun and Smyth 2016) with
+    the samples as one group; and the values are their log2 counts per million with TMM
+    normalization factors and an average count of 2 added
+    (:func:`~cytepool.normalization.log2_cpm`).
 
 References:
     Pearson K (1901). On lines and planes of closest fit to systems of points in space.
@@ -64,7 +64,7 @@ from ._masked_arrays import read_only, real_array, reject_masked, unmasked_array
 from ._messages import quoted
 from ._options import integral_number, positive_integer
 from .cube import Cube
-from .normalization import filter_by_expression, log_cpm, tmm_factors
+from .normalization import filter_by_expression, log2_cpm, tmm_factors
 from .stats.voom import VoomResult
 from .table import Table
 
@@ -92,7 +92,7 @@ class PrincipalComponents:
 
     Rows of ``coordinates`` are the samples used, in the order of ``samples``; columns
     are the components, in decreasing order of the variance they explain. There are
-    min(n_samples - 1, n_genes) components: the centred values have no more
+    min(n_samples - 1, n_features) components: the centred values have no more
     dimensions. The arrays are read-only.
 
     Attributes:
@@ -101,10 +101,12 @@ class PrincipalComponents:
             to sign.
         variance_explained: ``(n_components,)`` float64, each component's share of the
             total variance of the genes used, summing to 1; DESeq2's ``percentVar``.
-        loadings: ``(n_genes_used, n_components)`` float64, the unit vectors of the
-            components over the genes used, in the order of ``genes``.
-        genes: ``(n_genes_used,)`` positions of the genes used, in decreasing order of
-            their variance: columns of the matrix, or features of the cube.
+        loadings: ``(n_features_used, n_components)`` float64, the unit vectors of
+            the components over the features used, in the order of ``features``.
+        features: The features used, one row each, in decreasing order of their
+            variance: ``position``, the column of the matrix or the feature of the
+            cube, and for a cube the columns of its feature table, such as
+            ``feature_id`` and ``symbol``.
         samples: One row per sample used: ``sample_id`` and, for a cube, the columns
             of its sample table; for a matrix, the ids ``"1"``, ``"2"``, ... of its
             rows.
@@ -114,7 +116,7 @@ class PrincipalComponents:
     coordinates: FloatArray
     variance_explained: FloatArray
     loadings: FloatArray
-    genes: IntArray
+    features: Table
     samples: Table
     settings: Mapping[str, Any]
 
@@ -127,7 +129,7 @@ class PrincipalComponents:
                 self.coordinates,
                 self.variance_explained,
                 self.loadings,
-                self.genes,
+                self.features,
                 self.samples,
                 dict(self.settings),
                 provenance_text(self),
@@ -147,14 +149,15 @@ class PrincipalComponents:
         provenance (``"cube"``), the layer read and the settings; None for
         components of values given as an array or a VoomResult. The cube's record
         costs what it costs for
-        :func:`~cytepool.differential_expression.limma_voom` ("Provenance")."""
+        :func:`~cytepool.limma_voom` ("Provenance")."""
         return provenance_of(self)
 
     def __repr__(self) -> str:
         n_samples, n_components = self.coordinates.shape
         shares = ", ".join(f"{100 * v:.1f}%" for v in self.variance_explained[:3])
         return (
-            f"PrincipalComponents(n_samples={n_samples}, n_genes={self.genes.size}, "
+            f"PrincipalComponents(n_samples={n_samples}, "
+            f"n_features={len(self.features)}, "
             f"n_components={n_components}, variance_explained=[{shares}"
             f"{', ...' if n_components > 3 else ''}])"
         )
@@ -164,7 +167,7 @@ def _restored_components(
     coordinates: FloatArray,
     variance_explained: FloatArray,
     loadings: FloatArray,
-    genes: IntArray,
+    features: Table,
     samples: Table,
     settings: dict[str, Any],
     provenance: str | None,
@@ -174,7 +177,7 @@ def _restored_components(
         coordinates=read_only(np.asarray(coordinates)),
         variance_explained=read_only(np.asarray(variance_explained)),
         loadings=read_only(np.asarray(loadings)),
-        genes=read_only(np.asarray(genes)),
+        features=features,
         samples=samples,
         settings=MappingProxyType(settings),
     )
@@ -198,7 +201,7 @@ def principal_components(
     Args:
         data: ``(n_samples, n_genes)`` log-expression values, finite; a
             :class:`~cytepool.stats.voom.VoomResult`, whose log-CPM values are used;
-            or a :class:`~cytepool.cube.Cube`, of which one group's samples are used.
+            or a :class:`~cytepool.Cube`, of which one group's samples are used.
         group: The group (cell type) of a cube; it may be left out when the cube has
             one group. Only cubes take it.
         top: The number of genes of largest variance used, at least 1 (DESeq2's
@@ -207,8 +210,8 @@ def principal_components(
             default as for ``limma_voom``; for a cube that records cell numbers.
 
     Returns:
-        The coordinates, shares of variance and loadings, with the genes and samples
-        used.
+        The coordinates, shares of variance and loadings, with the features and
+        samples used.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -222,6 +225,7 @@ def principal_components(
     """
     count = positive_integer(top, "top")
     values, genes, samples, settings = _values(data, group, min_cells)
+    feature_table = data.features if isinstance(data, Cube) else None
     n_samples, n_genes = values.shape
     if n_samples < 2:
         raise ValueError(
@@ -255,13 +259,28 @@ def principal_components(
         coordinates=read_only(np.ascontiguousarray(coordinates)),
         variance_explained=read_only(singular**2 / total),
         loadings=read_only(np.ascontiguousarray(loadings)),
-        genes=read_only(genes[chosen]),
+        features=_features_used(genes[chosen], feature_table),
         samples=samples,
         settings=MappingProxyType(settings),
     )
     if isinstance(data, Cube):
         keep_provenance(result, "principal_components", data, settings)
     return result
+
+
+def _features_used(positions: IntArray, features: Table | None) -> Table:
+    """The features used: their positions, then the columns of the cube's feature
+    table at those positions."""
+    columns: dict[str, Any] = {"position": read_only(np.asarray(positions, np.int64))}
+    if features is not None:
+        if "position" in features:
+            raise ValueError(
+                "the cube's feature table has a column 'position', the name the "
+                "principal components give the positions of the features used; "
+                "rename it"
+            )
+        columns |= features.take(positions).to_dict()
+    return Table(columns)
 
 
 def _signs(coordinates: FloatArray) -> FloatArray:
@@ -288,7 +307,7 @@ def _values(
         raise ValueError(
             f"{given} applies to a cube, and data is a {type(data).__name__}"
         )
-    source = data.log_cpm if isinstance(data, VoomResult) else data
+    source = data.log2_cpm if isinstance(data, VoomResult) else data
     values = real_array(unmasked_array(source, "data"), "data", boolean=False)
     if values.ndim != 2:
         raise ValueError(
@@ -338,13 +357,13 @@ def _cube_values(
             f"{fewest} cells; principal components need two or more"
         )
     kept = counts[rows]
-    keep = filter_by_expression(kept, group=np.zeros(rows.size))
+    keep = filter_by_expression(kept, sample_groups=np.zeros(rows.size))
     if not keep.any():
         raise ValueError(
             f"no gene of group {group!r} passes filter_by_expression, so there is "
             "nothing to decompose"
         )
     kept = kept[:, keep]
-    values = log_cpm(kept, norm_factors=tmm_factors(kept), prior_count=_PRIOR_COUNT)
+    values = log2_cpm(kept, norm_factors=tmm_factors(kept), prior_count=_PRIOR_COUNT)
     settings: dict[str, Any] = {"group": group, "min_cells": fewest}
     return values, np.flatnonzero(keep), cube.samples.take(rows), settings

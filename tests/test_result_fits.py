@@ -21,17 +21,18 @@ import pytest
 from numpy.testing import assert_array_equal
 from test_differential_expression import cells_cube, paired_design, voom_result
 
-from cytepool.cube import from_bulk
-from cytepool.design import Contrasts, Design
-from cytepool.design.checks import _aliasing
-from cytepool.differential_expression import (
+from cytepool import (
+    Design,
     DifferentialExpressionResult,
     GroupFit,
     dream_voom,
+    from_bulk,
     limma_trend,
     limma_voom,
 )
-from cytepool.normalization import filter_by_expression, log_cpm, tmm_factors
+from cytepool.design import Contrasts
+from cytepool.design.checks import _aliasing
+from cytepool.normalization import filter_by_expression, log2_cpm, tmm_factors
 from cytepool.stats.empirical_bayes import ModeratedFit, moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.voom import voom
@@ -164,7 +165,7 @@ def test_a_group_fitted_again_gives_the_tables_of_the_analysis(name: str) -> Non
             assert_array_equal(table["log2_fold_change"], estimate[:, j])
             assert_array_equal(table["t"], moderated.t[:, j])
             assert_array_equal(table["p_value"], moderated.p_value[:, j])
-            assert_array_equal(table["b_statistic"], moderated.lods[:, j])
+            assert_array_equal(table["log_odds"], moderated.log_odds[:, j])
         # The samples fitted are those the result says it used, with their numbers.
         used = result.samples.filter(group_id=group, used=True)
         assert fit.samples["sample_id"].tolist() == used["sample_id"].tolist()
@@ -193,7 +194,7 @@ def test_a_fit_is_limma_voom_by_hand_in_a_rank_deficient_group() -> None:
         weighted = voom(y, x, norm_factors=tmm_factors(y))
         columns = tuple(design.columns[j] for j in kept)
         model = fit_linear_model(
-            weighted.log_cpm, x, weights=weighted.weights, coefficient_names=columns
+            weighted.log2_cpm, x, weights=weighted.weights, coefficient_names=columns
         )
         estimable = [
             p for p, name in enumerate(design.contrasts.names)
@@ -210,7 +211,7 @@ def test_a_fit_is_limma_voom_by_hand_in_a_rank_deficient_group() -> None:
 
         fit = result.fit(group)
         assert isinstance(fit, GroupFit) and fit.group == group
-        assert_array_equal(fit.log2_cpm, weighted.log_cpm)
+        assert_array_equal(fit.log2_cpm, weighted.log2_cpm)
         assert_array_equal(fit.weights, weighted.weights)
         assert fit.voom.span == weighted.span
         assert_array_equal(fit.voom.sqrt_sd_trend, weighted.sqrt_sd_trend)
@@ -230,7 +231,7 @@ def test_a_fit_is_limma_voom_by_hand_in_a_rank_deficient_group() -> None:
     )
 
 
-def test_limma_trend_fits_log_cpm_with_the_sample_weights() -> None:
+def test_limma_trend_fits_log2_cpm_with_the_sample_weights() -> None:
     result = trend_result()
     fit = result.fit("T")
     rows = used_rows(result, "T")
@@ -239,7 +240,7 @@ def test_limma_trend_fits_log_cpm_with_the_sample_weights() -> None:
     x = result.design.matrix[rows]
     y = y[:, filter_by_expression(y, design=x)]
     assert_array_equal(
-        fit.log2_cpm, log_cpm(y, norm_factors=tmm_factors(y), prior_count=3.0)
+        fit.log2_cpm, log2_cpm(y, norm_factors=tmm_factors(y), prior_count=3.0)
     )
     assert fit.voom is None
     assert_array_equal(fit.weights, np.asarray(cube.n_cells)[rows, 1].astype(float))
@@ -292,7 +293,7 @@ def test_the_table_of_the_only_group_and_contrast_needs_no_keys() -> None:
         several.table(contrast="stim_vs_ctrl")
     with pytest.raises(
         ValueError,
-        match="the result has 3 contrasts and F-tests; name one with contrast",
+        match="the result has 3 contrasts; name one with contrast",
     ):
         several.table("T")
     # A dream F-test counts among the keys.
@@ -321,8 +322,7 @@ def test_a_moderated_fit_as_a_table_is_the_table_of_limma_voom() -> None:
                 "average_log2_cpm", "t", "p_value", "adjusted_p_value", "log_odds",
             )  # fmt: skip
             for column in theirs.columns:
-                found = "log_odds" if column == "b_statistic" else column
-                assert_array_equal(mine[found], theirs[column])
+                assert_array_equal(mine[column], theirs[column])
     moderated = result.fit("T").moderated
     by_position = moderated.table(1)
     assert by_position.equals(

@@ -60,9 +60,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.cube import from_cells
-from cytepool.design import Design
-from cytepool.differential_expression import limma_trend, limma_voom
+from cytepool import Design, from_cells, limma_trend, limma_voom
 
 FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[1] / "tests" / "data" / "differential_expression"
@@ -77,7 +75,7 @@ COLUMNS = {
     "t": "t",
     "P.Value": "p_value",
     "adj.P.Val": "adjusted_p_value",
-    "B": "b_statistic",
+    "B": "log_odds",
     "SE": "standard_error",
 }
 
@@ -202,7 +200,11 @@ def pooled(rng, samples, cells, n_genes):
     """The cube that from_cells pools from simulated cells, and the cells."""
     counts, labels, types = simulate_cells(rng, samples, cells, n_genes)
     cube = from_cells(
-        counts, samples=labels, groups=types, sample_table=samples, layers="counts"
+        counts,
+        sample_labels=labels,
+        group_labels=types,
+        samples=samples,
+        layers="counts",
     )
     return cube, {"counts": counts, "samples": labels, "groups": types}
 
@@ -412,7 +414,7 @@ def compare(name, case, result, limma):
         ids = next(iter(tables.values()))["feature_id"]
         tested = np.isin(cube.features["feature_id"], ids)
         row = list(result.groups).index(group)
-        df_prior = result.summary["prior_df"][row]
+        df_prior = result.summary["df_prior"][row]
         prior = float(np.median(theirs["df_prior"]))
         # A contrast that one program tests and the other does not, other than the
         # deliberate differences.

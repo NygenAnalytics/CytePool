@@ -45,8 +45,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.cube import Cube
-from cytepool.io import read_cube, write_cube
+from cytepool import Cube, read_cube, write_cube
 
 SEED = 20261025
 FIXTURE_DIR = (

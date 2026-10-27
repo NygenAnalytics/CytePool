@@ -61,9 +61,7 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import dream_voom
+from cytepool import Cube, Design, dream_voom
 from cytepool.normalization import filter_by_expression, library_sizes, tmm_factors
 from cytepool.stats.dream import moderated_fixed_effect_tests, voom_with_dream_weights
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
@@ -323,7 +321,7 @@ def scaled_prior(weights: np.ndarray, n_samples: int) -> np.ndarray:
 def add_given_fits(case: dict[str, Any], voom: Any) -> None:
     """Fits for lme4 to evaluate: the trend's (maximum likelihood) and dream's (REML)."""
     design, genes = design_of(case), np.arange(N_GIVEN)
-    n = voom.log_cpm.shape[0]
+    n = voom.log2_cpm.shape[0]
     prior = (
         np.ones((n, 1)) if case["weights"] is None else scaled_prior(case["weights"], n)
     )
@@ -334,12 +332,12 @@ def add_given_fits(case: dict[str, Any], voom: Any) -> None:
         ("reml", voom.weights[:, genes]),
     ):
         fit = fit_mixed_model(
-            voom.log_cpm[:, genes], design, weights=weights, method=kind
+            voom.log2_cpm[:, genes], design, weights=weights, method=kind
         )
         theta = np.sqrt(fit.variance_components / fit.residual_variance[:, None])
         case["fits"][kind] = fit
         case["given"][kind] = {
-            "y": voom.log_cpm[:, genes].T,
+            "y": voom.log2_cpm[:, genes].T,
             "w": weights.T,
             "reml": kind == "reml",
             "theta": theta,
@@ -401,8 +399,8 @@ def compare_stats(
         max(weights),
         CLOSE,
     )
-    fit = fit_mixed_model(voom.log_cpm, design, weights=voom.weights)
-    names, n = list(ref["names"]), fit.residual_df.size
+    fit = fit_mixed_model(voom.log2_cpm, design, weights=voom.weights)
+    names, n = list(ref["names"]), fit.df_residual.size
     matrix = np.zeros((len(design.columns), len(names)))
     for j, column in enumerate(names):
         for sign, term in zip(
@@ -442,14 +440,14 @@ def compare_stats(
                     relative(
                         np.sqrt(mod.residual_variance_at_mean_weight), ref["sigma"]
                     ),
-                    relative(mod.residual_df, ref["rdf"]),
+                    relative(mod.df_residual, ref["rdf"]),
                 ),
                 CLOSE,
             )
         each = [
             np.broadcast_to(np.asarray(value, float), (n,))
             for value in (
-                mod.prior_df,
+                mod.df_prior,
                 r["df_prior"],
                 mod.prior_variance,
                 r["s2_prior"],
@@ -468,7 +466,7 @@ def compare_stats(
         )
         ours = {
             "t": mod.t,
-            "lods": mod.lods,
+            "lods": mod.log_odds,
             "df_total": mod.df_total,
             "p": mod.p_value,
             "adjusted": adjust_p_values(mod.p_value, "bh", axis=0),
@@ -479,7 +477,7 @@ def compare_stats(
             f"{label}: prior df, estimator",
             "CytePool",
             "median, smallest, estimator",
-            f"{np.median(mod.prior_df):.4g}, {np.min(mod.prior_df):.4g}, {mod.prior_estimator}",
+            f"{np.median(mod.df_prior):.4g}, {np.min(mod.df_prior):.4g}, {mod.prior_estimator}",
         )
     if "extreme_z" in ref:
         k = names.index(case["extreme_coef"])
@@ -507,7 +505,7 @@ def compare_stats(
             max(
                 relative(given.log_likelihood, got["loglik"]),
                 relative(given.residual_variance, got["sigma2"]),
-                relative(given.residual_df, got["rdf"]),
+                relative(given.df_residual, got["rdf"]),
                 relative(
                     given.fitted_values,
                     np.asarray(got["fitted"]).T,
@@ -677,7 +675,7 @@ def compare_cube(
             )
             ours = {
                 "t": table["t"],
-                "lods": table["b_statistic"],
+                "lods": table["log_odds"],
                 "df_total": table["df"],
                 "p": table["p_value"],
                 "adjusted": table["adjusted_p_value"],
@@ -828,7 +826,7 @@ def main() -> int:
     case, ref = deviations["reproduced"], refs["reproduced"]
     voom = voom_with_dream_weights(case["counts"], design_of(case), span=0.5)
     t = fixed_effect_tests(
-        fit_mixed_model(voom.log_cpm, design_of(case), weights=voom.weights)
+        fit_mixed_model(voom.log2_cpm, design_of(case), weights=voom.weights)
     ).t[0, 1]
     in_r = (
         f"{ref['sqrt_sd'][ref['kept'].index(1)]:.2g}" if 1 in ref["kept"] else "dropped"

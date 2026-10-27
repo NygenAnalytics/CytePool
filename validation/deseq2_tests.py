@@ -64,7 +64,7 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 from scipy.special import gammaln
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.stats.deseq2 import (
     _count_score,
     _independent_filtering,

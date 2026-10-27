@@ -19,9 +19,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cytepool.cube import Cube
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
+from cytepool import Cube, Design, limma_voom
 
 DATA = Path(__file__).parent / "data" / "interferon_stimulated_pbmcs" / "limma.npz"
 EXACT = 1e-10
@@ -32,7 +30,7 @@ STATISTICS = (
     "t",
     "p_value",
     "adjusted_p_value",
-    "b_statistic",
+    "log_odds",
 )
 
 
@@ -81,7 +79,7 @@ def test_limma_voom_matches_limma_on_published_counts() -> None:
     assert result.samples["used"].tolist() == fixture["limma used"].tolist()
     assert record["aliased_columns"] == fixture["limma aliased"].tolist()
     assert result.summary["df_residual"][0] == fixture["limma df"][0]
-    prior_df = result.summary["prior_df"][0]
+    prior_df = result.summary["df_prior"][0]
     assert prior_df == pytest.approx(fixture["limma df"][1], rel=EXACT)
 
     table = result.table(group, "stim_vs_ctrl")

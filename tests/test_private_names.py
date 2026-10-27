@@ -34,6 +34,14 @@ _QUALITY_WEIGHTS = (
     "error that sample_quality_weights gives its callers"
 )
 _VOOM_RESULT = "builds the public VoomResult of cytepool.stats.voom"
+_SUMRANK = (
+    "parts of the public fit_sumrank of cytepool.stats.sumrank, which the analyses of "
+    "several studies run on their own statistics and permutations"
+)
+_VARIANCE_FRACTIONS = (
+    "parts of the public variance_fractions of cytepool.stats.variance_fractions, "
+    "which variance_partitioning runs on each group of a cube"
+)
 
 # (module, name): why other modules of the package import it from that module.
 SHARED_FROM_THEIR_MODULE = {
@@ -67,6 +75,10 @@ SHARED_FROM_THEIR_MODULE = {
         "builds the public ModeratedFixedEffectTests of cytepool.stats.dream from the "
         "parts of tests that dream_voom chooses feature by feature"
     ),
+    ("cytepool.stats.meta_analysis", "_checked_options"): (
+        "the options of the public fit_meta_analysis, which meta_analysis checks "
+        "alike before it reads the studies"
+    ),
     ("cytepool.stats.mixed_models", "_fit"): (
         "builds the public MixedModelFit of cytepool.stats.mixed_models"
     ),
@@ -88,6 +100,13 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.smoothing", "_weighted_lowess"): (
         "tests and validation/empirical_bayes.py import it from smoothing"
     ),
+    ("cytepool.stats.sumrank", "_NullCounts"): _SUMRANK,
+    ("cytepool.stats.sumrank", "_capped_sums"): _SUMRANK,
+    ("cytepool.stats.sumrank", "_studies_summed"): _SUMRANK,
+    ("cytepool.stats.variance_fractions", "_Terms"): _VARIANCE_FRACTIONS,
+    ("cytepool.stats.variance_fractions", "_checked_terms"): _VARIANCE_FRACTIONS,
+    ("cytepool.stats.variance_fractions", "_linear_fractions"): _VARIANCE_FRACTIONS,
+    ("cytepool.stats.variance_fractions", "_mixed_fractions"): _VARIANCE_FRACTIONS,
     ("cytepool.stats.voom", "_quality_weighted_voom"): _VOOM_RESULT,
 }
 

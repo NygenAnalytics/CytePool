@@ -21,7 +21,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.design import Design, make_contrasts
+from cytepool import Design
+from cytepool.design import make_contrasts
 from cytepool.stats.negative_binomial_models import fit_negative_binomial_model
 from cytepool.stats.quasi_likelihood import (
     QuasiLikelihoodFit,
@@ -29,7 +30,7 @@ from cytepool.stats.quasi_likelihood import (
     UnitDevianceMoments,
     _chi_squared_match,
     _leverages,
-    average_log_cpm,
+    average_log2_cpm,
     common_dispersion,
     fit_quasi_likelihood,
     negative_binomial_unit_deviance_moments,
@@ -182,10 +183,10 @@ def test_the_quasi_dispersions_are_edgers(fitted, name):
         rtol=MOMENTS,
     )
     # One value where edgeR reports one, and one per gene where it reports more.
-    assert np.ndim(fit.prior_df) == (case["edger_df.prior"].size > 1)
+    assert np.ndim(fit.df_prior) == (case["edger_df.prior"].size > 1)
     assert np.ndim(fit.prior_quasi_dispersion) == (case["edger_s2.prior"].size > 1)
     assert_allclose(
-        np.broadcast_to(fit.prior_df, n_genes),
+        np.broadcast_to(fit.df_prior, n_genes),
         np.broadcast_to(case["edger_df.prior"], n_genes),
         rtol=PRIOR_DF,
     )
@@ -226,12 +227,12 @@ def test_the_test_columns_are_edgers(fitted, name):
         # The log CPM is at the NB dispersion, which differs by up to 1e-5 when both
         # estimate it.
         assert_allclose(
-            test.average_log_cpm[genes],
+            test.average_log2_cpm[genes],
             e["logCPM"][genes],
             atol=1e-6 if estimated else 1e-8,
         )
         lfc = e["logFC"].reshape(-1, n_genes).T
-        assert_allclose(test.log_fold_change, lfc, atol=1e-6 if exact else FITS)
+        assert_allclose(test.log2_fold_change, lfc, atol=1e-6 if exact else FITS)
         assert scaled(test.f_statistic[genes], e["F"][genes]) < MOMENTS
         assert log10_ratio(test.p_value[genes], e["PValue"][genes]) < PROBABILITY
         assert log10_ratio(test.adjusted_p_value[genes], e["FDR"][genes]) < (
@@ -383,22 +384,22 @@ def test_moments_broadcast_and_scalars_give_floats():
 # ---------------------------------------------------------------------------------------
 
 
-def test_average_log_cpm_without_dispersion_or_prior_pools_the_counts():
+def test_average_log2_cpm_without_dispersion_or_prior_pools_the_counts():
     # A Poisson fit of one group: the mean per unit of library size is the ratio of
     # the totals.
     counts = np.array([[3.0, 0.0, 50.0], [7.0, 1.0, 20.0], [1.0, 0.0, 90.0]])
     sizes = np.array([1e6, 2e6, 3e6])
     expected = np.log2(counts.sum(axis=0) / sizes.sum() * 1e6)
-    result = average_log_cpm(
+    result = average_log2_cpm(
         counts, library_sizes=sizes, prior_count=0.0, dispersion=0.0
     )
     assert_allclose(result[[0, 2]], expected[[0, 2]], rtol=1e-12)
     assert_allclose(result[1], expected[1], rtol=1e-12)
 
 
-def test_average_log_cpm_is_the_cpm_of_a_single_sample():
+def test_average_log2_cpm_is_the_cpm_of_a_single_sample():
     counts = np.array([[12.0, 0.0, 5.0]])
-    result = average_log_cpm(counts, library_sizes=[2e6], prior_count=0.5)
+    result = average_log2_cpm(counts, library_sizes=[2e6], prior_count=0.5)
     prior = 0.5  # one sample: its library size is the mean
     expected = np.log2((counts[0] + prior) / (2e6 + 2 * prior) * 1e6)
     assert_allclose(result, expected, rtol=1e-12)
@@ -460,7 +461,7 @@ def test_sample_order_does_not_matter(two_groups):
     assert_allclose(result.p_value, test.p_value, rtol=1e-4)
 
 
-def test_library_sizes_scale_only_the_log_cpm(two_groups):
+def test_library_sizes_scale_only_the_log2_cpm(two_groups):
     case, fit, test = two_groups
     other = fit_quasi_likelihood(
         case["counts"], case["design"], library_sizes=case["library_sizes"] * 10.0
@@ -471,10 +472,10 @@ def test_library_sizes_scale_only_the_log_cpm(two_groups):
         other.posterior_quasi_dispersion, fit.posterior_quasi_dispersion, rtol=1e-6
     )
     assert_allclose(result.f_statistic, test.f_statistic, rtol=1e-5)
-    assert_allclose(result.log_fold_change, test.log_fold_change, atol=1e-7)
+    assert_allclose(result.log2_fold_change, test.log2_fold_change, atol=1e-7)
     # Up to the prior counts, which do not grow with the libraries: about c / N.
-    shifted = test.average_log_cpm - math.log2(10.0)
-    assert_allclose(result.average_log_cpm, shifted, atol=1e-5)
+    shifted = test.average_log2_cpm - math.log2(10.0)
+    assert_allclose(result.average_log2_cpm, shifted, atol=1e-5)
 
 
 def test_a_gene_counted_in_one_condition_keeps_the_invariances(fitted):
@@ -519,7 +520,7 @@ def test_a_reparametrised_design_gives_the_same_tests(two_groups):
         other.posterior_quasi_dispersion, fit.posterior_quasi_dispersion, rtol=1e-8
     )
     assert_allclose(result.f_statistic, test.f_statistic, rtol=1e-8)
-    assert_allclose(result.log_fold_change, test.log_fold_change, atol=1e-9)
+    assert_allclose(result.log2_fold_change, test.log2_fold_change, atol=1e-9)
 
 
 def test_equivalent_contrasts_give_the_same_f_test(fitted):
@@ -534,7 +535,7 @@ def test_equivalent_contrasts_give_the_same_f_test(fitted):
     # A coefficient test is the test of its unit contrast.
     unit = quasi_likelihood_f_test(fit, contrasts=[0.0, 0.0, 0.0, 1.0])
     assert_allclose(unit.f_statistic, tests[0].f_statistic, rtol=1e-6)
-    assert_allclose(unit.log_fold_change, tests[0].log_fold_change)
+    assert_allclose(unit.log2_fold_change, tests[0].log2_fold_change)
     # A contrast that repeats one is no more test.
     repeated = quasi_likelihood_f_test(fit, contrasts=np.column_stack([joint, joint]))
     assert repeated.df_test == 2
@@ -570,7 +571,7 @@ def test_a_gene_without_counts_is_not_tested():
         np.broadcast_to(fit.prior_quasi_dispersion, 30)[3]
     )
     assert test.f_statistic[3] == 0.0 and test.p_value[3] == 1.0
-    assert np.isfinite(test.log_fold_change[3, 0])
+    assert np.isfinite(test.log2_fold_change[3, 0])
 
 
 def test_weights_per_sample_are_the_same_weights_per_observation(two_groups):
@@ -600,7 +601,7 @@ def test_offsets_are_log_library_sizes(two_groups):
         result = quasi_likelihood_f_test(other, coefficients=1)
         assert other.dispersion == pytest.approx(fit.dispersion, rel=1e-10)
         assert_allclose(result.f_statistic, test.f_statistic, rtol=1e-9)
-        assert_allclose(result.average_log_cpm, test.average_log_cpm, atol=1e-10)
+        assert_allclose(result.average_log2_cpm, test.average_log2_cpm, atol=1e-10)
 
 
 def test_a_condition_without_counts_gets_the_leverages_of_the_limit():

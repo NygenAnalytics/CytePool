@@ -1,9 +1,9 @@
 """Tests of differences in cell-type composition between conditions, by propeller.
 
-:func:`propeller` tests, for every group (cell type) of a cube, whether the share of a
-sample's cells that belong to the group differs between conditions, as speckle's
-``propeller`` does (Phipson et al. 2022). It reads only the number of cells of every
-sample in every group (``Cube.n_cells``), or a table of them, and fits one linear
+:func:`~cytepool.propeller` tests, for every group (cell type) of a cube, whether the
+share of a sample's cells that belong to the group differs between conditions, as
+speckle's ``propeller`` does (Phipson et al. 2022). It reads only the number of cells of
+every sample in every group (``Cube.n_cells``), or a table of them, and fits one linear
 model to all groups at once:
 
 1. Proportions. Sample j, with x_ij cells of group i and N_j cells in all, has the
@@ -20,7 +20,7 @@ model to all groups at once:
    Bayes, robustly by default, as speckle calls limma's ``eBayes(robust = TRUE)``
    (Smyth 2004; Phipson et al. 2016).
 5. Tests. Each contrast is tested by its moderated t-statistic, as
-   ``propeller.ttest`` does. ``f_test`` names a factor whose levels are tested for
+   ``propeller.ttest`` does. ``f_tests`` names factors whose levels are tested for
    equal means by the moderated F-statistic, as ``propeller.anova`` does, and
    ``propeller`` with more than two groups. The p-values of a test are adjusted by
    the method of Benjamini and Hochberg over the groups (speckle's ``FDR``).
@@ -175,25 +175,24 @@ class CompositionResult:
     - ``group_id``;
     - ``baseline_proportion``: the group's share of all the cells of the samples
       used (speckle's ``BaselineProp``);
-    - for a contrast that compares the levels of a factor (see
-      :mod:`cytepool.composition`), ``mean_proportion_<level>`` for each level it
-      weighs, in level order: the mean proportion of the group over the samples at
-      that level (``PropMean``), and ``proportion_ratio``: the product of these
-      means raised to the weights of their levels, such as m_stim / m_ctrl
-      (``PropRatio``);
+    - for a contrast that compares the levels of a factor (see "Descriptive columns" in
+      the description of :func:`propeller`), ``mean_proportion_<level>`` for each level
+      it weighs, in level order: the mean proportion of the group over the samples at
+      that level (``PropMean``), and ``proportion_ratio``: the product of these means
+      raised to the weights of their levels, such as m_stim / m_ctrl (``PropRatio``);
     - ``t`` and ``p_value``: the moderated t-statistic of the contrast on the
       transformed proportions and its two-sided p-value (``Tstatistic``,
       ``P.Value``);
     - ``adjusted_p_value``: Benjamini-Hochberg over the groups (``FDR``).
 
-    The F-test table (``f_test``) has ``group_id``, ``baseline_proportion``,
-    ``mean_proportion_<level>`` for every level of the factor, ``f_statistic``,
-    ``p_value`` and ``adjusted_p_value`` (speckle's ``Fstatistic``, ``P.Value`` and
-    ``FDR``).
+    The table of an F-test (``tables`` and ``table``, by the name of its factor) has
+    ``group_id``, ``baseline_proportion``, ``mean_proportion_<level>`` for every level
+    of the factor, ``f_statistic``, ``p_value`` and ``adjusted_p_value`` (speckle's
+    ``Fstatistic``, ``P.Value`` and ``FDR``); ``f_tests`` names the F-tests.
 
     The summary has one row per group of the data: ``group_id``; ``n_cells``, its
     cells in the samples used; ``tested``; ``reason``, why it was not tested (empty
-    when tested); ``df_residual``; and ``prior_df``, the prior degrees of freedom of
+    when tested); ``df_residual``; and ``df_prior``, the prior degrees of freedom of
     the moderation (each group has its own with robust moderation; NaN for a group
     not tested). The sample table has one row per design sample, in the data's
     sample order: ``sample_id``, ``n_cells`` (in all groups), ``used`` and
@@ -205,16 +204,15 @@ class CompositionResult:
 
     Raises:
         TypeError: If ``contrasts`` is not a ``Contrasts``, ``tables`` not a mapping
-            of contrast name to ``Table``, ``f_test`` not a ``Table`` or None, or
-            ``summary``, ``samples`` or ``proportions`` not a ``Table``, or
-            ``provenance`` not a mapping that JSON can write.
+            of contrast or F-test name to ``Table``, ``summary``, ``samples`` or
+            ``proportions`` not a ``Table``, or ``provenance`` not a mapping that JSON
+            can write.
         ValueError: If ``provenance`` holds a NaN or an infinity.
     """
 
     __slots__ = (
         "_contrasts",
         "_tables",
-        "_f_test",
         "_summary",
         "_samples",
         "_proportions",
@@ -223,7 +221,6 @@ class CompositionResult:
 
     _contrasts: Contrasts
     _tables: Mapping[str, Table]
-    _f_test: Table | None
     _summary: Table
     _samples: Table
     _proportions: Table
@@ -233,7 +230,6 @@ class CompositionResult:
         self,
         contrasts: Contrasts,
         tables: Mapping[str, Table],
-        f_test: Table | None,
         summary: Table,
         samples: Table,
         proportions: Table,
@@ -245,19 +241,15 @@ class CompositionResult:
             )
         if not isinstance(tables, Mapping):
             raise TypeError(
-                "tables must be a mapping of contrast name to Table, got "
+                "tables must be a mapping of contrast or F-test name to Table, got "
                 f"{type(tables).__name__}"
             )
         for name, table in tables.items():
             if not isinstance(name, str) or not isinstance(table, Table):
                 raise TypeError(
-                    "tables must map contrast names (str) to Tables, got "
+                    "tables must map contrast and F-test names (str) to Tables, got "
                     f"{type(name).__name__} {name!r} to {type(table).__name__}"
                 )
-        if f_test is not None and not isinstance(f_test, Table):
-            raise TypeError(
-                f"f_test must be a Table or None, got {type(f_test).__name__}"
-            )
         for label, table in (
             ("summary", summary),
             ("samples", samples),
@@ -272,7 +264,6 @@ class CompositionResult:
         state = {
             "_contrasts": contrasts,
             "_tables": MappingProxyType(dict(tables)),
-            "_f_test": f_test,
             "_summary": summary,
             "_samples": samples,
             "_proportions": proportions,
@@ -294,7 +285,6 @@ class CompositionResult:
             (
                 self._contrasts,
                 dict(self._tables),
-                self._f_test,
                 self._summary,
                 self._samples,
                 self._proportions,
@@ -309,13 +299,15 @@ class CompositionResult:
 
     @property
     def tables(self) -> Mapping[str, Table]:
-        """The table of every contrast, by contrast name."""
+        """The table of every contrast and F-test, by its name."""
         return self._tables
 
     @property
-    def f_test(self) -> Table | None:
-        """The table of the F-test across the levels of ``f_test``, or None."""
-        return self._f_test
+    def f_tests(self) -> dict[str, tuple[str, ...]]:
+        """The F-tests, each named by its factor, with the levels it tests at once,
+        as a new dict; empty without F-tests."""
+        tests = json.loads(self._record)["f_tests"]
+        return {name: tuple(test["levels"]) for name, test in tests.items()}
 
     @property
     def summary(self) -> Table:
@@ -360,25 +352,31 @@ class CompositionResult:
         return record
 
     def table(self, contrast: str | None = None) -> Table:
-        """Return the table of one contrast.
+        """Return the table of one contrast, or F-test.
 
         Args:
-            contrast: A contrast name; it may be left out when the result tests one.
+            contrast: A contrast name, or the name of an F-test (its factor); it may
+                be left out when the result tests one contrast and no F-test, or one
+                F-test alone.
 
         Raises:
-            ValueError: If ``contrast`` is left out and the result tests several, or
-                none (an F-test alone, which ``f_test`` holds).
-            KeyError: If the contrast was not tested; the message lists those that
-                were.
+            ValueError: If ``contrast`` is left out and the result tests several.
+            KeyError: If the contrast or F-test was not tested; the message lists
+                those that were.
         """
+        f_tests = list(self.f_tests)
         contrast = only_key(
-            contrast, list(self._contrasts.names), "contrast", "contrasts"
+            contrast,
+            [*self._contrasts.names, *f_tests],
+            "contrast",
+            "contrasts and F-tests" if f_tests else "contrasts",
         )
         found = self._tables.get(contrast)
         if found is None:
             raise KeyError(
                 f"no contrast {contrast!r} was tested; contrasts are: "
                 f"{listing(list(self._contrasts.names)) or '(none)'}"
+                + (f"; F-tests are: {listing(f_tests)}" if f_tests else "")
             )
         return found
 
@@ -393,9 +391,8 @@ class CompositionResult:
         ]
         if len(self._contrasts):
             lines.append("  t-tests: " + ", ".join(self._contrasts.names))
-        if record["f_test"] is not None:
-            factor = record["f_test"]["factor"]
-            levels = record["f_test"]["levels"]
+        for test in record["f_tests"].values():
+            factor, levels = test["factor"], test["levels"]
             lines.append(f"  F-test across the {len(levels):,} levels of {factor}")
         return fitted_lines("\n".join(lines))
 
@@ -405,7 +402,7 @@ def propeller(
     design: Design,
     *,
     contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
-    f_test: str | None = None,
+    f_tests: str | Sequence[str] | None = None,
     transform: Literal["logit", "asin"] = "logit",
     robust: bool = True,
     trend: bool = False,
@@ -423,30 +420,29 @@ def propeller(
     As in speckle, ``propeller(clusters, sample, group)`` with two groups tests the
     first level against the second: ``Design(samples, "~ 0 + group",
     contrasts={"A_vs_B": "groupA - groupB"})``; with more groups it is
-    ``f_test="group"``. ``propeller.ttest`` with a design matrix of group columns
+    ``f_tests="group"``. ``propeller.ttest`` with a design matrix of group columns
     followed by covariates is a design such as ``~ 0 + group + age`` with a
     contrast between groups, and ``propeller.anova`` the F-test of ``group`` in
     it. The same comparisons in another parametrisation, such as ``~ group + age``
     with the contrast ``groupB``, give the same tables.
 
     Provenance:
-        The result records the cube's fingerprint, the digests it is built from and
-        its own provenance, as :func:`~cytepool.differential_expression.limma_voom`
-        does, although the test reads only the cell numbers. For a cube opened with
-        :func:`~cytepool.io.read_cube` this reads nothing, as the file stores the
-        digests; a cube in memory hashes its layers once, at about 1 s per GB of
-        values where the processor has SHA instructions, and keeps the digests.
+        The result records the cube's fingerprint, the digests it is built from and its
+        own provenance, as :func:`~cytepool.limma_voom` does, although the test reads
+        only the cell numbers. For a cube opened with :func:`~cytepool.read_cube` this
+        reads nothing, as the file stores the digests; a cube in memory hashes its
+        layers once, at about 1 s per GB of values where the processor has SHA
+        instructions, and keeps the digests.
 
     Args:
         data: The number of cells of every sample in every group: a
-            :class:`~cytepool.cube.Cube` that records them (``n_cells``), or a
-            table with one row per sample, a text column ``sample_id`` and one
-            column of cell numbers (integers) per group, named by its group id: a
-            ``Table``, a mapping of columns, or a pandas DataFrame. A DataFrame
-            without a ``sample_id`` column is read with its index as the sample
-            ids, as ``pandas.crosstab(cells["sample_id"], cells["cell_type"])``
-            gives it.
-        design: A :class:`~cytepool.design.Design` whose sample table has a
+            :class:`~cytepool.Cube` that records them (``n_cells``), or a table with one
+            row per sample, a text column ``sample_id`` and one column of cell numbers
+            (integers) per group, named by its group id: a ``Table``, a mapping of
+            columns, or a pandas DataFrame. A DataFrame without a ``sample_id`` column
+            is read with its index as the sample ids, as
+            ``pandas.crosstab(cells["sample_id"], cells["cell_type"])`` gives it.
+        design: A :class:`~cytepool.Design` whose sample table has a
             ``sample_id`` column with sample ids of the data; its rows may be some
             of the samples, in any order. A design with random effects is refused:
             the fit has fixed effects only.
@@ -454,10 +450,11 @@ def propeller(
             :func:`~cytepool.design.make_contrasts` and matched to the design's
             columns by name, such as ``{"stim_vs_ctrl": "conditionstim"}``. By
             default the design's named contrasts; an empty list tests none.
-        f_test: The name of a factor of the design, entering its formula as a main
+        f_tests: The name of a factor of the design, entering its formula as a main
             effect only, whose levels are tested for equal means by an F-test
-            (speckle's ANOVA), or None for no F-test. To compare some of its levels
-            only, test their differences as contrasts.
+            (speckle's ANOVA), or a list of such factors, an F-test of each, named by
+            its factor; None for no F-test. To compare some of its levels only, test
+            their differences as contrasts.
         transform: ``"logit"`` (speckle's default), with half a cell added to
             every count, or ``"asin"`` for the arcsine square root.
         robust: Whether to estimate the prior of the moderation robustly, as
@@ -478,15 +475,16 @@ def propeller(
             wrong type, or ``data`` or ``contrasts`` is or holds a numpy masked
             array.
         ValueError: If the cube records no cell numbers; the table has no rows or
-            no group columns, or an id that is missing, empty or repeated; a cell
-            number is negative or a sample has 2**53 cells or more; the design has
-            random effects or no ``sample_id`` column, names samples the data do not
-            have or names a sample twice; a contrast is invalid, or there is nothing
-            to test; ``transform`` is neither ``"logit"`` nor ``"asin"``; ``f_test``
-            does not name a factor that enters the formula as a main effect only;
-            fewer than two groups have cells; the design is not of full column rank
-            or leaves no residual degrees of freedom on the samples used; or it fits
-            the transformed proportions of every group exactly.
+            no group columns, or an id that is missing, empty or repeated; a cell number
+            is negative or a sample has 2**53 cells or more; the design has random
+            effects or no ``sample_id`` column, names samples the data do not have or
+            names a sample twice; a contrast is invalid, or there is nothing to test;
+            ``transform`` is neither ``"logit"`` nor ``"asin"``; ``f_tests`` names
+            something other than a factor that enters the formula as a main effect only,
+            names one twice, or names a contrast; fewer than two groups have cells; the
+            design is not of full column rank or leaves no residual degrees of freedom
+            on the samples used; or it fits the transformed proportions of every group
+            exactly.
     """
     cube, given = _as_cube(data)
     if not isinstance(design, Design):
@@ -499,7 +497,7 @@ def propeller(
         "transform": checked_choice(transform, "transform", ("logit", "asin")),
         "robust": checked_flag(robust, "robust"),
         "trend": checked_flag(trend, "trend"),
-        "f_test": _factor_name(f_test),
+        "f_tests": _factor_names(f_tests),
     }
     named = "the cube" if given == "cube" else "the table of cell numbers"
     cube_rows, design_rows = matched_samples(
@@ -516,14 +514,20 @@ def propeller(
     tested = (
         design.contrasts if contrasts is None else make_contrasts(contrasts, design)
     )
-    factor = None if settings["f_test"] is None else _factor(design, settings["f_test"])
-    if not len(tested) and factor is None:
+    factors = [_factor(design, name) for name in settings["f_tests"] or []]
+    clashes = [factor.name for factor in factors if factor.name in tested.names]
+    if clashes:
+        raise ValueError(
+            f"f_tests names {quoted(clashes)}, which is also the name of a contrast; "
+            "an F-test is named by its factor, so rename the contrast"
+        )
+    if not len(tested) and not factors:
         raise ValueError(
             "propeller has nothing to test: the design has no named contrasts, none "
-            "were given, and f_test is None. Name the contrasts in the design, as in "
+            "were given, and f_tests is None. Name the contrasts in the design, as in "
             "Design(samples, '~ 0 + group', contrasts={'B_vs_A': 'groupB - "
             "groupA'}), or pass contrasts= in the same form, or name a factor of "
-            "the design in f_test= to test all its levels at once; the design's "
+            "the design in f_tests= to test all its levels at once; the design's "
             f"columns are: {', '.join(design.columns)}"
         )
 
@@ -552,14 +556,14 @@ def propeller(
                     "adjusted_p_value": adjusted[:, k],
                 }
             )
-    f_table, hypothesis = None, None
-    if factor is not None:
+    hypotheses: dict[str, Any] = {}
+    for factor in factors:
         differences = factor.differences(len(design.columns))
         names = [f"{level}_vs_{factor.levels[0]}" for level in factor.levels[1:]]
         f_fit = _moderate(contrasts_fit(fit.model, differences, names=names), settings)
         if moderated is None:
             moderated = f_fit
-        f_table = Table(
+        tables[factor.name] = Table(
             {
                 **_descriptive(fit, group_ids, (factor, None)),
                 "f_statistic": f_fit.f_statistic,
@@ -567,7 +571,7 @@ def propeller(
                 "adjusted_p_value": adjust_p_values(f_fit.f_p_value, "bh"),
             }
         )
-        hypothesis = {
+        hypotheses[factor.name] = {
             "factor": factor.name,
             "levels": list(factor.levels),
             "contrasts": {
@@ -575,14 +579,13 @@ def propeller(
             },
         }
     assert moderated is not None  # there is a contrast or an F-test
-    prior_df = np.broadcast_to(moderated.prior_df, (fit.cells.shape[1],))
+    df_prior = np.broadcast_to(moderated.df_prior, (fit.cells.shape[1],))
 
     used_ids = sample_ids[fit.used]
     return CompositionResult(
         tested,
         tables,
-        f_table,
-        _summary_table(group_ids, fit, prior_df),
+        _summary_table(group_ids, fit, df_prior),
         _sample_table(sample_ids, fit),
         _proportion_table(fit, group_ids[fit.tested], used_ids),
         {
@@ -592,7 +595,7 @@ def propeller(
             "cube": cube_record(cube),
             "design": design_record(design, tested),
             "settings": {**settings, **_FIXED_SETTINGS},
-            "f_test": hypothesis,
+            "f_tests": hypotheses,
             "samples": used_ids.tolist(),
             "left_out": dict.fromkeys(
                 sample_ids[~fit.used].tolist(), "no cells in any group"
@@ -900,17 +903,26 @@ def _main_effect(model: ModelMatrix, name: str) -> _Factor | None:
     return None
 
 
-def _factor_name(value: Any) -> str | None:
-    if value is None or isinstance(value, str):
-        return value
-    raise TypeError(
-        "f_test must be the name of a factor of the design (a str) or None, got "
-        f"{type(value).__name__}"
-    )
+def _factor_names(value: Any) -> list[str] | None:
+    """The factors of the F-tests, as a list, or None for no F-test."""
+    if value is None:
+        return None
+    reject_masked(value, "f_tests")
+    names = [value] if isinstance(value, str) else value
+    if not isinstance(names, Sequence) or not all(isinstance(n, str) for n in names):
+        raise TypeError(
+            "f_tests must be the name of a factor of the design (a str), a list of "
+            f"them, or None, got {type(value).__name__}"
+        )
+    names = list(names)
+    repeated = [name for name in dict.fromkeys(names) if names.count(name) > 1]
+    if repeated:
+        raise ValueError(f"f_tests names {quoted(repeated)} more than once")
+    return names or None
 
 
 def _factor(design: Design, name: str) -> _Factor:
-    """The factor that f_test names, checked."""
+    """The factor that f_tests names, checked."""
     model = design.model_matrix
     factors = [variable for variable in model.variables if variable in model.levels]
     if name not in model.levels:
@@ -920,7 +932,7 @@ def _factor(design: Design, name: str) -> _Factor:
             else f"not a variable of the formula {design.formula!r}"
         )
         raise ValueError(
-            f"f_test names {name!r}, {kind}; the F-test compares the levels of a "
+            f"f_tests names {name!r}, {kind}; the F-test compares the levels of a "
             f"factor, and the factors of the design are: {quoted(factors) or '(none)'}"
         )
     factor = _main_effect(model, name)
@@ -933,7 +945,7 @@ def _factor(design: Design, name: str) -> _Factor:
             }
         )
         raise ValueError(
-            f"f_test names {name!r}, which enters the formula in the interaction "
+            f"f_tests names {name!r}, which enters the formula in the interaction "
             f"{listing(terms)}: the differences between its levels then depend on "
             "the other variables of the interaction, so equal means across its levels "
             "is not one hypothesis. Test the contrasts of interest with contrasts=, "
@@ -1009,12 +1021,12 @@ def _descriptive(
     return columns
 
 
-def _summary_table(group_ids: np.ndarray, fit: _Fit, prior_df: np.ndarray) -> Table:
+def _summary_table(group_ids: np.ndarray, fit: _Fit, df_prior: np.ndarray) -> Table:
     n_groups = group_ids.size
     df = np.full(n_groups, np.nan)
     df[fit.tested] = fit.model.df_residual[0]
     prior = np.full(n_groups, np.nan)
-    prior[fit.tested] = prior_df
+    prior[fit.tested] = df_prior
     return Table(
         {
             "group_id": group_ids,
@@ -1027,7 +1039,7 @@ def _summary_table(group_ids: np.ndarray, fit: _Fit, prior_df: np.ndarray) -> Ta
                 ]
             ),
             "df_residual": df,
-            "prior_df": prior,
+            "df_prior": prior,
         }
     )
 

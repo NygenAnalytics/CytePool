@@ -24,15 +24,15 @@ data are variable, so the test compares samples, the biological replicates, not 
 4. **Moderation.** The residual variances of the cell types are moderated by empirical
    Bayes, robustly by default, as speckle does ([Empirical Bayes
    moderation](empirical_bayes.md); @phipson2016).
-5. **Tests.** Each contrast is tested by its moderated t-statistic; `f_test` names a
-   factor whose levels are tested together by a moderated F-statistic. p-values are
-   adjusted by the method of Benjamini and Hochberg over the cell types.
+5. **Tests.** Each contrast is tested by its moderated t-statistic; `f_tests` names a
+   factor, or several, whose levels are tested together by a moderated F-statistic.
+   p-values are adjusted by the method of Benjamini and Hochberg over the cell types.
 
-The result, a {api}`CompositionResult`, holds a table for every contrast
-({api}`CompositionResult.table`) and one for the F-test, with speckle's descriptive
-columns: the baseline proportion of every cell type, the mean proportion in each level
-of the factor a contrast compares, and their ratio. Its summary says which cell types
-and samples were left out, and why.
+The result, a {api}`CompositionResult`, holds a table for every contrast and F-test
+({api}`CompositionResult.table`), with speckle's descriptive columns: the baseline
+proportion of every cell type, the mean proportion in each level of the factor a
+contrast compares, and their ratio. Its summary says which cell types and samples were
+left out, and why.
 
 ## Choices
 

@@ -182,7 +182,7 @@ class DesignReport:
     leverage: tuple[float, ...]
 
     @property
-    def residual_df(self) -> int:
+    def df_residual(self) -> int:
         """Residual degrees of freedom, the number of samples minus the rank."""
         return self.n_samples - self.rank
 
@@ -199,7 +199,7 @@ class DesignReport:
         summary = (
             f"Design check: {_count(self.n_samples, 'sample')}, "
             f"{_count(self.n_columns, 'column')}, rank {self.rank}, "
-            f"{_count(self.residual_df, 'residual degree')} of freedom"
+            f"{_count(self.df_residual, 'residual degree')} of freedom"
         )
         if not self.errors and not self.warnings:
             return fitted_lines(summary + "; no problems found.")
@@ -705,7 +705,7 @@ def _is_id_word(word: str) -> bool:
 def _leverage_check(
     variables: dict[str, _Factor | _Covariate],
     leverage: np.ndarray,
-    residual_df: int,
+    df_residual: int,
     names: list[str],
     already_named: set[int],
     warnings: list[DesignIssue],
@@ -787,7 +787,7 @@ def _leverage_check(
                 "high_leverage",
                 "the model nearly fits "
                 + _listing(crowded)
-                + f" exactly: with {_count(residual_df, 'residual degree')} of "
+                + f" exactly: with {_count(df_residual, 'residual degree')} of "
                 "freedom, such a sample largely decides some coefficients and barely "
                 "informs the residual variance. Add samples or simplify the formula",
             )

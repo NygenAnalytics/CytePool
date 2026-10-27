@@ -2,29 +2,27 @@
 their target genes, as decoupler computes them: the univariate and multivariate
 linear models (ULM, MLM) and the weighted aggregate.
 
-A network (:class:`~cytepool.networks.Network`), such as CollecTRI's regulons or
-PROGENy's pathway signatures (:mod:`cytepool.networks`), gives each source, a
-transcription factor or a pathway, a signed weight on each of its target genes. A
-source is active in a profile, the expression of a sample or the statistics of a
-contrast, when its targets are high where their weights are positive and low where
+A network (:class:`~cytepool.Network`), such as CollecTRI's regulons or PROGENy's
+pathway signatures (:func:`~cytepool.collectri`, :func:`~cytepool.progeny`), gives each
+source, a transcription factor or a pathway, a signed weight on each of its target
+genes. A source is active in a profile, the expression of a sample or the statistics of
+a contrast, when its targets are high where their weights are positive and low where
 they are negative. Each function scores every source in every profile, as decoupler
 2.2.0's ``mt.ulm``, ``mt.mlm`` and ``mt.waggr`` do (Badia-i-Mompel et al. 2022), and
-returns an :class:`Activities`, profiles x sources, which the linear models take as
-they take pathway scores, and which :func:`~cytepool.plotting.plot_activities` draws
-as a heatmap and :func:`~cytepool.plotting.plot_top_activities` as bars.
+returns an :class:`~cytepool.Activities`, profiles x sources, which the linear models
+take as they take pathway scores, and which :func:`~cytepool.plotting.plot_activities`
+draws as a heatmap and :func:`~cytepool.plotting.plot_top_activities` as bars.
 
 The profiles:
     - A samples x genes array, one profile per row, with one gene id per column.
-    - A group (cell type) of a :class:`~cytepool.cube.Cube`: its samples with at
+    - A group (cell type) of a :class:`~cytepool.Cube`: its samples with at
       least ``min_cells`` cells and some counts, over the genes that edgeR's
       ``filterByExpr`` keeps, as log2 counts per million after TMM normalization,
-      the values that :func:`~cytepool.pathway_scores.gsva` scores.
-    - The statistics of a
-      :class:`~cytepool.differential_expression.DifferentialExpressionResult`: one
-      profile for every group and contrast tested, by default the moderated
-      t-statistics, as decoupler's guides score the statistics of a contrast; or of a
-      table of results, a pandas Series or a mapping of gene id to statistic, one
-      profile.
+      the values that :func:`~cytepool.gsva` scores.
+    - The statistics of a :class:`~cytepool.DifferentialExpressionResult`: one profile
+      for every group and contrast tested, by default the moderated t-statistics, as
+      decoupler's guides score the statistics of a contrast; or of a table of results, a
+      pandas Series or a mapping of gene id to statistic, one profile.
 
     Each profile's genes are those with an id and a value: NaN marks a missing value,
     and a gene that a group did not test has none in that group's profiles. Genes
@@ -38,7 +36,7 @@ The network's targets:
     as decoupler's ``tmin`` leaves it out; ``n_targets`` gives each source's targets
     among each profile's genes.
 
-ULM (:func:`ulm`):
+ULM (:func:`~cytepool.ulm`):
     For each source and profile, a linear model of the profile's n genes on the
     source's weights, zero for the genes that are not its targets:
 
@@ -49,7 +47,7 @@ ULM (:func:`ulm`):
     x, and its p-value is two-sided, from Student's t distribution on n - 2 degrees
     of freedom. ``estimates`` are the slopes b_1.
 
-MLM (:func:`mlm`):
+MLM (:func:`~cytepool.mlm`):
     One linear model of each profile's genes on the weights of all its sources at
     once, with an intercept, y_g = b_0 + sum_s b_s x_gs + e_g, so that each source's
     score, the t-statistic of b_s on n - m - 1 degrees of freedom for m sources, is
@@ -58,7 +56,7 @@ MLM (:func:`mlm`):
     of the weights of other sources, such as two sources with the same targets and
     weights, cannot be told apart, and are refused: the message names them.
 
-Weighted aggregate (:func:`weighted_aggregate`):
+Weighted aggregate (:func:`~cytepool.weighted_aggregate`):
     The weighted mean of the values of a source's targets, sum_g w_g y_g /
     sum_g |w_g|, or their weighted sum, sum_g w_g y_g, the score of the original
     PROGENy method (Schubert et al. 2018). With ``n_permutations`` random
@@ -71,12 +69,12 @@ Weighted aggregate (:func:`weighted_aggregate`):
     and Smyth 2010). ``estimates`` keep the weighted means or sums.
 
 Adjusted p-values:
-    ``adjusted_p_values`` are Benjamini and Hochberg's (1995) over the sources of each
+    ``adjusted_p_value`` are Benjamini and Hochberg's (1995) over the sources of each
     profile, as decoupler adjusts them.
 
 Deliberate differences from decoupler 2.2.0:
     - decoupler reports MLM's p-values without adjusting them, under the name of its
-      adjusted p-values; here they are ``p_values``, and ``adjusted_p_values`` are
+      adjusted p-values; here they are ``p_value``, and ``adjusted_p_value`` are
       adjusted as for the other methods.
     - decoupler keeps adjusted p-values in single precision, and computes MLM's
       p-values as one minus the distribution function, which gives 0 below about
@@ -134,7 +132,7 @@ from ._analysis_records import (
     restore_provenance,
 )
 from ._columns import is_data_frame, text_column
-from ._expression_values import MIN_CELLS, expression_values
+from ._expression_values import MIN_CELLS, expression_values, profile_table
 from ._jit import by_chunks, jit, thread_limit
 from ._linear_algebra import RANK_TOLERANCE
 from ._masked_arrays import read_only, reject_masked
@@ -181,9 +179,9 @@ class Activities:
             source has fewer than ``min_targets`` targets among a profile's genes.
         estimates: The slopes (ULM), coefficients (MLM) or weighted means or sums
             (weighted aggregate).
-        p_values: Two-sided p-values: of the t-tests (ULM, MLM), or of the
+        p_value: Two-sided p-values: of the t-tests (ULM, MLM), or of the
             permutations (weighted aggregate; NaN without them).
-        adjusted_p_values: Benjamini and Hochberg's, over the sources of each
+        adjusted_p_value: Benjamini and Hochberg's, over the sources of each
             profile.
         n_targets: ``(n_profiles, n_sources)`` int64: the targets of each source
             among each profile's genes.
@@ -198,8 +196,8 @@ class Activities:
 
     scores: FloatArray
     estimates: FloatArray
-    p_values: FloatArray
-    adjusted_p_values: FloatArray
+    p_value: FloatArray
+    adjusted_p_value: FloatArray
     n_targets: IntArray
     profiles: Table
     network: Network
@@ -214,8 +212,8 @@ class Activities:
             (
                 self.scores,
                 self.estimates,
-                self.p_values,
-                self.adjusted_p_values,
+                self.p_value,
+                self.adjusted_p_value,
                 self.n_targets,
                 self.profiles,
                 self.network,
@@ -238,7 +236,7 @@ class Activities:
         provenance (``"cube"``), the layer read and the settings; None for
         activities of values given as an array, or of statistics, whose result
         keeps its own record. The cube's record costs what it costs for
-        :func:`~cytepool.differential_expression.limma_voom` ("Provenance")."""
+        :func:`~cytepool.limma_voom` ("Provenance")."""
         return provenance_of(self)
 
     def table(self) -> Table:
@@ -259,8 +257,8 @@ class Activities:
                 "n_targets": self.n_targets.T.ravel().copy(),
                 "score": self.scores.T.ravel().copy(),
                 "estimate": self.estimates.T.ravel().copy(),
-                "p_value": self.p_values.T.ravel().copy(),
-                "adjusted_p_value": self.adjusted_p_values.T.ravel().copy(),
+                "p_value": self.p_value.T.ravel().copy(),
+                "adjusted_p_value": self.adjusted_p_value.T.ravel().copy(),
             }
         )
 
@@ -275,8 +273,8 @@ class Activities:
 def _restored_activities(
     scores: FloatArray,
     estimates: FloatArray,
-    p_values: FloatArray,
-    adjusted_p_values: FloatArray,
+    p_value: FloatArray,
+    adjusted_p_value: FloatArray,
     n_targets: IntArray,
     profiles: Table,
     network: Network,
@@ -288,8 +286,8 @@ def _restored_activities(
     restored = Activities(
         read_only(np.asarray(scores)),
         read_only(np.asarray(estimates)),
-        read_only(np.asarray(p_values)),
-        read_only(np.asarray(adjusted_p_values)),
+        read_only(np.asarray(p_value)),
+        read_only(np.asarray(adjusted_p_value)),
         read_only(np.asarray(n_targets)),
         profiles,
         network,
@@ -323,7 +321,7 @@ def ulm(
     data: Any,
     network: Any,
     *,
-    gene_ids: Any = None,
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
     contrast: str | None = None,
@@ -346,22 +344,18 @@ def ulm(
     Args:
         data: ``(n_profiles, n_genes)`` values, such as log-expression values of
             samples or statistics of contrasts, NaN where missing; a
-            :class:`~cytepool.cube.Cube`, whose ``group`` is scored; a
-            :class:`~cytepool.differential_expression.DifferentialExpressionResult`,
-            whose statistics of every group and contrast are scored; or a table of
-            results (a ``Table`` or pandas DataFrame), a pandas Series indexed by
-            gene id or a mapping of gene id to statistic, one profile. A samples x
-            genes DataFrame, as decoupler takes it, is given as
-            ``frame.to_numpy()`` with ``gene_ids`` and ``sample_ids``.
-        network: A :class:`~cytepool.networks.Network`, such as
-            :func:`~cytepool.networks.collectri` or
-            :func:`~cytepool.networks.progeny` returns, or what ``Network`` takes: a
-            table with the columns ``source``, ``target`` and ``weight``, or a
-            mapping of source to targets.
-        gene_ids: For an array, the genes' ids, one per column (None, NaN or an
-            empty string for a gene without one); for a cube, the name of a column of
-            its features table, ``"feature_id"`` by default or ``"symbol"``, or one
-            id per feature.
+            :class:`~cytepool.Cube`, whose ``group`` is scored; a
+            :class:`~cytepool.DifferentialExpressionResult`, whose statistics of every
+            group and contrast are scored; or a table of results (a ``Table`` or pandas
+            DataFrame), a pandas Series indexed by gene id or a mapping of gene id to
+            statistic, one profile. A samples x genes DataFrame, as decoupler takes it,
+            is given as ``frame.to_numpy()`` with ``feature_ids`` and ``sample_ids``.
+        network: A :class:`~cytepool.Network`, such as
+            :func:`~cytepool.collectri` or :func:`~cytepool.progeny` returns, or what
+            ``Network`` takes: a table with the columns ``source``, ``target`` and
+            ``weight``, or a mapping of source to targets.
+        feature_ids: For an array, the genes' ids, one per column (None, NaN or an
+            empty string for a gene without one).
         sample_ids: For an array, one id per row; by default ``"1"``, ``"2"``, ...
         group: For a cube, the group (cell type) to score; it may be left out when
             the cube has one. For a differential-expression result, the group whose
@@ -370,15 +364,16 @@ def ulm(
             statistics are scored; by default every contrast.
         min_cells: For a cube, the fewest cells a sample needs in the group to be
             scored, at least 0, as for
-            :func:`~cytepool.differential_expression.limma_voom`.
+            :func:`~cytepool.limma_voom`.
         expression_filter: For a cube, whether to score only the genes that
             :func:`~cytepool.normalization.filter_by_expression` keeps, with the
             samples as one group; or a mapping of its settings, which may name a
             column of the cube's samples whose values group them, such as
             ``{"sample_groups": "condition"}``, as
-            :func:`~cytepool.differential_expression.limma_voom` takes it.
-        id_column: For a differential-expression result or a table, the column of
-            gene ids, such as ``"feature_id"`` or ``"symbol"``.
+            :func:`~cytepool.limma_voom` takes it.
+        id_column: For a cube, a differential-expression result or a table, the
+            column of gene ids (of the cube's features table), such as
+            ``"feature_id"`` or ``"symbol"``.
         statistic_column: For a differential-expression result or a table, the
             column of statistics, such as ``"t"`` or ``"log2_fold_change"``.
         min_targets: The fewest targets among a profile's genes for a source to be
@@ -408,13 +403,13 @@ def ulm(
         >>> y = rng.normal(size=(2, 40))
         >>> y[1, :6] += 3.0  # the targets of A are up in the second sample
         >>> network = Network({"A": genes[:6], "B": genes[10:16]})
-        >>> ulm(y, network, gene_ids=genes).scores.round(2).tolist()
+        >>> ulm(y, network, feature_ids=genes).scores.round(2).tolist()
         [[0.71, -0.1], [7.94, -0.85]]
     """
     profiles, graph, edges, smallest = _prepared(
         data,
         network,
-        gene_ids,
+        feature_ids,
         sample_ids,
         group,
         contrast,
@@ -456,7 +451,7 @@ def mlm(
     data: Any,
     network: Any,
     *,
-    gene_ids: Any = None,
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
     contrast: str | None = None,
@@ -479,7 +474,7 @@ def mlm(
     Args:
         data: The profiles, as for :func:`ulm`.
         network: The network, as for :func:`ulm`.
-        gene_ids: For an array or a cube, as for :func:`ulm`.
+        feature_ids: For an array, as for :func:`ulm`.
         sample_ids: For an array, as for :func:`ulm`.
         group: For a cube or a differential-expression result, as for :func:`ulm`.
         contrast: For a differential-expression result, as for :func:`ulm`.
@@ -511,7 +506,7 @@ def mlm(
     profiles, graph, edges, smallest = _prepared(
         data,
         network,
-        gene_ids,
+        feature_ids,
         sample_ids,
         group,
         contrast,
@@ -558,7 +553,7 @@ def weighted_aggregate(
     statistic: str = "mean",
     n_permutations: int = _N_PERMUTATIONS,
     rng: np.random.Generator | int | None = None,
-    gene_ids: Any = None,
+    feature_ids: Any = None,
     sample_ids: Any = None,
     group: str | None = None,
     contrast: str | None = None,
@@ -589,7 +584,7 @@ def weighted_aggregate(
         rng: A ``numpy.random.Generator`` to draw the permutations from, an integer
             seed for one (decoupler's ``seed``, 42 by default there), or None for a
             fresh, unseeded generator.
-        gene_ids: For an array or a cube, as for :func:`ulm`.
+        feature_ids: For an array, as for :func:`ulm`.
         sample_ids: For an array, as for :func:`ulm`.
         group: For a cube or a differential-expression result, as for :func:`ulm`.
         contrast: For a differential-expression result, as for :func:`ulm`.
@@ -630,7 +625,7 @@ def weighted_aggregate(
     profiles, graph, edges, smallest = _prepared(
         data,
         network,
-        gene_ids,
+        feature_ids,
         sample_ids,
         group,
         contrast,
@@ -679,7 +674,7 @@ def weighted_aggregate(
 def _prepared(
     data: Any,
     network: Any,
-    gene_ids: Any,
+    feature_ids: Any,
     sample_ids: Any,
     group: Any,
     contrast: Any,
@@ -696,7 +691,7 @@ def _prepared(
     graph = network if isinstance(network, Network) else _network(network)
     profiles = _profiles(
         data,
-        gene_ids,
+        feature_ids,
         sample_ids,
         group,
         contrast,
@@ -770,7 +765,7 @@ def _matched_edges(
 
 def _profiles(
     data: Any,
-    gene_ids: Any,
+    feature_ids: Any,
     sample_ids: Any,
     group: Any,
     contrast: Any,
@@ -787,7 +782,7 @@ def _profiles(
     )
     if statistics:
         for name, value, default in (
-            ("gene_ids", gene_ids, gene_ids is None),
+            ("feature_ids", feature_ids, feature_ids is None),
             ("sample_ids", sample_ids, sample_ids is None),
             ("min_cells", min_cells, _is_default_cells(min_cells)),
             ("expression_filter", expression_filter, expression_filter is True),
@@ -795,7 +790,7 @@ def _profiles(
             if not default:
                 reject_masked(value, name)
                 hint = ""
-                if name == "gene_ids":
+                if name == "feature_ids":
                     hint = "; name the column of gene ids with id_column"
                 raise ValueError(
                     f"{name} applies to an array or a cube, and data is a "
@@ -804,7 +799,6 @@ def _profiles(
         return _statistics(data, group, contrast, id_column, statistic_column)
     for name, given, expected in (
         ("contrast", contrast, None),
-        ("id_column", id_column, "feature_id"),
         ("statistic_column", statistic_column, "t"),
     ):
         if expected is None:
@@ -819,10 +813,11 @@ def _profiles(
             )
     expression = expression_values(
         data,
-        gene_ids,
+        id_column,
+        feature_ids,
         sample_ids,
         group,
-        "log_cpm",
+        "log2_cpm",
         min_cells,
         expression_filter,
         matched_to="the network's targets",
@@ -831,14 +826,7 @@ def _profiles(
             "gene id to statistic"
         ),
     )
-    samples = expression.samples
-    if _PROFILE_ID in samples:
-        raise ValueError(
-            f"the sample table has a column {_PROFILE_ID!r}, the name the activities "
-            "give the ids of their profiles; rename it"
-        )
-    ids = samples["sample_id"]
-    table = Table({_PROFILE_ID: ids, **samples.to_dict()})
+    table = profile_table(expression.samples, "the activities")
     return _Profiles(
         expression.values,
         expression.gene_ids,
@@ -918,8 +906,8 @@ def _statistics(
                 f"data is read as a table of results, with a column of gene ids "
                 f"({id_column!r}) and one of statistics ({statistic_column!r}), and "
                 "it has neither. To score a samples x genes table, give its values "
-                "with their ids: data=frame.to_numpy(), gene_ids=list(frame.columns), "
-                "sample_ids=list(frame.index)"
+                "with their ids: data=frame.to_numpy(), "
+                "feature_ids=list(frame.columns), sample_ids=list(frame.index)"
             )
         ranked.append(
             ranked_genes(

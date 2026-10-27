@@ -57,9 +57,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.composition import propeller
-from cytepool.cube import Cube
-from cytepool.design import Design
+from cytepool import Cube, Design, propeller
 
 FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[1] / "tests" / "data" / "composition_tests"
@@ -188,9 +186,9 @@ class Case:
         options = {key: call[key] for key in ("transform", "robust", "trend")}
         if test.startswith("F:"):
             result = propeller(
-                self.cube, design, contrasts=[], f_test=test[2:], **options
+                self.cube, design, contrasts=[], f_tests=test[2:], **options
             )
-            return result.f_test
+            return result.table(test[2:])
         tested = design.contrasts.select(test)
         return propeller(self.cube, design, contrasts=tested, **options).table(test)
 

@@ -51,7 +51,7 @@ import numba
 import numpy as np
 import scipy.sparse as sp
 
-from cytepool.cube import Cube, from_bulk, from_cells
+from cytepool import Cube, from_bulk, from_cells
 
 SEED = 20261023
 TARGET_SUM = 1e4
@@ -668,7 +668,10 @@ def main() -> int:
 
     def pool(counts: Any, **options: Any) -> Cube:
         return from_cells(
-            counts, samples=integer["sample"], groups=integer["group"], **options
+            counts,
+            sample_labels=integer["sample"],
+            group_labels=integer["group"],
+            **options,
         )
 
     start = time.perf_counter()

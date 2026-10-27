@@ -44,28 +44,41 @@ from numba.core.errors import TypingError
 from numpy.testing import assert_array_equal
 
 import cytepool
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
+    GeneSets,
+    Network,
+    StudyResults,
+    Table,
+    camera,
+    dream_voom,
+    from_bulk,
+    from_cells,
+    gsea,
+    gsva,
+    held_out_prediction,
+    limma_trend,
+    limma_voom,
+    meta_analysis,
+    over_representation,
+    propeller,
+    replication,
+    sumrank,
+    to_anndata,
+    to_mudata,
+    ulm,
+    variance_partitioning,
+)
 from cytepool._masked_arrays import reject_masked
-from cytepool.activity import ulm
-from cytepool.composition import propeller
-from cytepool.cube import Cube, CubeCollection, from_bulk, from_cells
-from cytepool.design import Design, make_contrasts
-from cytepool.differential_expression import dream_voom, limma_voom
-from cytepool.gene_sets import GeneSets
-from cytepool.gsea import gsea
-from cytepool.held_out_prediction import held_out_prediction
-from cytepool.io.anndata import to_anndata, to_mudata
+from cytepool.design import make_contrasts
 from cytepool.io.zarr import open_array, write_array, write_group
-from cytepool.meta_analysis import differential_expression_meta_analysis
-from cytepool.networks import Network
-from cytepool.normalization import cpm, filter_by_expression, log_cpm
-from cytepool.over_representation import over_representation
-from cytepool.pathway_scores import gsva
-from cytepool.replication import differential_expression_replication
+from cytepool.normalization import cpm, filter_by_expression, log2_cpm
 from cytepool.stats import distributions, special
 from cytepool.stats.deseq2 import deseq2_dispersions, deseq2_wald_test, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
-from cytepool.stats.gene_set_tests import camera
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 from cytepool.stats.multiple_testing import adjust_p_values
@@ -73,9 +86,6 @@ from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import lowess
 from cytepool.stats.quasi_likelihood import quasi_likelihood_f_test
 from cytepool.stats.voom import voom, voom_with_quality_weights
-from cytepool.sumrank import differential_expression_sumrank
-from cytepool.table import Table
-from cytepool.variance_partitioning import variance_partitioning
 
 # anndata and mudata, which the conversions of cubes call, warn about their own use
 # of pandas options that pandas 4 removes.
@@ -179,7 +189,7 @@ class Context:
 @pytest.fixture(scope="module")
 def context(tmp_path_factory: pytest.TempPathFactory) -> Context:
     directory = tmp_path_factory.mktemp("masked_inputs")
-    expression = log_cpm(COUNTS)
+    expression = log2_cpm(COUNTS)
     expression[0, 0] = np.nan
     fit = fit_linear_model(expression, DESIGN)
     write_array(directory / "array", np.arange(12.0).reshape(3, 4), chunks=(2, 2))
@@ -188,7 +198,9 @@ def context(tmp_path_factory: pytest.TempPathFactory) -> Context:
         expression=expression,
         fit=fit,
         contrast_fit=contrasts_fit(fit, np.eye(2), names=["first", "second"]),
-        cube=from_cells(CELL_COUNTS, samples=CELL_SAMPLES, groups=CELL_GROUPS),
+        cube=from_cells(
+            CELL_COUNTS, sample_labels=CELL_SAMPLES, group_labels=CELL_GROUPS
+        ),
         design=Design(SAMPLE_TABLE, "~ condition"),
         zarr_array=open_array(directory / "array"),
     )
@@ -261,10 +273,10 @@ def _collection() -> CubeCollection:
 def _from_cells_arguments(context: Context) -> dict[str, Any]:
     return {
         "counts": CELL_COUNTS,
-        "samples": CELL_SAMPLES,
-        "groups": CELL_GROUPS,
-        "sample_table": {"sample_id": ["S1", "S2"]},
-        "group_table": {"group_id": ["B", "T"]},
+        "sample_labels": CELL_SAMPLES,
+        "group_labels": CELL_GROUPS,
+        "samples": {"sample_id": ["S1", "S2"]},
+        "groups": {"group_id": ["B", "T"]},
         "features": {"feature_id": ["g1", "g2", "g3"]},
         "library_sizes": [3.0, 4.0, 7.0, 5.0],
         "layers": ["counts", "detected"],
@@ -374,7 +386,11 @@ def _scverse_arguments(context: Context, container: str) -> dict[str, Any]:
         pytest.importorskip("mudata")
         data = {"mdata": to_mudata(cube)}
     else:
-        data = {"adata": to_anndata(cube), "sample": "sample_id", "group": "group_id"}
+        data = {
+            "adata": to_anndata(cube),
+            "sample_column": "sample_id",
+            "group_column": "group_id",
+        }
     return {
         **data,
         "layers": {"counts": "counts"},
@@ -383,8 +399,8 @@ def _scverse_arguments(context: Context, container: str) -> dict[str, Any]:
             index=cube.samples["sample_id"].tolist(),
             columns=cube.groups["group_id"].tolist(),
         ),
-        "sample_table": {"sample_id": ["S1", "S2"]},
-        "group_table": {"group_id": ["B", "T"]},
+        "samples": {"sample_id": ["S1", "S2"]},
+        "groups": {"group_id": ["B", "T"]},
         "normalization": {"method": "library_size", "target_sum": 1e4},
         "source": {"dataset": "test", "values": [1, 2]},
     }
@@ -395,15 +411,15 @@ def _scverse_arguments(context: Context, container: str) -> dict[str, Any]:
 _SCVERSE_ARRAYS: dict[str, str | None] = {
     "layers": None,
     "n_cells": None,
-    "sample_table": None,
-    "group_table": None,
+    "samples": None,
+    "groups": None,
     "normalization": "None",
     "source": "None",
 }
 _SCVERSE_KEYS = {
     "layers": "counts",
-    "sample_table": "sample_id",
-    "group_table": "group_id",
+    "samples": "sample_id",
+    "groups": "group_id",
     "normalization": "target_sum",
     "source": "values",
 }
@@ -420,11 +436,11 @@ def _deseq2_fit() -> Any:
 def _gene_set_arguments() -> dict[str, Any]:
     """log-CPM of COUNTS (complete), the design, a contrast and one set of two ids."""
     return {
-        "y": log_cpm(COUNTS),
+        "data": log2_cpm(COUNTS),
         "design": DESIGN,
         "contrast": [0.0, 1.0],
         "gene_sets": {"set": ["g1", "g2"]},
-        "gene_ids": [f"g{i}" for i in range(COUNTS.shape[1])],
+        "feature_ids": [f"g{i}" for i in range(COUNTS.shape[1])],
         "weights": np.full(COUNTS.shape, 2.0),
     }
 
@@ -432,7 +448,7 @@ def _gene_set_arguments() -> dict[str, Any]:
 def _mixed_model(context: Context) -> dict[str, Any]:
     """Complete log-CPM values, and a design with a random intercept per donor."""
     return {
-        "y": log_cpm(COUNTS),
+        "y": log2_cpm(COUNTS),
         "design": Design(
             SAMPLE_TABLE, "~ condition", random="(1 | donor)", levels=LEVELS
         ),
@@ -452,7 +468,7 @@ def _meta_analysis_arguments(context: Context) -> dict[str, Any]:
         expression_filter=False,
     )
     return {
-        "results": {"first": result, "second": result},
+        "studies": {"first": result, "second": result},
         "groups": ["bulk"],
         "contrasts": ["stim"],
         "min_studies": 2,
@@ -477,10 +493,8 @@ def _replication_studies() -> tuple[CubeCollection, dict[str, Any]]:
 
 def _replication_arguments(context: Context | None) -> dict[str, Any]:
     """The replication of the two studies, with a value for every argument."""
-    collection, results = _replication_studies()
     return {
-        "collection": collection,
-        "results": results,
+        "studies": StudyResults(*_replication_studies()),
         "group": "bulk",
         "contrast": "stim",
         "alpha": 0.5,
@@ -495,7 +509,7 @@ def _replication_arguments(context: Context | None) -> dict[str, Any]:
 
 @functools.cache
 def _replication() -> Any:
-    return differential_expression_replication(**_replication_arguments(None))
+    return replication(**_replication_arguments(None))
 
 
 def _axes() -> Any:
@@ -513,7 +527,9 @@ def _bulk_cube() -> Cube:
 def _pathway_scores() -> Any:
     """GSVA scores of two sets in the four samples of COUNTS."""
     genes = [f"g{j}" for j in range(COUNTS.shape[1])]
-    return gsva(log_cpm(COUNTS), {"set": genes[:3], "other": genes[3:]}, gene_ids=genes)
+    return gsva(
+        log2_cpm(COUNTS), {"set": genes[:3], "other": genes[3:]}, feature_ids=genes
+    )
 
 
 @functools.cache
@@ -521,7 +537,7 @@ def _activities() -> Any:
     """ULM activities of two sources in the four samples of COUNTS."""
     genes = [f"g{j}" for j in range(COUNTS.shape[1])]
     network = {"A": {"g1": 1.0, "g2": -1.0, "g5": 0.5}, "B": ["g0", "g3", "g4"]}
-    return ulm(log_cpm(COUNTS), network, gene_ids=genes,
+    return ulm(log2_cpm(COUNTS), network, feature_ids=genes,
                sample_ids=SAMPLE_TABLE["sample_id"], min_targets=2)  # fmt: skip
 
 
@@ -554,12 +570,24 @@ def _tested(context: Context, **options: Any) -> Any:
     )
 
 
+def _trend_tested(context: Context) -> Any:
+    """limma_trend of the bulk cube of _differential_expression, every gene tested,
+    for romer, which takes no observation weights."""
+    arguments = _differential_expression(context)
+    return limma_trend(
+        arguments["cube"],
+        arguments["design"],
+        contrasts=arguments["contrasts"],
+        expression_filter=False,
+    )
+
+
 def _forest_arguments(context: Context) -> dict[str, Any]:
-    """The meta-analysis of _meta_analysis_arguments, its studies and a gene."""
-    results = _meta_analysis_arguments(context)["results"]
-    meta = differential_expression_meta_analysis(results)
+    """The meta-analysis of _meta_analysis_arguments, which keeps its studies, and a
+    gene."""
+    meta = meta_analysis(_meta_analysis_arguments(context)["studies"])
     feature = meta.table("bulk", "stim")["feature_id"][0]
-    return {"meta": meta, "studies": results, "feature": feature}
+    return {"meta": meta, "feature": feature}
 
 
 @functools.cache
@@ -582,10 +610,8 @@ def _studies() -> tuple[CubeCollection, dict[str, Any]]:
 
 def _sumrank_arguments(context: Context) -> dict[str, Any]:
     """SumRank of the two studies, with permutations and a value for every option."""
-    collection, results = _studies()
     return {
-        "collection": collection,
-        "results": results,
+        "studies": StudyResults(*_studies()),
         "group": "bulk",
         "contrast": "stim",
         "proportion_of_studies": 1.0,
@@ -597,16 +623,14 @@ def _sumrank_arguments(context: Context) -> dict[str, Any]:
 
 def _held_out_arguments(context: Context) -> dict[str, Any]:
     """Held-out prediction of the two studies, with a value for every option."""
-    collection, results = _studies()
     return {
-        "collection": collection,
-        "results": results,
+        "studies": StudyResults(*_studies()),
         "contrast": "stim",
         "variable": "condition",
         "case": "stim",
         "control": "ctrl",
         "groups": ["bulk"],
-        "n_genes": 2,
+        "n_features": 2,
         "proportion_of_studies": 1.0,
     }
 
@@ -735,10 +759,10 @@ ENTRY_POINTS: dict[str, Entry] = {
         _from_cells_arguments,
         {
             "counts": None,
+            "sample_labels": None,
+            "group_labels": None,
             "samples": None,
             "groups": None,
-            "sample_table": None,
-            "group_table": None,
             "features": None,
             "library_sizes": None,
             "layers": None,
@@ -748,8 +772,8 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         options=("target_sum",),
         keys={
-            "sample_table": "sample_id",
-            "group_table": "group_id",
+            "samples": "sample_id",
+            "groups": "group_id",
             "features": "feature_id",
             "source": "values",
         },
@@ -758,8 +782,8 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.cube.pool.from_cells[feature ids]": Entry(
         lambda c: {
             "counts": CELL_COUNTS,
-            "samples": CELL_SAMPLES,
-            "groups": CELL_GROUPS,
+            "sample_labels": CELL_SAMPLES,
+            "group_labels": CELL_GROUPS,
             "features": ["g1", "g2", "g3"],
         },
         {"features": None},
@@ -806,7 +830,7 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.io.anndata.from_anndata": Entry(
         lambda c: _scverse_arguments(c, "anndata"),
         _SCVERSE_ARRAYS,
-        options=("sample", "group"),
+        options=("sample_column", "group_column"),
         objects=("adata",),
         keys=_SCVERSE_KEYS,
     ),
@@ -821,11 +845,11 @@ ENTRY_POINTS: dict[str, Entry] = {
             "path": c.new_path(),
             "data": np.arange(6.0).reshape(2, 3),
             "chunks": (1, 2),
-            "level": 4,
+            "compression_level": 4,
             "dimension_names": ["row", "column"],
         },
         {"data": None, "chunks": None, "dimension_names": None},
-        options=("compression", "level"),
+        options=("compression", "compression_level"),
         objects=("path", "attributes"),
     ),
     # Designs and contrasts.
@@ -915,18 +939,23 @@ ENTRY_POINTS: dict[str, Entry] = {
         _normalization(library_sizes=LIBRARY_SIZES, norm_factors=NORM_FACTORS),
         {"counts": None, "library_sizes": None, "norm_factors": None},
     ),
-    "cytepool.normalization.log_cpm": Entry(
+    "cytepool.normalization.log2_cpm": Entry(
         _normalization(library_sizes=LIBRARY_SIZES, norm_factors=NORM_FACTORS),
         {"counts": None, "library_sizes": None, "norm_factors": None},
         options=("prior_count",),
     ),
     "cytepool.normalization.filter_by_expression": Entry(
         _normalization(
-            group=["a", "b", "a", "b"],
+            sample_groups=["a", "b", "a", "b"],
             library_sizes=LIBRARY_SIZES,
             norm_factors=NORM_FACTORS,
         ),
-        {"counts": None, "group": None, "library_sizes": None, "norm_factors": None},
+        {
+            "counts": None,
+            "sample_groups": None,
+            "library_sizes": None,
+            "norm_factors": None,
+        },
         options=("min_count", "min_total_count", "large_n", "min_prop"),
     ),
     # A design instead of groups; edgeR refuses both at once.
@@ -1095,7 +1124,7 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.stats.voom.VoomResult": Entry(
         lambda c: _fields(voom_with_quality_weights(COUNTS, DESIGN)),
         {
-            "log_cpm": None,
+            "log2_cpm": None,
             "weights": None,
             "effective_library_sizes": None,
             "mean_log_count": "NaN",
@@ -1248,7 +1277,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         objects=("fit",),
     ),
     # Quasi-likelihood fits and tests (edgeR's glmQLFit and glmQLFTest).
-    "cytepool.stats.quasi_likelihood.average_log_cpm": Entry(
+    "cytepool.stats.quasi_likelihood.average_log2_cpm": Entry(
         lambda c: {
             "counts": COUNTS,
             "library_sizes": LIBRARY_SIZES,
@@ -1266,7 +1295,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         options=("prior_count",),
     ),
-    "cytepool.stats.quasi_likelihood.average_log_cpm[offsets]": Entry(
+    "cytepool.stats.quasi_likelihood.average_log2_cpm[offsets]": Entry(
         lambda c: {"counts": COUNTS, "offsets": np.log(LIBRARY_SIZES)},
         {"offsets": None},
     ),
@@ -1452,11 +1481,17 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.stats.empirical_bayes.treat[fc]": Entry(
         lambda c: {"fit": c.fit, "fc": 1.5}, {}, options=("fc",), objects=("fit",)
     ),
-    # Gene-set tests take complete values: none may be missing.
-    "cytepool.stats.gene_set_tests.camera": Entry(
-        lambda c: {**_gene_set_arguments(), "inter_gene_correlation": 0.05},
+    # Gene-set tests take complete values: none may be missing. trend and robust
+    # are False for an array, and the result's own by default.
+    "cytepool.gene_set_tests.camera": Entry(
+        lambda c: {
+            **_gene_set_arguments(),
+            "inter_gene_correlation": 0.05,
+            "trend": False,
+            "robust": False,
+        },
         dict.fromkeys(
-            ("y", "design", "contrast", "gene_sets", "gene_ids", "weights"), None
+            ("data", "design", "contrast", "gene_sets", "feature_ids", "weights"), None
         ),
         options=(
             "inter_gene_correlation",
@@ -1467,16 +1502,33 @@ ENTRY_POINTS: dict[str, Entry] = {
         ),
         keys={"gene_sets": "set"},
     ),
-    "cytepool.stats.gene_set_tests.fry": Entry(
-        lambda c: _gene_set_arguments(),
+    "cytepool.gene_set_tests.fry": Entry(
+        lambda c: {**_gene_set_arguments(), "trend": False, "robust": False},
         dict.fromkeys(
-            ("y", "design", "contrast", "gene_sets", "gene_ids", "weights"), None
+            ("data", "design", "contrast", "gene_sets", "feature_ids", "weights"), None
         ),
         options=("standardize", "trend", "robust"),
         keys={"gene_sets": "set"},
     ),
+    # A group and a contrast of a differential-expression result, whose features are
+    # named by a column.
+    **{
+        f"cytepool.gene_set_tests.{test.__name__}[result]": Entry(
+            lambda c: {
+                "data": _tested(c),
+                "gene_sets": {"set": ["feature_1", "feature_2"]},
+                "group": "bulk",
+                "contrast": "stim",
+                "id_column": "feature_id",
+            },
+            {},
+            options=("group", "contrast", "id_column"),
+            objects=("data", "gene_sets"),
+        )
+        for test in (camera, cytepool.fry)
+    },
     # Rotation tests take complete values too; contribution weights are finite.
-    "cytepool.stats.rotation_gene_set_tests.roast": Entry(
+    "cytepool.rotation_gene_set_tests.roast": Entry(
         lambda c: (
             {
                 key: value
@@ -1487,17 +1539,19 @@ ENTRY_POINTS: dict[str, Entry] = {
                 "gene_set": ["g1", "g2"],
                 "gene_weights": np.linspace(-1.0, 1.0, COUNTS.shape[1]),
                 "n_rotations": 9,
+                "trend": False,
+                "robust": False,
                 "rng": 1,
                 "n_threads": 1,
             }
         ),
         dict.fromkeys(
             (
-                "y",
+                "data",
                 "design",
                 "contrast",
                 "gene_set",
-                "gene_ids",
+                "feature_ids",
                 "weights",
                 "gene_weights",
             ),
@@ -1512,21 +1566,23 @@ ENTRY_POINTS: dict[str, Entry] = {
             "n_threads",
         ),
     ),
-    "cytepool.stats.rotation_gene_set_tests.mroast": Entry(
+    "cytepool.rotation_gene_set_tests.mroast": Entry(
         lambda c: {
             **_gene_set_arguments(),
             "gene_weights": np.linspace(-1.0, 1.0, COUNTS.shape[1]),
             "n_rotations": 9,
+            "trend": False,
+            "robust": False,
             "rng": 1,
             "n_threads": 1,
         },
         dict.fromkeys(
             (
-                "y",
+                "data",
                 "design",
                 "contrast",
                 "gene_sets",
-                "gene_ids",
+                "feature_ids",
                 "weights",
                 "gene_weights",
             ),
@@ -1544,7 +1600,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         keys={"gene_sets": "set"},
     ),
     # romer takes sample weights only.
-    "cytepool.stats.rotation_gene_set_tests.romer": Entry(
+    "cytepool.rotation_gene_set_tests.romer": Entry(
         lambda c: {
             **_gene_set_arguments(),
             "weights": np.full(COUNTS.shape[0], 2.0),
@@ -1553,7 +1609,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "n_threads": 1,
         },
         dict.fromkeys(
-            ("y", "design", "contrast", "gene_sets", "gene_ids", "weights"), None
+            ("data", "design", "contrast", "gene_sets", "feature_ids", "weights"), None
         ),
         options=(
             "set_statistic",
@@ -1564,20 +1620,47 @@ ENTRY_POINTS: dict[str, Entry] = {
         ),
         keys={"gene_sets": "set"},
     ),
+    # A group and a contrast of a result: of limma_voom for roast and mroast, of
+    # limma_trend for romer, which takes no observation weights.
+    **{
+        f"cytepool.rotation_gene_set_tests.{name}[result]": Entry(
+            lambda c, tested=tested, sets=sets: {
+                "data": tested(c),
+                sets: (
+                    ["feature_1", "feature_2"]
+                    if sets == "gene_set"
+                    else {"set": ["feature_1", "feature_2"]}
+                ),
+                "group": "bulk",
+                "contrast": "stim",
+                "id_column": "feature_id",
+                "n_rotations": 9,
+                "rng": 1,
+            },
+            {},
+            options=("group", "contrast", "id_column"),
+            objects=("data", sets),
+        )
+        for name, tested, sets in (
+            ("roast", _tested, "gene_set"),
+            ("mroast", _tested, "gene_sets"),
+            ("romer", _trend_tested, "gene_sets"),
+        )
+    },
     # Gene-set collections: no gene of a set may be missing; the genes of an
     # analysis, a selection and a universe mark missing ids with None.
     "cytepool.gene_sets.GeneSets": Entry(
         lambda c: {
             "sets": {"set": ["g1", "g2"]},
             "descriptions": {"set": "two genes"},
-            "source": "a curated list",
+            "name": "a curated list",
             "version": "1",
             "licence": "CC0",
             "file": "sets.gmt",
             "sha256": "0" * 64,
         },
         {"sets": None},
-        options=("source", "version", "licence", "file", "sha256"),
+        options=("name", "version", "licence", "file", "sha256"),
         objects=("descriptions",),
         keys={"sets": "set"},
     ),
@@ -1611,7 +1694,7 @@ ENTRY_POINTS: dict[str, Entry] = {
     ),
     # A list of selected genes with a universe; the options that read a table are
     # checked first.
-    "cytepool.over_representation.over_representation": Entry(
+    "cytepool.over_representation_analysis.over_representation": Entry(
         lambda c: {
             "genes": ["g1", "g2", None],
             "gene_sets": {"set": ["g1", "g3"]},
@@ -1626,7 +1709,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         keys={"gene_sets": "set"},
     ),
     # A differential-expression result, of which a group and a contrast are tested.
-    "cytepool.over_representation.over_representation[result]": Entry(
+    "cytepool.over_representation_analysis.over_representation[result]": Entry(
         lambda c: {
             "genes": _tested(c),
             "gene_sets": {"set": ["feature_1", "feature_2"]},
@@ -1638,7 +1721,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         objects=("genes", "gene_sets"),
     ),
     # Statistics by gene id, ranked; the options that read a table are checked too.
-    "cytepool.gsea.gsea": Entry(
+    "cytepool.gene_set_enrichment.gsea": Entry(
         lambda c: {
             "statistics": RANKED,
             "gene_sets": {"set": ["g1", "g2", "g5"]},
@@ -1673,7 +1756,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         keys={"statistics": "g0", "gene_sets": "set"},
     ),
     # A differential-expression result, of which a group and a contrast are ranked.
-    "cytepool.gsea.gsea[result]": Entry(
+    "cytepool.gene_set_enrichment.gsea[result]": Entry(
         lambda c: {
             "statistics": _tested(c),
             "gene_sets": {"set": ["feature_1", "feature_2"]},
@@ -1691,16 +1774,16 @@ ENTRY_POINTS: dict[str, Entry] = {
     **{
         f"cytepool.pathway_scores.{name}": Entry(
             lambda c, options=options: {
-                "data": c.expression if missing else log_cpm(COUNTS),
+                "data": c.expression if missing else log2_cpm(COUNTS),
                 "gene_sets": {"set": ["g1", "g2", "g5"], "other": ["g0", "g3"]},
-                "gene_ids": [f"g{j}" for j in range(7)] + [None],
+                "feature_ids": [f"g{j}" for j in range(7)] + [None],
                 "sample_ids": ["S1", "S2", "S3", "S4"],
                 **options,
             },
             {
                 "data": missing,
                 "gene_sets": None,
-                "gene_ids": "None",
+                "feature_ids": "None",
                 "sample_ids": None,
             },
             options=tuple(options),
@@ -1744,14 +1827,14 @@ ENTRY_POINTS: dict[str, Entry] = {
                     "set": ["feature_1", "feature_2", "feature_5"],
                     "other": ["feature_0", "feature_3"],
                 },
-                "gene_ids": "feature_id",
+                "id_column": "feature_id",
                 "group": "bulk",
                 "values": "counts",
                 "min_cells": 1,
                 "expression_filter": False,
             },
             {},
-            options=("gene_ids", "group", "values", "min_cells", "expression_filter"),
+            options=("id_column", "group", "values", "min_cells", "expression_filter"),
             objects=("data", "gene_sets"),
         )
         for name in ("gsva", "ssgsea", "combined_z_scores", "plage")
@@ -1763,7 +1846,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             lambda c, options=options: {
                 "data": c.expression,
                 "network": NETWORK,
-                "gene_ids": [f"g{j}" for j in range(7)] + [None],
+                "feature_ids": [f"g{j}" for j in range(7)] + [None],
                 "sample_ids": ["S1", "S2", "S3", "S4"],
                 "min_targets": 2,
                 **options,
@@ -1771,7 +1854,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             {
                 "data": "NaN",
                 "network": "None or NaN",
-                "gene_ids": "None",
+                "feature_ids": "None",
                 "sample_ids": None,
             },
             options=("min_targets", *options),
@@ -1793,14 +1876,14 @@ ENTRY_POINTS: dict[str, Entry] = {
             lambda c: {
                 "data": _bulk_cube(),
                 "network": FEATURE_NETWORK,
-                "gene_ids": "feature_id",
+                "id_column": "feature_id",
                 "group": "bulk",
                 "min_cells": 1,
                 "expression_filter": False,
                 "min_targets": 2,
             },
             {},
-            options=("gene_ids", "group", "min_cells", "expression_filter"),
+            options=("id_column", "group", "min_cells", "expression_filter"),
             objects=("data", "network"),
         )
         for name in ("ulm", "mlm", "weighted_aggregate")
@@ -1846,8 +1929,8 @@ ENTRY_POINTS: dict[str, Entry] = {
     ),
     # n and axis go through operator.index, which reads a 0-d masked integer.
     "cytepool.stats.multiple_testing.adjust_p_values": Entry(
-        lambda c: {"p": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
-        {"p": "NaN", "n": None, "axis": None},
+        lambda c: {"p_values": [0.01, 0.2, 0.5], "n": 5, "axis": 0},
+        {"p_values": "NaN", "n": None, "axis": None},
         options=("method",),
     ),
     # Numbers of points and the settings of the rule, each a number.
@@ -1980,10 +2063,10 @@ ENTRY_POINTS: dict[str, Entry] = {
             },
             "design": Design(SAMPLE_TABLE, "~ condition", levels=LEVELS),
             "contrasts": {"stim": [0.0, 1.0]},
-            "f_test": "condition",
+            "f_tests": "condition",
         },
         {"data": None, "contrasts": None},
-        options=("f_test", "transform", "robust", "trend"),
+        options=("f_tests", "transform", "robust", "trend"),
         objects=("design",),
         keys={"data": "B", "contrasts": "stim"},
     ),
@@ -2001,34 +2084,34 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"contrasts": None},
     ),
     # Principal components: of an array, or of a cube's group (an object).
-    "cytepool.principal_components.principal_components": Entry(
-        lambda c: {"data": log_cpm(COUNTS), "top": 4},
+    "cytepool.principal_component_analysis.principal_components": Entry(
+        lambda c: {"data": log2_cpm(COUNTS), "top": 4},
         {"data": None},
         options=("top",),
     ),
-    "cytepool.principal_components.principal_components[cube]": Entry(
+    "cytepool.principal_component_analysis.principal_components[cube]": Entry(
         lambda c: {"data": _bulk_cube(), "group": "bulk", "min_cells": 1},
         {},
         options=("group", "min_cells"),
         objects=("data",),
     ),
     # Meta-analysis. NaN marks a study that did not measure a feature.
-    "cytepool.meta_analysis.meta_analysis": Entry(
+    "cytepool.stats.meta_analysis.fit_meta_analysis": Entry(
         lambda c: {
             "effects": [[0.1, 0.4], [0.3, np.nan], [0.2, 0.5]],
             "standard_errors": [[0.1, 0.2], [0.2, 0.3], [0.15, 0.1]],
-            "level": 0.9,
+            "confidence_level": 0.9,
         },
         {"effects": "NaN", "standard_errors": "NaN"},
-        options=("method", "test", "level"),
+        options=("method", "test", "confidence_level"),
     ),
     # min_studies goes through operator.index, which reads a 0-d masked integer;
     # the results were checked when they were built.
-    "cytepool.meta_analysis.differential_expression_meta_analysis": Entry(
+    "cytepool.meta_analysis_of_studies.meta_analysis": Entry(
         _meta_analysis_arguments,
         {"groups": None, "contrasts": None, "min_studies": None},
-        options=("method", "test", "level"),
-        objects=("results",),
+        options=("method", "test", "confidence_level"),
+        objects=("studies",),
     ),
     # Combined p-values and pi0: NaN marks a study that did not test a feature, or a
     # missing p-value.
@@ -2059,19 +2142,19 @@ ENTRY_POINTS: dict[str, Entry] = {
     ),
     "cytepool.stats.multiple_testing.proportion_of_true_nulls": Entry(
         lambda c: {
-            "p": np.linspace(0.0, 1.0, 21),
+            "p_values": np.linspace(0.0, 1.0, 21),
             "lambdas": [0.2, 0.4, 0.6, 0.8],
             "method": "bootstrap",
             "smooth_df": 3.0,
             "smooth_log": False,
         },
-        {"p": "NaN", "lambdas": None},
+        {"p_values": "NaN", "lambdas": None},
         options=("method", "smooth_df", "smooth_log"),
     ),
     # Replication: a mapping of weights by study, and options of
-    # proportion_of_true_nulls; the collection and results were checked when they
-    # were built.
-    "cytepool.replication.differential_expression_replication": Entry(
+    # proportion_of_true_nulls; the studies' results were checked when they were
+    # built.
+    "cytepool.replication_across_studies.replication": Entry(
         _replication_arguments,
         {"weights": None, "null_proportion": None},
         options=(
@@ -2083,12 +2166,13 @@ ENTRY_POINTS: dict[str, Entry] = {
             "conjunction_method",
             "meta_method",
         ),
-        objects=("collection", "results"),
+        objects=("studies",),
         keys={"weights": "A", "null_proportion": "lambdas"},
     ),
-    # SumRank: NaN marks a gene a study did not test. n_permutations and n_genes go
-    # through operator.index, which reads a 0-d masked integer.
-    "cytepool.sumrank.sumrank": Entry(
+    # SumRank: NaN marks a gene a study did not test. n_permutations, n_features
+    # and n_studies_summed go through operator.index, which reads a 0-d masked
+    # integer.
+    "cytepool.stats.sumrank.fit_sumrank": Entry(
         lambda c: {
             "statistics": [[1.0, 2.0, np.nan, 0.5], [2.0, 1.0, 3.0, -1.0]],
             "proportion_of_studies": 0.5,
@@ -2097,23 +2181,43 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"statistics": "NaN", "null_statistics": "NaN"},
         options=("proportion_of_studies",),
     ),
-    "cytepool.sumrank.differential_expression_sumrank": Entry(
+    # A number of studies instead of a proportion; both at once are refused.
+    "cytepool.stats.sumrank.fit_sumrank[n_studies_summed]": Entry(
+        lambda c: {
+            "statistics": [[1.0, 2.0, np.nan, 0.5], [2.0, 1.0, 3.0, -1.0]],
+            "n_studies_summed": 2,
+        },
+        {"n_studies_summed": None},
+    ),
+    "cytepool.sumrank_across_studies.sumrank": Entry(
         _sumrank_arguments,
         {"n_permutations": None},
         options=("group", "contrast", "proportion_of_studies", "permute", "rng"),
-        objects=("collection", "results"),
+        objects=("studies",),
     ),
-    "cytepool.held_out_prediction.held_out_prediction": Entry(
+    "cytepool.sumrank_across_studies.sumrank[n_studies_summed]": Entry(
+        lambda c: {"studies": StudyResults(*_studies()), "n_studies_summed": 2},
+        {"n_studies_summed": None},
+    ),
+    "cytepool.held_out_studies.held_out_prediction": Entry(
         _held_out_arguments,
-        {"groups": None, "n_genes": None},
+        {"groups": None, "n_features": None},
         options=("contrast", "variable", "case", "control", "proportion_of_studies"),
-        objects=("collection", "results"),
+        objects=("studies",),
+    ),
+    "cytepool.held_out_studies.held_out_prediction[n_studies_summed]": Entry(
+        lambda c: {
+            "studies": StudyResults(*_studies()),
+            "n_features": 2,
+            "n_studies_summed": 1,
+        },
+        {"n_studies_summed": None},
     ),
     # Figures, each drawn into an Axes that pyplot does not keep. A variable of the
     # samples is an array of labels, or a name; the other inputs are objects.
     "cytepool.plotting.plot_mds": Entry(
         lambda c: {
-            "data": log_cpm(COUNTS),
+            "data": log2_cpm(COUNTS),
             "color_by": ["a", "b", "a", "b"],
             "marker_by": ["x", "x", "y", "y"],
             "labels": ["S1", "S2", "S3", "S4"],
@@ -2146,7 +2250,7 @@ ENTRY_POINTS: dict[str, Entry] = {
     ),
     "cytepool.plotting.plot_pca": Entry(
         lambda c: {
-            "data": log_cpm(COUNTS),
+            "data": log2_cpm(COUNTS),
             "color_by": ["a", "b", "a", "b"],
             "marker_by": ["x", "x", "y", "y"],
             "labels": ["S1", "S2", "S3", "S4"],
@@ -2180,16 +2284,16 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.plotting.plot_dotplot": Entry(
         lambda c: {
             "cube": c.cube,
-            "genes": ["feature_0", "feature_2"],
+            "features": ["feature_0", "feature_2"],
             "groups": ["T", "B"],
             "samples": ["S1", "S2"],
-            "standard_scale": "gene",
+            "standard_scale": "feature",
             "mean_only_expressed": True,
             "vmin": 0.0,
             "vmax": 2.0,
             "ax": _axes(),
         },
-        {"genes": None, "groups": None, "samples": None},
+        {"features": None, "groups": None, "samples": None},
         options=("standard_scale", "mean_only_expressed", "vmin", "vmax"),
         objects=("cube", "ax"),
     ),
@@ -2330,11 +2434,11 @@ ENTRY_POINTS: dict[str, Entry] = {
         lambda c: {
             "statistics": [0.5, -1.0, 2.0, 0.1, 3.0, -0.2, 1.1, 0.0],
             "gene_set": ["g1", "g2"],
-            "gene_ids": [f"g{j}" for j in range(8)],
+            "feature_ids": [f"g{j}" for j in range(8)],
             "span": 0.5,
             "ax": _axes(),
         },
-        {"statistics": None, "gene_set": None, "gene_ids": None},
+        {"statistics": None, "gene_set": None, "feature_ids": None},
         options=("span",),
         objects=("ax",),
     ),
@@ -2497,7 +2601,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         ),
         {},
         options=("feature", "group", "contrast"),
-        objects=("meta", "studies", "ax"),
+        objects=("meta", "ax"),
     ),
     "cytepool.plotting.plot_study_agreement": Entry(
         lambda c: {
@@ -2517,20 +2621,25 @@ ENTRY_POINTS: dict[str, Entry] = {
     ),
     "cytepool.plotting.plot_sumrank": Entry(
         lambda c: {
-            "result": differential_expression_sumrank(*_studies(), "bulk", "stim"),
+            "result": sumrank(StudyResults(*_studies()), "bulk", "stim"),
             "direction": "down",
             "alpha": 0.1,
-            "n_labels": 2,
+            "top": 2,
             "ax": _axes(),
         },
         {},
-        options=("direction", "alpha", "n_labels"),
+        options=("direction", "alpha", "top"),
         objects=("result", "ax"),
     ),
     "cytepool.plotting.plot_held_out_auc": Entry(
         lambda c: {
             "prediction": held_out_prediction(
-                *_studies(), "stim", "condition", "stim", "ctrl", n_genes=2
+                StudyResults(*_studies()),
+                "stim",
+                variable="condition",
+                case="stim",
+                control="ctrl",
+                n_features=2,
             ),
             "ax": _axes(),
         },
@@ -2548,17 +2657,17 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("group", "sort"),
         objects=("data", "ax"),
     ),
-    # Genes named by labels, one per gene.
-    "cytepool.plotting.plot_gene_variance_fractions": Entry(
+    # Features named by labels, one per feature.
+    "cytepool.plotting.plot_feature_variance_fractions": Entry(
         lambda c: {
             "data": _variance_partition(),
-            "genes": ["x1", "x2"],
+            "features": ["x1", "x2"],
             "group": "bulk",
             "labels": [f"x{j}" for j in range(COUNTS.shape[1])],
             "sort": False,
             "ax": _axes(),
         },
-        {"genes": None, "labels": None},
+        {"features": None, "labels": None},
         options=("group", "sort"),
         objects=("data", "ax"),
     ),
@@ -2566,7 +2675,7 @@ ENTRY_POINTS: dict[str, Entry] = {
     # column and per row, weights per sample and a covariate of the trend.
     "cytepool.score_tests.limma": Entry(
         lambda c: {
-            "data": log_cpm(COUNTS),
+            "data": log2_cpm(COUNTS),
             "design": Design(
                 SAMPLE_TABLE,
                 "~ condition",
@@ -2608,9 +2717,9 @@ ENTRY_POINTS: dict[str, Entry] = {
         keys={"levels": "condition", "contrasts": "stim"},
     ),
     # Variance partitioning: a mixed model, a linear model, and every group of a cube.
-    "cytepool.variance_partitioning.variance_fractions": Entry(
+    "cytepool.stats.variance_fractions.variance_fractions": Entry(
         lambda c: {
-            "y": log_cpm(COUNTS),
+            "y": log2_cpm(COUNTS),
             "design": Design(SAMPLE_TABLE, "~ 1", random="(1 | donor)"),
             "weights": np.full(COUNTS.shape, 2.0),
             "method": "reml",
@@ -2620,15 +2729,15 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("method",),
         objects=("design",),
     ),
-    "cytepool.variance_partitioning.variance_fractions[linear]": Entry(
+    "cytepool.stats.variance_fractions.variance_fractions[linear]": Entry(
         lambda c: {
-            "y": log_cpm(COUNTS),
+            "y": log2_cpm(COUNTS),
             "design": Design(SAMPLE_TABLE, "~ condition", levels=LEVELS),
             "weights": np.full(4, 2.0),
         },
         {"y": None, "weights": None},
     ),
-    "cytepool.variance_partitioning.variance_partitioning": Entry(
+    "cytepool.variance_components.variance_partitioning": Entry(
         _variance_partitioning,
         {
             "groups": None,
@@ -2640,7 +2749,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         objects=("cube", "design"),
         keys={"expression_filter": "min_count"},
     ),
-    "cytepool.variance_partitioning.variance_partitioning[prior_weights]": Entry(
+    "cytepool.variance_components.variance_partitioning[prior_weights]": Entry(
         _variance_partitioning_by_cells, {}, options=("prior_weights",)
     ),
 }
@@ -2675,7 +2784,7 @@ NO_ARRAY_INPUT = {
     "cytepool.design.formula.quote_name": (("name",), "a variable name, a str"),
     "cytepool.io.cube_files.read_cube": (("path",), "a path"),
     "cytepool.io.cube_files.write_cube": (
-        ("cube", "path", "compression", "level", "overwrite"),
+        ("cube", "path", "compression", "compression_level", "overwrite"),
         "a Cube, whose arrays were checked when it was built, a path and options",
     ),
     "cytepool.io.anndata.to_anndata": (
@@ -2692,7 +2801,7 @@ NO_ARRAY_INPUT = {
     ),
     "cytepool.io.zarr.ZarrArray.__array__": (("dtype", "copy"), "a dtype and a flag"),
     "cytepool.io.zarr.check_compression": (
-        ("compression", "level"),
+        ("compression", "compression_level"),
         "a codec name and an integer level",
     ),
     "cytepool.io.zarr.open_array": (("path",), "a path"),
@@ -2743,12 +2852,12 @@ NO_ARRAY_INPUT = {
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
     ),
-    "cytepool.variance_partitioning.VariancePartitioningResult": (
+    "cytepool.variance_components.VariancePartitioningResult": (
         ("variables", "summary", "samples", "tables", "provenance"),
         "variable names, Tables, which were checked when they were built, and a "
         "record kept as JSON, which cannot hold an array",
     ),
-    "cytepool.variance_partitioning.VariancePartitioningResult.table": (
+    "cytepool.variance_components.VariancePartitioningResult.table": (
         ("group",),
         "a group id, looked up",
     ),
@@ -2756,7 +2865,6 @@ NO_ARRAY_INPUT = {
         (
             "contrasts",
             "tables",
-            "f_test",
             "summary",
             "samples",
             "proportions",
@@ -2767,41 +2875,36 @@ NO_ARRAY_INPUT = {
     ),
     "cytepool.composition.CompositionResult.table": (
         ("contrast",),
-        "a contrast name, looked up",
+        "a contrast name or the name of an F-test, looked up",
     ),
-    "cytepool.meta_analysis.MetaAnalysisResult": (
-        ("summary", "studies", "tables", "provenance"),
-        "Tables, which were checked when they were built, and a record kept as JSON, "
-        "which cannot hold an array",
+    "cytepool.meta_analysis_of_studies.MetaAnalysisResult": (
+        ("summary", "studies", "tables", "provenance", "study_results"),
+        "Tables and the studies' results, which were checked when they were built, "
+        "and a record kept as JSON, which cannot hold an array",
     ),
-    "cytepool.meta_analysis.MetaAnalysisResult.table": (
+    "cytepool.meta_analysis_of_studies.MetaAnalysisResult.table": (
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
     ),
-    "cytepool.replication.ReplicationResult": (
-        ("genes", "study_pairs", "found_in", "studies", "provenance"),
+    "cytepool.replication_across_studies.ReplicationResult": (
+        ("features", "study_pairs", "found_in", "studies", "provenance"),
         "Tables, which were checked when they were built, and a record kept as JSON, "
         "which cannot hold an array",
     ),
-    "cytepool.sumrank.SumRankResult": (
-        ("table", "studies", "provenance"),
+    "cytepool.sumrank_across_studies.SumRankResult": (
+        ("features", "studies", "provenance"),
         "Tables, which were checked when they were built, and a record kept as JSON, "
         "which cannot hold an array",
     ),
-    "cytepool.held_out_prediction.HeldOutPrediction": (
-        ("auc", "scores", "genes", "provenance"),
+    "cytepool.held_out_studies.HeldOutPrediction": (
+        ("auc", "scores", "features", "provenance"),
         "Tables, which were checked when they were built, and a record kept as JSON, "
         "which cannot hold an array",
-    ),
-    "cytepool.meta_analysis.align_study_results": (
-        ("collection", "results", "group", "contrast"),
-        "a CubeCollection and results, which were checked when they were built, and a "
-        "group id and a contrast name, looked up",
     ),
     "cytepool.gene_sets.GeneSets.__getitem__": (("name",), "a set name, looked up"),
     "cytepool.gene_sets.GeneSets.__contains__": (("name",), "a set name, looked up"),
     "cytepool.gene_sets.read_gmt": (
-        ("path", "source", "version", "licence"),
+        ("path", "name", "version", "licence"),
         "a path, and text that the collection keeps",
     ),
     "cytepool.networks.Network.__getitem__": (("source",), "a source, looked up"),
@@ -2836,16 +2939,16 @@ RECORDS = {
     "cytepool.stats.mixed_models.FixedEffectFTest",
     "cytepool.stats.mixed_models.FixedEffectTests",
     "cytepool.stats.mixed_models.MixedModelFit",
-    "cytepool.meta_analysis.MetaAnalysisFit",
+    "cytepool.stats.meta_analysis.MetaAnalysisFit",
     "cytepool.stats.combined_p_values.CombinedPValues",
     "cytepool.stats.multiple_testing.TrueNullProportion",
-    "cytepool.sumrank.SumRankFit",
-    "cytepool.principal_components.PrincipalComponents",
+    "cytepool.stats.sumrank.SumRankFit",
+    "cytepool.principal_component_analysis.PrincipalComponents",
     "cytepool.stats.dream.ModeratedFixedEffectTests",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodFit",
     "cytepool.stats.quasi_likelihood.QuasiLikelihoodTest",
     "cytepool.stats.quasi_likelihood.UnitDevianceMoments",
-    "cytepool.variance_partitioning.VarianceFractions",
+    "cytepool.stats.variance_fractions.VarianceFractions",
     "cytepool.differential_expression.GroupFit",
     "cytepool.pathway_scores.PathwayScores",
     "cytepool.activity.Activities",
@@ -3293,14 +3396,14 @@ def test_records_store_masked_fields_as_given(name: str) -> None:
 
 def test_a_masked_sample_label_is_refused_and_dropping_its_cells_works() -> None:
     samples = np.ma.array(["s1", "s1", "hidden_sample", "s2"], mask=[0, 0, 1, 0])
-    with pytest.raises(TypeError, match=message("samples")):
-        from_cells(CELL_COUNTS, samples=samples, groups=CELL_GROUPS)
+    with pytest.raises(TypeError, match=message("sample_labels")):
+        from_cells(CELL_COUNTS, sample_labels=samples, group_labels=CELL_GROUPS)
 
     keep = ~np.ma.getmaskarray(samples)
     cube = from_cells(
         CELL_COUNTS[keep],
-        samples=samples.compressed(),
-        groups=np.array(CELL_GROUPS)[keep],
+        sample_labels=samples.compressed(),
+        group_labels=np.array(CELL_GROUPS)[keep],
     )
     assert cube.samples["sample_id"].tolist() == ["s1", "s2"]
     # Cells 0 and 1 are s1 (groups B and T), cell 3 is s2 (group T).
@@ -3385,7 +3488,7 @@ class _ConvertsToMasked:
 
 
 ARRAY_LIKE_CALLS = [
-    pytest.param(adjust_p_values, [0.01, 0.5, 0.02], "p", "NaN", id="p-values"),
+    pytest.param(adjust_p_values, [0.01, 0.5, 0.02], "p_values", "NaN", id="p-values"),
     pytest.param(norm_cdf, [0.5, 1.5], "x", "NaN", id="distribution"),
     pytest.param(cpm, COUNTS, "counts", None, id="normalization counts"),
     pytest.param(
@@ -3407,16 +3510,16 @@ ARRAY_LIKE_CALLS = [
     ),
     pytest.param(from_bulk, COUNTS, "counts", None, id="bulk counts"),
     pytest.param(
-        lambda v: from_cells(v, samples=CELL_SAMPLES, groups=CELL_GROUPS),
+        lambda v: from_cells(v, sample_labels=CELL_SAMPLES, group_labels=CELL_GROUPS),
         CELL_COUNTS,
         "counts",
         None,
         id="cell counts",
     ),
     pytest.param(
-        lambda v: from_cells(CELL_COUNTS, samples=v, groups=CELL_GROUPS),
+        lambda v: from_cells(CELL_COUNTS, sample_labels=v, group_labels=CELL_GROUPS),
         CELL_SAMPLES,
-        "samples",
+        "sample_labels",
         None,
         id="cell labels",
     ),
@@ -3462,7 +3565,9 @@ def test_pandas_inputs_keep_their_missing_values() -> None:
     frame = pandas.DataFrame({"x": np.ma.array([1.0, 2.0], mask=[0, 1])})
     assert_array_equal(Table(frame)["x"], [1.0, np.nan])
     labels = pandas.Categorical(CELL_SAMPLES, categories=["S2", "S1"])
-    cube = from_cells(CELL_COUNTS, samples=labels, groups=pandas.Series(CELL_GROUPS))
+    cube = from_cells(
+        CELL_COUNTS, sample_labels=labels, group_labels=pandas.Series(CELL_GROUPS)
+    )
     assert cube.samples["sample_id"].tolist() == ["S1", "S2"]
     design = Design(pandas.DataFrame(SAMPLE_TABLE), "~ condition")
     assert design.columns == COLUMNS
@@ -3521,7 +3626,7 @@ def test_masked_attributes_of_duck_typed_arguments_are_refused(
             (
                 f"counts.{part}",
                 lambda counts=counts: from_cells(
-                    counts, samples=CELL_SAMPLES, groups=CELL_GROUPS
+                    counts, sample_labels=CELL_SAMPLES, group_labels=CELL_GROUPS
                 ),
             )
         )

@@ -119,15 +119,21 @@ def _modules() -> Iterator[tuple[ModuleType, ModuleType]]:
             yield module, importlib.import_module(info.name.rpartition(".")[0])
 
 
+def _exported(package: ModuleType) -> set[str]:
+    """The names that a package re-exports, and those of the top level, which the API
+    reference documents there."""
+    return set(getattr(package, "__all__", ())) | set(cytepool.__all__)
+
+
 def _is_implementation(module: ModuleType, package: ModuleType) -> bool:
-    """Whether a package re-exports names of a module, which implements it."""
-    exported = set(getattr(package, "__all__", ()))
-    return package is not cytepool and bool(set(_public_names(module)) & exported)
+    """Whether a package, or the top level, re-exports names of a module, which
+    implements them."""
+    return bool(set(_public_names(module)) & _exported(package))
 
 
 def _public_modules() -> set[str]:
     """The modules users import from: modules with public names that do not just
-    implement their package. The top level holds only ``__version__``."""
+    implement their package or the top level."""
     return {
         module.__name__
         for module, package in _modules()
@@ -136,12 +142,13 @@ def _public_modules() -> set[str]:
 
 
 def _required_objects() -> set[str]:
-    """Every public name, as the API reference must name it: the names of the public
-    modules, and names an implementation module exports but its package does not."""
+    """Every public name, as the API reference must name it: the names of the top
+    level, the names of the public modules, and names an implementation module exports
+    but neither its package nor the top level does."""
     public = _public_modules()
-    required = set()
+    required = {f"cytepool.{name}" for name in cytepool.__all__}
     for module, package in _modules():
-        exported = set(getattr(package, "__all__", ()))
+        exported = _exported(package)
         implementation = _is_implementation(module, package)
         for name in _public_names(module):
             if module.__name__ in public or (implementation and name not in exported):
@@ -188,10 +195,12 @@ def _members(name: str, value: Any) -> set[str]:
 def _documented_objects() -> dict[str, set[str]]:
     """The full names of the objects each API page documents.
 
-    ``automodule`` documents the module's public names that have docstrings and the
-    methods and properties of its classes. ``autofunction`` and ``autoclass`` take
-    full names. ``py:data`` names an object in the module that the page documents
-    last, or in its ``:module:`` option.
+    ``automodule`` documents the module and its public names that have docstrings,
+    with the methods and properties of its classes; with ``:no-members:`` it documents
+    none of its names, and with ``:no-index:`` the module has no entry of its own, as
+    the pages render the description of a module that implements top-level names.
+    ``autofunction`` and ``autoclass`` take full names. ``py:data`` names an object in
+    the module that the page documents last, or in its ``:module:`` option.
     """
     pages = {}
     for page in API_SOURCE.glob("*.md"):
@@ -201,7 +210,10 @@ def _documented_objects() -> dict[str, set[str]]:
             if kind == "automodule":
                 current = name
                 module = importlib.import_module(name)
-                documented.add(name)
+                if "no-index" not in options:
+                    documented.add(name)
+                if "no-members" in options:
+                    continue
                 for member in _public_names(module):
                     documented |= _members(f"{name}.{member}", getattr(module, member))
             elif kind.startswith("auto"):
@@ -471,26 +483,41 @@ def test_output_checks_ignore_the_versions_of_cytepool_a_page_prints(
 
 
 def test_every_public_module_is_in_the_api_reference() -> None:
-    documented = {
-        name
+    modules = [
+        (name, options)
         for page in API_SOURCE.glob("*.md")
-        for kind, name, _ in _directives(page)
+        for kind, name, options in _directives(page)
         if kind == "automodule"
-    }
+    ]
+    documented = {name for name, options in modules if "no-index" not in options}
     public = _public_modules()
 
     assert public == documented
+    # The module of top-level names gives its page the description of the method,
+    # and documents none of its names, which the page documents at the top level.
+    narratives = [(name, options) for name, options in modules if "no-index" in options]
+    assert narratives
+    assert all("no-members" in options for _, options in narratives)
+    assert not {name for name, _ in narratives} & public
     # The definition finds what a user imports from, and not the files that
-    # implement a package.
+    # implement a package or the top level.
     assert {
-        "cytepool.cube",
+        "cytepool.cube.provenance",
         "cytepool.design",
         "cytepool.io.zarr",
+        "cytepool.stats.meta_analysis",
         "cytepool.stats.voom",
-        "cytepool.table",
     } <= public
     assert (
-        not {"cytepool.cube.cube", "cytepool.design.formula", "cytepool.stats"} & public
+        not {
+            "cytepool.cube",
+            "cytepool.cube.cube",
+            "cytepool.design.formula",
+            "cytepool.differential_expression",
+            "cytepool.stats",
+            "cytepool.table",
+        }
+        & public
     )
 
 
@@ -499,10 +526,14 @@ def test_every_public_name_is_documented_under_its_own_name() -> None:
 
     assert sorted(_required_objects() - documented) == []
     # Constants and names that a package does not re-export need directives of
-    # their own; these are the ones that exist today.
-    assert {"cytepool.design.INTERCEPT", "cytepool.design.formula.quote_name"} <= (
-        _required_objects()
-    )
+    # their own; these are the ones that exist today. The top level's names are
+    # documented there.
+    assert {
+        "cytepool.__version__",
+        "cytepool.design.INTERCEPT",
+        "cytepool.design.formula.quote_name",
+        "cytepool.limma_voom",
+    } <= _required_objects()
 
 
 def test_every_api_page_is_in_the_api_index() -> None:
@@ -613,7 +644,7 @@ def test_link_check_finds_broken_links() -> None:
     working = [
         "installation.md#build-this-documentation",
         "/api/voom.html#cytepool.stats.voom.voom",
-        "/api/designs.html#cytepool.design.Design.check",
+        "/api/designs.html#cytepool.Design.check",
         "/api/designs.html#cytepool.design.INTERCEPT",
         REPOSITORY + "blob/master/validation/cube.py#L10",
     ]
@@ -1096,7 +1127,7 @@ def test_the_staged_site_links_roles_to_the_api_reference(
 
     assert (site / "index.md").read_text() == (
         "# Example\n\nSee [`limma_voom`]("
-        "/api/differential_expression.html#cytepool.differential_expression.limma_voom).\n"
+        "/api/differential_expression.html#cytepool.limma_voom).\n"
     )
     (source / "index.md").write_text("# Example\n\nSee {api}`select`.\n")
     with pytest.raises(ValueError, match="'select' is ambiguous"):
@@ -1109,6 +1140,7 @@ def test_the_code_of_a_page_uses_what_it_imports_from_cytepool() -> None:
         %time import numpy as np
         from cytepool.cube.pool import from_cells
         import cytepool.stats.voom as weights
+        from cytepool import limma_voom
         from cytepool._jit import jit
         from cytepool.design import Design as D
         result = weights.voom(counts, D(samples, "~ group"))
@@ -1117,26 +1149,21 @@ def test_the_code_of_a_page_uses_what_it_imports_from_cytepool() -> None:
 
     uses = page_index.code_uses(code, page_index.api_entries())
 
-    # A name imported from the module that implements it finds its documented name;
-    # private names and modules are not uses.
+    # A name imported from the module that implements it finds its documented name,
+    # at the top level; private names and modules are not uses.
     assert uses == {
-        "cytepool.cube.from_cells",
+        "cytepool.from_cells",
+        "cytepool.limma_voom",
         "cytepool.stats.voom.voom",
-        "cytepool.design.Design",
+        "cytepool.Design",
     }
 
 
 def test_api_entries_link_back_to_the_pages_that_use_and_explain_them() -> None:
     pytest.importorskip("yaml")
     links = page_index.links()
-    used = {
-        page.file
-        for page in links.used_in["cytepool.differential_expression.limma_voom"]
-    }
-    explained = {
-        page.file
-        for page in links.explained_in["cytepool.differential_expression.limma_voom"]
-    }
+    used = {page.file for page in links.used_in["cytepool.limma_voom"]}
+    explained = {page.file for page in links.explained_in["cytepool.limma_voom"]}
 
     assert "quickstart.ipynb" in used  # its code imports it
     assert "guides/bulk_rna_seq.ipynb" in used
@@ -1145,9 +1172,7 @@ def test_api_entries_link_back_to_the_pages_that_use_and_explain_them() -> None:
     index = {page.file for page in page_index.pages() if page.kind == page_index.INDEX}
     for pages in (*links.used_in.values(), *links.explained_in.values()):
         assert not index & {page.file for page in pages}
-    lines = page_index.backlink_lines(
-        "cytepool.differential_expression.limma_voom", links
-    )
+    lines = page_index.backlink_lines("cytepool.limma_voom", links)
     assert lines[0] == ""
     assert lines[1].startswith("**Used in:** `Quick start <../quickstart/>`__")
     assert "`Choosing a method <../statistics/choosing-a-method/>`__" in lines[3]
@@ -1500,9 +1525,9 @@ def test_the_public_names_are_those_of_the_api_rule_and_their_methods() -> None:
                 parent.rpartition(".")[2],
             )
         ), name
-    assert {"cytepool.cube.Cube.select", "cytepool.design.Design.check"} <= names
+    assert {"cytepool.Cube.select", "cytepool.Design.check"} <= names
     # Properties are not methods.
-    assert "cytepool.cube.Cube.n_cells" not in names
+    assert "cytepool.Cube.n_cells" not in names
 
 
 def test_the_coverage_report_finds_names_listed_wrongly(tmp_path: Path) -> None:
@@ -1520,15 +1545,12 @@ def test_the_coverage_report_finds_names_listed_wrongly(tmp_path: Path) -> None:
     write(
         exempt
         | {
-            "cytepool.differential_expression.limma_voom": "covered",
+            "cytepool.limma_voom": "covered",
             "cytepool.nothing": "x",
         }
     )
     report = coverage.report(path)
-    assert report.stale == [
-        "cytepool.differential_expression.limma_voom",
-        "cytepool.nothing",
-    ]
+    assert report.stale == ["cytepool.limma_voom", "cytepool.nothing"]
     first = next(iter(exempt))
     write({**exempt, first: " "})
     assert coverage.report(path).empty == [first]

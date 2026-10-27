@@ -117,9 +117,9 @@ class CubeCollection:
         collection's order, and its own samples with their own ids, so that a design
         built from its sample table applies. Any analysis of one cube, such as
         ``limma_voom`` with each study's own design, then gives results keyed by
-        the aligned groups, which ``align_study_results`` lines up gene by gene and
-        ``differential_expression_meta_analysis`` combines
-        (``cytepool.meta_analysis``).
+        the aligned groups; ``analyse_each_study`` runs one on every study, and the
+        ``StudyResults`` it returns lines them up gene by gene, for
+        ``meta_analysis`` and the other functions that combine studies.
 
     Stacking:
         ``stack()`` puts the studies into one cube, for a joint model with the study

@@ -69,7 +69,7 @@ from pathlib import Path
 import mpmath
 import numpy as np
 
-from cytepool.design import Design
+from cytepool import Design
 from cytepool.normalization import tmm_factors
 from cytepool.stats.negative_binomial_models import (
     fit_negative_binomial_model,

@@ -8,20 +8,19 @@ A single study often finds differences that others do not reproduce: of the gene
 differentially expressed in Alzheimer's disease in one dataset, over 85% were not
 reproduced in any of 16 others [@nakatsuka2025]. A meta-analysis combines the estimates
 of several studies into one, weighs each by its precision, and measures how much the
-studies disagree. {api}`meta_analysis` does it for every gene at once, as metafor's
+studies disagree. {api}`fit_meta_analysis` does it for every gene at once, as metafor's
 `rma.uni` does for one effect without moderators [@viechtbauer2010], and
-{api}`differential_expression_meta_analysis` does it for the results of
-{api}`limma_voom` or {api}`limma_trend` on several cubes, matched by cell type, contrast
-and gene id. {api}`meta_analysis` returns a {api}`MetaAnalysisFit`, and
-{api}`differential_expression_meta_analysis` a {api}`MetaAnalysisResult`, with a table
-for every cell type and contrast ({api}`MetaAnalysisResult.table`). Where the studies
-give p-values rather than comparable effects, or to ask in how many studies a gene
-changes, their p-values are combined, and
-{api}`differential_expression_replication` says how well the studies replicate each
-other (see [](#combined-p-values) and below). The guides
+{api}`meta_analysis` does it for the results of {api}`limma_voom` or {api}`limma_trend`
+on several cubes, kept together as a {api}`StudyResults` and matched by cell type,
+contrast and gene id. {api}`fit_meta_analysis` returns a {api}`MetaAnalysisFit`, and
+{api}`meta_analysis` a {api}`MetaAnalysisResult`, with a table for every cell type and
+contrast ({api}`MetaAnalysisResult.table`). Where the studies give p-values rather than
+comparable effects, or to ask in how many studies a gene changes, their p-values are
+combined, and {api}`replication` says how well the studies replicate each other (see
+[](#combined-p-values) and below). The guides
 [Combine studies](../guides/combine_studies.ipynb) and
-[Replication across studies](../guides/replication_across_studies.ipynb) run them on
-six simulated cohorts whose true changes are known.
+[Replication across studies](../guides/replication_across_studies.ipynb) run them on six
+simulated cohorts whose true changes are known.
 
 ## The model
 
@@ -66,18 +65,17 @@ percentage.
 ## Genes that some studies did not measure
 
 NaN marks a study that did not measure or test a gene. Each gene is analysed over the
-studies that measured it; {api}`differential_expression_meta_analysis` analyses a gene
-tested by at least `min_studies` studies (two by default, since one study says nothing
-about $\tau^2$). It takes limma's moderated standard errors as the known sampling
-errors.
+studies that measured it; {api}`meta_analysis` analyses a gene tested by at least
+`min_studies` studies (two by default, since one study says nothing about $\tau^2$). It
+takes limma's moderated standard errors as the known sampling errors.
 
 A gene missing from a study's results was not measured there, or was measured and left
 out, as by the expression filter, which are different findings. For the studies of a
-{api}`CubeCollection`, each analysed on its aligned cube,
-{api}`align_study_results` lines up the results of one cell type and contrast with a
-row for every study and gene, which says whether the study tested the gene and, where
-it did not, why: it did not measure the gene, measured it and left it out, or did not
-analyse the cell type or the contrast.
+{api}`CubeCollection`, each analysed on its aligned cube by {api}`analyse_each_study`,
+{api}`StudyResults.table` lines up the results of one cell type and contrast with a row
+for every study and gene, which says whether the study tested the gene and, where it did
+not, why: it did not measure the gene, measured it and left it out, or did not analyse
+the cell type or the contrast.
 
 (combined-p-values)=
 ## Combined p-values
@@ -149,17 +147,17 @@ small for the second study to find on its own [@storey2003].
 
 ## Replication across the studies of a collection
 
-{api}`differential_expression_replication` reads one cell type and contrast of the
-studies of a {api}`CubeCollection`, lined up by {api}`align_study_results`, and returns
-a {api}`ReplicationResult` with four tables:
+{api}`replication` reads one cell type and contrast of the studies' results, a
+{api}`StudyResults`, lined up by {api}`StudyResults.table`, and returns a
+{api}`ReplicationResult` with four tables:
 
-- `genes`: for every gene, the studies that tested it and find it (adjusted p-value
+- `features`: for every gene, the studies that tested it and find it (adjusted p-value
   below `alpha`), up and down; the combined p-value, by Stouffer's method weighted by
   the square roots of the studies' samples and signed by their log2 fold changes; the
   partial conjunction p-value of an effect in at least `at_least` studies in one
-  direction (Simes's by default), both adjusted over the genes; the share of the
-  studies whose effect has the combined direction; and Cochran's $Q$, $I^2$ and
-  $\tau^2$ of its log2 fold changes, from {api}`meta_analysis`;
+  direction (Simes's by default), both adjusted over the genes; the combined direction
+  as a sign and the share of the studies whose effect has it; and Cochran's $Q$, $I^2$
+  and $\tau^2$ of its log2 fold changes, from {api}`fit_meta_analysis`;
 - `study_pairs`: for every ordered pair of studies, $\pi_1$ and the sign agreement of
   the genes the first finds in the second, and how many the second finds too. $\pi_0$
   is estimated at $\lambda = 0.5$ by default: on the few dozen p-values of the genes
@@ -175,17 +173,16 @@ each number of studies finds.
 
 ## SumRank: genes that rank high in most studies
 
-A meta-analysis weighs each study by its precision, so a gene with a very small
-p-value in one or two studies can pass without any sign of change in the others; such
-genes predicted case status poorly in studies left out [@nakatsuka2025]. SumRank asks
-instead that a gene rank high in most studies. {api}`sumrank` computes it from a signed
-statistic of every gene in every study and returns a {api}`SumRankFit`;
-{api}`differential_expression_sumrank` computes it from the results of one cell type
-and contrast of the studies of a {api}`CubeCollection` and returns a
-{api}`SumRankResult`, whose table ({api}`SumRankResult.table`) gives each gene's
-statistics and p-values, up and down, and whose table of studies
-({api}`SumRankResult.studies`) says which studies tested the cell type and contrast,
-and why the others did not.
+A meta-analysis weighs each study by its precision, so a gene with a very small p-value
+in one or two studies can pass without any sign of change in the others; such genes
+predicted case status poorly in studies left out [@nakatsuka2025]. SumRank asks instead
+that a gene rank high in most studies. {api}`fit_sumrank` computes it from a signed
+statistic of every gene in every study and returns a {api}`SumRankFit`; {api}`sumrank`
+computes it from the results of one cell type and contrast of the studies of a
+collection, a {api}`StudyResults`, and returns a {api}`SumRankResult`, whose table
+({api}`SumRankResult.features`) gives each gene's statistics and p-values, up and down,
+and whose table of studies ({api}`SumRankResult.studies`) says which studies tested the
+cell type and contrast, and why the others did not.
 
 Each study ranks the genes that every study tested by its signed $-\log_{10}$
 p-value, from $r = 1$ for the gene most up to $r = G$; tied genes share their average
@@ -199,24 +196,25 @@ m = \lfloor p\,k \rfloor,
 $$
 
 with $u_{g(1)} \le \dots \le u_{g(k)}$ and the proportion $p$ of the studies
-(`proportion_of_studies`). The paper sums every study when there are few, and chose $p$
-by prediction in held-out studies when there are many (0.65 of 17 studies of Alzheimer's
-disease, 0.55 of 16 of COVID-19). Genes down have the statistic of the ranks $1 - u$.
-A gene that some study did not test, because it did not measure it or its expression
-filter left it out, is not ranked, as the paper ranks the genes every study measured:
-a rank says where a gene stands among the genes ranked with it.
+(`proportion_of_studies`), or $m$ given itself (`n_studies_summed`). The paper sums
+every study when there are few, and chose $p$ by prediction in held-out studies when
+there are many (0.65 of 17 studies of Alzheimer's disease, 0.55 of 16 of COVID-19).
+Genes down have the statistic of the ranks $1 - u$. A gene that some study did not test,
+because it did not measure it or its expression filter left it out, is not ranked, as
+the paper ranks the genes every study measured: a rank says where a gene stands among
+the genes ranked with it.
 
 If each study ranked the genes at random, the normalized ranks would be independent
 uniform variables, and $S_g$ below the cap would follow the Irwin-Hall distribution of a
 sum of $m$ of them [@irwin1927; @hall1927], whose distribution function gives the
 Irwin-Hall p-value. With every study summed it is exact under that null; the sum of the
 best $m$ of $k$ ranks is smaller than a sum of $m$ ranks, so with $m < k$ these p-values
-are much too small: in six simulated studies without changes, summing three, 37% of
-them fell below 0.05, and {api}`differential_expression_sumrank` warns when it gives
-them. The paper takes its p-values from permutations instead: each study's labels are
-permuted and its analysis run again, and the statistics of every gene in every
-permutation make one null distribution, $N$ statistics in all, against which a gene of
-statistic $s$ has the p-value
+are much too small: in six simulated studies without changes, summing three, 37% of them
+fell below 0.05, and {api}`sumrank` warns when it gives them. The paper takes its
+p-values from permutations instead: each study's labels are permuted and its analysis
+run again, and the statistics of every gene in every permutation make one null
+distribution, $N$ statistics in all, against which a gene of statistic $s$ has the
+p-value
 
 $$
 p = \frac{1 + \#\{\text{null statistics} \le s\}}{1 + N},
@@ -224,13 +222,14 @@ $$
 
 never zero [@phipson2010]. Pooling over the genes gives small p-values from few
 permutations, 100 permutations of 10,000 genes reaching $10^{-6}$. With
-`n_permutations`, {api}`differential_expression_sumrank` permutes a variable of each
-study's design among the samples of its fit of the cell type, from a seeded
-`numpy.random.Generator`, and re-runs the study's {api}`limma_voom` or {api}`limma_trend`
-with the design and settings its result records: 0.21 s per study and permutation for
-40 samples and 10,000 genes with limma-voom, so that 100 permutations of 20 such studies
-take about 7 minutes on a laptop. {api}`plot_sumrank` draws every gene's p-value, the
-genes in alphabetical order, as the authors of SumRank draw it.
+`n_permutations`, {api}`sumrank` permutes the variable whose levels the contrast
+compares (or `permute`) in each study's design among the samples of its fit of the cell
+type, from a seeded `numpy.random.Generator`, and re-runs the study's {api}`limma_voom`
+or {api}`limma_trend` with the design and settings its result records: 0.21 s per study
+and permutation for 40 samples and 10,000 genes with limma-voom, so that 100
+permutations of 20 such studies take about 7 minutes on a laptop. {api}`plot_sumrank`
+draws every gene's p-value, the genes in alphabetical order, as the authors of SumRank
+draw it.
 
 Where CytePool departs from the paper and its authors' code, which the validation runs:
 
@@ -249,20 +248,21 @@ Where CytePool departs from the paper and its authors' code, which the validatio
 ## Prediction in held-out studies
 
 How well genes found in some studies replicate can be measured in a study that had no
-part in finding them. {api}`held_out_prediction` leaves each study of a collection out
-in turn, chooses genes up and genes down in each cell type from the other studies'
-results, by SumRank and by the random-effects meta-analysis above with REML and the
-Knapp-Hartung adjustment (the paper's comparison), scores every case and control of
-the held-out study, and reports the area under the ROC curve of cases against controls
-[@hanley1982], by study and method, in a {api}`HeldOutPrediction`
-({api}`HeldOutPrediction.auc`). A sample's score is UCell's [@andreatta2021]: in each
-cell type, the ranks of the chosen genes among all the genes of the sample's profile,
-scaled to [0, 1] over the study's samples, the genes up counted for the sample and the
-genes down against it, summed over the cell types, as the authors' code sums them. The genes chosen and the scores are in
-{api}`HeldOutPrediction.genes` and {api}`HeldOutPrediction.scores`, and
+part in finding them. {api}`held_out_prediction` leaves each study of a
+{api}`StudyResults` out in turn, chooses genes up and genes down in each cell type from
+the other studies' results, by SumRank and by the random-effects meta-analysis above
+with REML and the Knapp-Hartung adjustment (the paper's comparison), scores every case
+and control of the held-out study, the two levels that the contrast compares, and
+reports the area under the ROC curve of cases against controls [@hanley1982], by study
+and method, in a {api}`HeldOutPrediction` ({api}`HeldOutPrediction.auc`). A sample's
+score is UCell's [@andreatta2021]: in each cell type, the ranks of the chosen genes
+among all the genes of the sample's profile, scaled to [0, 1] over the study's samples,
+the genes up counted for the sample and the genes down against it, summed over the cell
+types, as the authors' code sums them. The genes chosen and the scores are in
+{api}`HeldOutPrediction.features` and {api}`HeldOutPrediction.scores`, and
 {api}`plot_held_out_auc` draws the AUC of every study by method. The paper fits a
-logistic regression on the score and lets pROC choose the direction of each study's
-AUC [@robin2011], so that a score that ranks controls above cases also scores above 0.5;
+logistic regression on the score and lets pROC choose the direction of each study's AUC
+[@robin2011], so that a score that ranks controls above cases also scores above 0.5;
 here cases must score higher, and an AUC below 0.5 says the genes predict the wrong
 direction.
 

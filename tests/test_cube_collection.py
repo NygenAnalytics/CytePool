@@ -1,4 +1,5 @@
-"""Tests of CubeCollection and align_study_results.
+"""Tests of CubeCollection and of StudyResults.table, which lines up the studies'
+results.
 
 The reference values come from validation/cube_collection.py --write-fixtures: three
 small studies (``lupus``, ``covid`` and ``atlas``), anndata's ``concat`` of their
@@ -19,13 +20,16 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
-from cytepool.cube import Cube, CubeCollection
-from cytepool.design import Design
-from cytepool.differential_expression import DifferentialExpressionResult, limma_voom
-from cytepool.io import read_cube, write_cube
-from cytepool.meta_analysis import (
-    align_study_results,
-    differential_expression_meta_analysis,
+from cytepool import (
+    Cube,
+    CubeCollection,
+    Design,
+    DifferentialExpressionResult,
+    StudyResults,
+    limma_voom,
+    meta_analysis,
+    read_cube,
+    write_cube,
 )
 
 DATA = Path(__file__).parent / "data" / "cube_collection"
@@ -42,7 +46,7 @@ STATISTICS = (
     "t",
     "p_value",
     "adjusted_p_value",
-    "b_statistic",
+    "log_odds",
     "standard_error",
 )
 
@@ -182,10 +186,10 @@ def test_stack_is_anndata_inner_join() -> None:
 
 def test_studies_analysed_alone_and_lined_up_give_limma() -> None:
     collection = fixture_collection()
-    results = fixture_results()
+    studies = StudyResults(collection, fixture_results())
     arrays, _ = fixture()
     for group in collection.groups["group_id"].tolist():
-        table = align_study_results(collection, results, group, "stim")
+        table = studies.table(group, "stim")
         assert len(table) == collection.n_studies * collection.n_features
         for row, study in enumerate(collection.studies):
             mine = table.filter(table["study"] == study)
@@ -225,10 +229,10 @@ def test_the_stack_of_two_studies_fits_their_joint_model_as_limma() -> None:
 
 def test_lined_up_results_feed_the_meta_analysis() -> None:
     results = fixture_results()
-    meta = differential_expression_meta_analysis(results)
+    meta = meta_analysis(results)
     collection = fixture_collection()
     group = collection.groups["group_id"][0]
-    table = align_study_results(collection, results, group, "stim")
+    table = StudyResults(collection, results).table(group, "stim")
     lined_up = meta.table(group, "stim")
     tested = table["status"] == "tested"
     counts = {
@@ -965,15 +969,15 @@ def test_lining_up_results_refuses_results_of_other_cubes() -> None:
     results = fixture_results()
     group = collection.groups["group_id"][0]
     with pytest.raises(TypeError, match="collection must be a CubeCollection"):
-        align_study_results(fixture_cubes(), results, group, "stim")  # type: ignore[arg-type]
+        StudyResults(fixture_cubes(), results).table(group, "stim")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match=r"missing 'atlas'"):
-        align_study_results(
-            collection, {s: results[s] for s in ("lupus", "covid")}, group, "stim"
+        StudyResults(collection, {s: results[s] for s in ("lupus", "covid")}).table(
+            group, "stim"
         )
     with pytest.raises(KeyError, match=r"no group 'T cell' in the collection"):
-        align_study_results(collection, results, "T cell", "stim")
+        StudyResults(collection, results).table("T cell", "stim")
     with pytest.raises(KeyError, match="no study tested the contrast 'ctrl'"):
-        align_study_results(collection, results, group, "ctrl")
+        StudyResults(collection, results).table(group, "ctrl")
     # The covid study's own cube has its own group ids, which the collection merges.
     own = fixture_cubes()["covid"]
     design = Design(own.samples, FORMULAS["covid"], levels=LEVELS)
@@ -981,7 +985,7 @@ def test_lining_up_results_refuses_results_of_other_cubes() -> None:
         "covid": limma_voom(own, design, contrasts={"stim": "conditionstim"})
     }
     with pytest.raises(ValueError, match=r"analyses the groups 'B', 'T4 naive'"):
-        align_study_results(collection, unaligned, group, "stim")
+        StudyResults(collection, unaligned).table(group, "stim")
     # Its unmeasured genes are filled with zeros, which a test without the
     # expression filter tests.
     alone = CubeCollection({"covid": own}, align_groups_by="group_id")
@@ -989,4 +993,4 @@ def test_lining_up_results_refuses_results_of_other_cubes() -> None:
         own, design, contrasts={"stim": "conditionstim"}, expression_filter=False
     )
     with pytest.raises(ValueError, match="which the study did not measure"):
-        align_study_results(alone, {"covid": tested_all}, "B", "stim")
+        StudyResults(alone, {"covid": tested_all}).table("B", "stim")

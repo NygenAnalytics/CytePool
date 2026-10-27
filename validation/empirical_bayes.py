@@ -571,8 +571,8 @@ def model_results(case, run):
     eb = moderated_statistics(fit, f_statistic="limma", **options)
     tr = treat(fit, lfc=LFC, **options)
     out = {
-        "t": eb.t, "p.value": eb.p_value, "lods": eb.lods, "F": eb.f_statistic,
-        "F.p.value": eb.f_p_value, "s2.prior": eb.prior_variance, "df.prior": eb.prior_df,
+        "t": eb.t, "p.value": eb.p_value, "lods": eb.log_odds, "F": eb.f_statistic,
+        "F.p.value": eb.f_p_value, "s2.prior": eb.prior_variance, "df.prior": eb.df_prior,
         "s2.post": eb.posterior_variance, "df.total": eb.df_total,
         "var.prior": eb.coefficient_prior_variance, "treat.p": tr.p_value,
         # limma reports t = 0 for coefficients that are NaN; here they stay NaN
@@ -603,7 +603,7 @@ def variance_results(case, run):
     out = {
         "var.post": squeezed.posterior_variance,
         "var.prior": squeezed.prior_variance,
-        "df.prior": squeezed.prior_df,
+        "df.prior": squeezed.df_prior,
     }
     if legacy == "FALSE":
         fit = fit_f_distribution_likelihood(

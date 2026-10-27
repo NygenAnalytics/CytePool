@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cytepool.cube import Cube, from_cells
-from cytepool.io import cube_files, read_cube, write_cube
+from cytepool import Cube, from_cells, read_cube, write_cube
+from cytepool.io import cube_files
 
 FIXTURES = Path(__file__).parent / "data" / "cube_fingerprints"
 REFERENCE = json.loads((FIXTURES / "reference.json").read_text("utf-8"))
@@ -268,10 +268,12 @@ def test_pooling_some_cells_equals_selecting_their_samples() -> None:
     counts[np.flatnonzero(samples == "S3")[0], 0] = 2.0**33  # S3 needs uint64 counts
     kept = samples != "S3"
 
-    pooled = from_cells(counts, samples=samples, groups=groups).select(
+    pooled = from_cells(counts, sample_labels=samples, group_labels=groups).select(
         samples=["S1", "S2"]
     )
-    subset = from_cells(counts[kept], samples=samples[kept], groups=groups[kept])
+    subset = from_cells(
+        counts[kept], sample_labels=samples[kept], group_labels=groups[kept]
+    )
 
     assert pooled.layer("counts").dtype == np.uint64
     assert subset.layer("counts").dtype == np.uint32

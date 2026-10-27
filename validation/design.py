@@ -54,7 +54,8 @@ from typing import Any
 
 import numpy as np
 
-from cytepool.design import Design, make_contrasts, model_matrix, parse_formula
+from cytepool import Design
+from cytepool.design import make_contrasts, model_matrix, parse_formula
 
 SEED = 20261023
 N_SAMPLES = 24

@@ -2,16 +2,17 @@
 CollecTRI's transcription factors and PROGENy's pathways, downloaded from their
 releases, and networks given as tables.
 
-A :class:`Network` maps each source, a transcription factor or a pathway, to its
-targets, the genes it regulates or that respond to it, each with a weight whose sign
-says whether the source raises the gene (positive) or lowers it (negative). The
-activity functions of :mod:`cytepool.activity` take one, as decoupler takes its
-networks (Badia-i-Mompel et al. 2022): a table with the columns ``source``,
-``target`` and ``weight``. A network records its name, version, where it comes from,
-its licence and its citation, and, for a network read from a file, the name of the
-file and its SHA-256 digest.
+A :class:`~cytepool.Network` maps each source, a transcription factor or a pathway, to
+its targets, the genes it regulates or that respond to it, each with a weight whose sign
+says whether the source raises the gene (positive) or lowers it (negative). The activity
+functions (:func:`~cytepool.ulm`, :func:`~cytepool.mlm` and
+:func:`~cytepool.weighted_aggregate`) take one, as decoupler takes its networks
+(Badia-i-Mompel et al. 2022): a table with the columns ``source``, ``target`` and
+``weight``. A network records its name, version, where it comes from, its licence and
+its citation, and, for a network read from a file, the name of the file and its SHA-256
+digest.
 
-CollecTRI (:func:`collectri`):
+CollecTRI (:func:`~cytepool.collectri`):
     The signed regulons of 1,186 human transcription factors, 43,175 interactions,
     that Mueller-Dott et al. (2023) assembled from twelve resources of literature
     curation and text mining: version 2.0 of the file ``CollecTRI_regulons.csv`` of
@@ -32,7 +33,7 @@ CollecTRI (:func:`collectri`):
     CC BY-SA 4.0 (TRRUST), LGPL 3.0 (HTRIdb) and an informal licence (DoRothEA's
     level A). Use under any level is subject to these terms, such as attribution.
 
-PROGENy (:func:`progeny`):
+PROGENy (:func:`~cytepool.progeny`):
     The weights of the genes that respond to 14 signalling pathways, from the
     perturbation experiments of Schubert et al. (2018), for human, and their
     transfer to mouse (Holland, Szalai and Saez-Rodriguez 2020): the data frames
@@ -216,7 +217,7 @@ class Network(Mapping[str, Mapping[str, float]]):
             columns, such as a p-value or the resources of an interaction, are kept
             with the edges. Or a mapping of source to its targets: a mapping of gene
             id to weight, or a list of gene ids, each of weight 1, so that a
-            :class:`~cytepool.gene_sets.GeneSets` is a network of unweighted sets.
+            :class:`~cytepool.GeneSets` is a network of unweighted sets.
         name: The network's name, such as ``"CollecTRI"``.
         version: Its version or release.
         url: Where it was obtained.
@@ -419,21 +420,20 @@ class Network(Mapping[str, Mapping[str, float]]):
     def to_gene_sets(self) -> GeneSets:
         """Return the targets of each source as a gene set, without their weights.
 
-        The gene-set tests and per-sample scores take gene sets, such as the
-        regulons of CollecTRI to test with :func:`~cytepool.gsea.gsea` or score with
-        :func:`~cytepool.pathway_scores.gsva`. Each source becomes a set of its
-        targets, in the order of the edges, named by the source. The weights, and
-        so the signs that tell activated targets from repressed ones, are left out:
-        :func:`~cytepool.activity.ulm` and the other activity methods use them. The
-        sets keep the network's name, as their ``source``, version, licence, file
-        and digest.
+        The gene-set tests and per-sample scores take gene sets, such as the regulons of
+        CollecTRI to test with :func:`~cytepool.gsea` or score with
+        :func:`~cytepool.gsva`. Each source becomes a set of its targets, in the order
+        of the edges, named by the source. The weights, and so the signs that tell
+        activated targets from repressed ones, are left out: :func:`~cytepool.ulm` and
+        the other activity methods use them. The sets keep the network's name, version,
+        licence, file and digest.
 
         Returns:
-            A :class:`~cytepool.gene_sets.GeneSets` with one set per source.
+            A :class:`~cytepool.GeneSets` with one set per source.
         """
         return GeneSets(
             {source: list(self._targets[source]) for source in self._sources},
-            source=self._name,
+            name=self._name,
             version=self._version,
             licence=self._licence,
             file=self._file,

@@ -33,7 +33,7 @@ References, run as separate programs on files in a temporary directory:
   ``covid`` with ``~ donor + condition``, the steps of
   ``validation/differential_expression.py`` (``min_cells=10``, ``filterByExpr``,
   TMM, ``voom`` with ``adaptive.span = TRUE``, ``lmFit``, ``eBayes``, ``topTable``).
-  ``limma_voom`` on every aligned cube, lined up by ``align_study_results``, must give
+  ``limma_voom`` on every aligned cube, lined up by ``StudyResults.table``, must give
   limma's tables, ``"not_measured"`` for every gene the study did not measure and
   ``"not_tested"`` for the others limma left out; ``limma_voom`` on the stack must
   give the joint model. A control fits the joint model with the donor ids as the
@@ -68,11 +68,14 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.cube import CubeCollection, from_cells
-from cytepool.design import Design
-from cytepool.differential_expression import limma_voom
-from cytepool.io.anndata import to_anndata
-from cytepool.meta_analysis import align_study_results
+from cytepool import (
+    CubeCollection,
+    Design,
+    StudyResults,
+    from_cells,
+    limma_voom,
+    to_anndata,
+)
 
 SEED = 20261026
 EXACT = 1e-10
@@ -88,7 +91,7 @@ COLUMNS = (
     "t",
     "p_value",
     "adjusted_p_value",
-    "b_statistic",
+    "log_odds",
     "standard_error",
 )
 ONTOLOGY = {"B": "CL:0000236", "CD4": "CL:0000624", "CD8": "CL:0000625"}
@@ -298,10 +301,10 @@ def simulate(rng, name, genes, groups, samples, cells, unmeasured=()):
     measured[list(unmeasured)] = False
     return from_cells(
         np.vstack(blocks),
-        samples=sample_labels,
-        groups=group_labels,
-        sample_table=samples,
-        group_table=groups,
+        sample_labels=sample_labels,
+        group_labels=group_labels,
+        samples=samples,
+        groups=groups,
         features={"feature_id": genes, "measured": measured},
         source={"study": name, "simulation": "validation/cube_collection.py"},
     )
@@ -548,8 +551,9 @@ def check_limma(collection, reference):
         cube = collection.aligned_cube(study)
         design = Design(cube.samples, FORMULAS[study], levels=levels)
         results[study] = limma_voom(cube, design, contrasts=contrast)
+    studies = StudyResults(collection, results)
     tables = {
-        group: align_study_results(collection, results, group, "stim")
+        group: studies.table(group, "stim")
         for group in collection.groups["group_id"].tolist()
     }
     rows = []

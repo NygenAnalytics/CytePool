@@ -27,9 +27,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool import plotting
-from cytepool.cube import Cube, from_cells
-from cytepool.principal_components import PrincipalComponents, principal_components
+from cytepool import (
+    Cube,
+    PrincipalComponents,
+    from_cells,
+    plotting,
+    principal_components,
+)
+from cytepool.normalization import filter_by_expression, log2_cpm, tmm_factors
 
 FIGURE = pytest.importorskip("matplotlib.figure")
 
@@ -45,7 +50,7 @@ MARKERS["others"] = ["g10", "g20", "g30", "g39"]
 GENES = [gene for genes in MARKERS.values() for gene in genes]
 DOT_CASES: dict[str, dict[str, Any]] = {
     "plain": {},
-    "scaled by gene": {"standard_scale": "gene"},
+    "scaled by gene": {"standard_scale": "feature"},
     "scaled by group": {"standard_scale": "group"},
     "expressing cells": {"mean_only_expressed": True},
     "chosen samples and groups": {
@@ -135,7 +140,7 @@ def test_components_are_those_of_plotPCA_up_to_sign(
     )
     assert scaled(result.variance_explained[chosen], data[f"{case} percent"]) <= EXACT
     # 500 is more than the genes: every gene, in decreasing order of variance.
-    assert result.genes.size == min(top, data["values"].shape[1])
+    assert len(result.features) == min(top, data["values"].shape[1])
 
 
 def test_genes_of_equal_variance_keep_their_order_as_plotPCA_keeps_them() -> None:
@@ -143,7 +148,7 @@ def test_genes_of_equal_variance_keep_their_order_as_plotPCA_keeps_them() -> Non
     result = principal_components(data["ties"], top=20)
 
     # Genes 18 to 21 (from 0) have equal variance; the 20 kept end with 18 and 19.
-    assert result.genes.tolist()[-2:] == [18, 19]
+    assert result.features["position"].tolist()[-2:] == [18, 19]
     assert up_to_sign(result.coordinates[:, :2], data["ties coordinates"]) <= EXACT
 
 
@@ -172,9 +177,11 @@ def test_components_of_a_cube_record_the_cube_they_read() -> None:
     # Both pickle, the provenance with them; the copy keeps none it did not have.
     for found in (result, of_values):
         copy = pickle.loads(pickle.dumps(found))
-        for name in ("coordinates", "variance_explained", "loadings", "genes"):
+        for name in ("coordinates", "variance_explained", "loadings"):
             assert_array_equal(getattr(copy, name), getattr(found, name))
             assert not getattr(copy, name).flags.writeable
+        assert copy.features.equals(found.features)
+        assert not copy.features["position"].flags.writeable
         assert copy.samples.equals(found.samples)
         assert dict(copy.settings) == dict(found.settings)
         assert copy.provenance == found.provenance
@@ -213,7 +220,7 @@ def test_dot_plot_areas_and_colours_are_scanpys(case: str) -> None:
         assert [t.get_text() for t in artists(ax, "gene group names")] == labels
 
 
-@pytest.mark.parametrize("standard_scale", [None, "gene"])
+@pytest.mark.parametrize("standard_scale", [None, "feature"])
 def test_dot_plot_labels_its_colour_bar_clear_of_the_key(
     standard_scale: str | None,
 ) -> None:
@@ -248,6 +255,41 @@ def test_dot_plot_labels_its_colour_bar_clear_of_the_key(
 # Values derived by hand, and invariants.
 
 
+def test_the_features_used_are_their_positions_with_the_cubes_columns() -> None:
+    cube = pca_cube()
+    named = cube.with_columns(features={"symbol": [f"G{j}" for j in range(300)]})
+    result = principal_components(named, top=100)
+    features = result.features
+    positions = features["position"]
+    assert features.columns == ("position", "feature_id", "symbol")
+    assert len(features) == 100 and np.unique(positions).size == 100
+    assert features.select(["feature_id", "symbol"]).equals(
+        named.features.take(positions)
+    )
+    # They are the features whose values give the coordinates: those that
+    # filter_by_expression keeps on the samples with 10 cells or more, as log2-CPM
+    # with TMM factors and a prior count of 2, in decreasing order of variance.
+    rows = np.flatnonzero(fixture("pca")["n_cells"] >= 10)
+    counts = np.asarray(named.layer("counts", "T"), dtype=np.float64)[rows]
+    kept = np.flatnonzero(filter_by_expression(counts, sample_groups=np.zeros(10)))
+    values = log2_cpm(
+        counts[:, kept], norm_factors=tmm_factors(counts[:, kept]), prior_count=2.0
+    )
+    columns = np.searchsorted(kept, positions)
+    assert_array_equal(kept[columns], positions)
+    used = values[:, columns]
+    assert_allclose(
+        (used - used.mean(axis=0)) @ result.loadings, result.coordinates, atol=1e-12
+    )
+    assert np.all(np.diff(np.var(used, axis=0)) <= 0.0)
+    # The features of an array are its columns, by position alone.
+    of_values = principal_components(random_values(), top=25)
+    assert of_values.features.columns == ("position",)
+    variance = np.var(random_values(), axis=0)
+    expected = np.argsort(-variance, kind="stable")[:25]
+    assert_array_equal(of_values.features["position"], expected)
+
+
 def test_three_samples_on_two_genes_whose_components_are_the_genes() -> None:
     # Centred, gene 0 is (-1, 1, 0) and gene 1 (-1/3, -1/3, 2/3): orthogonal, with
     # sums of squares 2 and 2/3, so the components are the genes with shares 3/4 and
@@ -260,7 +302,7 @@ def test_three_samples_on_two_genes_whose_components_are_the_genes() -> None:
     )
     assert_allclose(result.variance_explained, [0.75, 0.25], rtol=1e-15)
     assert_allclose(np.abs(result.loadings), np.eye(2), atol=1e-15)
-    assert result.genes.tolist() == [0, 1]
+    assert result.features["position"].tolist() == [0, 1]
     assert result.samples["sample_id"].tolist() == ["1", "2", "3"]
 
 
@@ -270,7 +312,7 @@ def test_two_samples_have_one_component_along_their_difference() -> None:
     values = np.array([[0.0, 0.0, 5.0], [3.0, 4.0, 5.0]])
     result = principal_components(values, top=2)
 
-    assert result.genes.tolist() == [1, 0]
+    assert result.features["position"].tolist() == [1, 0]
     assert_allclose(result.coordinates, [[2.5], [-2.5]], rtol=1e-15)
     assert_allclose(result.loadings, [[-0.8], [-0.6]], rtol=1e-15)
     assert_allclose(result.variance_explained, [1.0])
@@ -282,7 +324,7 @@ def test_one_gene_gives_its_centred_values() -> None:
     values = np.array([[1.0, 9.0], [4.0, 9.5], [7.0, 10.0], [0.0, 11.0]])
     result = principal_components(values, top=1)
 
-    assert result.genes.tolist() == [0]  # variance 10 against 0.729
+    assert result.features["position"].tolist() == [0]  # variance 10, not 0.729
     assert_allclose(result.coordinates[:, 0], [-2.0, 1.0, 4.0, -3.0])
 
 
@@ -307,7 +349,7 @@ def test_the_order_of_samples_and_genes_and_the_sign_of_the_values_do_not_matter
     assert_allclose(by_sample.coordinates, base.coordinates[samples], atol=1e-12)
     by_gene = principal_components(values[:, genes], top=25)
     assert_allclose(by_gene.coordinates, base.coordinates, atol=1e-12)
-    assert_array_equal(genes[by_gene.genes], base.genes)
+    assert_array_equal(genes[by_gene.features["position"]], base.features["position"])
     negated = principal_components(-values, top=25)
     assert_allclose(negated.coordinates, base.coordinates, atol=1e-12)
     assert_allclose(negated.loadings, -base.loadings, atol=1e-12)
@@ -318,9 +360,8 @@ def test_the_order_of_samples_and_genes_and_the_sign_of_the_values_do_not_matter
 
 def test_components_are_orthonormal_and_their_shares_sum_to_one() -> None:
     result = principal_components(random_values(), top=25)
-    centred = random_values()[:, result.genes] - random_values()[:, result.genes].mean(
-        0
-    )
+    used = random_values()[:, result.features["position"]]
+    centred = used - used.mean(0)
 
     assert result.n_components == 8  # one fewer than the samples
     assert_allclose(result.loadings.T @ result.loadings, np.eye(8), atol=1e-12)
@@ -466,8 +507,8 @@ def cells() -> dict[str, Any]:
     counts[counts.sum(axis=1) == 0, 0] = 1.0
     return {
         "counts": counts,
-        "samples": rng.choice(["s1", "s2", "s3"], n),
-        "groups": rng.choice(["B", "T", "NK"], n),
+        "sample_labels": rng.choice(["s1", "s2", "s3"], n),
+        "group_labels": rng.choice(["B", "T", "NK"], n),
         "features": [f"x{j}" for j in range(12)],
     }
 
@@ -478,9 +519,11 @@ def test_a_merged_group_and_pooled_samples_are_the_same_cells_given_one_label() 
     genes = ["x0", "x3", "x7", "x11"]
     merged = cube.regroup({"BT": ["B", "T"]})
     relabelled = from_cells(
-        **(data | {"groups": np.where(data["groups"] == "NK", "NK", "BT")})
+        **(data | {"group_labels": np.where(data["group_labels"] == "NK", "NK", "BT")})
     )
-    one_sample = from_cells(**(data | {"samples": np.full(data["groups"].size, "all")}))
+    one_sample = from_cells(
+        **(data | {"sample_labels": np.full(data["group_labels"].size, "all")})
+    )
 
     for first, second, groups in (
         (merged, relabelled, ["BT"]),
@@ -499,14 +542,14 @@ def test_a_merged_group_and_pooled_samples_are_the_same_cells_given_one_label() 
 def test_scaled_means_run_from_zero_to_one() -> None:
     cube = from_cells(**cells())
     genes = ["x0", "x3", "x7", "x11"]
-    for scale, axis in (("gene", 0), ("group", 1)):
+    for scale, axis in (("feature", 0), ("group", 1)):
         ax = plotting.plot_dotplot(cube, genes, standard_scale=scale, ax=axes())
         values = np.asarray(artists(ax, "dots")[0].get_array()).reshape(3, 4)
         assert_allclose(values.min(axis=axis), 0.0, atol=0)
         assert_allclose(values.max(axis=axis), 1.0, rtol=1e-15)
     # A gene equal in every group is 0 throughout.
     ax = plotting.plot_dotplot(
-        hand_cube(), ["a", "b"], standard_scale="gene", ax=axes()
+        hand_cube(), ["a", "b"], standard_scale="feature", ax=axes()
     )
     assert_array_equal(artists(ax, "dots")[0].get_array(), [0.0, 0.0])
 
@@ -550,11 +593,11 @@ def test_dot_plots_refuse_what_they_cannot_draw() -> None:
     )
     with pytest.raises(ValueError, match="the cube lacks cell numbers"):
         plotting.plot_dotplot(bulk, ["a"], ax=axes())
-    with pytest.raises(KeyError, match="no gene 'c'"):
+    with pytest.raises(KeyError, match="no feature 'c'"):
         plotting.plot_dotplot(hand_cube(), ["c"], ax=axes())
-    with pytest.raises(ValueError, match="genes is empty"):
+    with pytest.raises(ValueError, match="features is empty"):
         plotting.plot_dotplot(hand_cube(), [], ax=axes())
-    with pytest.raises(ValueError, match="the group of genes 'g' is empty"):
+    with pytest.raises(ValueError, match="the group of features 'g' is empty"):
         plotting.plot_dotplot(hand_cube(), {"g": []}, ax=axes())
     with pytest.raises(KeyError, match="no group 'B'"):
         plotting.plot_dotplot(hand_cube(), ["a"], groups=["B"], ax=axes())
@@ -568,7 +611,10 @@ def test_dot_plots_refuse_what_they_cannot_draw() -> None:
     with pytest.raises(ValueError, match="pseudocount of 1"):
         plotting.plot_dotplot(without, ["a"], mean_only_expressed=True, ax=axes())
     empty = from_cells(
-        **(cells() | {"groups": np.where(cells()["samples"] == "s1", "A", "B")})
+        **(
+            cells()
+            | {"group_labels": np.where(cells()["sample_labels"] == "s1", "A", "B")}
+        )
     )
     with pytest.raises(
         ValueError, match="group 'A' has no cells in the samples pooled"
@@ -586,7 +632,7 @@ def test_dot_plots_refuse_what_they_cannot_draw() -> None:
         n_cells=np.array([[1]]),
         normalization={"method": "library_size"},
     )
-    with pytest.raises(ValueError, match="the symbol 'G' names 2 genes"):
+    with pytest.raises(ValueError, match="the symbol 'G' names 2 features"):
         plotting.plot_dotplot(twice, ["G"], ax=axes())
     with pytest.raises(ValueError, match=r"vmin \(3\) must be below vmax \(1\)"):
         plotting.plot_dotplot(hand_cube(), ["a"], vmin=3, vmax=1, ax=axes())

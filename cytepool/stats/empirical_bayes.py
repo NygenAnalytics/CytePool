@@ -276,14 +276,14 @@ class SqueezedVariances(NamedTuple):
             inverses of the posterior means of their reciprocals.
         prior_variance: The prior variance: one value per feature when it follows a
             covariate or with at most two variances, a float otherwise.
-        prior_df: The prior degrees of freedom: a float, or one value per feature
+        df_prior: The prior degrees of freedom: a float, or one value per feature
             from a robust fit (from the likelihood estimator only when it finds
             outliers, as in limma).
     """
 
     posterior_variance: FloatArray
     prior_variance: float | FloatArray
-    prior_df: float | FloatArray
+    df_prior: float | FloatArray
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -297,27 +297,28 @@ class ModeratedFit:
         fit: The linear model fit.
         prior_variance: The prior variance s0^2 (limma's ``s2.prior``): a float, or
             one value per feature with a trend or with at most two features.
-        prior_df: The prior degrees of freedom d0 (``df.prior``): a float, possibly
+        df_prior: The prior degrees of freedom d0 (``df.prior``): a float, possibly
             infinite, or one value per feature from a robust fit (from the
             likelihood estimator only when it finds outliers, as in limma).
         posterior_variance: ``(n_features,)`` posterior variances (``s2.post``).
         df_total: ``(n_features,)`` degrees of freedom of the moderated t-statistics,
-            ``df_residual + prior_df`` capped at the residual degrees of freedom
+            ``df_residual + df_prior`` capped at the residual degrees of freedom
             summed over all features (``df.total``).
         t: ``(n_features, n_coefficients)`` moderated t-statistics.
         p_value: Two-sided p-values of ``t`` on ``df_total`` degrees of freedom.
-        lods: Log-odds that each coefficient is non-zero (the B-statistic), on the
-            natural log scale.
+        log_odds: Log-odds that each coefficient is non-zero (limma's B-statistic,
+            ``lods``), on the natural log scale.
         coefficient_prior_variance: ``(n_coefficients,)`` unscaled prior variance v0
             of a non-zero coefficient, which is N(0, v0 sigma_g^2) (``var.prior``).
         f_statistic: ``(n_features,)`` moderated F-statistics testing all
             coefficients equal to zero.
         f_p_value: P-values of ``f_statistic`` on ``f_df1`` and
-            ``df_residual + prior_df`` degrees of freedom; limma does not cap the
+            ``df_residual + df_prior`` degrees of freedom; limma does not cap the
             denominator degrees of freedom here (found by probing).
         f_df1: Numerator degrees of freedom of the F-tests: the rank of the
             correlation matrix of the coefficients.
-        proportion: The assumed proportion of non-zero coefficients behind ``lods``.
+        proportion: The assumed proportion of non-zero coefficients behind
+            ``log_odds``.
         prior_estimator: The estimator of the prior: ``"moments"`` or
             ``"likelihood"`` (see :func:`squeeze_variances`); with at most two
             features neither is used.
@@ -325,12 +326,12 @@ class ModeratedFit:
 
     fit: LinearModelFit
     prior_variance: float | FloatArray
-    prior_df: float | FloatArray
+    df_prior: float | FloatArray
     posterior_variance: FloatArray
     df_total: FloatArray
     t: FloatArray
     p_value: FloatArray
-    lods: FloatArray
+    log_odds: FloatArray
     coefficient_prior_variance: FloatArray
     f_statistic: FloatArray
     f_p_value: FloatArray
@@ -344,15 +345,15 @@ class ModeratedFit:
         """Return the tests of one coefficient or contrast as a table.
 
         limma's ``topTable(sort.by = "none")``, with the columns of the tables of
-        :func:`~cytepool.differential_expression.limma_voom`, one row per feature
-        in the order of the fit: ``feature_id``; ``log2_fold_change``, the
-        coefficient (``logFC``); ``standard_error``, its moderated standard error,
-        ``stdev_unscaled`` times the posterior standard deviation;
-        ``average_log2_cpm``, the mean of the values fitted (``AveExpr``); ``t`` and
-        ``p_value``; ``adjusted_p_value``, Benjamini-Hochberg over the features
-        (``adj.P.Val``); and ``log_odds``, the B-statistic (``B``). The names of the
-        effect and of the mean are those of log2 counts per million, such as voom's,
-        as limma names them ``logFC`` and ``AveExpr`` whatever the values.
+        :func:`~cytepool.limma_voom`, one row per feature in the order of the fit:
+        ``feature_id``; ``log2_fold_change``, the coefficient (``logFC``);
+        ``standard_error``, its moderated standard error, ``stdev_unscaled`` times the
+        posterior standard deviation; ``average_log2_cpm``, the mean of the values
+        fitted (``AveExpr``); ``t`` and ``p_value``; ``adjusted_p_value``,
+        Benjamini-Hochberg over the features (``adj.P.Val``); and ``log_odds``, the
+        B-statistic (``B``). The names of the effect and of the mean are those of log2
+        counts per million, such as voom's, as limma names them ``logFC`` and
+        ``AveExpr`` whatever the values.
 
         Args:
             coefficient: The coefficient or contrast, by name or position; it may be
@@ -380,7 +381,7 @@ class ModeratedFit:
                 "t": self.t[:, j],
                 "p_value": p_value,
                 "adjusted_p_value": adjust_p_values(p_value, "bh"),
-                "log_odds": self.lods[:, j],
+                "log_odds": self.log_odds[:, j],
             }
         )
 
@@ -388,7 +389,7 @@ class ModeratedFit:
         return (
             f"ModeratedFit(n_features={self.t.shape[0]}, "
             f"coefficient_names={self.fit.coefficient_names!r}, "
-            f"prior_df={value_range(self.prior_df)}, "
+            f"df_prior={value_range(self.df_prior)}, "
             f"prior_variance={value_range(self.prior_variance)}, "
             f"prior_estimator={self.prior_estimator!r})"
         )
@@ -403,7 +404,7 @@ class TreatFit:
         lfc: The threshold tau of the null hypothesis |beta| <= tau, on the scale of
             the coefficients (log2 fold changes for log2 expression).
         prior_variance: The prior variance, as in :class:`ModeratedFit`.
-        prior_df: The prior degrees of freedom, as in :class:`ModeratedFit`.
+        df_prior: The prior degrees of freedom, as in :class:`ModeratedFit`.
         posterior_variance: ``(n_features,)`` posterior variances.
         df_total: ``(n_features,)`` degrees of freedom of the tests.
         t: ``(n_features, n_coefficients)`` moderated t-statistics shrunk towards
@@ -416,7 +417,7 @@ class TreatFit:
     fit: LinearModelFit
     lfc: float
     prior_variance: float | FloatArray
-    prior_df: float | FloatArray
+    df_prior: float | FloatArray
     posterior_variance: FloatArray
     df_total: FloatArray
     t: FloatArray
@@ -828,8 +829,8 @@ def moderated_statistics(
             fit.stdev_unscaled * np.sqrt(squeezed.posterior_variance)[:, np.newaxis]
         )
     p_value = 2.0 * _as_array(t_sf(np.abs(t), df_total[:, np.newaxis]))
-    prior_df = np.broadcast_to(squeezed.prior_df, df_total.shape)
-    infinite = np.isinf(prior_df)
+    df_prior = np.broadcast_to(squeezed.df_prior, df_total.shape)
+    infinite = np.isinf(df_prior)
     prior_variance = np.broadcast_to(squeezed.prior_variance, df_total.shape)
     median_prior = float(np.nanmedian(prior_variance))
     v0 = np.array(
@@ -850,17 +851,17 @@ def moderated_statistics(
             v0[failed] = np.reciprocal(prior_variance[0])
     lods = log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
     f_value, f_df1 = _f_statistics(t, fit, exact)
-    f_df2 = prior_df + fit.df_residual
+    f_df2 = df_prior + fit.df_residual
     f_p_value = _as_array(f_sf(f_value, float(f_df1), f_df2))
     return ModeratedFit(
         fit=fit,
         prior_variance=_frozen(squeezed.prior_variance),
-        prior_df=_frozen(squeezed.prior_df),
+        df_prior=_frozen(squeezed.df_prior),
         posterior_variance=_frozen(squeezed.posterior_variance),
         df_total=_frozen(df_total),
         t=_frozen(t),
         p_value=_frozen(p_value),
-        lods=_frozen(lods),
+        log_odds=_frozen(lods),
         coefficient_prior_variance=_frozen(v0),
         f_statistic=_frozen(f_value),
         f_p_value=_frozen(f_p_value),
@@ -940,7 +941,7 @@ def treat(
         fit=fit,
         lfc=threshold,
         prior_variance=_frozen(squeezed.prior_variance),
-        prior_df=_frozen(squeezed.prior_df),
+        df_prior=_frozen(squeezed.df_prior),
         posterior_variance=_frozen(squeezed.posterior_variance),
         df_total=_frozen(df_total),
         t=_frozen(shrunk),
@@ -984,7 +985,7 @@ def _fit_moments(
             df2 = math.inf
             scale = float(np.mean(values))
         return FDistributionFit(scale, df2)
-    fitted, residual_df = _spline_trend(covariate, usable, e)
+    fitted, df_residual = _spline_trend(covariate, usable, e)
     if fitted is None:
         # A trend of one degree of freedom is a constant: limma then fits no trend,
         # which matters for an infinite df2, where the scale is the mean variance
@@ -992,7 +993,7 @@ def _fit_moments(
         constant = _fit_moments(x, d, None, usable)
         return FDistributionFit(np.full(x.size, constant.scale), constant.df2)
     residuals = e - fitted[usable]
-    e_variance = float(np.sum(residuals**2)) / residual_df - mean_trigamma
+    e_variance = float(np.sum(residuals**2)) / df_residual - mean_trigamma
     if e_variance > 0.0:
         df2 = 2.0 * float(trigamma_inverse(e_variance))
         shift = float(_log_minus_digamma(np.array([df2 / 2.0]))[0])
@@ -1658,7 +1659,7 @@ def _squeeze(
     if x.size <= 2:
         return SqueezedVariances(x.copy(), x.copy(), 0.0)
     prior_variance: float | FloatArray
-    prior_df: float | FloatArray
+    df_prior: float | FloatArray
     if estimator == "likelihood":
         # limma's likelihood estimator does not stop on mostly zero variances.
         _check_zero_variances(x, usable, robust=False)
@@ -1668,17 +1669,17 @@ def _squeeze(
         fitted = _fit_likelihood(missing, d, covariate, np.ones(x.size), robust)
         prior_variance = fitted.scale
         # A robust fit gives each feature its prior df once it finds outliers.
-        prior_df = fitted.df2 if math.isnan(fitted.df2_outlier) else fitted.df2_shrunk
+        df_prior = fitted.df2 if math.isnan(fitted.df2_outlier) else fitted.df2_shrunk
     elif robust:
         _check_zero_variances(x, usable, robust)
         robust_fit = _fit_robust(x, d, covariate, usable, p_lower, p_upper)
-        prior_variance, prior_df = robust_fit.scale, robust_fit.df2_shrunk
+        prior_variance, df_prior = robust_fit.scale, robust_fit.df2_shrunk
     else:
         _check_zero_variances(x, usable, robust)
         moments = _fit_moments(x, d, covariate, usable)
-        prior_variance, prior_df = moments.scale, moments.df2
+        prior_variance, df_prior = moments.scale, moments.df2
     return SqueezedVariances(
-        posterior_variances(x, d, prior_variance, prior_df), prior_variance, prior_df
+        posterior_variances(x, d, prior_variance, df_prior), prior_variance, df_prior
     )
 
 
@@ -1708,8 +1709,8 @@ def _moderate(
     squeezed = _squeeze(
         variances, df, covariate, usable, robust, lower, upper, estimator
     )
-    prior_df = np.broadcast_to(squeezed.prior_df, df.shape)
-    df_total = np.minimum(df + prior_df, float(df.sum()))
+    df_prior = np.broadcast_to(squeezed.df_prior, df.shape)
+    df_total = np.minimum(df + df_prior, float(df.sum()))
     return squeezed, df_total, estimator
 
 

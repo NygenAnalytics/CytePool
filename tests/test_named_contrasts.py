@@ -18,7 +18,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from cytepool.design import Contrasts, Design, make_contrasts
+from cytepool import Design
+from cytepool.design import Contrasts, make_contrasts
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 
@@ -481,7 +482,7 @@ def test_moderated_statistics_of_design_contrasts_match_a_reparametrised_design(
     assert (fit.coefficient_names == design.columns) == (formula == design.formula)
     contrasted = contrasts_fit(fit, design.contrasts)
     moderated = moderated_statistics(contrasted)
-    assert np.isfinite(moderated.prior_df)  # the variances are moderated
+    assert np.isfinite(moderated.df_prior)  # the variances are moderated
 
     # The independent route: designs whose coefficients are the contrasts, from a
     # change of reference level and from age centred at 50 with group means.
@@ -509,7 +510,7 @@ def test_moderated_statistics_of_design_contrasts_match_a_reparametrised_design(
         # t-statistics and log-odds near zero carry absolute, not relative, precision.
         assert_agrees(moderated.t[:, j], reference.t[:, k], floor=1.0)
         assert_agrees(moderated.p_value[:, j], reference.p_value[:, k])
-        assert_agrees(moderated.lods[:, j], reference.lods[:, k], floor=1.0)
+        assert_agrees(moderated.log_odds[:, j], reference.log_odds[:, k], floor=1.0)
     # Not a check of the contrasts, which these do not depend on, but of what the
     # contrasted fit carries over: the residual variances of each feature, and so
     # the prior and posterior variances of any parametrisation.

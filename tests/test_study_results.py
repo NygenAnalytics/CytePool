@@ -1,8 +1,8 @@
 """Every study of a collection analysed alike, and the results lined up gene by gene.
 
 ``analyse_each_study`` is checked against the loop it replaces, written out with the
-validated functions, and ``StudyResults`` against ``align_study_results`` and each
-study's own table.
+validated functions, and ``StudyResults`` against the same results given as a mapping
+and each study's own table.
 """
 
 import pickle
@@ -15,19 +15,17 @@ import pytest
 from numpy.testing import assert_array_equal
 from test_cube_collection import LEVELS, fixture_collection
 
-from cytepool.cube import CubeCollection
-from cytepool.design import Design
-from cytepool.differential_expression import (
+from cytepool import (
+    CubeCollection,
+    Design,
     DifferentialExpressionResult,
+    StudyResults,
+    analyse_each_study,
     dream_voom,
     limma_trend,
     limma_voom,
+    meta_analysis,
 )
-from cytepool.meta_analysis import (
-    align_study_results,
-    differential_expression_meta_analysis,
-)
-from cytepool.study_results import StudyResults, analyse_each_study
 
 FORMULA = "~ donor + condition"
 CONTRASTS = {"stim": "conditionstim"}
@@ -119,7 +117,7 @@ def test_the_table_lines_up_each_study_and_the_matrix_takes_one_column() -> None
     for group in collection.groups["group_id"].tolist():
         table = results.table(group, "stim")
         assert table.equals(
-            align_study_results(collection, dict(results), group, "stim")
+            StudyResults(collection, dict(results)).table(group, "stim")
         )
         for column in ("p_value", "t", "log2_fold_change"):
             matrix = results.matrix(column, group, "stim")
@@ -202,8 +200,8 @@ def test_the_results_are_a_read_only_mapping_that_pickles() -> None:
     group = pair().groups["group_id"][0]
     assert restored.table(group).equals(results.table(group))
     # The combining functions take the results as they take a dict of them.
-    meta = differential_expression_meta_analysis(results)
-    expected = differential_expression_meta_analysis(dict(results))
+    meta = meta_analysis(results)
+    expected = meta_analysis(dict(results))
     assert meta.table(group, "stim").equals(expected.table(group, "stim"))
 
 

@@ -24,10 +24,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
-from cytepool import networks
-from cytepool.gene_sets import GeneSets
-from cytepool.networks import Network, collectri, progeny
-from cytepool.table import Table
+from cytepool import GeneSets, Network, Table, collectri, networks, progeny
 
 DATA = Path(__file__).parent / "data" / "activity"
 ROWS = (DATA / "collectri_rows.csv").read_bytes()
@@ -313,7 +310,7 @@ def test_a_network_selects_records_and_pickles() -> None:
 def _as_written_in_the_guides(network: Network) -> GeneSets:
     return GeneSets(
         {source: list(targets) for source, targets in network.items()},
-        source=network.name,
+        name=network.name,
         version=network.version,
         licence=network.licence,
         file=network.file,
@@ -325,7 +322,7 @@ def _same_sets(ours: GeneSets, expected: GeneSets) -> None:
     assert list(ours) == list(expected)
     for name in expected:
         assert ours[name] == expected[name]
-    for attribute in ("source", "version", "licence", "file", "sha256"):
+    for attribute in ("name", "version", "licence", "file", "sha256"):
         assert getattr(ours, attribute) == getattr(expected, attribute), attribute
 
 
@@ -340,7 +337,7 @@ def test_a_network_as_gene_sets_drops_the_weights_and_keeps_the_record(
         "IRF1": ("CXCL10", "MYC"),
     }
     _same_sets(sets, _as_written_in_the_guides(network))
-    assert (sets.source, sets.version, sets.licence) == ("mine", "1", "CC0")
+    assert (sets.name, sets.version, sets.licence) == ("mine", "1", "CC0")
     # Back to a network, every target weighs 1.
     again = Network(sets)
     assert again.edges.select(["source", "target"]).equals(

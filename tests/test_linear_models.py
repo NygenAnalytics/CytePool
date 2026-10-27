@@ -16,9 +16,8 @@ import numba
 import numpy as np
 import pytest
 
+from cytepool import Design, from_bulk
 from cytepool._jit import thread_limit
-from cytepool.cube import from_bulk
-from cytepool.design import Design
 from cytepool.stats import linear_models
 from cytepool.stats.linear_models import LinearModelFit, contrasts_fit, fit_linear_model
 

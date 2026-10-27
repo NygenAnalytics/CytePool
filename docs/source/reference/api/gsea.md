@@ -6,7 +6,7 @@ myst:
 
 # Gene set enrichment analysis
 
-{func}`~cytepool.gsea.gsea` ranks genes by a statistic, of a group and contrast of a
+{func}`~cytepool.gsea` ranks genes by a statistic, of a group and contrast of a
 differential-expression result, of a table of results or of a mapping of gene id to
 statistic, and asks of each gene set whether its genes gather at the top or at the
 bottom of the ranking, as fgsea's `fgsea` computes it: the enrichment score and its
@@ -17,5 +17,9 @@ set, and {func}`~cytepool.plotting.plot_gsea_table` the top sets with their gene
 the ranking.
 
 ```{eval-rst}
-.. automodule:: cytepool.gsea
+.. automodule:: cytepool.gene_set_enrichment
+   :no-members:
+   :no-index:
+
+.. autofunction:: cytepool.gsea
 ```

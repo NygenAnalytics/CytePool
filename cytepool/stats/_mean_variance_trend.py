@@ -56,7 +56,7 @@ _LOG2_MILLION = math.log2(1e6)
 class Trend:
     """voom's quantities before prior weights are multiplied in."""
 
-    log_cpm: FloatArray
+    log2_cpm: FloatArray
     weights: FloatArray  # the trend's: NaN only where a prior weight is zero
     mean_log_count: FloatArray
     sqrt_sd: FloatArray
@@ -114,8 +114,8 @@ def voom_log_cpm(y: FloatArray, sizes: FloatArray) -> FloatArray:
     """voom's log2 counts per million, log2((r + 0.5) / (R + 1) * 1e6)."""
     # The operations of limma, which give its values to the last bit (found by
     # probing).
-    log_cpm: FloatArray = np.log2((y + 0.5) / (sizes + 1.0)[:, np.newaxis] * 1e6)
-    return log_cpm
+    log2_cpm: FloatArray = np.log2((y + 0.5) / (sizes + 1.0)[:, np.newaxis] * 1e6)
+    return log2_cpm
 
 
 def voom_mean_log_count(
@@ -136,7 +136,7 @@ def voom_mean_log_count(
 
 
 def trend_weights(
-    log_cpm: FloatArray,
+    log2_cpm: FloatArray,
     mean_log_count: FloatArray,
     sigma: FloatArray,
     in_trend: npt.NDArray[np.bool_],
@@ -153,7 +153,7 @@ def trend_weights(
     inverse fourth power of the trend at its fitted log2 count, from ``fitted``.
 
     Args:
-        log_cpm: The log2 counts per million.
+        log2_cpm: The log2 counts per million.
         mean_log_count: The x of the trend.
         sigma: The residual standard deviation of each feature.
         in_trend: The features whose ``sigma`` enter the trend.
@@ -168,7 +168,7 @@ def trend_weights(
         ValueError: If fewer than two features are in the trend, or the trend is not
             positive where weights are read from it.
     """
-    n_features = log_cpm.shape[1]
+    n_features = log2_cpm.shape[1]
     sqrt_sd = np.full(n_features, np.nan)
     sqrt_sd_trend = np.full(n_features, np.nan)
     n_in_trend = int(np.count_nonzero(in_trend))
@@ -207,7 +207,7 @@ def trend_weights(
             "exactly, can cause this: filter out features with low counts, or use "
             "more features"
         )
-    return Trend(log_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
+    return Trend(log2_cpm, weights, mean_log_count, sqrt_sd, sqrt_sd_trend, fraction)
 
 
 def scaled_prior_weights(
