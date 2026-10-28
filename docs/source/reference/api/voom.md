@@ -6,8 +6,7 @@ myst:
 
 # Precision weights for counts
 
-voom's precision weights for log counts, alone and with sample quality weights;
-[limma-voom and limma-trend](../statistics/limma-voom/#voom) explains them.
+voom's precision weights for log counts, alone and with sample quality weights; [limma-voom and limma-trend](../statistics/limma-voom/#voom) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.voom

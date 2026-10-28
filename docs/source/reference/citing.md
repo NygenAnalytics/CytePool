@@ -4,13 +4,11 @@ description: How to cite CytePool, and which papers to cite for each of its meth
 
 # How to cite
 
-CytePool has no paper yet. Cite the software with the version you ran, which
-`cytepool.__version__` gives and every result's provenance record keeps:
+CytePool has no paper yet. Cite the software with the version you ran, which `cytepool.__version__` gives and every result's provenance record keeps:
 
 > CytePool, version `<version>`, https://github.com/NygenAnalytics/CytePool
 
-Cite also the papers that define the methods you used. CytePool reimplements them, and
-the credit for the methods belongs to their authors.
+Cite also the papers that define the methods you used. CytePool reimplements them, and the credit for the methods belongs to their authors.
 
 | Functions | Cite |
 | --- | --- |
@@ -52,6 +50,4 @@ the credit for the methods belongs to their authors.
 | {api}`sumrank`, {api}`fit_sumrank` | SumRank [@nakatsuka2025] |
 | {api}`held_out_prediction` | [@nakatsuka2025]; the scores of the samples, UCell's [@andreatta2021] |
 
-Each module's documentation lists, under References, every work it implements; the
-[Bibliography](bibliography.md) collects them. For the data of the documentation, cite
-@kang2018 and, for the Hallmark gene set, @liberzon2015 ([Datasets](datasets.md)).
+Each module's documentation lists, under References, every work it implements; the [Bibliography](bibliography.md) collects them. For the data of the documentation, cite @kang2018 and, for the Hallmark gene set, @liberzon2015 ([Datasets](datasets.md)).

@@ -6,8 +6,7 @@ myst:
 
 # Combined p-values
 
-Combined p-values of several studies, and partial conjunction tests that an effect
-replicates; [Replication](../statistics/replication/#combined-p-values) explains them.
+Combined p-values of several studies, and partial conjunction tests that an effect replicates; [Replication](../statistics/replication/#combined-p-values) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.combined_p_values

@@ -6,9 +6,7 @@ myst:
 
 # Quasi-likelihood F-tests
 
-edgeR's quasi-likelihood F-tests, as `glmQLFit` and `glmQLFTest` run them by default in
-edgeR 4.4; [edgeR and DESeq2](../statistics/count-models/#quasi-likelihood) explains
-them.
+edgeR's quasi-likelihood F-tests, as `glmQLFit` and `glmQLFTest` run them by default in edgeR 4.4; [edgeR and DESeq2](../statistics/count-models/#quasi-likelihood) explains them.
 
 ```python
 from cytepool import Design

@@ -6,9 +6,7 @@ myst:
 
 # Tests of pathway scores and activities
 
-limma on the pathway scores and activities of samples, with the cube's design;
-[Pathway scores per sample](../statistics/pathway-scores/#testing-scores) explains
-it.
+limma on the pathway scores and activities of samples, with the cube's design; [Pathway scores per sample](../statistics/pathway-scores/#testing-scores) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.score_tests

@@ -6,8 +6,7 @@ myst:
 
 # SumRank
 
-SumRank, every gene's best ranks summed across studies, with Irwin-Hall and permutation
-p-values; [Replication](../statistics/replication/#sum-of-ranks) explains it.
+SumRank, every gene's best ranks summed across studies, with Irwin-Hall and permutation p-values; [Replication](../statistics/replication/#sum-of-ranks) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.sumrank_across_studies

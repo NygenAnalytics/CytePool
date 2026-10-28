@@ -4,12 +4,7 @@ description: The datasets the documentation's pages read and the networks CytePo
 
 # Datasets
 
-The pages that run code read shared datasets by file name, such as
-`read_cube("simulated_bulk.cube.zarr")`. A script in the repository,
-[`docs/datasets.py`](https://github.com/NygenAnalytics/CytePool/blob/master/docs/datasets.py),
-makes them deterministically into a cache outside the repository, downloads what they
-need with checksums, and checks each against the fingerprint of every cube and the
-digest of every other file it records. From the repository root:
+The pages that run code read shared datasets by file name, such as `read_cube("simulated_bulk.cube.zarr")`. A script in the repository, [`docs/datasets.py`](https://github.com/NygenAnalytics/CytePool/blob/master/docs/datasets.py), makes them deterministically into a cache outside the repository, downloads what they need with checksums, and checks each against the fingerprint of every cube and the digest of every other file it records. From the repository root:
 
 ```bash
 uv run --group docs python docs/datasets.py list
@@ -17,9 +12,7 @@ uv run --group docs python docs/datasets.py prepare simulated_pbmc
 uv run --group docs python docs/datasets.py verify
 ```
 
-The cache is `CYTEPOOL_DOCS_DATA`, else `cytepool-docs` under `XDG_CACHE_HOME` or
-`~/.cache`. Copy or link the files a page names into your working directory to run its
-code.
+The cache is `CYTEPOOL_DOCS_DATA`, else `cytepool-docs` under `XDG_CACHE_HOME` or `~/.cache`. Copy or link the files a page names into your working directory to run its code.
 
 | Dataset | What it holds | Source | Licence | Cite |
 | --- | --- | --- | --- | --- |
@@ -29,22 +22,12 @@ code.
 | `kang2018` | Peripheral blood cells of 8 lupus patients, each split into an interferon-beta stimulated and an untreated culture: 24,673 cells pooled into 16 samples x 8 cell types x 35,635 genes (counts and detecting cells); a 77 MB download | [GEO GSE96583](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583), batch 2 | GEO's terms: NCBI places no restrictions on the use of GEO data, though submitters may claim rights in theirs ([disclaimer](https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html)) | @kang2018 |
 | `hallmark_interferon_alpha` | The 97 genes of the Hallmark interferon-alpha response set (M5911, MSigDB v2026.2.Hs) | [MSigDB](https://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_INTERFERON_ALPHA_RESPONSE) | Creative Commons Attribution 4.0 ([terms](https://www.gsea-msigdb.org/gsea/msigdb_license_terms.jsp)) | @liberzon2015 |
 
-The downloads of `kang2018` are the files that the validation script
-`validation/interferon_stimulated_pbmcs.py` downloads, with the same checksums and in
-the same directory, so a machine fetches them once; its cube is the one that script
-tests. A notebook page names its datasets in its metadata; `make -C docs execute`
-prepares them, links them into the directory the page runs in, and records the
-fingerprint of each file it was given, which the build checks against the registry.
+The downloads of `kang2018` are the files that the validation script `validation/interferon_stimulated_pbmcs.py` downloads, with the same checksums and in the same directory, so a machine fetches them once; its cube is the one that script tests. A notebook page names its datasets in its metadata; `make -C docs execute` prepares them, links them into the directory the page runs in, and records the fingerprint of each file it was given, which the build checks against the registry.
 
 (networks)=
 ## Networks
 
-The activity functions ({api}`ulm`, {api}`mlm` and {api}`weighted_aggregate`) read
-networks that {api}`collectri` and {api}`progeny` download on first use into
-`cytepool/networks` under `XDG_CACHE_HOME` or `~/.cache` (or the directory given as
-`cache_dir`), each checked against its size and SHA-256 digest; no file of them is in
-the repository. [Activities from networks](../statistics/activities.md#regulator-networks)
-explains how they are used.
+The activity functions ({api}`ulm`, {api}`mlm` and {api}`weighted_aggregate`) read networks that {api}`collectri` and {api}`progeny` download on first use into `cytepool/networks` under `XDG_CACHE_HOME` or `~/.cache` (or the directory given as `cache_dir`), each checked against its size and SHA-256 digest; no file of them is in the repository. [Activities from networks](../statistics/activities.md#regulator-networks) explains how they are used.
 
 | Network | What it holds | Source | Licence | Cite |
 | --- | --- | --- | --- | --- |
@@ -53,12 +36,4 @@ explains how they are used.
 
 CollecTRI's resources and their terms, as OmniPath's records of resources list them
 [@tuerei2021]: Creative Commons Attribution 4.0 for ExTRI, NTNU Curated, TFactS,
-SIGNOR, IntAct, CytReg, GOA and Pavlidis2021; Creative Commons Attribution-ShareAlike
-4.0 for TRRUST; the GNU Lesser General Public License 3.0 for HTRIdb; an informal
-licence for DoRothEA's level A; and the Academic Free License 3.0 for GEREDB, which
-OmniPath lists for academic use. `collectri(licence="commercial")`, the default, keeps
-the 39,896 interactions that at least one resource listed for commercial use supports;
-`collectri(licence="academic")` keeps all 43,175, including the 3,279 that GEREDB alone
-supports. Each level is subject to the terms of the resources it keeps, such as
-attribution; the providers' own statements of their terms prevail over these
-records.
+SIGNOR, IntAct, CytReg, GOA and Pavlidis2021; Creative Commons Attribution-ShareAlike 4.0 for TRRUST; the GNU Lesser General Public License 3.0 for HTRIdb; an informal licence for DoRothEA's level A; and the Academic Free License 3.0 for GEREDB, which OmniPath lists for academic use. `collectri(licence="commercial")`, the default, keeps the 39,896 interactions that at least one resource listed for commercial use supports; `collectri(licence="academic")` keeps all 43,175, including the 3,279 that GEREDB alone supports. Each level is subject to the terms of the resources it keeps, such as attribution; the providers' own statements of their terms prevail over these records.

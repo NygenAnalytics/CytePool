@@ -6,8 +6,7 @@ myst:
 
 # Designs and contrasts
 
-Designs, their formulas, model matrices, contrasts and checks; [Designs, linear models
-and contrasts](../statistics/linear-models/) explains them.
+Designs, their formulas, model matrices, contrasts and checks; [Designs, linear models and contrasts](../statistics/linear-models/) explains them.
 
 ```{eval-rst}
 .. autoclass:: cytepool.Design

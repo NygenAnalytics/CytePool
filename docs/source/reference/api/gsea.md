@@ -6,8 +6,7 @@ myst:
 
 # Gene set enrichment analysis
 
-Gene set enrichment analysis of genes ranked by a statistic; [Over-representation
-and GSEA](../statistics/over-representation-and-gsea/#gsea) explains it.
+Gene set enrichment analysis of genes ranked by a statistic; [Over-representation and GSEA](../statistics/over-representation-and-gsea/#gsea) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.gene_set_enrichment

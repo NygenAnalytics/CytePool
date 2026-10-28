@@ -6,10 +6,7 @@ myst:
 
 # Networks
 
-Networks of regulators and pathways with signed weights, CollecTRI and PROGENy
-among them; [Activities from networks](../statistics/activities/#regulator-networks)
-explains them, and [Datasets](../reference/datasets/#networks) gives their files
-and licences.
+Networks of regulators and pathways with signed weights, CollecTRI and PROGENy among them; [Activities from networks](../statistics/activities/#regulator-networks) explains them, and [Datasets](../reference/datasets/#networks) gives their files and licences.
 
 ```{eval-rst}
 .. automodule:: cytepool.networks

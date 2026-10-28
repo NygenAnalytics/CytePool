@@ -6,8 +6,7 @@ myst:
 
 # Held-out prediction
 
-The prediction of cases in held-out studies by genes chosen from the others;
-[Replication](../statistics/replication/#held-out-prediction) explains it.
+The prediction of cases in held-out studies by genes chosen from the others; [Replication](../statistics/replication/#held-out-prediction) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.held_out_studies

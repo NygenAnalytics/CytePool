@@ -6,8 +6,7 @@ myst:
 
 # Rotation gene-set tests
 
-limma's rotation tests roast, mroast and romer on one contrast of a linear model;
-[Gene-set tests](../statistics/gene-set-tests/#roast) explains them.
+limma's rotation tests roast, mroast and romer on one contrast of a linear model; [Gene-set tests](../statistics/gene-set-tests/#roast) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.rotation_gene_set_tests

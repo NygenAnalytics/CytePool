@@ -6,8 +6,7 @@ myst:
 
 # DESeq2
 
-DESeq2's dispersions, fits, Wald tests and likelihood ratio tests; [edgeR and
-DESeq2](../statistics/count-models/#deseq2) explains them.
+DESeq2's dispersions, fits, Wald tests and likelihood ratio tests; [edgeR and DESeq2](../statistics/count-models/#deseq2) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.deseq2

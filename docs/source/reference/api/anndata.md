@@ -6,9 +6,7 @@ myst:
 
 # AnnData and MuData
 
-Conversions of cubes to and from the AnnData and MuData layouts of scverse;
-[Pseudobulk profiles and cubes](../statistics/cubes/#profiles-from-other-tools)
-explains what an import takes.
+Conversions of cubes to and from the AnnData and MuData layouts of scverse; [Pseudobulk profiles and cubes](../statistics/cubes/#profiles-from-other-tools) explains what an import takes.
 
 ```{eval-rst}
 .. automodule:: cytepool.io.anndata

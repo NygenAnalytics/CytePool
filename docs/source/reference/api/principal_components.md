@@ -6,8 +6,7 @@ myst:
 
 # Principal components
 
-Principal components of samples, as DESeq2's `plotPCA` computes them; [Normalization and
-filtering](../statistics/normalization-and-filtering/#samples-at-a-glance) explains them.
+Principal components of samples, as DESeq2's `plotPCA` computes them; [Normalization and filtering](../statistics/normalization-and-filtering/#samples-at-a-glance) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.principal_component_analysis

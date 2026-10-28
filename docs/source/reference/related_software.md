@@ -4,17 +4,11 @@ description: The R and Python tools for sample-level statistics on pseudobulk an
 
 # Related software
 
-CytePool brings the sample-level methods of several R packages into one Python package,
-reads the pseudobulk layouts of the scverse tools, and works beside other tools that
-answer neighbouring questions. Licences and versions were read from each project's CRAN
-or Bioconductor index entry, PyPI page or repository on 26 October 2026.
+CytePool brings the sample-level methods of several R packages into one Python package, reads the pseudobulk layouts of the scverse tools, and works beside other tools that answer neighbouring questions. Licences and versions were read from each project's CRAN or Bioconductor index entry, PyPI page or repository on 26 October 2026.
 
 ## Reimplemented and validated against
 
-CytePool implements these methods from their papers and documentation, and runs the
-packages as separate programs to compare results ([Validation](../validation.md)). The
-validation uses the versions the Validation page lists, which can be older than the
-current releases below.
+CytePool implements these methods from their papers and documentation, and runs the packages as separate programs to compare results ([Validation](../validation.md)). The validation uses the versions the Validation page lists, which can be older than the current releases below.
 
 | Tool | What it does | Licence | Current release |
 | --- | --- | --- | --- |
@@ -30,16 +24,11 @@ current releases below.
 | [progeny](https://bioconductor.org/packages/progeny) | PROGENy's weights of the genes that respond to 14 pathways, and its pathway scores [@schubert2018]; CytePool reads its weights | Apache-2.0 | Bioconductor 1.34.0 |
 | [PyDESeq2](https://github.com/scverse/PyDESeq2) | A Python implementation of DESeq2 [@muzellec2023]; CytePool also adapts some of its constants, as `THIRD_PARTY_NOTICES.md` records | MIT | PyPI 0.5.4 |
 
-Because limma, edgeR, DESeq2, variancePartition, speckle, metafor, lme4, lmerTest and
-GSVA are under copyleft licences, CytePool is written from their papers and
-documentation and never from their source code, so that it can be distributed under the
-BSD 3-Clause license.
+Because limma, edgeR, DESeq2, variancePartition, speckle, metafor, lme4, lmerTest and GSVA are under copyleft licences, CytePool is written from their papers and documentation and never from their source code, so that it can be distributed under the BSD 3-Clause license.
 
 ## Read and written by CytePool
 
-CytePool reads the pseudobulk layouts these tools write and writes them back
-({api}`from_anndata`, {api}`to_anndata`, {api}`from_mudata`, {api}`to_mudata`), and its
-cube files are Zarr v3 stores.
+CytePool reads the pseudobulk layouts these tools write and writes them back ({api}`from_anndata`, {api}`to_anndata`, {api}`from_mudata`, {api}`to_mudata`), and its cube files are Zarr v3 stores.
 
 | Tool | What it does | Licence | Current release |
 | --- | --- | --- | --- |
@@ -51,8 +40,7 @@ cube files are Zarr v3 stores.
 
 ## Beside CytePool
 
-These tools answer neighbouring questions, or the same ones by other models. CytePool
-neither uses nor reads them.
+These tools answer neighbouring questions, or the same ones by other models. CytePool neither uses nor reads them.
 
 | Tool | What it does | Licence | Current release |
 | --- | --- | --- | --- |
@@ -67,8 +55,7 @@ neither uses nor reads them.
 | [GSEApy](https://github.com/zqfang/GSEApy) | Gene set enrichment analysis in Python | BSD 3-Clause | PyPI 1.3.1 |
 | [scvi-tools](https://github.com/scverse/scvi-tools) | Probabilistic models of single-cell omics data | BSD 3-Clause | PyPI 1.5.1 |
 
-Independent Python ports of the copyleft R packages exist too. CytePool neither uses nor
-reads them.
+Independent Python ports of the copyleft R packages exist too. CytePool neither uses nor reads them.
 
 | Tool | What it does | Licence | Current release |
 | --- | --- | --- | --- |

@@ -6,9 +6,7 @@ myst:
 
 # Mixed models
 
-Linear mixed models with random intercepts fitted to every gene, and their t-tests and
-F-tests; [Mixed models and dream](../statistics/mixed-models/#mixed-model-reml) explains
-them.
+Linear mixed models with random intercepts fitted to every gene, and their t-tests and F-tests; [Mixed models and dream](../statistics/mixed-models/#mixed-model-reml) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.mixed_models

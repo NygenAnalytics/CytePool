@@ -6,8 +6,7 @@ myst:
 
 # Pathway scores
 
-Scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE;
-[Pathway scores per sample](../statistics/pathway-scores/#gsva) explains them.
+Scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE; [Pathway scores per sample](../statistics/pathway-scores/#gsva) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.pathway_scores

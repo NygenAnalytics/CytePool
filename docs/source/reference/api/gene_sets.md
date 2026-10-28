@@ -6,9 +6,7 @@ myst:
 
 # Gene-set files
 
-Gene-set collections, read from and written to GMT files; [Gene-set
-tests](../statistics/gene-set-tests/#gene-set-collections) explains how they are
-matched to an analysis.
+Gene-set collections, read from and written to GMT files; [Gene-set tests](../statistics/gene-set-tests/#gene-set-collections) explains how they are matched to an analysis.
 
 ```{eval-rst}
 .. automodule:: cytepool.gene_sets

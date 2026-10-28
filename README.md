@@ -1,43 +1,38 @@
 <h1><img src="https://docs.nygen.io/assets/brand/logo/cytepool-dark.png" alt="" width="96" align="right"> CytePool</h1>
 
-Test which genes, cell types and pathways change between conditions in studies of many
-samples, from single-cell or bulk RNA-seq data. Cells of one donor are not independent
-replicates, so CytePool pools the cells of each sample and cell type into a cube of
-pseudobulk profiles and tests the samples with the methods that are standard in R:
-limma, edgeR, DESeq2, dream, propeller and metafor. It runs them in Python, with numpy
-and numba as its only required dependencies, and every method is checked against an
-independent reference, usually the package that defined it.
+<p align="left">
+  <a href="https://github.com/NygenAnalytics/CytePool/actions/workflows/tests.yml"><img src="https://github.com/NygenAnalytics/CytePool/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://docs.nygen.io/CytePool/"><img src="https://img.shields.io/github/actions/workflow/status/NygenAnalytics/CytePool/pages.yml?label=Documentation" alt="Documentation"></a>
+  <a href="https://pypi.org/project/cytepool"><img src="https://img.shields.io/pypi/v/cytepool.svg?color=4c72b0" alt="PyPI"></a>
+</p>
 
-**Status:** early development. Nothing is released yet.
+**Test which genes, cell types and pathways change between conditions in single-cell and bulk RNA-seq.**
+
+Cells from one donor are not independent replicates. CytePool pools each sample and cell type into a cube of pseudobulk profiles, and runs limma, edgeR, DESeq2, dream, variancePartition, propeller, fgsea, GSVA, decoupler, metafor and SumRank in Python on numpy arrays.
 
 ## Install
 
-CytePool needs Python 3.13 or newer:
+Requires Python 3.13 or newer:
 
 ```bash
-pip install "git+https://github.com/NygenAnalytics/CytePool.git"
+pip install cytepool
 ```
 
-The extras `anndata`, `mudata` and `plot` add conversions to AnnData and MuData and the
-figures; [Installation](https://docs.nygen.io/CytePool/installation) gives the details.
+For AnnData, MuData and plotting, install `pip install "cytepool[mudata,plot]"`. See [Installation](https://docs.nygen.io/CytePool/installation).
 
 ## Example
 
-Pool the cells into a cube, then test a stimulation in every cell type with
-limma-voom, with a design that pairs the samples of each donor:
+Pool cells into a cube, then test a stimulation across cell types with limma-voom, pairing samples by donor:
 
 ```python
 from cytepool import Design, camera, from_cells, limma_voom, read_gmt
 
-# counts: cells x genes; cell_sample and cell_type: the labels of each cell;
-# samples: a table with sample_id, donor and condition; genes: with feature_id
-# and symbol.
 cube = from_cells(
-    counts,
-    sample_labels=cell_sample,
-    group_labels=cell_type,
-    samples=samples,
-    features=genes,
+    counts,  # cells x genes, e.g. adata.X
+    sample_labels=cell_sample,  # e.g. adata.obs["sample"]
+    group_labels=cell_type,  # e.g. adata.obs["cell_type"]
+    samples=samples,  # sample_id, donor, condition
+    features=genes,  # feature_id and symbol, or adata.var
 )
 design = Design(
     cube.samples,
@@ -46,47 +41,37 @@ design = Design(
     contrasts={"stim_vs_ctrl": "conditionstim"},
 )
 result = limma_voom(cube, design)
-table = result.table("Monocytes", "stim_vs_ctrl")  # topTable's columns
+table = result.table("Monocytes", "stim_vs_ctrl")  # topTable columns
 
-# Which pathways respond in the monocytes, from a GMT file of gene sets.
+# Test pathway response in monocytes from a GMT file.
 hallmark = read_gmt("h.all.v2026.2.Hs.symbols.gmt")
 pathways = camera(result, hallmark, group="Monocytes", id_column="symbol")
 ```
 
-The result keeps the cube's fingerprint, so that it can be traced to the profiles it
-was computed from. The [Quick start](https://docs.nygen.io/CytePool/quickstart) pools
-and tests a simulated study this way, and [Gene sets and
-pathways](https://docs.nygen.io/CytePool/guides/gene-sets) tests pathways.
+If you already pooled profiles in scanpy, decoupler or LIANA, import them with `from_anndata` or `from_mudata`. See the [Quick start](https://docs.nygen.io/CytePool/quickstart) and [Gene sets and pathways](https://docs.nygen.io/CytePool/guides/gene-sets).
 
 ## What CytePool answers
 
-| Question | Start with |
-| --- | --- |
-| Which genes change in each cell type? | `limma_voom` |
-| Which genes change in bulk RNA-seq? | `limma_voom` on a cube from `from_bulk` |
-| Which genes change, with several samples of each donor? | `dream_voom` |
-| What drives the variation between samples? | `variance_partitioning` |
-| Which cell types expand or contract? | `propeller` |
-| Do the genes of a pathway respond to a contrast? | `camera` |
-| Do the genes of a pathway gather along a ranking? | `gsea` |
-| How active is a pathway in each sample? | `gsva` |
-| Which regulators and pathways are active? | `ulm` |
-| What do several studies say together? | `meta_analysis` |
-| Which changes replicate across studies? | `sumrank` |
+| Question | Start with | Other CytePool functions | R and Python equivalents |
+| --- | --- | --- | --- |
+| Pool cells or import profiles | `from_cells`, `from_bulk` | `from_anndata`, `from_mudata`, `write_cube`, `read_cube` | scanpy `get.aggregate`, decoupler `pp.pseudobulk`, LIANA `adata_to_views` |
+| Which genes change in each cell type? | `limma_voom` | `limma_trend`, `filter_by_expression`, `tmm_factors` | limma `voom`, `lmFit`, `eBayes`, `topTable`; edgeR `filterByExpr`, `calcNormFactors` |
+| Which genes change in bulk RNA-seq? | `limma_voom` on `from_bulk` | `fit_quasi_likelihood`, `quasi_likelihood_f_test`, `fit_deseq2`, `deseq2_wald_test`, `deseq2_likelihood_ratio_test`, `treat` | edgeR `glmQLFit`, `glmQLFTest`; DESeq2 `DESeq`, `results`; limma `treat` |
+| Which genes change, with several samples of each donor? | `dream_voom` | `fit_mixed_model`, `fixed_effect_tests`, `fixed_effect_f_test` | variancePartition `dream`, `voomWithDreamWeights`; lme4 `lmer`, lmerTest, pbkrtest |
+| What drives the variation between samples? | `variance_partitioning` | `principal_components`, `plot_mds`, `plot_pca` | variancePartition `fitExtractVarPartModel`; DESeq2 `plotPCA`; limma `plotMDS` |
+| Which cell types expand or contract? | `propeller` | `plot_composition` | speckle `propeller` |
+| Do the genes of a pathway respond to a contrast? | `camera` | `fry`, `roast`, `mroast`, `romer`, `over_representation` | limma `camera`, `fry`, `roast`, `mroast`, `romer`, `kegga` |
+| Do the genes of a pathway gather along a ranking? | `gsea` | `plot_enrichment`, `plot_gsea_table` | fgsea `fgseaMultilevel`, `plotEnrichment`, `plotGseaTable` |
+| How active is a pathway in each sample? | `gsva` | `ssgsea`, `combined_z_scores`, `plage`, `limma` | GSVA `gsva`, `ssgseaParam`, `zscoreParam`, `plageParam` |
+| Which regulators and pathways are active? | `ulm` | `mlm`, `weighted_aggregate`, `collectri`, `progeny`, `limma` | decoupler `mt.ulm`, `mt.mlm`, `mt.waggr`; CollecTRI, PROGENy |
+| What do several studies say together? | `meta_analysis` | `CubeCollection`, `analyse_each_study`, `combine_p_values` | metafor `rma.uni`; metap |
+| Which changes replicate across studies? | `sumrank` | `replication`, `partial_conjunction`, `proportion_of_true_nulls`, `held_out_prediction` | SumRank; qvalue `pi0est` |
 
-[Choosing a method](https://docs.nygen.io/CytePool/statistics/choosing-a-method) gives
-the alternatives for each question and what is not implemented yet, and
-[Validation](https://docs.nygen.io/CytePool/validation) how closely each method agrees
-with its reference.
+[Choosing a method](https://docs.nygen.io/CytePool/statistics/choosing-a-method) compares the alternatives for each question, and [Validation](https://docs.nygen.io/CytePool/validation) benchmarks CytePool against the reference packages.
 
 ## Documentation
 
-The documentation is at <https://docs.nygen.io/CytePool/>: a quick start, guides to
-building cubes, comparing conditions and combining studies, chapters on how each method
-works, the API reference and the Validation page. Its sources are in
-[`docs/`](https://github.com/NygenAnalytics/CytePool/tree/master/docs), and
-[Installation](https://docs.nygen.io/CytePool/installation#build-the-documentation)
-shows how to build it.
+The documentation is at <https://docs.nygen.io/CytePool/>.
 
 ## Development
 
@@ -99,11 +84,6 @@ uv run mypy cytepool
 make -C docs api
 ```
 
-[`AGENTS.md`](https://github.com/NygenAnalytics/CytePool/blob/master/AGENTS.md) gives
-the conventions of the code, its tests and its documentation.
-
 ## License
 
-BSD 3-Clause. See
-[LICENSE](https://github.com/NygenAnalytics/CytePool/blob/master/LICENSE) and
-[THIRD_PARTY_NOTICES.md](https://github.com/NygenAnalytics/CytePool/blob/master/THIRD_PARTY_NOTICES.md).
+BSD 3-Clause. See [LICENSE](https://github.com/NygenAnalytics/CytePool/blob/master/LICENSE) and [THIRD_PARTY_NOTICES.md](https://github.com/NygenAnalytics/CytePool/blob/master/THIRD_PARTY_NOTICES.md).

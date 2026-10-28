@@ -6,10 +6,7 @@ myst:
 
 # Differential expression
 
-{func}`~cytepool.limma_voom`, {func}`~cytepool.limma_trend` and
-{func}`~cytepool.dream_voom` test the contrasts of a design in every cell type of a
-cube; [limma-voom and limma-trend](../statistics/limma-voom/) and [Mixed models and
-dream](../statistics/mixed-models/) explain them.
+{func}`~cytepool.limma_voom`, {func}`~cytepool.limma_trend` and {func}`~cytepool.dream_voom` test the contrasts of a design in every cell type of a cube; [limma-voom and limma-trend](../statistics/limma-voom/) and [Mixed models and dream](../statistics/mixed-models/) explain them.
 
 ```{eval-rst}
 .. automodule:: cytepool.differential_expression

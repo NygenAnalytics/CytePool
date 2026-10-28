@@ -283,7 +283,10 @@ def test_the_release_files_of_this_tree_can_be_published(
         ),
         pytest.param(
             "wheel",
-            _metadata("**Status:**", "**State:**"),
+            _metadata(
+                "Test which genes, cell types and pathways change",
+                "Test which genes, cell types and pathways differ",
+            ),
             ["the description is not README.md"],
             id="another-description",
         ),

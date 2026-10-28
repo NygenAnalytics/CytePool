@@ -8,20 +8,15 @@ myst:
 
 Return to the [guides and validation](../).
 
-`import cytepool` gives the functions and classes an analysis starts from, such as
-`cytepool.limma_voom` and `cytepool.Cube`, and the pages below document them by topic.
-The building blocks that work on arrays are in their modules: `cytepool.stats.voom`
-and the other modules of `cytepool.stats`, `cytepool.normalization`, the parts of a
-design in `cytepool.design`, and the figures in `cytepool.plotting`.
+`import cytepool` exposes the main functions and classes, such as `cytepool.limma_voom`, `cytepool.dream_voom`, `cytepool.propeller`, `cytepool.camera` and `cytepool.Cube`:
 
-Arrays of counts and expression values are samples x features: rows are samples,
-columns are features such as genes. Where an argument accepts missing values, NaN
-marks them in numbers and None in text. numpy masked arrays, and array-likes that
-convert to one, are refused with a `TypeError`, because numpy drops the mask when it
-converts one and the masked entries would be read as data; the message names the
-argument and says how to mark its missing values instead. The
-[quick start](../quickstart/) shows how the pieces fit together in a
-differential-expression analysis.
+- **Top-level workflows (`cytepool`):** pooling cells (`from_cells`, `from_bulk`), converting AnnData and MuData (`from_anndata`, `from_mudata`), designs (`Design`), differential expression (`limma_voom`, `limma_trend`, `dream_voom`), composition (`propeller`), variance partitioning (`variance_partitioning`, `principal_components`), pathways and activities (`camera`, `fry`, `roast`, `mroast`, `romer`, `gsea`, `over_representation`, `gsva`, `ssgsea`, `ulm`, `mlm`), and multi-study analysis (`CubeCollection`, `analyse_each_study`, `meta_analysis`, `sumrank`, `replication`, `held_out_prediction`).
+- **Array building blocks (`cytepool.stats`, `cytepool.normalization`, `cytepool.design`):** linear and mixed models, empirical Bayes moderation, voom, sample quality weights, negative binomial and quasi-likelihood fits, DESeq2, TMM and size-factor normalization, formula parsing, and multiple testing.
+- **Figures (`cytepool.plotting`):** volcano, MD, MDS, PCA, voom trend, dispersion, barcode, GSEA, dot plot, composition, variance fraction and forest plots (requires the `plot` extra).
+
+See the [quick start](../quickstart/) for an end-to-end differential-expression example.
+
+**Input conventions:** Count and expression arrays have shape `samples x features` (rows are samples, columns are features such as genes). Missing values are represented by `NaN` in numeric arrays and `None` in string arrays. numpy masked arrays are rejected with a `TypeError`, because converting them to standard arrays silently drops the mask; the error message names the argument and explains how to pass missing values instead.
 
 ```{eval-rst}
 .. py:data:: __version__

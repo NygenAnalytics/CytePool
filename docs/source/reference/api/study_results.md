@@ -6,9 +6,7 @@ myst:
 
 # Results of several studies
 
-Every study of a collection analysed alike, with the results kept together and lined up
-gene by gene; [Aligning studies](../statistics/aligning-studies/#one-analysis-per-study)
-explains them.
+Every study of a collection analysed alike, with the results kept together and lined up gene by gene; [Aligning studies](../statistics/aligning-studies/#one-analysis-per-study) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.study_results

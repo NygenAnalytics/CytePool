@@ -6,8 +6,7 @@ myst:
 
 # Multiple testing
 
-Adjusted p-values and the proportion of true nulls; [Multiple
-testing](../statistics/multiple-testing/) explains them.
+Adjusted p-values and the proportion of true nulls; [Multiple testing](../statistics/multiple-testing/) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.multiple_testing

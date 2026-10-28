@@ -6,8 +6,7 @@ myst:
 
 # dream
 
-dream's precision weights and moderated tests of mixed models; [Mixed models and
-dream](../statistics/mixed-models/#dream) explains them.
+dream's precision weights and moderated tests of mixed models; [Mixed models and dream](../statistics/mixed-models/#dream) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.dream

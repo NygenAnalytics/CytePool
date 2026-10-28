@@ -6,8 +6,7 @@ myst:
 
 # Meta-analysis
 
-Meta-analysis of every gene across studies by fixed and random effects, as metafor
-computes it; [Meta-analysis](../statistics/meta-analysis/) explains it.
+Meta-analysis of every gene across studies by fixed and random effects, as metafor computes it; [Meta-analysis](../statistics/meta-analysis/) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.meta_analysis_of_studies

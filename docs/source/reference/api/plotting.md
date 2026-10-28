@@ -6,9 +6,7 @@ myst:
 
 # Figures
 
-{mod}`cytepool.plotting` draws, in one call each, the figures of CytePool's cubes and
-results, each as the tool whose method it shows draws it. It needs matplotlib: install
-CytePool's `plot` extra (`pip install "cytepool[plot]"`), or matplotlib itself.
+{mod}`cytepool.plotting` draws, in one call each, the figures of CytePool's cubes and results, each as the tool whose method it shows draws it. It needs matplotlib: install CytePool's `plot` extra (`pip install "cytepool[plot]"`), or matplotlib itself.
 
 ```{eval-rst}
 .. automodule:: cytepool.plotting

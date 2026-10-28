@@ -6,9 +6,7 @@ myst:
 
 # Pseudobulk cubes and tables
 
-Cubes, their tables, and the collections of the cubes of several studies;
-[Pseudobulk profiles and cubes](../statistics/cubes/) explains cubes, and [Aligning
-studies](../statistics/aligning-studies/) their collections.
+Cubes, their tables, and the collections of the cubes of several studies; [Pseudobulk profiles and cubes](../statistics/cubes/) explains cubes, and [Aligning studies](../statistics/aligning-studies/) their collections.
 
 ```{eval-rst}
 .. autoclass:: cytepool.Cube
@@ -38,9 +36,7 @@ studies](../statistics/aligning-studies/) their collections.
 
 ## Fingerprints and provenance
 
-The fingerprint that names a cube's values and the record of how it was made; [Cube
-files and provenance records](../reference/cube-files/#fingerprint-encoding) specifies
-both.
+The fingerprint that names a cube's values and the record of how it was made; [Cube files and provenance records](../reference/cube-files/#fingerprint-encoding) specifies both.
 
 ```{eval-rst}
 .. automodule:: cytepool.cube.fingerprints

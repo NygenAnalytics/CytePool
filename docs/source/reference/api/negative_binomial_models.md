@@ -6,8 +6,7 @@ myst:
 
 # Negative binomial models
 
-Negative binomial models of every gene, as edgeR's `glmFit` fits them; [edgeR and
-DESeq2](../statistics/count-models/#negative-binomial-model) explains them.
+Negative binomial models of every gene, as edgeR's `glmFit` fits them; [edgeR and DESeq2](../statistics/count-models/#negative-binomial-model) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.negative_binomial_models

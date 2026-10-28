@@ -6,9 +6,7 @@ myst:
 
 # Variance partitioning
 
-The share of each gene's variance that each variable of a design explains, in every cell
-type of a cube or in a matrix; [Mixed models and
-dream](../statistics/mixed-models/#variance-fractions) explains it.
+The share of each gene's variance that each variable of a design explains, in every cell type of a cube or in a matrix; [Mixed models and dream](../statistics/mixed-models/#variance-fractions) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.variance_components

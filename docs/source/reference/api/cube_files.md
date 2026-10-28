@@ -6,10 +6,7 @@ myst:
 
 # Cube files
 
-Cube files, and the Zarr v3 reader and writer they use; [Cube files and provenance
-records](../reference/cube-files/#cube-file-format) specifies the format, and
-[Pseudobulk profiles and cubes](../statistics/cubes/#cubes-larger-than-memory)
-explains how a cube larger than memory is read.
+Cube files, and the Zarr v3 reader and writer they use; [Cube files and provenance records](../reference/cube-files/#cube-file-format) specifies the format, and [Pseudobulk profiles and cubes](../statistics/cubes/#cubes-larger-than-memory) explains how a cube larger than memory is read.
 
 ```{eval-rst}
 .. autofunction:: cytepool.write_cube

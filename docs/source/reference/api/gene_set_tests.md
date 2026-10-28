@@ -6,8 +6,7 @@ myst:
 
 # Gene-set tests
 
-limma's camera and fry on one contrast of a linear model; [Gene-set
-tests](../statistics/gene-set-tests/#camera) explains them.
+limma's camera and fry on one contrast of a linear model; [Gene-set tests](../statistics/gene-set-tests/#camera) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.gene_set_tests

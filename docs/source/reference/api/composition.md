@@ -6,8 +6,7 @@ myst:
 
 # Cell-type composition
 
-propeller's tests of cell-type composition; [Composition
-tests](../statistics/composition/) explains them.
+propeller's tests of cell-type composition; [Composition tests](../statistics/composition/) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.composition

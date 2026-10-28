@@ -6,9 +6,7 @@ myst:
 
 # Replication tables
 
-The replication tables of one cell type and contrast across the studies of a
-collection; [Replication](../statistics/replication/#replication-tables) explains what
-each table answers.
+The replication tables of one cell type and contrast across the studies of a collection; [Replication](../statistics/replication/#replication-tables) explains what each table answers.
 
 ```{eval-rst}
 .. automodule:: cytepool.replication_across_studies

@@ -6,8 +6,7 @@ myst:
 
 # Linear models
 
-The linear model fitted to every gene, and its contrasts; [Designs, linear models and
-contrasts](../statistics/linear-models/#one-model-per-gene) explains them.
+The linear model fitted to every gene, and its contrasts; [Designs, linear models and contrasts](../statistics/linear-models/#one-model-per-gene) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.linear_models

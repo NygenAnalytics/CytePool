@@ -6,8 +6,7 @@ myst:
 
 # Pathway and regulator activity
 
-Activities of regulators and pathways by ULM, MLM and the weighted aggregate;
-[Activities from networks](../statistics/activities/#ulm) explains them.
+Activities of regulators and pathways by ULM, MLM and the weighted aggregate; [Activities from networks](../statistics/activities/#ulm) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.activity

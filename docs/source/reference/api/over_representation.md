@@ -6,9 +6,7 @@ myst:
 
 # Over-representation analysis
 
-Over-representation analysis of the genes called significant; [Over-representation
-and GSEA](../statistics/over-representation-and-gsea/#over-representation)
-explains it.
+Over-representation analysis of the genes called significant; [Over-representation and GSEA](../statistics/over-representation-and-gsea/#over-representation) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.over_representation_analysis
