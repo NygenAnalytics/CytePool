@@ -1,5 +1,12 @@
 """Model matrices from a sample table and a formula, coded as R's ``model.matrix``.
 
+:func:`~cytepool.design.model_matrix` builds the design matrix of a formula, column for
+column as R's ``model.matrix`` builds it, and returns a
+:class:`~cytepool.design.ModelMatrix` with R's column names, the term of each column
+and the levels it codes. The formula's grammar is that of ``cytepool.design.formula``.
+https://docs.nygen.io/CytePool/statistics/linear-models#designs-and-formulas explains
+designs.
+
 Variables:
     Numeric columns (integer or float) are covariates and give one column each. Text,
     boolean and pandas categorical columns are factors. A boolean column always has
@@ -60,7 +67,7 @@ import numpy as np
 
 from .._columns import is_data_frame, missing_mask
 from .._masked_arrays import reject_masked
-from .._messages import close_matches, fitted_lines
+from .._messages import LISTED, close_matches, fitted_lines, listing
 from ..table import Table
 from .formula import FormulaTerms, parse_formula, quote_name
 
@@ -70,12 +77,11 @@ INTERCEPT = "(Intercept)"
 """The name of the intercept column, as R names it."""
 
 _SAMPLE_ID = "sample_id"
-_LISTED_ROWS = 8  # rows named in an error message before "and n more"
 
 
 @dataclass(frozen=True, eq=False)
 class ModelMatrix:
-    """A design matrix with R's column names and the terms behind each column.
+    """A design matrix with R's column names and the term of each column.
 
     Attributes:
         matrix: float64 array of shape ``(n_samples, n_columns)``, read-only.
@@ -187,7 +193,9 @@ def model_matrix(
             or a pandas DataFrame, with one row per sample.
         formula: A right-hand-side formula such as ``"~ condition + batch"``,
             ``"~ 0 + group"``, ``"~ condition * sex"`` or ``"~ donor + condition"``.
-            See ``parse_formula`` for the grammar.
+            The grammar, R's, is given in the documentation of
+            ``cytepool.design.formula``, which the designs page of the API reference
+            shows (https://docs.nygen.io/CytePool/api/designs.html).
         levels: Level order of factors, for example
             ``{"condition": ["ctrl", "stim"]}``; the first level is the reference.
             Each list must contain every value the column holds. For a boolean
@@ -395,15 +403,11 @@ def _read_variables(
 def _describe_rows(table: Table, positions: np.ndarray | Sequence[int]) -> str:
     """Describe rows by position, and by sample_id when the table has one."""
     positions = [int(position) for position in positions]
-    shown = positions[:_LISTED_ROWS]
-    more = len(positions) - len(shown)
     noun = "row" if len(positions) == 1 else "rows"
-    text = f"{noun} " + ", ".join(str(position) for position in shown)
+    text = f"{noun} " + listing(positions)
     if _SAMPLE_ID in table and table[_SAMPLE_ID].dtype == object:
         ids = table[_SAMPLE_ID]
-        text += " (sample_id " + ", ".join(str(ids[p]) for p in shown) + ")"
-    if more:
-        text += f" and {more} more"
+        text += " (sample_id " + listing([ids[p] for p in positions[:LISTED]]) + ")"
     return text
 
 

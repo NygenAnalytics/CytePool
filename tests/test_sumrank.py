@@ -231,7 +231,7 @@ def test_a_number_of_studies_summed_is_the_proportion_that_gives_it(
             "n_studies_summed must be from 1 to the number of studies, 2, got 0",
         ),
         ({"n_studies_summed": 3}, ValueError, "number of studies, 2, got 3"),
-        ({"n_studies_summed": True}, TypeError, "whole number of studies, not bool"),
+        ({"n_studies_summed": True}, TypeError, "whole number of studies, got bool"),
         ({"n_studies_summed": 1.5}, TypeError, "whole number of studies, got float"),
     ],
 )
@@ -662,9 +662,9 @@ def test_permutations_need_a_variable_of_each_design() -> None:
         sumrank(results, "T", CONTRAST, permute="condition")
     with pytest.raises(ValueError, match="not a variable of the design of study"):
         sumrank(results, "T", CONTRAST, n_permutations=1, permute="donor")
-    with pytest.raises(ValueError, match="at least 0"):
+    with pytest.raises(ValueError, match="must be non-negative"):
         sumrank(results, "T", CONTRAST, n_permutations=-1)
-    with pytest.raises(TypeError, match="not bool"):
+    with pytest.raises(TypeError, match="got bool"):
         sumrank(results, "T", CONTRAST, n_permutations=True)
 
 

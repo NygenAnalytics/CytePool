@@ -1,122 +1,32 @@
 """SumRank: genes whose differential expression ranks high in study after study.
 
-Most genes that one single-cell study finds differentially expressed are not found by
-the next (Nakatsuka et al. 2025). SumRank asks instead whether a gene ranks high in
-every study: each study ranks its genes by their signed evidence of change, and a
-gene's ranks are summed over the studies, so that a gene ranked high everywhere has a
-small sum and a gene found by one study alone does not, however small its p-value
-there. :func:`fit_sumrank` computes the statistic and its p-values from a signed
-statistic of every gene in every study; :func:`cytepool.sumrank` does it for the
-studies' differential-expression results of one group (cell type) and contrast, with
-p-values from permutations that re-run each study's analysis on its samples with
-their labels permuted.
-
-The statistic, as the paper defines it and its authors' code (Apache-2.0) computes it:
-    1. Each study ranks the genes by their signed statistic, from 1 for the largest
-       (the gene most up); tied genes share the average of their ranks, as R's
-       ``rank``, which the authors' code calls, gives them. Results of
-       differential expression give the signed -log10 p-value: -log10(p_value),
-       negative where the log2 fold change is negative, as the paper ranks DESeq2's
-       results.
-    2. A gene of rank r among G genes has the normalized rank u = (r - 1) / (G - 1):
-       0 for the gene most up and 1 for the gene most down.
-    3. For each gene, the m smallest of its normalized ranks in the k studies are
-       summed: those of the studies that rank it best, which leaves out studies that
-       rank it low for reasons of their own. m is given (``n_studies_summed``), or
-       m = floor(p k), at least 1, for a proportion p of the studies
-       (``proportion_of_studies``), the product rounded to 9 decimals first, so that
-       0.57 of 100 studies is 57; by default every study is summed (m = k). The paper
-       sums every study when there are few (its 3 to 6 studies of Parkinson's,
-       Huntington's disease and schizophrenia) and chose p by prediction in held-out
-       studies when there are many (0.65 of 17 studies of Alzheimer's disease, 0.55
-       of 16 of COVID-19); :func:`~cytepool.held_out_prediction` gives that
-       prediction for a chosen m or p.
-    4. A sum above m / 2, the mean of a sum of m uniform ranks, is set to m / 2, so
-       that genes without consistent evidence share one value.
-
-    The result is the statistic of genes up (``up_statistic``): small for a gene that
-    ranks high in its best m studies. Genes down have the same statistic of the
-    negated statistics (``down_statistic``), whose normalized ranks are 1 - u, as the
-    paper tests genes down by testing controls against cases.
-
-Genes that a study did not measure or did not test:
-    The genes ranked are those that every study tested (a finite or infinite statistic,
-    not NaN), as the paper ranks the genes that every dataset measured, the intersection
-    of their genes. A rank says where a gene stands among the genes ranked with it, so
-    the studies must rank the same genes; and a gene ranked in fewer studies would have
-    a statistic, and a distribution under the null, of its own. The other genes have
-    NaN. A study that did not analyse the group or the contrast at all is left out by
-    :func:`cytepool.sumrank`, as the authors' code leaves out a dataset without the cell
-    type: k counts the studies that did.
+:func:`fit_sumrank` computes SumRank (Nakatsuka et al. 2025), the sum of each gene's
+best normalized ranks over the studies, with its Irwin-Hall p-values and, given the
+statistics of permuted data, its permutation p-values, from each study's signed
+statistics of the genes, and returns a :class:`SumRankFit`. :func:`cytepool.sumrank`
+computes it for the studies' differential-expression results of one group (cell type)
+and contrast, and runs the permutations.
+https://docs.nygen.io/CytePool/statistics/replication#sum-of-ranks explains the
+statistic and its p-values, and
+https://docs.nygen.io/CytePool/statistics/replication#replication-limits how they
+differ from the paper's and its authors' code.
 
 Irwin-Hall p-values:
-    If every study ranked the genes in an order of its own, at random and
-    independently of the others, each normalized rank would be uniform on [0, 1],
-    and the sum of m of them would follow the Irwin-Hall distribution of a sum of m
-    independent uniform variables (Irwin 1927; Hall 1927), whose distribution
-    function is
+    The Irwin-Hall p-value of a statistic s below the cap is F_m(s), and 1 at the cap,
+    with F_m the distribution function of a sum of m independent uniform variables
+    (Irwin 1927; Hall 1927),
+    F_m(x) = (1/m!) sum_{j=0}^{floor(x)} (-1)^j C(m, j) (x - j)^m. The ranks are taken
+    as continuous: a gene ranked first in every study (s = 0) has the p-value 0, where
+    its probability is G^-m. The alternating sum loses every digit to cancellation
+    near the middle of the distribution for tens of studies, so F_m is computed as a
+    sum of positive terms, F_m(x) = sum_{i=0}^{floor(x)} N_{m+1}(x - floor(x) + i),
+    with N_{m+1} the cardinal B-spline of order m + 1, which de Boor's recurrence
+    evaluates with positive terms only (de Boor 1978):
+    N_{m+1}'(x) = N_m(x) - N_m(x - 1).
 
-        F_m(x) = (1/m!) sum_{j=0}^{floor(x)} (-1)^j C(m, j) (x - j)^m.
-
-    ``up_irwin_hall_p_value`` is F_m(s) for the statistic s of a gene below the cap,
-    and 1 at the cap: the probability under that null of a statistic at most s.
-    It treats the ranks as continuous: a gene ranked first in every study (s = 0)
-    has p-value 0, where its probability is G^-m.
-
-    With every study summed (m = k), the p-value is exact under that null, apart from
-    the steps of the ranks. A sum of the m best of k ranks (m < k) is smaller than a sum
-    of m ranks, so its Irwin-Hall p-values are too small: the paper takes its p-values
-    from permutations instead, as below, and so should an analysis with m < k, as
-    :func:`cytepool.sumrank` warns. Genes whose ranks are not uniform under the null,
-    such as genes with a p-value of 1 in many permutations, depart from it too.
-
-    The alternating sum above loses every digit to cancellation near the middle of
-    the distribution for tens of studies. F_m is computed instead as a sum of
-    positive terms, F_m(x) = sum_{i=0}^{floor(x)} N_{m+1}(x - floor(x) + i), where
-    N_{m+1} is the cardinal B-spline of order m + 1, the density of the Irwin-Hall
-    distribution of m + 1 variables, which de Boor's recurrence evaluates with
-    positive terms only (de Boor 1978): N_{m+1}' (x) = N_m(x) - N_m(x - 1), so the
-    sum telescopes to the integral of N_m. It agrees with a high-precision
-    computation to about 1e-14 relative for up to 200 studies
-    (``validation/sumrank.py``).
-
-Permutation p-values:
-    The paper permutes the case and control labels of the samples of every study,
-    runs each study's analysis and SumRank again, and pools the statistics of every
-    gene in every permutation into one null distribution: with B permutations of G
-    genes, N = B G null statistics. The p-value of a gene of statistic s is
-
-        p = (1 + the number of null statistics at most s) / (1 + N),
-
-    as Phipson and Smyth (2010) form p-values from random permutations, so that it
-    is never zero, and a gene at the cap has p = 1. Pooling over the genes gives
-    small p-values from few permutations (100 permutations of 10,000 genes give a
-    p-value as small as 1e-6), for genes whose null distributions are alike. The
-    statistics of a permutation are computed as those of the data, over the genes
-    that every study's analysis of that permutation tested.
-
-    :func:`fit_sumrank` takes the statistics of the permutations as an array;
-    :func:`cytepool.sumrank` draws them by permuting the labels of each study's
-    samples and running its analysis again.
-
-Deliberate differences from the paper and its authors' code:
-    - The Irwin-Hall p-value is the lower tail of the distribution, as above. The
-      paper calls its Irwin-Hall p-values two-sided, which would double these, and
-      the authors' code computes the density of the Irwin-Hall distribution at the
-      statistic instead (the unifed package's ``dirwin.hall``), which is not a
-      probability. Its permutation p-values compare -log10 of that density, which
-      falls as the statistic rises up to the cap for m >= 2: they order genes as the
-      statistic does, so the permutation p-values here do not depend on this choice.
-    - The authors' code takes as the permutation p-value the share of null
-      statistics strictly below the gene's (``1 - ecdf`` of -log10 of the density),
-      without the one above: a gene beyond every null statistic has the p-value 0,
-      and a gene at the cap the share of null statistics below the cap rather than
-      1. Here ties count as at least as extreme, which keeps the p-value valid.
-    - The authors' code sums the normalized ranks in floating point, in each gene's
-      own order, so that genes with equal statistics can compare as unequal in its
-      calibration; here the sums are exact. It stops when it sums one study (m = 1),
-      and takes floor(p k) of the product in floating point, which for 0.57 of 100
-      studies is 56.
+Matching the authors' code:
+    The statistic is the paper's, as its authors' code (Apache-2.0) computes it, run on
+    the validation's data.
 
 References:
     Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
@@ -227,11 +137,17 @@ def fit_sumrank(
 ) -> SumRankFit:
     """Rank every gene in every study and sum its best ranks, as SumRank does.
 
-    Each study ranks the genes that every study tested by their statistic, from the
-    largest; a gene's normalized ranks in the studies that rank it best are summed and
-    capped at their mean under the null, for genes up and, with the statistics
-    negated, for genes down. The module description gives the statistic, its
-    Irwin-Hall p-values and the permutation p-values.
+    Each study ranks the genes that every study tested by their statistic, from 1 for
+    the largest, tied genes sharing their average rank, as R's ``rank`` gives it. A
+    gene of rank r among G genes has the normalized rank u = (r - 1) / (G - 1), and its
+    m smallest normalized ranks over the k studies, those of the studies that rank it
+    best, are summed and capped at m / 2, their mean under the null, for genes up and,
+    with the statistics negated, for genes down. The Irwin-Hall p-value is the
+    distribution function of a sum of m uniform ranks at the statistic, 1 at the cap;
+    with m < k these are too small, and permutation p-values should be used. A permutation p-value is (1 + the null
+    statistics at most the gene's) / (1 + their number), over the statistics of every
+    gene in every permutation, 1 at the cap and never zero (Phipson and Smyth 2010).
+    https://docs.nygen.io/CytePool/statistics/replication#sum-of-ranks explains them.
 
     Args:
         statistics: ``(n_studies, n_features)`` signed statistics, larger for a gene
@@ -243,11 +159,13 @@ def fit_sumrank(
             default every study.
         proportion_of_studies: Instead of ``n_studies_summed``, the proportion p of
             the k studies whose ranks are summed, in (0, 1]: m = floor(p k), at
-            least one; 1 sums every study.
+            least one, with p k rounded to 9 decimals first, so that 0.57 of 100
+            studies sums 57; 1 sums every study.
         null_statistics: ``(n_permutations, n_studies, n_features)``: the statistics
             of the same studies with their labels permuted, one study's analysis
             re-run on each permutation, NaN where an analysis did not test a gene;
-            or None for no permutation p-values.
+            or None for no permutation p-values. Each permutation is ranked as the
+            data are, over the genes that every study's analysis of it tested.
 
     Returns:
         The statistics of every gene, up and down, their Irwin-Hall p-values and,
@@ -525,7 +443,7 @@ def _studies_summed(
     if n_studies_summed is not None:
         if isinstance(n_studies_summed, bool | np.bool_):
             raise TypeError(
-                "n_studies_summed must be a whole number of studies, not bool"
+                "n_studies_summed must be a whole number of studies, got bool"
             )
         summed = index_integer(
             n_studies_summed, "n_studies_summed", expected="a whole number of studies"

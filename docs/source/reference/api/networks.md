@@ -6,15 +6,10 @@ myst:
 
 # Networks
 
-A {class}`~cytepool.Network` maps each source, a transcription factor or a pathway, to
-its target genes with signed weights, and records its name, version, licence, citation
-and the file it was read from. {func}`~cytepool.collectri` returns CollecTRI's regulons
-of human transcription factors, at the licence level you choose, and
-{func}`~cytepool.progeny` the pathway signatures of PROGENy for human or mouse; both
-download their files on first use, check them against pinned SHA-256 digests and keep
-them in a cache. The activity functions, such as {func}`~cytepool.ulm`, take a network,
-or a table with the columns `source`, `target` and `weight`, and
-{meth}`~cytepool.Network.to_gene_sets` gives each source's targets as a gene set.
+Networks of regulators and pathways with signed weights, CollecTRI and PROGENy
+among them; [Activities from networks](../statistics/activities/#regulator-networks)
+explains them, and [Datasets](../reference/datasets/#networks) gives their files
+and licences.
 
 ```{eval-rst}
 .. automodule:: cytepool.networks

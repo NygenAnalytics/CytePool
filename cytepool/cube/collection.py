@@ -1,9 +1,10 @@
 """Several studies' cubes, aligned by sample, gene and group: ``CubeCollection``.
 
-Studies of one question, such as cohorts of a disease, are compared or combined only
-once their samples, genes and cell types are aligned, and that is where errors enter:
-donor ids that repeat across studies, genes that a study did not measure read as
-zeros. ``CubeCollection`` aligns them and says what each study measured and has.
+:class:`~cytepool.CubeCollection` aligns the cubes of several studies by sample, gene
+and group (cell type), says what each study measured and has, and keeps each cube as
+it was given, for an analysis of each study on the collection's axes or a joint model
+of the studies stacked into one cube.
+https://docs.nygen.io/CytePool/statistics/aligning-studies explains why and how.
 
 References:
     Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
@@ -58,12 +59,12 @@ _NUMBERS = frozenset({"integers", "floats", "complex numbers"})
 class CubeCollection:
     """Several studies' cubes, aligned by sample, gene and group.
 
-    Most genes found in one study are not found in the next (Nakatsuka et al.
-    2025), and the studies are compared or combined only once their samples, genes
-    and groups (cell types) are aligned. A collection aligns the cubes of several
-    named studies and keeps each cube as it was given (``cubes``): it reads no layer,
-    and each analysis of a study reads that study's cube. It is immutable:
-    ``select`` returns a new collection.
+    Studies are compared or combined only once their samples, genes and groups (cell
+    types) are aligned. A collection aligns the cubes of several named studies and
+    keeps each cube as it was given (``cubes``): it reads no layer, and each analysis
+    of a study reads that study's cube. It is immutable: ``select`` returns a new
+    collection. https://docs.nygen.io/CytePool/statistics/aligning-studies explains
+    the alignment.
 
     Samples:
         Sample ids mean something only inside their study, so the collection names
@@ -83,7 +84,9 @@ class CubeCollection:
 
     Genes:
         Features are aligned by ``feature_id``, which must hold ids of one kind in
-        every study, such as Ensembl gene ids. A study measured a feature when its
+        every study, such as Ensembl gene ids, compared as they are: ids are not
+        converted, so Ensembl ids with versions (``ENSG00000141510.17``) must have
+        them removed first. A study measured a feature when its
         cube has it and does not mark it False in the feature column ``measured``:
         tools that give every study the same genes fill those a study did not
         measure with zeros, and ``measured`` tells them apart. The collection's
@@ -104,6 +107,8 @@ class CubeCollection:
         ``{"CL:0001054": "CD14 monocytes"}`` for groups aligned by their Cell Ontology
         ids, and groups of one study with the same aligned id are merged: their
         layers and cell numbers are summed, exactly, as ``Cube.regroup`` sums them.
+        Groups are aligned by equal values only: give merges up the Cell Ontology,
+        such as of CD4 T cell subsets into CD4 T cells, in ``group_mapping``.
         ``group_members`` lists the groups of each study under their aligned ids.
         ``groups`` has ``group_id``, the aligned id or its name, and every other
         column of any study's group table: a group keeps a column's value where the
@@ -135,13 +140,6 @@ class CubeCollection:
         provenance, the settings of the alignment with each study's groups under
         their aligned ids, and each selection since. A stacked cube records the
         studies and the alignment in its provenance (``cytepool.cube.provenance``).
-
-    Not done:
-        Groups are aligned by equal values only: rolling cell types up to a common
-        ancestor in the Cell Ontology needs the ontology as a resource, so give such
-        merges in ``group_mapping``. Feature ids are not converted, so Ensembl ids
-        with versions (``ENSG00000141510.17``) must have them removed first.
-        ``stack`` gives a cube in memory.
 
     Args:
         cubes: Study name to cube, at least one, in the order the collection keeps.
@@ -416,11 +414,10 @@ class CubeCollection:
         CytePool that aligned them, ``align_groups_by``, ``group_mapping``,
         ``group_names`` (when given), ``within_study`` and ``groups``, each study's
         groups under their aligned ids when the collection was made; and
-        ``operations``: each selection since,
-        with the studies, groups and features it kept (null for an axis given as
-        None). The fingerprints cost what ``Cube.fingerprint`` costs: nothing for a
-        cube file, which stores them, and a pass over the values of a cube in memory
-        the first time, at about 1 s per GB.
+        ``operations``: each selection since, with the studies, groups and features
+        it kept (null for an axis given as None). The fingerprints cost what
+        ``Cube.fingerprint`` costs: nothing for a cube file, which stores them, and a
+        pass over the values of a cube in memory the first time.
         """
         alignment = json.loads(self._settings)
         return {

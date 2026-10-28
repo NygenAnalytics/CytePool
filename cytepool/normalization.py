@@ -1,4 +1,18 @@
-"""Library-size normalization and expression filtering for count data.
+"""Normalization factors, counts per million and filtering by expression, for counts.
+
+:func:`tmm_factors`, :func:`upper_quartile_factors` and :func:`rle_factors` give the
+normalization factors of edgeR's ``normLibSizes`` (``calcNormFactors``), which multiply
+the library sizes (:func:`library_sizes`) into effective library sizes;
+:func:`median_ratio_size_factors` gives DESeq2's size factors, which take the place of
+the library sizes; :func:`cpm` and :func:`log2_cpm` give counts per million and log2
+counts per million as edgeR's ``cpm`` computes them; and :func:`filter_by_expression`
+says which features edgeR's ``filterByExpr`` keeps (Robinson and Oshlack 2010; Bullard
+et al. 2010; Anders and Huber 2010; Chen, Lun and Smyth 2016).
+https://docs.nygen.io/CytePool/statistics/normalization-and-filtering#normalization-and-size-factors
+explains each and when to choose it, and
+https://docs.nygen.io/CytePool/statistics/normalization-and-filtering#normalization-limits
+how they differ from edgeR; each function's Raises names the inputs it refuses where
+edgeR returns a value.
 
 Counts are samples x features (rows are samples, columns are genes): finite,
 non-negative, integer or not. They are converted to float64, which holds every
@@ -7,31 +21,20 @@ rounded to the nearest float64, a relative change below 1.2e-16, and never wraps
 around. R, whose integers have 32 bits, holds counts that large as doubles too.
 A library size, a total of a feature's counts or a count per million beyond the
 float64 range (about 1.8e308) raises OverflowError instead of becoming infinite
-or NaN. The functions reproduce edgeR and DESeq2:
+or NaN.
 
-- normalization factors as edgeR's ``normLibSizes`` (``calcNormFactors``)
-  computes them: :func:`tmm_factors`, the trimmed mean of M values (Robinson and
-  Oshlack 2010), :func:`upper_quartile_factors` (Bullard et al. 2010) and
-  :func:`rle_factors` (Anders and Huber 2010). They multiply the library sizes into
-  effective library sizes, ``library_sizes * norm_factors``, and have geometric
-  mean one;
-- DESeq2's size factors, which take the place of the library sizes:
-  :func:`median_ratio_size_factors`, the median-of-ratios method of Anders and
-  Huber (2010);
-- counts per million and log counts per million as edgeR's ``cpm`` computes
-  them: :func:`cpm` and :func:`log2_cpm`;
-- edgeR's ``filterByExpr`` (Chen, Lun and Smyth 2016): :func:`filter_by_expression`.
-
-The routines repeat R's floating-point operations wherever an operation
-decides a discrete outcome: the rank-based trimming and the reference sample
-of TMM, and the comparisons of ``filterByExpr``. Sums and means that R
-accumulates in extended precision (``sum``, ``mean``, ``colSums``,
-``rowMeans``) are accumulated with error compensation and rounded once.
-Logarithms and exponentials come from the C math library, as in R. With these,
-the results agree with edgeR and DESeq2 to the last bit on the validation
-inputs (numba set up to use Intel's SVML library may change the last bit).
-Conventions that the documentation of edgeR, DESeq2 or R leaves open were
-found by running them as black boxes; comments mark them "found by probing".
+Matching edgeR and DESeq2:
+    The functions follow edgeR 4.4.0's ``calcNormFactors``, ``cpm`` and
+    ``filterByExpr``, and DESeq2 1.46.0's size factors. Their documentation gives the
+    methods, and running them on chosen inputs settled the conventions it leaves open,
+    which comments in the code record. The routines repeat R's floating-point
+    operations wherever an operation decides a discrete outcome: the rank-based
+    trimming and the reference sample of TMM, and the comparisons of
+    ``filterByExpr``. Sums and means that R accumulates in extended precision
+    (``sum``, ``mean``, ``colSums``, ``rowMeans``) are accumulated with error
+    compensation and rounded once, and logarithms and exponentials come from the C
+    math library, as in R. numba set up to use Intel's SVML library may change the
+    last bit.
 
 References:
     Robinson MD, Oshlack A (2010). A scaling normalization method for differential
@@ -159,7 +162,7 @@ def tmm_factors(
             is closest to the mean of that ratio over samples (the first one
             when several are equally close). When the median of the ratios is
             below 1e-20, as with very sparse counts, it is the sample with the
-            largest sum of square-root counts instead (found by probing).
+            largest sum of square-root counts instead, as in edgeR.
         log_ratio_trim: Fraction of features trimmed from each end of the M
             values, in [0, 0.5).
         sum_trim: Fraction of features trimmed from each end of the A values,
@@ -183,7 +186,9 @@ def tmm_factors(
     trim_m = _fraction(log_ratio_trim, "log_ratio_trim")
     trim_a = _fraction(sum_trim, "sum_trim")
     if not isinstance(weighted, bool | np.bool_):
-        raise TypeError(f"weighted must be a bool, got {type(weighted).__name__}")
+        raise TypeError(
+            f"weighted must be True or False, got {type(weighted).__name__}"
+        )
     cutoff = real_number(a_cutoff, "a_cutoff", finite=False)
     expressed = _expressed(y)
     if expressed.shape[1] == 0:
@@ -253,8 +258,8 @@ def rle_factors(
     Over the features with positive counts in every sample, a sample's counts
     are divided by the features' geometric means across samples; the factor is
     the median of these ratios divided by the library size. edgeR takes the
-    median of the ratios, where DESeq2 takes the median of their logarithms
-    (found by probing); the two differ when the number of features is even.
+    median of the ratios, where DESeq2 takes the median of their logarithms;
+    the two differ when the number of features is even.
     The factors are scaled to geometric mean one.
 
     Args:
@@ -290,16 +295,16 @@ def median_ratio_size_factors(
     With ``method="ratio"`` (Anders and Huber 2010, equation 5), the size factor
     of a sample is the median, over the features with positive counts in every
     sample, of its counts divided by the features' geometric means across
-    samples. As in DESeq2, the median is taken of the log ratios (found by
-    probing), and the factors are not rescaled.
+    samples. As in DESeq2, the median is taken of the log ratios, and the
+    factors are not rescaled.
 
     With ``method="poscounts"``, a feature's geometric mean is the n-th root of
     the product of its positive counts, n being the number of samples, so
     features with zeros take part. A sample's median runs over the features
     where its count is positive. The factors are then scaled to geometric mean
-    one, as DESeq2's ``estimateSizeFactors()``, and so ``DESeq()``, returns them
-    (found by probing). The lower-level ``estimateSizeFactorsForMatrix()``
-    returns them before this scaling.
+    one, as DESeq2's ``estimateSizeFactors()``, and so ``DESeq()``, returns them.
+    The lower-level ``estimateSizeFactorsForMatrix()`` returns them before this
+    scaling.
 
     Args:
         counts: Counts, samples x features.
@@ -328,6 +333,8 @@ def median_ratio_size_factors(
     if missing.size:
         raise ValueError(f"sample(s) {missing.tolist()} have no positive count")
     factors = np.array([math.exp(m) for m in medians])
+    # estimateSizeFactors() scales the poscounts factors to geometric mean one, and
+    # estimateSizeFactorsForMatrix() does not (found by probing).
     return _to_geometric_mean_one(factors) if positive_only else factors
 
 
@@ -432,8 +439,8 @@ def filter_by_expression(
     ``min_total_count``, where N are the effective library sizes (Chen, Lun and
     Smyth 2016). n is the smallest group size or, with a design, the smallest
     inverse leverage ``1 / max(h)``, where h is the diagonal of the hat matrix
-    of the design with an intercept column added, as R's ``hat()`` adds it
-    (found by probing); the two agree for a one-way design. When n exceeds
+    of the design with an intercept column added, as R's ``hat()`` adds it;
+    the two agree for a one-way design. When n exceeds
     ``large_n`` it is relaxed to ``large_n + (n - large_n) * min_prop``.
     Without groups and design all samples form one group, as in edgeR, with a
     warning.
@@ -488,6 +495,8 @@ def filter_by_expression(
         min_samples = float(_smallest_group_size(sample_groups, n_samples))
     elif design is not None:
         matrix = _design_matrix(design, n_samples)
+        # filterByExpr takes the leverages of the design with an intercept column
+        # added, as R's hat() adds it (found by probing).
         leverages = _leverages(np.column_stack([np.ones(n_samples), matrix]))
         min_samples = 1.0 / float(np.max(leverages))
     else:

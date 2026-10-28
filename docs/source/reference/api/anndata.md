@@ -6,16 +6,9 @@ myst:
 
 # AnnData and MuData
 
-scverse keeps pseudobulk profiles in two layouts, and CytePool reads and writes both.
-{func}`~cytepool.to_anndata` and {func}`~cytepool.from_anndata` convert a cube to and
-from a long AnnData, with a row per sample and cell type, as `scanpy.get.aggregate`
-and `decoupler.pp.pseudobulk` make it; {func}`~cytepool.to_mudata` and
-{func}`~cytepool.from_mudata` convert it to and from a MuData with a modality per cell
-type and the samples as its rows, as LIANA's `adata_to_views` makes it. An import
-takes only sums and counts of cells, so a cube made from aggregated profiles holds
-what one made from the cells would hold, and a cube exported and read back has the
-same fingerprint. anndata and mudata are optional: install CytePool's `anndata` or
-`mudata` extra.
+Conversions of cubes to and from the AnnData and MuData layouts of scverse;
+[Pseudobulk profiles and cubes](../statistics/cubes/#profiles-from-other-tools)
+explains what an import takes.
 
 ```{eval-rst}
 .. automodule:: cytepool.io.anndata

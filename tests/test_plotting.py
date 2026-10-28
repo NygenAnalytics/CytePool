@@ -782,7 +782,7 @@ def test_cell_numbers_are_the_cubes_with_entries_left_out_pale() -> None:
     assert np.ma.getmaskarray(artists(ax, "cell numbers")[0].get_array()).sum() == 2
     with pytest.raises(ValueError, match="does not record cell numbers"):
         plotting.plot_cell_numbers(bulk_cube())
-    with pytest.raises(ValueError, match="min_cells must be at least 0"):
+    with pytest.raises(ValueError, match="min_cells must be non-negative"):
         plotting.plot_cell_numbers(cube, min_cells=-1)
     with pytest.raises(TypeError, match="cube must be a Cube"):
         plotting.plot_cell_numbers(cells)  # type: ignore[arg-type]

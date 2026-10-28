@@ -1,16 +1,17 @@
 """Prediction of case status in held-out studies, from genes chosen in the others.
 
-Genes found by combining studies should separate cases from controls in a study that had
-no part in finding them. :func:`~cytepool.held_out_prediction` measures this as the
-paper that introduced SumRank does (Nakatsuka et al. 2025): each study of a collection
-is left out in turn; genes up and genes down in each cell type are chosen from the other
-studies, by SumRank (:func:`~cytepool.stats.sumrank.fit_sumrank`) and, for comparison,
-by a random-effects meta-analysis
-(:func:`~cytepool.stats.meta_analysis.fit_meta_analysis`); every sample of the held-out
-study is scored by how high its profiles rank those genes; and the area under the ROC
-curve (AUC) of the score says how well it separates the study's cases from its controls.
-:func:`~cytepool.plotting.plot_held_out_auc` draws the AUC of every held-out study by
-method.
+:func:`~cytepool.held_out_prediction` leaves out the studies of a collection in turn,
+chooses genes up and down in each cell type from the other studies, by SumRank
+(:func:`~cytepool.stats.sumrank.fit_sumrank`) and by a random-effects meta-analysis
+(:func:`~cytepool.stats.meta_analysis.fit_meta_analysis`), scores each sample of the
+held-out study by how high its profiles rank those genes, and returns the area under the
+ROC curve (AUC) of the scores of the study's cases against its controls, in a
+:class:`~cytepool.HeldOutPrediction`, as the paper that introduced SumRank compares
+methods (Nakatsuka et al. 2025). :func:`~cytepool.plotting.plot_held_out_auc` draws the
+AUCs by study and method.
+https://docs.nygen.io/CytePool/statistics/replication#held-out-prediction explains the
+method, and https://docs.nygen.io/CytePool/statistics/replication#replication-limits how
+it differs from the paper's.
 
 Choosing the genes:
     In every group (cell type), from the studies other than the held-out one whose
@@ -62,26 +63,6 @@ The AUC:
     score does not separate them, and below 0.5 the genes predict the wrong
     direction; the AUC is NaN, with the reason, for a study without a case or
     without a control.
-
-Deliberate differences from the paper:
-    - The paper fits a logistic regression of case status on the score in the other
-      studies and takes the AUC of its predictions in the held-out study from
-      pROC's ``auc``, whose default ``direction = "auto"`` compares the medians of
-      the held-out cases and controls and takes the direction in which the cases
-      score higher (Robin et al. 2011). A logistic regression on one score is
-      monotone in it, so that AUC is the score's in the direction pROC chooses,
-      which puts a score that ranks controls above cases above 0.5 too. Here the
-      cases are expected to score higher, as genes up minus genes down should make
-      them, so the logistic regression is not needed.
-    - The profiles are the summed counts, which rank the genes of a sample as their
-      mean over its cells does; the paper ranked Seurat's average of the cells'
-      normalized expression, which weighs each cell's counts by its depth.
-
-Not done:
-    The number of studies summed is given, not chosen: the paper chose the proportion
-    whose genes predict best, which a loop over the numbers gives. The paper's
-    prediction of disease severity in cases (a linear regression on the score) is
-    not done.
 
 References:
     Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
@@ -275,8 +256,13 @@ def held_out_prediction(
     chosen from the results of the other studies, by SumRank and by a
     random-effects meta-analysis; each case and control of the held-out study is
     scored by how high its profiles rank those genes, as UCell scores them; and the
-    AUC says how well the scores separate cases from controls. The module
-    description gives each step. The results are those that
+    AUC says how well the scores separate cases from controls. A sample's score is
+    UCell's rank score of the chosen genes in each cell type, scaled over the
+    held-out study's samples, the genes up counted for it and the genes down against
+    it, summed over the cell types; the AUC is the probability that a case scores
+    higher than a control, ties counting one half.
+    https://docs.nygen.io/CytePool/statistics/replication#held-out-prediction explains
+    the method. The results are those that
     :func:`~cytepool.sumrank` takes: each study's analysis of its aligned cube.
 
     Args:
@@ -513,7 +499,7 @@ def _groups(collection: CubeCollection, value: Any) -> list[str]:
 
 def _n_features(value: Any) -> int:
     if isinstance(value, bool | np.bool_):
-        raise TypeError("n_features must be a whole number of genes, not bool")
+        raise TypeError("n_features must be a whole number of genes, got bool")
     number = index_integer(value, "n_features", expected="a whole number of genes")
     if number < 1:
         raise ValueError(f"n_features must be at least 1, got {number}")

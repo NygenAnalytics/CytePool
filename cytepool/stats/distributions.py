@@ -14,9 +14,9 @@ functions never raise for numeric input. Arguments that are not real numbers rai
 ``TypeError``, and so do numpy masked arrays, whose mask numpy would drop: NaN marks a
 missing value instead.
 
-The compiled scalar routines behind the public functions are named
-``<function>_scalar`` (for example ``t_sf_scalar``) and can be called from other compiled
-code, such as per-gene loops.
+Each public function calls a compiled scalar routine named ``<function>_scalar`` (for
+example ``t_sf_scalar``), which other compiled code, such as a per-gene loop, can call
+too.
 
 Methods:
     - Normal: Q(x) = erfc(x / sqrt 2) / 2 from the C library's ``erfc``, with the

@@ -1,17 +1,21 @@
-"""Linear models fitted to many features at once.
+"""Linear models fitted to many features at once, as limma's ``lmFit`` fits them.
 
-Every feature (gene) of a samples x features matrix is fitted with the same
-design by ordinary, weighted or generalised least squares, and the fitted
-coefficients can be re-expressed as contrasts. The results match limma's
-``lmFit`` and ``contrasts.fit``. For feature g with observed responses y_g,
+:func:`fit_linear_model` fits one design to every feature (gene) of a samples x
+features matrix, by ordinary, weighted or generalised least squares, and returns a
+:class:`LinearModelFit`; :func:`contrasts_fit` re-expresses a fit as contrasts of its
+coefficients. https://docs.nygen.io/CytePool/statistics/linear-models#one-model-per-gene
+gives the model, and https://docs.nygen.io/CytePool/statistics/linear-models#contrasts
+the contrasts and their standard errors.
 
-    E(y_g) = X a_g,    var(y_g) = sigma_g^2 W_g^(-1/2) R W_g^(-1/2),
+Matching limma:
+    The results match limma 3.62.1's ``lmFit`` and ``contrasts.fit``. Running limma
+    settled the conventions that its documentation leaves open, such as which
+    covariance matrix of the coefficients a fit reports.
 
-where W_g is the diagonal matrix of the feature's precision weights and R is
-the identity, or the correlation matrix of a known correlation between samples
-of the same block (Smyth 2004; Smyth, Michaud and Scott 2005). A feature with missing
-values or weights of its own is fitted to its observed samples by a Householder QR
-decomposition of its own (Golub and Van Loan 2013).
+Differences from limma:
+    https://docs.nygen.io/CytePool/statistics/linear-models#linear-models-limits lists
+    them; the docstrings of :func:`fit_linear_model` and :func:`contrasts_fit` give
+    those that change their results.
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
@@ -111,8 +115,8 @@ class LinearModelFit:
 
     Raises:
         TypeError: If ``coefficient_names`` is a string,
-            ``exact_standard_errors`` is not a bool, or a field is a numpy masked
-            array.
+            ``exact_standard_errors`` is not True or False, or a field is a numpy
+            masked array.
         ValueError: If shapes disagree, names are not unique, or a fit marked
             exact has neither per-feature covariance matrices nor standard
             errors that ``cov_coefficients`` implies.
@@ -182,7 +186,10 @@ class LinearModelFit:
             self.cov_coefficients, "cov_coefficients", shape=square
         )
         if not isinstance(self.exact_standard_errors, (bool, np.bool_)):
-            raise TypeError("exact_standard_errors must be a bool")
+            raise TypeError(
+                "exact_standard_errors must be True or False, got "
+                f"{type(self.exact_standard_errors).__name__}"
+            )
         exact = bool(self.exact_standard_errors)
         per_feature = self.cov_coefficients_per_feature
         if per_feature is not None:
@@ -247,8 +254,9 @@ def fit_linear_model(
     Each column of ``y`` is regressed on ``design``: by ordinary least
     squares, by weighted least squares with precision ``weights``, and by
     generalised least squares when ``block`` and ``correlation`` set a known
-    correlation between samples of the same block. Results match limma's
-    ``lmFit``.
+    correlation between samples of the same block, as limma's ``lmFit`` does.
+    https://docs.nygen.io/CytePool/statistics/linear-models#one-model-per-gene
+    gives the model.
 
     NaN in ``y`` marks a missing value of one feature, and a zero weight
     leaves an observed value out of that feature's fit (it still counts in
@@ -299,14 +307,17 @@ def fit_linear_model(
         sample weights, one factorisation serves every feature. Otherwise each
         feature is fitted on its own, in parallel on up to ``n_threads`` threads,
         and the fit stores the covariance matrix of every feature:
-        ``n_features * n_coefficients**2`` floats.
+        ``n_features * n_coefficients**2`` floats of 8 bytes, so 16 MB for 20,000
+        features and 10 coefficients, and 1.6 GB for 100 coefficients.
 
     Raises:
         TypeError: If an input is not real-valued, a label is not comparable, or an
             input is or holds a numpy masked array (mark missing values of ``y``
             with NaN).
         ValueError: If shapes disagree, ``y`` has infinite values, ``design``
-            has random effects that the fit would drop, is not finite or is not
+            has random effects that the fit would drop (the message says what can
+            be fitted: ``fit_mixed_model`` estimates random intercepts, and no
+            function estimates random slopes yet), is not finite or is not
             of full column rank (the message names the aliased columns), a
             weight is negative or not finite where ``y`` is observed, ``block``
             and ``correlation`` are invalid, or ``coefficient_names`` move a
@@ -375,9 +386,12 @@ def contrasts_fit(
     approximate, because P then comes from the whole design without weights
     rather than from each feature's own samples and weights. On a design whose
     coefficients are correlated, such as group comparisons adjusted for a
-    covariate, they can be off by a factor of two or more; and with sample
+    covariate, they can be far from the exact ones, and they change with the
+    parametrisation of the design, where the exact ones do not; with sample
     weights, a single missing value anywhere, or a single zero weight, makes
     them approximate for every feature.
+    https://docs.nygen.io/CytePool/statistics/linear-models#contrasts explains
+    why the exact standard errors are the default.
 
     A contrast with a non-zero multiplier on a coefficient that is NaN for a
     feature is NaN for that feature, as in limma. This includes contrasts that
@@ -395,7 +409,7 @@ def contrasts_fit(
     ..., n - 1) are taken in the order of ``fit.coefficient_names``; a pandas
     index of other labels that are not strings is an error. limma's
     ``contrasts.fit`` always takes the rows in order, and only warns when their
-    names differ from the coefficient names (found by probing).
+    names differ from the coefficient names.
 
     Args:
         fit: A fit from :func:`fit_linear_model` or from this function.
@@ -439,6 +453,9 @@ def contrasts_fit(
             "contrasts_fit with method='limma'), so its contrasts cannot be exact; "
             "contrast the original fit, or use method='limma'"
         )
+    # Weights that name their coefficients are matched to them by name. limma's
+    # contrasts.fit takes the rows in order and only warns when the names differ
+    # (found by probing).
     matrix, contrast_names = contrast_matrix(contrasts, names, fit.coefficient_names)
     n_features = fit.coefficients.shape[0]
     n_contrasts = matrix.shape[1]

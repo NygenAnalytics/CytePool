@@ -1,95 +1,17 @@
 """DESeq2's dispersion estimates and its Wald and likelihood-ratio tests.
 
-DESeq2 (Love, Huber and Anders 2014) models the count y_gi of gene g in sample i as
-
-    y_gi ~ NB(mu_gi, alpha_g),    var(y_gi) = mu_gi + alpha_g mu_gi^2,
-    log2(mu_gi) = log2(s_i) + x_i' beta_g,
-
-with s_i the size factor of sample i (by default the median-of-ratios factors of
-Anders and Huber (2010), :func:`~cytepool.normalization.median_ratio_size_factors`),
-x_i its row of the design
-and beta_g the coefficients of gene g on the log2 scale. :func:`fit_deseq2` estimates
-the dispersions and fits every gene, as ``DESeq()`` does; :func:`deseq2_wald_test`
-tests a coefficient or contrast and :func:`deseq2_likelihood_ratio_test` a reduced
-design against the full one, with the columns of ``results()``. They follow DESeq2's
-documentation and paper, with DESeq2's defaults; conventions the documentation leaves
-open were found by running DESeq2 1.46.0 as a black box and are marked "found by
-probing". Genes without counts are left out of every step and get NaN.
-
-Dispersions (:func:`deseq2_dispersions`, as ``estimateDispersions()``):
-
-1. The means of the likelihood. For a one-way layout, whose design rows take as many
-   distinct values as it has columns, the linear model of the normalized counts
-   y / s: s_i times the mean normalized count of the samples with sample i's row.
-   For other designs the fit described below, at a rough dispersion: the smaller of
-   a moment estimate from that linear model's residuals, its fitted values raised to
-   at least 1, and one from the mean and variance of the normalized counts (found by
-   probing, as PyDESeq2 computes them). Means below ``min_mean`` (0.5) are raised to
-   it.
-2. Gene-wise estimates: the maximum of the Cox-Reid adjusted profile log-likelihood
-   (Cox and Reid 1987; McCarthy, Chen and Smyth 2012), conditional on those means,
-
-       l(alpha) - 1/2 log det(X' W X),    W = diag(mu / (1 + alpha mu)),
-
-   over [1e-8, max(10, n_samples)], the bounds of DESeq2 (found by probing). A gene
-   whose rough dispersion is at the lower bound keeps the bound as its estimate, as in
-   DESeq2, even where the maximum lies above it (found by probing).
-3. The trend of the dispersions on the mean normalized count m, alpha_tr(m) = a0 +
-   a1 / m: a gamma-family generalized linear model with identity link, fitted to the
-   genes whose gene-wise estimate is above 1e-6 (found by probing) and lies within
-   (1e-4, 15) times the current trend, from a0 = 0.1 and a1 = 1, and fitted again until
-   the squared logarithmic changes of a0 and a1 add up to less than 1e-6 after a fit
-   that converged, in at most 11 fits. Each fit is that of R's ``glm()`` with its
-   default control, as DESeq2 makes it: iteratively reweighted least squares from the
-   coefficients of the fit before, stopped when the deviance changes by less than 1e-8
-   of it or after 25 steps, with a step that makes a mean non-positive halved towards
-   the coefficients before it (found by probing; with these, the coefficients agree
-   with DESeq2's to rounding). The trend is then evaluated at every gene. With
-   ``trend="mean"``, the trend is the mean of the gene-wise estimates above 1e-7,
-   trimmed by 0.1% at each end, instead.
-4. The prior log(alpha_g) ~ N(log(alpha_tr(m_g)), sigma_d^2). With s_lr the median
-   absolute deviation, scaled as R's ``mad``, of the log residuals log(alpha_gw /
-   alpha_tr) over the genes whose gene-wise estimate is at least 1e-6 (found by
-   probing), and d the residual degrees of freedom, sigma_d^2 = max(s_lr^2 -
-   trigamma(d / 2), 0.25). For d of 3 or fewer the paper matches the density of the
-   log residuals to that of simulated ones, log(chi^2_d / d) + N(0, sigma_d^2); here
-   sigma_d^2 is the maximum likelihood estimate in that model instead, over [0, 8] (the
-   range of DESeq2's grid), and at least 0.25.
-5. Maximum a posteriori estimates: the maximum of the adjusted log-likelihood plus the
-   logarithm of the prior density, over the same interval and with the same means.
-6. A gene whose log gene-wise estimate exceeds the log trend by more than 2 s_lr is a
-   dispersion outlier: it keeps its gene-wise estimate, and the others take their
-   maximum a posteriori estimate.
-
-Each maximum is found from the sign changes of the derivative on a grid of 30 log
-dispersions, refined to 1e-12 by the Illinois variant of false position (Dowell and
-Jarratt 1971), the largest of several being kept. The derivative is
-computed without cancellation where the dispersion is small: as series in the
-dispersion and from logarithms of ratios.
-
-Fits (:func:`fit_deseq2`, as ``nbinomWaldTest()``): DESeq2's iteratively reweighted
-least squares raises fitted values below ``min_mean`` to it in the weights and working
-values, and adds a ridge penalty of 1e-6 beta^2 / 2 on the log2 scale (found by
-probing). Its fixed point maximizes a concave function: the log-likelihood in which the
-term of each observation is continued, below a fitted value of ``min_mean``, by its
-quadratic expansion there in the linear predictor, with the expected information as
-curvature, less the penalty. Each gene is fitted by Newton's method on that function,
-to steps of 1e-10 in the log fitted values; a design that is an intercept alone is
-fitted by the log of the mean normalized count, as DESeq2 does (found by probing). The
-covariance of the coefficients is (I + L)^-1 I (I + L)^-1, with I = X' W X, W =
-mu / (1 + alpha mu) at the raised fitted values and L the penalty; the hat values are
-the diagonal of W^(1/2) X (I + L)^-1 X' W^(1/2). The fitted values reported are not
-raised.
-
-Cook's distances are r^2 / p h / (1 - h)^2, with h the hat value, p the number of
-coefficients and r the Pearson residual (y - mu) / sqrt(mu + a mu^2) at a robust moment
-estimate a of the dispersion (found by probing, with the constants of PyDESeq2): a = (v
-- m) / m^2, at least 0.04, with m the mean normalized count and v a robust variance of
-the normalized counts, the largest over the groups of three or more samples that share
-a design row of a trimmed mean of squared deviations from the group's trimmed mean (at
-each end 1/3 of the samples of a group of 3, 1/4 below 24 and 1/8 from 24, scaled by
-2.04, 1.86 or 1.51), or, without such groups, the same over all samples with 1/8 and
-1.51.
+:func:`deseq2_dispersions` estimates every gene's dispersion as DESeq2's
+``estimateDispersions()`` does, into a :class:`DESeq2Dispersions`; :func:`fit_deseq2`
+fits every gene at those dispersions as ``DESeq()`` does, into a :class:`DESeq2Fit`;
+and :func:`deseq2_wald_test` tests a coefficient or contrast and
+:func:`deseq2_likelihood_ratio_test` a reduced design against the full one, each into a
+:class:`DESeq2Results` with the columns of ``results()`` (Love, Huber and Anders 2014).
+The size factors are those of
+:func:`~cytepool.normalization.median_ratio_size_factors` by default (Anders and Huber
+2010), and genes without counts are left out of every step and get NaN.
+https://docs.nygen.io/CytePool/statistics/count-models#deseq2 gives the model and the
+steps, and https://docs.nygen.io/CytePool/statistics/count-models#count-models-limits
+how the results differ from DESeq2's.
 
 Tests and ``results()``:
 
@@ -98,60 +20,38 @@ Tests and ``results()``:
   p-values. When a contrast has weights of both signs and every count is zero in the
   samples with a nonzero entry in a column of positive weight, and in those with one in
   a column of negative weight, the log2 fold change and the statistic are 0 and the
-  p-value 1 (found by probing; ``results()`` documents this for a comparison of two
-  groups). The standard error is kept.
+  p-value 1, as ``results()`` documents for a comparison of two groups. The standard
+  error is kept.
 - Likelihood ratio test: the difference of the deviances of the reduced and the full
   fit, against the chi-squared distribution with as many degrees of freedom as the full
   design has more columns. Its log2 fold change and standard error are those of a
   coefficient of the full fit.
-- A gene's p-value is removed (NaN) when its largest Cook's distance over the samples
-  whose design row occurs three or more times exceeds the 0.99 quantile of F(p, n - p);
-  in a comparison of two groups (one factor of two levels, with or without an
-  intercept) not when three or more samples have larger counts than the sample with
-  the largest distance over all samples (found by probing). A numeric covariate of two
-  values is not such a comparison; a design matrix that is not a ``Design`` is, when
-  its rows take two distinct values of zeros and ones.
+- A gene's p-value is removed (NaN) when its largest Cook's distance (Cook 1977) over
+  the samples whose design row occurs three or more times exceeds the 0.99 quantile of
+  F(p, n - p); in a comparison of two groups (one factor of two levels, with or without
+  an intercept) not when three or more samples have larger counts than the sample with
+  the largest distance over all samples. A numeric covariate of two values is not such
+  a comparison; a design matrix that is not a ``Design`` is, when its rows take two
+  distinct values of zeros and ones.
 - Adjusted p-values are Benjamini-Hochberg's (Benjamini and Hochberg 1995), after
   independent filtering on the mean normalized count (Bourgon, Gentleman and Huber
   2010): at 50 quantiles of the mean counts, from the fraction of genes without counts
   to 0.95, the adjusted p-values of the genes at or above the quantile, and the number
   of them below ``alpha``. The quantile kept is the lowest whose number exceeds the
   maximum of a LOWESS fit (span 1/5) less the root mean square of its residuals, or
-  failing that 90% and then 80% of that maximum (found by probing), or the lowest
-  quantile; and the lowest quantile when no number exceeds 10. Genes below it get NaN.
+  failing that 90% and then 80% of that maximum, or the lowest quantile; and the lowest
+  quantile when no number exceeds 10. Genes below it get NaN.
 
-Deliberate differences from DESeq2, found by probing:
-
-- DESeq2 maximizes the dispersions by a line search that stops when an iteration gains
-  less than 1e-6, and that can stall where it starts, returning its starting value: its
-  gene-wise estimates are often about 1e-4 from the maximum on the log scale and a few
-  up to 1 or more, and its maximum a posteriori estimates up to about 1e-2 from theirs,
-  relative. Here each is the maximum, but for the genes of step 2 that keep the lower
-  bound. DESeq2's own maximum a posteriori routine, given a nearly flat prior, finds
-  the same gene-wise maxima.
-- DESeq2's fits stop when the deviance changes by less than 1e-8 of it: its
-  coefficients up to about 3e-3 from the fixed point, relative to the larger of the
-  coefficient and 1, and the means of its first fit, at the rough dispersion, up to
-  about 1e-3. Here every fit converges.
-- For three or fewer residual degrees of freedom DESeq2 chooses sigma_d^2 from a grid of
-  1,000 values on [0, 8] by comparing densities of simulated residuals; its choice moves
-  by several percent with the sample of residuals, and is high for small variances (0.55
-  to 0.58 for 0.5). The maximum likelihood estimate used here is the limit of its
-  criterion as those densities become exact.
-- Where the parametric trend fails, a coefficient not positive or no convergence in 11
-  fits, DESeq2 substitutes a local regression, which CytePool does not have; the mean
-  trend is used instead, with a warning, as PyDESeq2 does.
-
-Not implemented: the replacement of outlier counts that ``DESeq()`` makes for design
-rows that occur seven times or more (the results here are those of ``DESeq(...,
-minReplicatesForReplace = Inf)``), shrunken fold changes (``lfcShrink``), the local
-trend and glmGamPoi, observation weights, normalization factors that differ between
-genes, thresholds on the fold change (``lfcThreshold``) and t-distributed Wald tests
-(``useT``).
-
-The constants and the structure taken from PyDESeq2 (Muzellec et al. 2023), in the
-robust dispersions of Cook's distances, the rough dispersions and the fallback to the
-mean trend, are recorded, with PyDESeq2's license, in ``THIRD_PARTY_NOTICES.md``.
+Matching DESeq2:
+    The results match DESeq2 1.46.0, run with ``DESeq(..., minReplicatesForReplace =
+    Inf)``: its documentation and paper give the method, and running it on chosen
+    inputs settled the conventions they leave open, which comments in the code record:
+    the bounds of the dispersions, the genes that the trend and the prior are estimated
+    from, the trend's iterations, the ridge penalty of the fits, the rules of the Wald
+    test, Cook's distances and independent filtering above. The constants and the
+    structure taken from PyDESeq2 (Muzellec et al. 2023), in the robust dispersions of
+    Cook's distances, the rough dispersions and the fallback to the mean trend, are
+    recorded, with PyDESeq2's license, in ``THIRD_PARTY_NOTICES.md``.
 
 References:
     Love MI, Huber W, Anders S (2014). Moderated estimation of fold change and
@@ -590,12 +490,55 @@ def deseq2_dispersions(
 ) -> DESeq2Dispersions:
     """Estimate every gene's dispersion as DESeq2's ``estimateDispersions()``.
 
-    The module description gives the steps: gene-wise estimates, a trend, a prior on
-    the log dispersions around it, and maximum a posteriori estimates. Gene-wise
-    estimates, values of the trend and the prior's variance may be given in
+    For counts y_gi ~ NB(mu_gi, alpha_g) with var(y_gi) = mu_gi + alpha_g mu_gi^2:
+
+    1. The means of the likelihood. For a one-way layout, whose design rows take as
+       many distinct values as it has columns, the linear model of the normalized
+       counts y / s: s_i times the mean normalized count of the samples with sample
+       i's row. For other designs the fit of :func:`fit_deseq2` at a rough dispersion,
+       the smaller of a moment estimate from that linear model's residuals, its fitted
+       values raised to at least 1, and one from the mean and variance of the
+       normalized counts. Means below ``min_mean`` are raised to it.
+    2. Gene-wise estimates: the maximum of the Cox-Reid adjusted profile
+       log-likelihood (Cox and Reid 1987; McCarthy, Chen and Smyth 2012), conditional
+       on those means, l(alpha) - 1/2 log det(X' W X) with W = diag(mu / (1 + alpha
+       mu)), over [1e-8, max(10, n_samples)]: the largest of the maxima found from the
+       sign changes of its derivative on a grid of 30 log dispersions, each refined to
+       1e-12 by the Illinois variant of false position (Dowell and Jarratt 1971). A
+       gene whose rough dispersion is at the lower bound keeps it, as in DESeq2, even
+       where the maximum lies above.
+    3. The trend on the mean normalized count m, alpha_tr(m) = a0 + a1 / m: a
+       gamma-family generalized linear model with identity link, fitted to the genes
+       whose gene-wise estimate is above 1e-6 and lies within (1e-4, 15) times the
+       current trend, from a0 = 0.1 and a1 = 1, and fitted again until the squared
+       logarithmic changes of a0 and a1 add up to less than 1e-6 after a fit that
+       converged, in at most 11 fits. Each fit is that of R's ``glm()`` with its
+       default control: iteratively reweighted least squares from the coefficients of
+       the fit before, stopped when the deviance changes by less than 1e-8 of it or
+       after 25 steps, with a step that makes a mean non-positive halved towards the
+       coefficients before it. Where a coefficient is not positive, or no fit
+       converges in the 11, the mean trend is used, with a warning. With
+       ``trend="mean"``, the trend is the mean of the gene-wise estimates above 1e-7,
+       trimmed by 0.1% at each end, instead.
+    4. The prior log(alpha_g) ~ N(log(alpha_tr(m_g)), sigma_d^2). With s_lr the median
+       absolute deviation, scaled as R's ``mad``, of the log residuals log(alpha_gw /
+       alpha_tr) over the genes whose gene-wise estimate is at least 1e-6, and d the
+       residual degrees of freedom, sigma_d^2 = max(s_lr^2 - trigamma(d / 2), 0.25).
+       For d of 3 or fewer it is the maximum likelihood estimate in the model
+       log(chi^2_d / d) + N(0, sigma_d^2) of the log residuals, over [0, 8], and at
+       least 0.25.
+    5. Maximum a posteriori estimates: the maximum of the adjusted log-likelihood plus
+       the logarithm of the prior density, over the same interval and with the same
+       means, found as in step 2.
+    6. A gene whose log gene-wise estimate exceeds the log trend by more than 2 s_lr is
+       a dispersion outlier: it keeps its gene-wise estimate, and the others take their
+       maximum a posteriori estimate.
+
+    Gene-wise estimates, values of the trend and the prior's variance may be given in
     place of their estimates, as DESeq2's lower-level functions allow
     (``estimateDispersionsGeneEst``, a custom ``dispersionFunction`` and the
     ``dispPriorVar`` of ``estimateDispersionsMAP``).
+    https://docs.nygen.io/CytePool/statistics/count-models#deseq2 explains the steps.
 
     Args:
         counts: ``(n_samples, n_features)`` counts: whole numbers, finite and
@@ -673,12 +616,40 @@ def fit_deseq2(
 ) -> DESeq2Fit:
     """Fit DESeq2's negative binomial model to every gene, as ``DESeq()`` does.
 
-    Estimates the size factors and dispersions unless they are given, fits every gene
-    as ``nbinomWaldTest()`` does, and computes the standard errors, hat values and
-    Cook's distances; the module description gives the methods. Test the fit with
+    Estimates the size factors and dispersions unless they are given
+    (:func:`deseq2_dispersions`), fits every gene as ``nbinomWaldTest()`` does, and
+    computes the standard errors, hat values and Cook's distances. Test the fit with
     :func:`deseq2_wald_test` or :func:`deseq2_likelihood_ratio_test`. Outlier counts
     are not replaced: the fit is that of ``DESeq(..., minReplicatesForReplace =
     Inf)``, which is DESeq2's default where no design row occurs seven or more times.
+
+    Fits:
+        log2(mu_gi) = log2(s_i) + x_i' beta_g. DESeq2's iteratively reweighted least
+        squares raises fitted values below ``min_mean`` to it in the weights and
+        working values, and adds a ridge penalty of 1e-6 beta^2 / 2 on the log2 scale.
+        Its fixed point maximizes a concave function: the log-likelihood in which the
+        term of each observation is continued, below a fitted value of ``min_mean``,
+        by its quadratic expansion there in the linear predictor, with the expected
+        information as curvature, less the penalty. Each gene is fitted by Newton's
+        method on that function, to steps of 1e-10 in the log fitted values; a design
+        that is an intercept alone is fitted by the log of the mean normalized count,
+        as DESeq2 does. The covariance of the coefficients is (I + L)^-1 I (I + L)^-1,
+        with I = X' W X, W = mu / (1 + alpha mu) at the raised fitted values and L the
+        penalty; the hat values are the diagonal of W^(1/2) X (I + L)^-1 X' W^(1/2).
+        The fitted values reported are not raised.
+
+    Cook's distances:
+        r^2 / p h / (1 - h)^2, with h the hat value, p the number of coefficients and
+        r the Pearson residual (y - mu) / sqrt(mu + a mu^2) at a robust moment estimate
+        a of the dispersion: a = (v - m) / m^2, at least 0.04, with m the mean
+        normalized count and v a robust variance of the normalized counts, the largest
+        over the groups of three or more samples that share a design row of a trimmed
+        mean of squared deviations from the group's trimmed mean (at each end 1/3 of
+        the samples of a group of 3, 1/4 below 24 and 1/8 from 24, scaled by 2.04,
+        1.86 or 1.51), or, without such groups, the same over all samples with 1/8 and
+        1.51.
+
+    https://docs.nygen.io/CytePool/statistics/count-models#deseq2 explains the model.
 
     Args:
         counts: ``(n_samples, n_features)`` counts: whole numbers, finite and

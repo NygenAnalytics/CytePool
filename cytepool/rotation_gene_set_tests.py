@@ -1,58 +1,45 @@
 """Rotation gene-set tests of one contrast of a linear model: limma's roast, mroast and
 romer.
 
-A rotation test (Langsrud 2005) draws random rotations of the residual space of the
-linear model fitted to every gene, which leave the joint distribution of the data
-unchanged under the null hypothesis, and compares a set statistic with its values under
-the rotations. :func:`~cytepool.roast` and :func:`~cytepool.mroast` are self-contained
-tests of one gene set and of many (Wu et al. 2010): whether the genes of a set are
-differentially expressed for the contrast at all. :func:`~cytepool.romer` is a
-competitive test of many sets (Majewski et al. 2010): whether the genes of a set rank
-higher than the other genes. :func:`~cytepool.fry` gives the limit of ``mroast`` with
-the mean statistic over infinitely many rotations without drawing any. Results match
-limma 3.62.1 within Monte Carlo error, and exactly when CytePool is given limma's
-rotations, except where noted under "Deliberate differences".
+:func:`~cytepool.roast` and :func:`~cytepool.mroast` are self-contained rotation tests
+(Langsrud 2005; Wu et al. 2010) of one gene set and of many: whether the genes of a set
+are differentially expressed for the contrast at all; roast returns a table of one row,
+and mroast a row per set, with p-values adjusted over the sets. :func:`~cytepool.romer`
+is a competitive rotation test of many sets (Majewski et al. 2010): whether the genes of
+a set rank higher than the other genes. :func:`~cytepool.fry` gives the limit of
+``mroast`` with the mean statistic over infinitely many rotations without drawing any.
+https://docs.nygen.io/CytePool/statistics/gene-set-tests#roast explains the tests, and
+https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits how they
+differ from limma's.
 
-Effects and rotations:
-    Each gene's contrast effect u_0 and residual effects u_1, ..., u_d are those of
-    :func:`~cytepool.camera` and :func:`~cytepool.fry`: coordinates of its data,
-    whitened by its precision weights, in the basis of the Householder QR decomposition
-    of the design reparametrised so that the contrast is its last coefficient. Under the
-    null hypothesis they are independent with variance sigma^2, so one rotation applied
-    to the (d + 1)-vectors of every gene leaves the joint distribution of the data, and
-    the correlation between genes, unchanged (Wu et al. 2010, section 4.2). A rotation
-    is given by its first row r, a point drawn uniformly from the unit sphere in d + 1
-    dimensions (a vector of standard normal draws divided by its length): a gene's
-    rotated contrast effect is u* = r'u and its rotated residual sum of squares |u|^2 -
-    u*^2. The rotated moderated t-statistic of a gene uses the prior variance s_0^2 and
-    prior df d_0 estimated once from the observed residual variances of all genes (Wu et
-    al. 2010, section 2.4): t* = u* / s*, with s*^2 = (d_0 s_0^2 + |u|^2 - u*^2) / (d_0
-    + d). The rotations come from ``rng.standard_normal``, 4,096 at a time, which bounds
-    the memory they take; numpy gives the same stream however its draws are split, so a
-    seeded generator gives the same p-values every time. limma draws its own rotations
-    from R's generator, so the two programs agree within Monte Carlo error.
+Rotations:
+    The tests read their data, design and contrast as :func:`~cytepool.camera` and
+    :func:`~cytepool.fry` do, and rotate each gene's contrast effect u_0 and residual
+    effects u_1, ..., u_d (Wu et al. 2010, section 4.2). A rotation is given by its
+    first row r, a point drawn uniformly from the unit sphere in d + 1 dimensions (a
+    vector of standard normal draws divided by its length): a gene's rotated contrast
+    effect is u* = r'u and its rotated residual sum of squares |u|^2 - u*^2. The
+    rotated moderated t-statistic of a gene uses the prior variance s_0^2 and prior df
+    d_0 estimated once from the observed residual variances of all genes (Wu et al.
+    2010, section 2.4): t* = u* / s*, with s*^2 = (d_0 s_0^2 + |u|^2 - u*^2) / (d_0 +
+    d). The rotations come from ``rng.standard_normal``, 4,096 at a time, which bounds
+    the memory they take; numpy gives the same stream however its draws are split, so
+    a seeded generator gives the same p-values every time.
 
-roast and mroast:
+Set statistics of roast and mroast:
     Each gene's moderated t becomes a z-score by Bailey's (1980) normalizing
     transformation, limma's default, z = (8 nu + 1) / (8 nu + 9) (nu + 19/12)^(1/2)
-    log(1 + t^2 / (nu + 1/12))^(1/2) with the sign of t (limma's ``zscoreT(approx =
-    TRUE)`` to 1e-14, found by probing), on nu = min(d_0 + d, 10^4) degrees of freedom,
-    limma's limit (found by probing). With an infinite prior df the exact z-score is t
-    itself, which the limit lowers by about (t^2 + 1) / (4 10^4) of its value
-    (1.2e-4 at t = 2, 2.5e-3 at t = 10); the same transformation applies to the
-    observed and the rotated statistics, so the test remains exact. With contribution
-    weights a_g (1 unless given; a gene of weight zero leaves the set), A = sum |a_g|
-    and m genes in the set, the set statistics of Wu et al. (2010, section 3.3) are, for
-    the up, down and mixed alternatives:
+    log(1 + t^2 / (nu + 1/12))^(1/2) with the sign of t, on nu = min(d_0 + d, 10^4)
+    degrees of freedom. With contribution weights a_g (1 unless given; a gene of weight
+    zero leaves the set), A = sum |a_g| and m genes in the set, the set statistics of Wu
+    et al. (2010, section 3.3) are, for the up, down and mixed alternatives:
 
     - ``"mean"``: sum a_g z_g / A, its negative, and sum |a_g z_g| / A.
     - ``"floormean"``: sum max(a_g z_g, 0) / A, sum max(-a_g z_g, 0) / A, and
       sum |a_g| max(|z_g|, c) / A, with c = 0.674, the square root of the median of
       the chi-squared distribution on 1 df.
     - ``"mean50"``: the mean of the h largest a_g z_g, of the h largest -a_g z_g, and
-      of the h largest |a_g z_g|, with h = ceiling(m / 2), the smallest integer at least
-      half the number of genes, as the paper's text and limma have it (its formula,
-      ceiling((m + 1) / 2), is larger for even m).
+      of the h largest |a_g z_g|, with h = ceiling(m / 2).
     - ``"msq"``: sum |a_g| z_g^2 / A over the genes with a_g z_g > 0, over those with
       a_g z_g < 0, and over all genes.
 
@@ -61,81 +48,66 @@ roast and mroast:
     extreme, and the p-value is (b + 1) / (B + 1) for b such rotations out of B
     (Phipson and Smyth 2010). For the up and down alternatives each rotation r also
     gives -r, which negates every rotated z-score, so b counts 2B rotated statistics
-    and the p-value is (b + 1) / (2B + 1), as in limma. A gene is active for the up
-    alternative when sign(a_g) z_g > sqrt(2), for the down alternative when
-    sign(a_g) z_g < -sqrt(2), and for the mixed alternative when |z_g| > sqrt(2) (Wu
-    et al. 2010, section 3.5); the two-sided alternative reports the larger of the up
-    and down proportions, as limma does. mroast's direction is "up" when the up
-    p-value is smaller than the down p-value and "down" otherwise (found by
-    probing), and its adjusted p-values are Benjamini and Hochberg's, applied to the
-    mid-p-values p - 1 / (2 (B + 1)) (Routledge 1994) and then raised to at least the
-    p-value, as limma does by default. All sets share the same rotations.
+    and the p-value is (b + 1) / (2B + 1). A gene is active for the up alternative when
+    sign(a_g) z_g > sqrt(2), for the down alternative when sign(a_g) z_g < -sqrt(2),
+    and for the mixed alternative when |z_g| > sqrt(2) (Wu et al. 2010, section 3.5);
+    the two-sided alternative reports the larger of the up and down proportions.
+    mroast's direction is "up" when the up p-value is smaller than the down p-value
+    and "down" otherwise, and its adjusted p-values are Benjamini and Hochberg's,
+    applied to the mid-p-values p - 1 / (2 (B + 1)) (Routledge 1994) and then raised to
+    at least the p-value. All sets share the same rotations.
 
-romer:
+Set statistics of romer:
     Every gene's observed moderated t-statistic is ranked among all genes (ties get
     their average rank), and a set's statistic is the mean rank of its genes: the
     ranks of t for the up alternative, of -t for the down alternative and of |t| for
     the mixed alternative (``"mean"``); the same after setting negative values to
-    zero, and for the mixed alternative |t| below 1 to 1 (``"floormean"``, the floor
-    of 1 found by probing); or the mean of the ceiling(m / 2) largest ranks of the set
-    (``"mean50"``). Each rotation ranks the rotated t-statistics of all genes again.
-    The p-value of each alternative is (b + 1) / (B + 1), where b counts the rotations
-    whose statistic is at least the observed one.
+    zero, and for the mixed alternative |t| below 1 to 1 (``"floormean"``); or the
+    mean of the ceiling(m / 2) largest ranks of the set (``"mean50"``). Each rotation
+    ranks the rotated t-statistics of all genes again. The p-value of each alternative
+    is (b + 1) / (B + 1), where b counts the rotations whose statistic is at least the
+    observed one.
 
     Before rotating, each gene's contrast effect is shrunk, so that the
     differential expression of the gene does not inflate its rotated statistics
-    (limma's ``shrink.resid``; formula found by probing): u_0 becomes
-    u_0 / (1 + P_g v_0 / v)^(1/2). P_g is the posterior probability that the gene is
-    differentially expressed and v_0 the prior variance of the contrast for such genes,
-    from the log-odds (B-statistics) of
-    :func:`~cytepool.stats.empirical_bayes.moderated_statistics` with the t-statistics
-    on d_0 + d degrees of freedom (their limit for an infinite prior df) and 1 - pi_0
-    differentially expressed genes, and v is the unscaled variance of the contrast.
-    The proportion of true null hypotheses pi_0 is (2 / (n + 1)) sum min(p_(i), i / n)
-    over the n ordered p-values p_(i) of the moderated t-statistics (limma's
-    ``propTrueNull(method = "lfdr")``, found by probing). The rotated residual sum of
-    squares remains |u|^2 - u*^2 with |u| the length of the gene's unshrunk effects,
-    as in limma (found by probing). romer multiplies the residual effects by the sign
-    of the last diagonal element of R, as limma's romer does and its roast does not
-    (found by probing); a uniformly random rotation does not depend on the basis of the
-    residual space, but limma's rotations then mean the same here. The bounds of v_0
-    are those of ``moderated_statistics`` (``stdev_coef_lim``), in log-expression
-    units, so, as in limma, romer's p-values can change when the data are rescaled.
+    (limma's ``shrink.resid``): u_0 becomes u_0 / (1 + P_g v_0 / v)^(1/2). P_g is the
+    posterior probability that the gene is differentially expressed, 1 / (1 + exp(-B))
+    for its log-odds B, which stays finite for any B, and v_0 the prior variance of the
+    contrast for such genes, from the log-odds (B-statistics) of
+    :func:`~cytepool.stats.empirical_bayes.moderated_statistics` with the
+    t-statistics on d_0 + d degrees of freedom (their limit for an infinite prior df)
+    and 1 - pi_0 differentially expressed genes, and v is the unscaled variance of the
+    contrast. The proportion of true null hypotheses pi_0 is (2 / (n + 1)) sum
+    min(p_(i), i / n) over the n ordered p-values p_(i) of the moderated
+    t-statistics. The bounds of v_0 are those of ``moderated_statistics``
+    (``stdev_coef_lim``), in log-expression units, so, as in limma, romer's p-values
+    can change when the data are rescaled.
 
-Deliberate differences from limma:
-    - roast and mroast count a rotated statistic equal to the observed one as at least
-      as extreme, as Wu et al. (2010) and Phipson and Smyth (2010) define the p-value
-      (and as limma's romer does); limma's roast counts only larger ones. The two
-      differ only where the observed statistic is the smallest the statistic can
-      take, which happens with positive probability for ``"floormean"`` and
-      ``"msq"``: a set with no gene on one side of zero has a one-sided p-value of 1
-      here and of about 1/2 in limma, and with ``"floormean"`` a set whose |z| are
-      all below 0.674 has a mixed p-value of 1 here.
-    - ``"msq"`` with contribution weights follows Wu et al. (2010). With weights of
-      both signs, limma's up, down and two-sided msq p-values differ from it, and with
-      more than 1,000 rotations (limma draws them 1,000 at a time) its msq p-values
-      change when every weight is multiplied by the same number (found by probing).
-      Its mixed msq p-values, and those of sets whose weights have one sign, agree with
-      CytePool's for up to 1,000 rotations.
-    - ``"floormean"``'s mixed statistic weighs each gene by |a_g|, as the paper's
-      mixed statistics do; limma weighs it by a_g, so a negative weight turns a gene
-      with a large |z| into evidence against the set (a one-gene set's mixed p-value
-      goes from 0.003 to 0.997 when its weight changes sign).
-    - A gene of contribution weight zero leaves the set: it counts neither in
-      ``n_genes`` nor among the values that ``"mean50"`` averages. limma keeps it in
-      both (and leaves it out of the active proportions, as CytePool does).
-    - romer's posterior probability P_g is 1 / (1 + exp(-B)), of the log-odds B.
-      limma computes exp(B) / (1 + exp(B)), which is NaN beyond B = 709.8 (|t| above
-      about 38 with an infinite prior df); the gene's shrunk contrast effect is then
-      NaN and the p-values of every set change (found by probing).
-    - A set without genes, or whose genes all have weight zero, has NaN p-values and
-      no direction and is left out of the adjustment of the other sets; limma reports
-      "down" and NA, or the smallest possible p-value when all weights are zero. A
-      gene listed twice counts once; limma counts it twice.
-    - mroast tests every set with the same rotations; limma draws new rotations for
-      each set. Each set's p-value is a valid rotation p-value either way.
-    - A z-score is computed without overflow for |t| above 1e154, where limma's is
-      infinite.
+Matching limma:
+    The results match limma 3.62.1 within Monte Carlo error, and exactly when CytePool
+    is given the rotations that limma draws from R's generator. limma's documentation
+    gives some of the conventions above and below, and running limma on chosen inputs
+    gave the others.
+
+    - Bailey's transformation is limma's ``zscoreT(approx = TRUE)`` to 1e-14, and its
+      limit of 10^4 degrees of freedom is limma's. With an infinite prior df the exact
+      z-score is t itself, which the limit lowers by about (t^2 + 1) / (4 10^4) of its
+      value (1.2e-4 at t = 2, 2.5e-3 at t = 10); the same transformation applies to the
+      observed and the rotated statistics, so the test remains exact.
+    - ``"mean50"`` averages the ceiling(m / 2) largest values, the smallest integer at
+      least half the number of genes, as the paper's text and limma have it; its
+      formula, ceiling((m + 1) / 2), is larger for even m.
+    - The p-values of the up and down alternatives count 2B rotated statistics, and
+      the two-sided alternative reports the larger of the up and down proportions of
+      active genes, as limma does; mroast's direction and its adjustment of mid-p-values
+      are limma's defaults.
+    - romer's floor mean raises |t| below 1 to 1 for the mixed alternative; its
+      shrinkage, the formula above with pi_0 from limma's ``propTrueNull(method =
+      "lfdr")``, is limma's; the rotated residual sum of squares keeps |u|, the length
+      of the gene's unshrunk effects; and romer multiplies the residual effects by the
+      sign of the last diagonal element of R, as limma's romer does and its roast does
+      not. A uniformly random rotation does not depend on the basis of the residual
+      space, but limma's rotations then mean the same here.
 
 References:
     Wu D, Lim E, Vaillant F, Asselin-Labat ML, Visvader JE, Smyth GK (2010). ROAST:
@@ -257,10 +229,15 @@ def roast(
     differentially expressed for ``contrast``, down, up, in either direction
     (two-sided) and mixed (in either direction, gene by gene), by comparing a set
     statistic of the genes' moderated z-scores with its values under random rotations
-    of the residual space. The module docstring gives the method and the deliberate
-    differences from limma. With many sets, :func:`mroast` tests them together. A
-    result of :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested
-    as :func:`~cytepool.camera` tests it.
+    of the residual space; the p-value is (b + 1) / (B + 1) for b of B rotations at
+    least as extreme, and (b + 1) / (2B + 1) for the up and down alternatives.
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#roast explains the test,
+    the module documentation gives the set statistics and the conventions that match
+    limma, and
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits the
+    differences from it. With many sets, :func:`mroast` tests them together. A result
+    of :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested as
+    :func:`~cytepool.camera` tests it.
 
     Args:
         data: A :class:`~cytepool.DifferentialExpressionResult` of limma-voom or
@@ -272,9 +249,11 @@ def roast(
             among them are left out), 0-based positions of columns of an array when
             ``feature_ids`` is not given, or a boolean mask over the genes; or a
             mapping of gene (id or position) to its contribution weight. A gene
-            listed twice counts once, and a gene of weight zero leaves the set. One
-            set of a :class:`~cytepool.GeneSets`, ``gene_sets[name]``, is a tuple of
-            gene ids.
+            listed twice counts once, and a gene of weight zero leaves the set: it
+            counts neither in ``n_genes`` nor among the values that ``"mean50"``
+            averages, where limma keeps it in both (both leave it out of the active
+            proportions). One set of a :class:`~cytepool.GeneSets`,
+            ``gene_sets[name]``, is a tuple of gene ids.
         group: For a result, the group (cell type) whose fit is tested; it may be
             left out when the result has one.
         contrast: The contrast to test, as for :func:`~cytepool.camera`: for a
@@ -296,10 +275,13 @@ def roast(
             negative weight marks a gene expected to change in the opposite
             direction to the set, and larger weights count more in the set
             statistic. Not with a set that gives its own weights.
-        set_statistic: ``"mean"`` (limma's default), ``"floormean"``, ``"mean50"``
-            or ``"msq"``; see the module docstring. The mean detects sets in which
-            most genes change in the same direction; the others detect sets in which
-            fewer genes change, msq the fewest.
+        set_statistic: ``"mean"`` (limma's default), the mean of the genes'
+            z-scores; ``"floormean"``, their mean after values on the wrong side of
+            zero are set to zero, and for the mixed alternative |z| below 0.674 to
+            0.674; ``"mean50"``, the mean of the larger half; or ``"msq"``, the mean
+            square. The module documentation gives them with contribution weights.
+            The mean detects sets in which most genes change in the same direction;
+            the others detect sets in which fewer genes change, msq the fewest.
         n_rotations: Number of rotations B, at least 1. The smallest p-value is
             1 / (B + 1), and 1 / (2B + 1) for the up and down alternatives.
         trend: Whether the prior variance follows the mean log-expression of the
@@ -319,8 +301,10 @@ def roast(
         genes active down, up and in either direction; ``direction``, ``"up"`` or
         ``"down"`` (None where the p-value is NaN); ``p_value``, the two-sided
         p-value (limma's ``UpOrDown``); and ``down_p_value``, ``up_p_value`` and
-        ``mixed_p_value``, those of the other alternatives. A set without genes has
-        NaN proportions and p-values.
+        ``mixed_p_value``, those of the other alternatives. A set without genes, or
+        whose genes all have weight zero, has NaN proportions and p-values and no
+        direction; limma reports "down" and NA for a set without genes, and the
+        smallest p-value it can when every weight is zero.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -393,8 +377,12 @@ def mroast(
     """Self-contained rotation tests of many gene sets for one contrast.
 
     limma's ``mroast``: :func:`roast` for each set, all sets with the same rotations,
-    and with their p-values adjusted for testing many sets. The module docstring gives
-    the method and the deliberate differences from limma.
+    and with their p-values adjusted for testing many sets by Benjamini and Hochberg's
+    method, applied to mid-p-values.
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#roast explains the test,
+    the module documentation the conventions, and
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits the
+    differences from limma.
 
     Args:
         data: A differential-expression result, a VoomResult or log-expression
@@ -432,8 +420,10 @@ def mroast(
         directional p-value; ``adjusted_p_value``, Benjamini-Hochberg over the sets
         (Benjamini and Hochberg 1995), limma's default (its other ``adjust.method``
         choices are not offered); ``mixed_p_value``, the p-value of the mixed
-        alternative; and ``mixed_adjusted_p_value``. A set without genes has NaN
-        proportions and p-values.
+        alternative; and ``mixed_adjusted_p_value``. A set without genes, or whose
+        genes all have weight zero, has NaN proportions and p-values and no direction,
+        and the adjustment leaves it out; limma reports "down" and NA for a set
+        without genes, and the smallest p-value it can when every weight is zero.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -442,7 +432,7 @@ def mroast(
             any set is among the data's ids.
         KeyError: As :func:`roast`.
     """
-    use_mid_p = checked_flag(mid_p, "mid_p", expected="a bool")
+    use_mid_p = checked_flag(mid_p, "mid_p")
     tests = _roast_tests(
         data,
         gene_sets,
@@ -486,7 +476,8 @@ def mroast(
 
 def _direction(p: float, p_up: float, p_down: float) -> str | None:
     """The direction of a set with the two-sided p-value p: up when its up p-value is
-    the smaller, down otherwise; None where p is NaN."""
+    the smaller, down otherwise; None where p is NaN. limma's mroast decides it so
+    (found by probing)."""
     return None if math.isnan(p) else ("up" if p_up < p_down else "down")
 
 
@@ -514,11 +505,17 @@ def romer(
     the set's mean rank with its values when every gene's rotated statistics are
     ranked again. Like gene set enrichment analysis it pits the sets against one
     another, but it uses rotations instead of permuting samples, so it works for any
-    contrast of a linear model with residual degrees of freedom. The module docstring
-    gives the method. A result of :func:`~cytepool.limma_trend` is tested as
-    :func:`~cytepool.camera` tests it; romer has no observation weights, so a result
-    of :func:`~cytepool.limma_voom`, whose voom weights are, is refused, and limma's
-    romer moderates the variances without a trend.
+    contrast of a linear model with residual degrees of freedom. Before rotating,
+    each gene's contrast effect is shrunk by its posterior probability of being
+    differentially expressed.
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#romer explains the test,
+    the module documentation its statistics and shrinkage, and
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits the
+    differences from limma. A result of :func:`~cytepool.limma_trend` is tested as
+    :func:`~cytepool.camera` tests it, but romer moderates the variances without a
+    trend and without robust estimation, whatever the result used, as limma's romer,
+    which has neither option. romer has no observation weights, so a result of
+    :func:`~cytepool.limma_voom`, whose voom weights are, is refused.
 
     Args:
         data: A :class:`~cytepool.DifferentialExpressionResult` of limma-trend, or
@@ -535,8 +532,10 @@ def romer(
         feature_ids: For an array, one id per gene, unique, to name genes by id.
         weights: For an array, ``(n_samples,)`` sample weights, positive and finite
             (limma's ``array.weights``). romer has no observation weights.
-        set_statistic: ``"mean"`` (limma's default), ``"floormean"`` or ``"mean50"``;
-            see the module docstring.
+        set_statistic: ``"mean"`` (limma's default), the mean rank of the set's
+            genes; ``"floormean"``, the same after negative t-statistics are set to
+            zero, and for the mixed alternative |t| below 1 to 1; or ``"mean50"``,
+            the mean of the larger half of the ranks.
         n_rotations: Number of rotations B, at least 1; limma's default is 9999. The
             smallest p-value is 1 / (B + 1).
         shrink_contrast_effects: Whether each gene's contrast effect is shrunk before
@@ -564,9 +563,7 @@ def romer(
     """
     statistic = _statistic(set_statistic, _ROMER_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    shrink = checked_flag(
-        shrink_contrast_effects, "shrink_contrast_effects", expected="a bool"
-    )
+    shrink = checked_flag(shrink_contrast_effects, "shrink_contrast_effects")
     generator = random_generator(rng)
     with thread_limit(n_threads):
         read = gene_set_data(
@@ -674,12 +671,8 @@ def _roast_tests(
     """The active proportions and p-values of each set, for roast and mroast."""
     statistic = _statistic(set_statistic, _ROAST_STATISTICS)
     n_rotations = _rotation_count(n_rotations)
-    with_trend = (
-        None if trend is None else checked_flag(trend, "trend", expected="a bool")
-    )
-    with_robust = (
-        None if robust is None else checked_flag(robust, "robust", expected="a bool")
-    )
+    with_trend = None if trend is None else checked_flag(trend, "trend")
+    with_robust = None if robust is None else checked_flag(robust, "robust")
     generator = random_generator(rng)
     with thread_limit(n_threads):
         read = gene_set_data(
@@ -881,7 +874,11 @@ def _set_statistics(
     """The up, down and mixed statistics of the genes ``members[start:stop]``.
 
     Larger values are more extreme for every alternative; the down statistic is the
-    up statistic of -z.
+    up statistic of -z. With contribution weights, msq and floormean's mixed
+    statistic weigh each gene by |a| as Wu et al. (2010) do. limma's msq p-values
+    differ for weights of both signs and, beyond 1,000 rotations, change with the
+    scale of the weights, and its floormean weighs the mixed statistic by a (found by
+    probing).
     """
     m = stop - start
     if statistic == _MEAN50:
@@ -1113,7 +1110,8 @@ def _moderated_t(
 
 @jit
 def _bailey_z(t: float, df: float) -> float:
-    """Bailey's (1980) normalizing transformation of t on df degrees of freedom."""
+    """Bailey's (1980) normalizing transformation of t on df degrees of freedom,
+    limma's ``zscoreT(approx = TRUE)`` to 1e-14 (found by probing)."""
     if math.isinf(df) or t == 0.0 or math.isnan(t):
         return t
     a = abs(t)
@@ -1188,7 +1186,8 @@ def _romer_p_values(
     with np.errstate(divide="ignore", invalid="ignore"):
         t = effects[:, 0] / np.sqrt(squeezed.posterior_variance)
     t = np.where(np.isnan(t), 0.0, t)
-    norms = np.sum(effects**2, axis=1)  # of the unshrunk effects, as in limma
+    # The squared lengths of the unshrunk effects, as in limma (found by probing).
+    norms = np.sum(effects**2, axis=1)
     rotated = effects.copy()
     if shrink:
         rotated[:, 0] *= _shrinkage(
@@ -1236,7 +1235,8 @@ def _shrinkage(
 
     P and v_0 are those of the log-odds of ``moderated_statistics`` (Smyth 2004), with
     the t-statistics on d_0 + d degrees of freedom and the proportion of
-    differentially expressed genes 1 - pi_0.
+    differentially expressed genes 1 - pi_0: limma's ``shrink.resid`` (formula found
+    by probing).
     """
     df = np.asarray(df_prior, dtype=np.float64) + d
     p_values = 2.0 * np.asarray(t_sf(np.abs(t), df), dtype=np.float64)
@@ -1263,6 +1263,8 @@ def _shrinkage(
     lods = log_odds(
         t[:, np.newaxis], unscaled, df, np.isinf(df), np.array([v0]), proportion
     )[:, 0]
+    # 1 / (1 + exp(-B)) stays finite; limma's exp(B) / (1 + exp(B)) is NaN beyond
+    # B = 709.8 (found by probing).
     with np.errstate(over="ignore"):
         posterior = 1.0 / (1.0 + np.exp(-lods))
     with np.errstate(invalid="ignore"):
@@ -1666,4 +1668,4 @@ def _statistic(value: Any, options: tuple[str, ...]) -> int:
 
 def _rotation_count(value: Any) -> int:
     reject_masked(value, "n_rotations")
-    return positive_integer(value, "n_rotations", expected="a positive integer")
+    return positive_integer(value, "n_rotations")

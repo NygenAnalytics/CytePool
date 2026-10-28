@@ -4,7 +4,7 @@ Reference values in ``tests/data/kenward_roger_and_f_tests`` come from pbkrtest 
 lmerTest 3.1-3 on lme4 1.1-38, evaluated at CytePool's REML estimates, and from
 variancePartition 1.36.2's ``dream``, ``eBayes`` and ``topTable``, written by
 ``validation/kenward_roger_and_f_tests.py``. The other tests check closed forms of
-balanced designs, where Kenward and Roger's degrees of freedom are those of the analysis
+balanced designs, where Kenward-Roger's degrees of freedom are those of the analysis
 of variance and the adjustment vanishes, and invariants that a wrong implementation
 breaks: reparametrised designs and equivalent contrasts, relabelled donors and
 reordered samples, the scale of the weights, and an F-test of one contrast, which is the
@@ -196,7 +196,7 @@ def study(name: str, method: str) -> tuple[Any, Any]:
     ],
 )
 def test_moderated_tests_match_dream(name: str, ddf: str, method: str) -> None:
-    """dream's adaptive choice is Kenward and Roger's method for 12 samples and
+    """dream's adaptive choice is Kenward-Roger's method for 12 samples and
     Satterthwaite's for 20, as the tests of each method reproduce."""
     data, _ = fixture(f"study_{name}")
     moderated, time = study(name, method)
@@ -250,7 +250,7 @@ def cube_result() -> Any:
 
 
 def test_dream_voom_by_default_chooses_the_degrees_of_freedom_as_dream_does() -> None:
-    """12 samples left in "small": Kenward and Roger's method; 24 in "large":
+    """12 samples left in "small": Kenward-Roger's method; 24 in "large":
     Satterthwaite's; the tables are dream's with ddf = "adaptive"."""
     data, _ = fixture("cube")
     result = cube_result()
@@ -343,8 +343,8 @@ def test_a_balanced_one_way_design_has_kenward_rogers_closed_forms() -> None:
 def test_a_randomised_block_design_has_the_classical_degrees_of_freedom() -> None:
     """Donors as random blocks with each treatment once per donor: a difference of
     treatments lies within donors, on (q - 1)(t - 1) df, and a treatment's mean has
-    Satterthwaite's combination of the donor and residual mean squares, as Kenward
-    and Roger's method gives; the adjustment vanishes. The F-test of the treatments
+    Satterthwaite's combination of the donor and residual mean squares, as
+    Kenward-Roger's method gives; the adjustment vanishes. The F-test of the treatments
     is the analysis of variance's, MS treatments / MSE on (t - 1, (q - 1)(t - 1))."""
     q, t = 7, 3
     rng = np.random.default_rng(5)
@@ -615,7 +615,7 @@ def ill_conditioned_cube() -> tuple[Cube, Design]:
 
 def test_dream_voom_falls_back_to_satterthwaite_where_dream_does() -> None:
     """Features whose adjusted covariance has a condition number above 1e6 take
-    Satterthwaite's tests; the others Kenward and Roger's."""
+    Satterthwaite's tests; the others Kenward-Roger's."""
     cube, design = ill_conditioned_cube()
     kr = dream_voom(cube, design, df_method="kenward_roger", expression_filter=False)
     satterthwaite = dream_voom(
@@ -629,7 +629,7 @@ def test_dream_voom_falls_back_to_satterthwaite_where_dream_does() -> None:
     np.testing.assert_allclose(
         np.asarray(first["t"])[same], np.asarray(second["t"])[same], rtol=1e-10
     )
-    # dream_voom with its default is Kenward and Roger's for 15 samples.
+    # dream_voom with its default is Kenward-Roger's for 15 samples.
     default = dream_voom(cube, design, expression_filter=False)
     np.testing.assert_array_equal(default.table("bulk", "t1")["df"], first["df"])
     assert default.summary["df_method"][0] == "kenward_roger"

@@ -18,7 +18,7 @@ def local_path(path: Any) -> Path:
         raise TypeError(f"path must be a str or os.PathLike, got {type(path).__name__}")
     text = os.fspath(path)
     if not isinstance(text, str):
-        raise TypeError("path must be text, not bytes")
+        raise TypeError("path must be text, got bytes")
     if "://" in text:
         raise ValueError(
             f"{text!r} is a URL; only local directories are supported (zarr-python "

@@ -6,14 +6,9 @@ myst:
 
 # Tests of pathway scores and activities
 
-Pathway scores and the activities of regulators give every sample of a cell type one
-value per gene set or source, and differ between conditions as expression values do.
-{func}`~cytepool.limma` tests a contrast of a {class}`~cytepool.Design` on them as
-GSVA's and decoupler's guides do with limma: a linear model of every set's scores,
-moderated t-tests of the contrast and Benjamini-Hochberg adjusted p-values, with the
-design built for the cube matched to the scored samples by `sample_id`. It takes
-{class}`~cytepool.PathwayScores`, {class}`~cytepool.Activities` of samples, or an array
-of values from another platform.
+limma on the pathway scores and activities of samples, with the cube's design;
+[Pathway scores per sample](../statistics/pathway-scores/#testing-scores) explains
+it.
 
 ```{eval-rst}
 .. automodule:: cytepool.score_tests

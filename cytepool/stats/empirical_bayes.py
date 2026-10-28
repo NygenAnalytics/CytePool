@@ -1,57 +1,24 @@
 """Empirical Bayes moderation of feature-wise variances, as in limma's ``eBayes``.
 
-A linear model fit gives each feature g a residual variance s_g^2 on d_g degrees of
-freedom. The hierarchical model of Smyth (2004) assumes
+:func:`moderated_statistics` moderates the residual variances of a linear model fit
+and returns moderated t and F statistics, their p-values and the B-statistic in a
+:class:`ModeratedFit`; :func:`treat` tests whether coefficients exceed a threshold in
+absolute value (:class:`TreatFit`); :func:`squeeze_variances` moderates any set of
+variances (:class:`SqueezedVariances`); and :func:`fit_f_distribution`,
+:func:`fit_f_distribution_robust` and :func:`fit_f_distribution_likelihood` estimate
+the prior that the variances are shrunk towards, by the estimator that
+``prior_estimator`` chooses (:func:`squeeze_variances` gives the choices).
+https://docs.nygen.io/CytePool/statistics/empirical-bayes explains the model, the
+estimators and the statistics, and
+https://docs.nygen.io/CytePool/statistics/empirical-bayes#empirical-bayes-limits how
+they differ from limma; each function's docstring gives the differences that change
+what it returns.
 
-    s_g^2 | sigma_g^2 ~ sigma_g^2 chi^2(d_g) / d_g,
-    1 / sigma_g^2 ~ chi^2(d0) / (d0 s0^2),
-
-so that s_g^2 ~ s0^2 F(d_g, d0) marginally. The prior (s0^2, d0) is estimated from all
-features, and each variance is replaced by its posterior value
-s~_g^2 = (d0 s0^2 + d_g s_g^2) / (d0 + d_g), the inverse of the posterior mean of
-1 / sigma_g^2 (Smyth 2004). A moderated t-statistic, which uses s~_g in
-place of s_g, follows a t distribution on d0 + d_g degrees of freedom under the null
-hypothesis; an infinite d0 gives every feature the prior variance.
-
-Estimation of the prior, by one of two estimators (``prior_estimator``):
-    - The method of moments (``"moments"``, limma's ``legacy=TRUE``):
-      :func:`fit_f_distribution` matches the mean and variance of e_g = log s_g^2 -
-      psi(d_g / 2) + log(d_g / 2), whose variance is psi'(d0 / 2) plus the mean of
-      psi'(d_g / 2) (Smyth 2004, section 6.2). When the variance of the e_g is no larger
-      than chi-squared sampling explains, d0 is infinite and s0^2 is the mean variance.
-      With a covariate (limma-trend uses the mean log-expression) the moments are taken
-      about a natural cubic spline fit of e_g, and s0^2 becomes a trend (Phipson et al.
-      2016, section 10.1). :func:`fit_f_distribution_robust` matches the moments of the
-      log variances Winsorized at their 5% and 90% quantiles to those of a Winsorized
-      log F variable, computed by Gauss-Legendre quadrature, so that hypervariable
-      features do not lower d0. Each feature then gets its own prior df, smaller for
-      outliers (Phipson et al. 2016). With a covariate, the log variances are first
-      detrended by LOWESS.
-    - Weighted moments and profile likelihood (``"likelihood"``, limma's
-      ``fitFDistUnequalDF1``): :func:`fit_f_distribution_likelihood` estimates log s0^2
-      by a weighted mean of the e_g, which gives less weight to variances on fewer
-      degrees of freedom, and d0 by maximising the likelihood of the variances under
-      s0^2 F(d_g, d0) with that scale (Chen et al. 2025). It suits degrees of freedom
-      that differ between features, or are small or fractional. With a covariate the
-      weighted mean becomes a weighted LOWESS trend; its robust variant downweights
-      outliers by prior weights instead of Winsorizing.
-
-    By default (``prior_estimator=None``) the likelihood estimator is used when the
-    positive degrees of freedom differ between features, as with missing values or
-    zero observation weights, and the method of moments otherwise: limma's default,
-    ``legacy=NULL``, since limma 3.61.8.
-
-Statistics: :func:`moderated_statistics` computes moderated t and F statistics, their
-p-values and the log-odds of differential expression (the B-statistic of Loennstedt
-and Speed 2002, in the form of Smyth 2004, section 5); :func:`treat` tests whether
-coefficients exceed a threshold in absolute value (McCarthy and Smyth 2009).
-
-Results match limma 3.62.1 (``fitFDist``, ``fitFDistRobustly``, ``fitFDistUnequalDF1``,
-``squeezeVar``, ``eBayes`` and ``treat``, with ``legacy`` NULL, TRUE or FALSE).
-Conventions that limma's documentation leaves open were settled by running it as a
-black box; comments mark them "found by probing". The robust likelihood estimator
-deliberately differs from limma's where some features have no usable variance or
-prior weights are given (see :func:`fit_f_distribution_likelihood`).
+Matching limma:
+    The results match limma 3.62.1's ``fitFDist``, ``fitFDistRobustly``,
+    ``fitFDistUnequalDF1``, ``squeezeVar``, ``eBayes`` and ``treat``, with ``legacy``
+    NULL, TRUE or FALSE. Running limma settled the conventions that its documentation
+    leaves open; the functions below state them.
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
@@ -313,12 +280,12 @@ class ModeratedFit:
         f_statistic: ``(n_features,)`` moderated F-statistics testing all
             coefficients equal to zero.
         f_p_value: P-values of ``f_statistic`` on ``f_df1`` and
-            ``df_residual + df_prior`` degrees of freedom; limma does not cap the
-            denominator degrees of freedom here (found by probing).
+            ``df_residual + df_prior`` degrees of freedom, which are not capped as
+            ``df_total`` is, as in limma.
         f_df1: Numerator degrees of freedom of the F-tests: the rank of the
             correlation matrix of the coefficients.
-        proportion: The assumed proportion of non-zero coefficients behind
-            ``log_odds``.
+        proportion: The assumed proportion of non-zero coefficients that
+            ``log_odds`` uses.
         prior_estimator: The estimator of the prior: ``"moments"`` or
             ``"likelihood"`` (see :func:`squeeze_variances`); with at most two
             features neither is used.
@@ -439,14 +406,15 @@ def fit_f_distribution(
 ) -> FDistributionFit:
     """Fit a scaled F distribution to variances by the method of moments.
 
-    Each variance is modelled as ``scale * F(df_g, df2)``. Matches limma's
-    ``fitFDist``. The moments are those of the logs of the variances, each bounded
-    below by 1e-5 times their median (limma does the same). With a covariate, the
-    scale follows a natural cubic spline in it: with n usable features, the spline
-    has 4 degrees of freedom including the intercept for n >= 30, 3 for n from 6 to
-    29, 2 for n from 3 to 5 and 1 (a constant) below, and never more than the
-    covariate has distinct values; its interior knots are at quantiles of the
-    covariate.
+    Each variance is modelled as ``scale * F(df_g, df2)``, as limma's ``fitFDist``
+    fits it. The moments are those of the logs of the variances, each bounded below
+    by 1e-5 times their median (limma does the same). With a covariate, the scale
+    follows a natural cubic spline in it: with n usable features, the spline has 4
+    degrees of freedom including the intercept for n >= 30, 3 for n from 6 to 29, 2
+    for n from 3 to 5 and 1 (a constant) below, and never more than the covariate
+    has distinct values; its interior knots are at quantiles of the covariate.
+    https://docs.nygen.io/CytePool/statistics/empirical-bayes#estimating-the-prior
+    explains the estimators.
 
     A variance is usable when it is finite and its df is positive. Unusable
     features do not enter the estimate; with a covariate, their scale is the spline
@@ -489,8 +457,9 @@ def fit_f_distribution_robust(
 ) -> RobustFDistributionFit:
     """Fit a scaled F distribution robustly, with prior df for each feature.
 
-    The robust empirical Bayes estimator of Phipson et al. (2016), matching limma's
-    ``fitFDistRobustly``:
+    The robust empirical Bayes estimator of Phipson et al. (2016), as limma's
+    ``fitFDistRobustly`` computes it
+    (https://docs.nygen.io/CytePool/statistics/empirical-bayes#estimating-the-prior):
 
     1. Variances are bounded below by 1e-12 times their median. When their df
        differ, each is mapped to the largest df d by matching tail probabilities
@@ -502,9 +471,9 @@ def fit_f_distribution_robust(
     3. The log variances are Winsorized at their ``winsor_tail_p`` quantiles (R's
        type 7), and ``df2`` solves var(Winsorized log variances) = var(log win(F)),
        with the Winsorized moments of log F computed by 128-point Gauss-Legendre
-       quadrature (sections 3 and 10.3). It is never below the moment estimate (a
-       rule found by probing). log s0^2 is the Winsorized mean minus the mean of the
-       Winsorized log F.
+       quadrature (sections 3 and 10.3). It is never below the moment estimate, as
+       in limma. log s0^2 is the Winsorized mean minus the mean of the Winsorized
+       log F.
     4. Each feature gets a tail probability p_g = P(F > s_g^2 / s0^2), and
        pi_g = min(1, p_g / ((r_g - 0.5) / n)), with r_g the rank of s_g^2 / s0^2
        from the largest, is its probability of not being an outlier;
@@ -516,7 +485,7 @@ def fit_f_distribution_robust(
        iterations, as in limma). When ``df2`` is infinite, the cumulative maximum
        alone makes the pi_g non-decreasing, and ``df2_shrunk`` is infinite where
        pi_g = 1 and pi_g n d elsewhere, the df of all n variances on the common
-       df d (both found by probing).
+       df d, both as in limma.
 
     Unusable features (NaN variance or zero df) are left out of the fit and get
     ``df2``; with a covariate, their scale is interpolated linearly in the
@@ -524,13 +493,12 @@ def fit_f_distribution_robust(
     itself is returned, with ``df2_shrunk`` equal to its ``df2``, when the number
     of usable features times the larger tail proportion is below one (fewer than
     10 features with the default proportions), and when the moment estimate of
-    ``df2`` is infinite but the Winsorized one is not (both rules found by
-    probing). With more than two usable features, more than half of which have a
-    zero variance, the estimator is undefined and raises an error, as limma does.
+    ``df2`` is infinite but the Winsorized one is not, as limma does. With more
+    than two usable features, more than half of which have a zero variance, the
+    estimator is undefined and raises an error, as limma does.
 
-    limma solves the equation of step 3 only to a tolerance, so its ``df2`` agrees
-    with this exact solution to about 1e-7 relative. Two limitations are shared
-    with limma, whose results agree with these. The quadrature of step 3 is
+    Step 3 is solved exactly, where limma stops at a tolerance. Two limitations are
+    shared with limma, whose results agree with these. The quadrature of step 3 is
     accurate to better than 1e-12 when both df are at least 1 and the tail
     proportions are the defaults, but not when a df is well below 1 (at df = 0.3
     the Winsorized variance of log F is off by 14% to 32%) or, near df = 1, with
@@ -589,9 +557,8 @@ def fit_f_distribution_likelihood(
     mean becomes a weighted trend of the e_g on the covariate.
 
     A variance is usable when it is finite, its df is at least 0.01 and its prior
-    weight is positive; at least two usable variances must be above zero. The
-    conventions of limma 3.62.1 that its documentation leaves open were found by
-    probing it:
+    weight is positive; at least two usable variances must be above zero. These
+    conventions follow limma 3.62.1 where its documentation leaves them open:
 
     - Variances at or below zero are raised to 1e-12 times the median of the
       positive usable variances.
@@ -639,18 +606,12 @@ def fit_f_distribution_likelihood(
     3.62.1 in two respects. Only the usable variances enter steps 1 and 3, where
     limma also counts the others, a missing variance as a zero one: it becomes the
     most extreme outlier and lowers the adjusted probabilities of the others, so
-    missing values change which features are outliers. In a simulation where 40 of
-    2,000 genes had no residual df, limma's robust prior df was 11.5% larger with a
-    constant prior, where it also gave 45 genes a smaller prior df as outliers and
-    this function gives every gene the same, and 6% to 10% larger with a trend.
-    Without a covariate the result is limma's fit of the usable variances alone.
-    And the second fit keeps the prior weights, which limma's drops, bringing back
-    the features they leave out. The two agree when every variance is usable and
-    there are no prior weights.
-
-    With df of 1e7 and more, limma's likelihood loses precision: its d0 differed
-    from this function's by up to 1e-5 relative at 1e7 and 5e-2 at 1e12, where this
-    function's agrees with the likelihood computed to 60 digits.
+    missing values change which features are outliers. Without a covariate the
+    result is limma's fit of the usable variances alone. And the second fit keeps
+    the prior weights, which limma's drops, bringing back the features they leave
+    out. The two agree when every variance is usable and there are no prior weights.
+    https://docs.nygen.io/CytePool/statistics/empirical-bayes#estimating-the-prior
+    explains the estimators.
 
     Args:
         variances: ``(n,)`` non-negative variances; NaN marks a missing value.
@@ -668,7 +629,7 @@ def fit_f_distribution_likelihood(
 
     Raises:
         TypeError: If an input is not real-valued or is a numpy masked array, or
-            ``robust`` is not a bool.
+            ``robust`` is not True or False.
         ValueError: As :func:`fit_f_distribution`, if ``prior_weights`` is
             invalid, or if fewer than two usable variances are above zero (limma
             returns NA), in the fit or, with ``robust``, in its second fit.
@@ -678,7 +639,7 @@ def fit_f_distribution_likelihood(
     weights = _prior_weight_vector(prior_weights, x.size)
     usable = _likelihood_usable(x, d, weights)
     z = _covariate_vector(covariate, usable, _LIKELIHOOD_UNUSABLE)
-    checked_flag(robust, "robust", expected="a bool")
+    checked_flag(robust, "robust")
     _check_zero_variances(x, usable, robust=False)
     return _fit_likelihood(x, d, z, weights, bool(robust))
 
@@ -694,7 +655,9 @@ def squeeze_variances(
 ) -> SqueezedVariances:
     """Shrink variances towards a prior by empirical Bayes.
 
-    Matches limma's ``squeezeVar``. The prior is estimated by the method of
+    This is limma's ``squeezeVar``, and
+    https://docs.nygen.io/CytePool/statistics/empirical-bayes#empirical-bayes-model
+    gives the model. The prior is estimated by the method of
     moments, :func:`fit_f_distribution` or, when ``robust``,
     :func:`fit_f_distribution_robust`; or by weighted moments and profile
     likelihood, :func:`fit_f_distribution_likelihood`, robustly when ``robust``.
@@ -725,7 +688,7 @@ def squeeze_variances(
 
     Raises:
         TypeError: If an input is not real-valued or is a numpy masked array, or
-            ``robust`` is not a bool.
+            ``robust`` is not True or False.
         ValueError: As :func:`fit_f_distribution` or
             :func:`fit_f_distribution_likelihood`, or if an option is invalid.
     """
@@ -735,7 +698,7 @@ def squeeze_variances(
     usable = _usable(x, d)
     z = _covariate_vector(covariate, usable)
     lower, upper = _tail_proportions(winsor_tail_p)
-    checked_flag(robust, "robust", expected="a bool")
+    checked_flag(robust, "robust")
     estimator = _prior_estimator(prior_estimator, given)
     return _squeeze(x, d, z, usable, bool(robust), lower, upper, estimator)
 
@@ -763,6 +726,8 @@ def moderated_statistics(
     when the residual degrees of freedom differ between the features that have
     some, as with missing values or zero observation weights, and by the method
     of moments otherwise.
+    https://docs.nygen.io/CytePool/statistics/empirical-bayes#empirical-bayes-model
+    gives the model and the statistics.
 
     The log-odds (B-statistic) of coefficient j of feature g is (Smyth 2004)
 
@@ -770,13 +735,13 @@ def moderated_statistics(
 
     with p = ``proportion``, d = ``df_total``, r = v / (v + v0), v the squared
     unscaled standard error and v0 the coefficient's prior variance; with an
-    infinite prior df the last term is its limit t^2 (1 - r) / 2 (found by
-    probing). v0 is estimated from the largest |t| (Smyth 2004, section 6.3): with
-    G the number of finite t-statistics, each of the ceiling(p G / 2) largest gives
-    an estimate, clipped to [lim1^2, lim2^2] / median(prior variance) from
-    ``stdev_coef_lim``, and v0 is their mean. The proportion used there is at least
-    the share of the largest values, and t-statistics on unequal df are first
-    mapped to the largest df by matching tail probabilities (found by probing).
+    infinite prior df the last term is its limit t^2 (1 - r) / 2, as in limma. v0 is
+    estimated from the largest |t| (Smyth 2004, section 6.3): with G the number of
+    finite t-statistics, each of the ceiling(p G / 2) largest gives an estimate,
+    clipped to [lim1^2, lim2^2] / median(prior variance) from ``stdev_coef_lim``,
+    and v0 is their mean. As in limma, the proportion used there is at least the
+    share of the largest values, and t-statistics on unequal df are first mapped to
+    the largest df by matching tail probabilities.
 
     The moderated F-statistic tests all coefficients of a feature equal to zero:
     t' R^+ t / r, with R the correlation matrix of the coefficients and r its rank,
@@ -833,6 +798,9 @@ def moderated_statistics(
     infinite = np.isinf(df_prior)
     prior_variance = np.broadcast_to(squeezed.prior_variance, df_total.shape)
     median_prior = float(np.nanmedian(prior_variance))
+    # As in limma, v0 takes a proportion at least the share of the largest values,
+    # and the log-odds of an infinite prior df the limit of the last term (both
+    # found by probing; coefficient_prior_variance and log_odds implement them).
     v0 = np.array(
         [
             coefficient_prior_variance(
@@ -851,6 +819,8 @@ def moderated_statistics(
             v0[failed] = np.reciprocal(prior_variance[0])
     lods = log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
     f_value, f_df1 = _f_statistics(t, fit, exact)
+    # limma caps the df of the t-tests at the total residual df, but not those of
+    # the F-tests (found by probing).
     f_df2 = df_prior + fit.df_residual
     f_p_value = _as_array(f_sf(f_value, float(f_df1), f_df2))
     return ModeratedFit(
@@ -896,8 +866,8 @@ def treat(
     Give the threshold as a log2 fold change ``lfc`` or as a fold change ``fc``,
     with ``lfc = log2(fc)``; the default is ``fc = 1.2``, as in limma. The
     threshold is |lfc|, so ``fc = 0.8`` and ``fc = 1.25`` are the same test.
-    Typical values are fc of 1.1, 1.2 or 1.5: estimated fold changes must be
-    clearly above the threshold to be significant.
+    https://docs.nygen.io/CytePool/statistics/empirical-bayes#treat-test explains
+    the test and the choice of a threshold.
 
     Args:
         fit: A fit from :func:`~cytepool.stats.linear_models.fit_linear_model` or
@@ -1137,9 +1107,9 @@ def _fit_robust(
     low, high = np.quantile(detrended, [p_lower, 1.0 - p_upper])
     winsorized = np.clip(detrended, low, high)
     target = float(np.var(winsorized, ddof=1))
-    # The Winsorized estimate is never below the moment estimate. When that is
+    # The Winsorized estimate is never below the moment estimate, and when that is
     # infinite but the Winsorized one is not, limma returns the moment estimate
-    # (found by probing).
+    # (both found by probing).
     if _winsorized_moments(df1, math.inf, p_lower, p_upper)[1] >= target:
         df2 = math.inf
     elif math.isinf(moments.df2):
@@ -1399,12 +1369,14 @@ def _fit_likelihood(
     usable = _likelihood_usable(x, d, prior_weights)
     positive = int(np.count_nonzero(x[usable] > 0.0))
     if positive < 2:
+        # limma's fitFDistUnequalDF1 returns NA here and squeezeVar stops (found by
+        # probing).
         raise ValueError(
             "the likelihood estimator needs at least two usable variances above zero "
             f"(finite, on at least {LIKELIHOOD_MIN_DF} degrees of freedom and with a "
             f"positive prior weight), got {positive}; limma's fitFDistUnequalDF1 "
-            "returns NA and squeezeVar stops here (found by probing). The method of "
-            "moments (prior_estimator='moments') does not need two"
+            "returns NA and squeezeVar stops here. The method of moments "
+            "(prior_estimator='moments') does not need two"
         )
     weights = np.where(usable, prior_weights, 0.0)
     location, df2, trended = _likelihood_location_and_df2(
@@ -1691,7 +1663,7 @@ def _moderate(
     prior_estimator: Any,
 ) -> tuple[SqueezedVariances, FloatArray, str]:
     """Squeezed variances of a fit, the total df of its tests and the estimator."""
-    checked_flag(robust, "robust", expected="a bool")
+    checked_flag(robust, "robust")
     lower, upper = _tail_proportions(winsor_tail_p)
     variances = fit.sigma**2
     df = _zero_tiny_df(fit.df_residual)
@@ -1893,9 +1865,7 @@ def _tail_proportions(winsor_tail_p: Any) -> tuple[float, float]:
             f"got {values.size}"
         )
     if not ((values > 0.0) & (values < 0.5)).all():
-        raise ValueError(
-            f"winsor_tail_p must lie strictly between 0 and 0.5, got {values.tolist()}"
-        )
+        raise ValueError(f"winsor_tail_p must be in (0, 0.5), got {values.tolist()}")
     return float(values[0]), float(values[1])
 
 
@@ -1910,7 +1880,7 @@ def _trend_covariate(trend: Any, fit: LinearModelFit) -> FloatArray | None:
     )
     if z.shape != fit.sigma.shape:
         raise ValueError(
-            "trend must be a bool or one covariate value per feature "
+            "trend must be True, False or one covariate value per feature "
             f"({fit.sigma.size}), got shape {z.shape}"
         )
     return z
@@ -1970,7 +1940,7 @@ def _coefficient_limits(limits: Any) -> tuple[float, float]:
 def _open_unit_interval(value: Any, name: str) -> float:
     number = real_number(value, name)
     if not 0.0 < number < 1.0:
-        raise ValueError(f"{name} must lie strictly between 0 and 1, got {number}")
+        raise ValueError(f"{name} must be in (0, 1), got {number}")
     return number
 
 

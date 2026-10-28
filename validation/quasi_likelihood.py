@@ -508,8 +508,8 @@ def compare_case(name, case, table):
     )
     label = "the same from edgeR's adjusted deviances"
     check(label, "glmQLFit, squeezeVar", MAX_RELATIVE, value, CLOSE, True)
-    # Observations whose fitted values tend to zero (near 1e-8 in edgeR's fits) get
-    # the leverages of the limit in both.
+    # Observations whose fitted values tend to zero (between about 1e-8 and 1e-7 in
+    # edgeR's fits) get the leverages of the limit in both.
     value = float(np.max(np.abs(fit.leverage - edger["leverage"].reshape(n, n_genes))))
     check("leverages", FIT, "max difference", value, CLOSE if exact else LEVENBERG)
     for i, (test, result) in enumerate(zip(case["tests"], tests), start=1):

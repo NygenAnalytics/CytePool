@@ -1,18 +1,19 @@
 """The differential expression of every study of a collection, analysed alike.
 
-Studies of one question, such as cohorts of a disease, are compared or combined only
-once each is analysed on the collection's axes: its aligned cube
-(:meth:`~cytepool.CubeCollection.aligned_cube`), with a design built from its own
-samples. :func:`~cytepool.analyse_each_study` runs one analysis per study that way, and
-:class:`~cytepool.StudyResults` keeps the results with their collection: it lines them
-up feature by feature (:meth:`~cytepool.StudyResults.table`), with the reason a study
-has no result for a feature (it did not measure it, did not test it, or did not analyse
-the group or contrast), and gives one column of every study as a studies x features
-matrix (:meth:`~cytepool.StudyResults.matrix`), the form that combined p-values
-(:func:`~cytepool.stats.combined_p_values.combine_p_values`) take. Every function that
-combines studies takes it: :func:`~cytepool.meta_analysis`,
-:func:`~cytepool.replication`, :func:`~cytepool.sumrank` and
-:func:`~cytepool.held_out_prediction`.
+Each study of a :class:`~cytepool.CubeCollection` is analysed on the collection's axes:
+its aligned cube (:meth:`~cytepool.CubeCollection.aligned_cube`), with a design built
+from its own samples. :func:`~cytepool.analyse_each_study` runs one analysis per study
+that way, and :class:`~cytepool.StudyResults` keeps the results with their collection:
+it lines them up feature by feature (:meth:`~cytepool.StudyResults.table`), with the
+reason a study has no result for a feature (it did not measure it, did not test it, or
+did not analyse the group or contrast), and gives one column of every study as a
+studies x features matrix (:meth:`~cytepool.StudyResults.matrix`), the form that
+:func:`~cytepool.stats.combined_p_values.combine_p_values` takes.
+:func:`~cytepool.meta_analysis`, :func:`~cytepool.replication`,
+:func:`~cytepool.sumrank` and :func:`~cytepool.held_out_prediction` take a
+``StudyResults``.
+https://docs.nygen.io/CytePool/statistics/aligning-studies#one-analysis-per-study
+explains it.
 
 Memory:
     Each result keeps the cube it analysed (see

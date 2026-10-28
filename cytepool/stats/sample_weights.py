@@ -1,9 +1,12 @@
 """Sample quality weights from a heteroscedastic linear model, as in limma's arrayWeights.
 
-Samples differ in quality: pooled from fewer cells, sequenced less deeply, or taken
-from an outlying donor, some follow the linear model less closely than others. Ritchie
-et al. (2006) estimate a weight for each sample from the residuals of every gene, and
-Liu et al. (2015) extend the model to groups of samples and combine it with voom.
+:func:`sample_quality_weights` estimates a weight for each sample, or each group of
+samples, from how closely its values follow the linear model across genes, as limma's
+``arrayWeights`` does: Ritchie et al. (2006) estimate a weight for each sample from
+the residuals of every gene, and Liu et al. (2015) extend the model to groups of
+samples and combine it with voom.
+https://docs.nygen.io/CytePool/statistics/limma-voom#sample-quality-weights explains
+when to use them.
 
 For gene g and sample j, with design rows x_j and prior weights w_gj (one when none
 are given), the model is
@@ -12,11 +15,9 @@ are given), the model is
 
 with the log variance factors u = Z gamma shared by every gene. Z is an orthonormal
 basis of the columns of the variance design projected off the constant vector, so u
-sums to zero and only the span of the variance design matters (found by probing: limma
-gives the same weights for any parametrisation of it, with or without an intercept).
-The default variance design gives each sample a variance of its own, and
-``variance_groups`` one per group. The sample quality weights are exp(-u_j), whose
-product is one.
+sums to zero and only the span of the variance design matters. The default variance
+design gives each sample a variance of its own, and ``variance_groups`` one per
+group. The sample quality weights are exp(-u_j), whose product is one.
 
 gamma is estimated by residual maximum likelihood (REML) with the gene variances
 sigma_g^2 profiled out. For a weighted least squares fit of gene g at weights
@@ -30,13 +31,12 @@ gradient of the REML log likelihood) and the information are
 where V_g has elements (delta_jk - h_g,jk)^2, h_g,jk being those of the hat matrix
 (Smyth 2002). The weights are squeezed toward equality by a prior equivalent to
 ``prior_n`` genes at equal weights: it adds prior_n Z'(exp(-u) - 1) to the score and
-prior_n Z'Z, the identity, to the information (found by probing). Two algorithms:
+prior_n Z'Z, the identity, to the information. Two algorithms:
 
 - ``"reml"``: Fisher scoring from equal weights, gamma <- gamma + d with the step
   d = I^-1 U, U and I summed over the genes and the prior, until the criterion
   d'U / ((G + prior_n) q) is below ``tolerance``, for q columns of Z and G genes;
-  where the criterion rises instead, the iterations stop before that step (found by
-  probing).
+  where the criterion rises instead, the iterations stop before that step.
 - ``"gene_by_gene"``: one pass through the genes in order (Ritchie et al. 2006). Each
   gene adds its information, with V_g replaced by the diagonal matrix of its row sums,
   diag(1 - h_g), to an information matrix that starts at prior_n Z'Z, and moves gamma
@@ -45,44 +45,48 @@ prior_n Z'Z, the identity, to the information (found by probing). Two algorithms
 - ``"auto"``: REML without prior weights or missing values, and gene by gene
   otherwise, as limma chooses.
 
-Results match limma 3.62.1. Conventions that its documentation leaves open, found by
-probing (running limma as a black box):
+Matching limma:
+    The weights match limma 3.62.1, whose documentation leaves these conventions
+    open; running limma on chosen inputs settled them, together with the prior's
+    terms and the stopping rule above.
 
-- Gene by gene, a gene is skipped where it has fewer than two residual degrees of
-  freedom, or a residual variance below 1e-15 at the current weights. Its samples are
-  those with an observed value and a positive weight.
-- REML uses only the genes with every value observed and every prior weight positive.
-  Without prior weights, it leaves out the genes whose residual variance at equal
-  weights is below 1e-15. With prior weights, every gene adds its information, a gene
-  whose residual variance at the current weights is below 1e-15 adds no score, and the
-  iterations stop when d'U / ((G + prior_n)^2 q) is below ``tolerance``, going on
-  where the criterion rises.
-- Every weight is one when there are fewer than two genes, when the design leaves
-  fewer than two residual degrees of freedom, or, for REML without prior weights, when
-  fewer than two genes have a positive residual variance; CytePool warns.
+    - Gene by gene, a gene is skipped where it has fewer than two residual degrees of
+      freedom, or a residual variance below 1e-15 at the current weights. Its samples
+      are those with an observed value and a positive weight.
+    - REML uses only the genes with every value observed and every prior weight
+      positive. Without prior weights, it leaves out the genes whose residual
+      variance at equal weights is below 1e-15. With prior weights, every gene adds
+      its information, a gene whose residual variance at the current weights is
+      below 1e-15 adds no score, and the iterations stop when
+      d'U / ((G + prior_n)^2 q) is below ``tolerance``, going on where the criterion
+      rises.
+    - Every weight is one when there are fewer than two genes, when the design leaves
+      fewer than two residual degrees of freedom, or, for REML without prior weights,
+      when fewer than two genes have a positive residual variance; CytePool warns.
 
-REML stops where limma stops, so that the weights are limma's. With the default
-``tolerance`` they are then within about half a percent of the REML estimate
-without prior weights, and up to about 15% from it with prior weights, where the
-criterion falls below the tolerance after one or two iterations (as with the voom
-weights of :func:`~cytepool.stats.voom.voom_with_quality_weights`), or where the
-criterion rises first. A smaller ``tolerance`` converges further where the iterations
-converge. A step that would give weights that are not finite is not taken: REML stops
-before it, with a warning.
+Where REML stops:
+    REML stops where limma stops, so that the weights are limma's. With the default
+    ``tolerance`` they are then within about half a percent of the REML estimate
+    without prior weights, and up to about 15% from it with prior weights, where the
+    criterion falls below the tolerance after one or two iterations (as with the voom
+    weights of :func:`~cytepool.stats.voom.voom_with_quality_weights`), or where the
+    criterion rises first. A smaller ``tolerance`` converges further where the
+    iterations converge. A step that would give weights that are not finite is not
+    taken: REML stops before it, with a warning.
 
-Deliberate deviations, where limma returns values without meaning or fails:
-
-- ``variance_design`` and ``variance_groups`` together are an error; limma uses
-  ``var.group`` and ignores ``var.design``.
-- ``prior_n`` must be at least zero; limma accepts a negative prior.
-- A design that is not of full column rank is an error, as in
-  :func:`~cytepool.stats.linear_models.fit_linear_model`; limma drops aliased columns.
-- REML with fewer than two complete genes gives weights of one, with a warning; limma
-  fails when one is left.
-- An information matrix that is singular is an error: some sample carries no
-  information about its variance, such as the only sample of a group of the design,
-  and ``prior_n`` is zero or too small to make up for it. limma's REML returns weights
-  that rounding error decides.
+Differences from limma:
+    - ``variance_design`` and ``variance_groups`` together are an error; limma uses
+      ``var.group`` and ignores ``var.design``.
+    - ``prior_n`` must be at least zero; limma accepts a negative prior.
+    - A design that is not of full column rank is an error, as in
+      :func:`~cytepool.stats.linear_models.fit_linear_model`; limma drops aliased
+      columns.
+    - REML with fewer than two complete genes gives weights of one, with a warning;
+      limma fails when one is left.
+    - An information matrix that is singular is an error: some sample carries no
+      information about its variance, such as the only sample of a group of the
+      design, and ``prior_n`` is zero or too small to make up for it. limma's REML
+      returns weights that rounding error decides.
 
 References:
     Ritchie ME, Diyagama D, Neilson J, van Laar R, Dobrovic A, Holloway A, Smyth GK
@@ -126,7 +130,7 @@ from cytepool._masked_arrays import (
     unmasked_array,
 )
 from cytepool._options import (
-    number_at_least,
+    non_negative_number,
     positive_finite_number,
     positive_integer,
 )
@@ -187,7 +191,10 @@ def sample_quality_weights(
     docstring gives the model, the algorithms and the conventions. Samples whose
     values have larger residuals across genes get lower weights. Multiply them into
     the precision weights of a fit, as
-    :func:`~cytepool.stats.voom.voom_with_quality_weights` does for voom.
+    :func:`~cytepool.stats.voom.voom_with_quality_weights` does for voom. The
+    gene-by-gene algorithm takes longer the more samples there are: on one thread of
+    an Intel Core Ultra 7 265U, 20,000 genes took about 0.25 s with 40 samples and
+    2.5 s with 100.
 
     Args:
         y: ``(n_samples, n_features)`` log-expression values, such as the log2
@@ -405,6 +412,8 @@ def _reml_scoring(
                 responses, weight_rows, x, log_variances, RANK_TOLERANCE
             )
             information = information + np.tril(information, -1).T
+        # The prior adds prior_n Z'(exp(-u) - 1) to the score and prior_n Z'Z to
+        # the information (found by probing).
         score = basis.T @ (score + model.prior_n * (sample_weights - 1.0))
         information = basis.T @ information @ basis
         information[np.diag_indices(n_parameters)] += model.prior_n
@@ -555,6 +564,8 @@ def _variance_model(
     # The constant column first: R's rank rule then drops any column that only adds
     # a constant, and the rest of the basis is orthogonal to it.
     space = column_space(np.column_stack([np.ones(n_samples), matrix]))
+    # Only the span of the variance design matters: limma gives the same weights
+    # for any parametrisation of it, with or without an intercept (found by probing).
     basis = np.ascontiguousarray(space.basis[:, 1:])
     if basis.shape[1] == 0:
         raise ValueError(
@@ -566,7 +577,7 @@ def _variance_model(
         raise ValueError(f"method must be one of {listed}, got {method!r}")
     return _VarianceModel(
         basis=basis,
-        prior_n=number_at_least(prior_n, "prior_n", 0.0),
+        prior_n=non_negative_number(prior_n, "prior_n"),
         method=method,
         max_iterations=positive_integer(max_iterations, "max_iterations"),
         tolerance=positive_finite_number(tolerance, "tolerance"),

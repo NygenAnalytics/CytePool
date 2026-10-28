@@ -466,7 +466,7 @@ Y = simulate(21, [1] * 8, n_genes=20)
             ValueError,
             "not both",
         ),
-        ({"prior_n": -1.0}, ValueError, "prior_n must be finite and at least 0"),
+        ({"prior_n": -1.0}, ValueError, "prior_n must be non-negative"),
         ({"prior_n": np.inf}, ValueError, "prior_n must be finite"),
         ({"prior_n": True}, TypeError, "prior_n must be a real number"),
         ({"method": "genebygene"}, ValueError, "method must be one of 'auto'"),
@@ -646,7 +646,7 @@ def test_quality_weights_with_one_residual_df_are_voom_weights() -> None:
     [
         ({"method": "auto"}, "method must be one of 'gene_by_gene', 'reml'"),
         ({"variance_groups": ["a"] * 8}, "at least two groups"),
-        ({"prior_n": -2.0}, "prior_n must be finite and at least 0"),
+        ({"prior_n": -2.0}, "prior_n must be non-negative"),
         ({"span": 2.0}, r"span must be a fraction of the features in \(0, 1\]"),
     ],
 )

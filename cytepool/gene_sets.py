@@ -4,55 +4,36 @@ A :class:`~cytepool.GeneSets` maps the name of each gene set to its genes, named
 id, and keeps the description of each set and where the collection comes from: its name,
 version and licence, as the user states them from what the provider of the collection
 documents, and, for a collection read from a file, the name of the file and its SHA-256
-digest. CytePool bundles no collection: MSigDB (Liberzon et al. 2011), Reactome,
-WikiPathways and the Gene Ontology distribute their sets under their own terms, and
-:func:`~cytepool.read_gmt` reads the files that users download from them.
+digest. :func:`~cytepool.read_gmt` reads one from a GMT file, and
+:func:`~cytepool.write_gmt` writes one. CytePool bundles no collection: MSigDB (Liberzon
+et al. 2011), Reactome and WikiPathways distribute their sets as GMT files under their
+own terms, as do the GMT exports of the Gene Ontology, and :func:`~cytepool.read_gmt`
+reads the files that users download from them.
+https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-collections
+explains how a collection is matched to an analysis.
 
 A ``GeneSets`` is a mapping of set name to genes, so every gene-set function of CytePool
 takes it as it is: as ``gene_sets`` of :func:`~cytepool.camera`, :func:`~cytepool.fry`,
-:func:`~cytepool.mroast`, :func:`~cytepool.romer` and
-:func:`~cytepool.over_representation`, and one of its sets, as ``gene_sets[name]``, as
-``gene_set`` of :func:`~cytepool.roast`. The tests match the genes of each set to the
-column ``id_column`` of a result's features, or to the ``feature_ids`` of an array.
-
-Genes and sets:
-    A set's genes are a tuple of gene ids (non-empty strings, compared exactly, case
-    included), each once, in the order given: a gene listed twice keeps its first
-    place, and the genes of a Python ``set`` are taken in sorted order, so that every
-    run lists them alike. Set names are non-empty strings. A description of ``"na"``,
-    which GSEA writes for a set without one, or an empty description, is None.
+:func:`~cytepool.mroast`, :func:`~cytepool.romer`,
+:func:`~cytepool.over_representation`, :func:`~cytepool.gsea` and the pathway scores,
+and one of its sets, as ``gene_sets[name]``, as ``gene_set`` of :func:`~cytepool.roast`.
+The tests match the genes of each set to the column ``id_column`` of a result's
+features, or to the ``feature_ids`` of an array.
 
 Matching and filtering:
-    :meth:`~cytepool.GeneSets.restrict_to` keeps the genes of each set that an analysis
-    measured and drops the sets left without genes, as limma's ``ids2indices`` does by
-    default, and refuses ids that match no gene at all, as when the sets name genes by
-    symbol and the analysis by Ensembl id. :meth:`~cytepool.GeneSets.filter_by_size`
-    keeps the sets of a range of sizes; restricted first, the sizes are those within the
-    analysis, as GSEA counts them before it leaves out sets of fewer than 15 or more
-    than 500 genes, its defaults (GSEA team 2026). :meth:`~cytepool.GeneSets.select`
-    takes sets by name. Each returns a new ``GeneSets`` with the descriptions and the
-    record of the collection.
+    :meth:`~cytepool.GeneSets.restrict_to` matches the sets to the genes of an
+    analysis, :meth:`~cytepool.GeneSets.filter_by_size` keeps the sets whose sizes lie
+    in a range, and :meth:`~cytepool.GeneSets.select` takes sets by name. Each returns
+    a new ``GeneSets`` with the descriptions and the record of the collection.
 
 GMT files:
     The GMT (gene matrix transposed) format of GSEA (Subramanian et al. 2005; GSEA
     team 2026) holds one gene set per line, in fields separated by tabs: the set's
-    name, a description, and the set's genes. :func:`~cytepool.read_gmt` reads:
-
-    - fields separated by tabs only, so that names with spaces, such as Reactome's
-      pathway names, are read whole;
-    - lines that end in a line feed, a carriage return and line feed, or a carriage
-      return; blank lines are skipped;
-    - empty fields among the genes, such as a tab at the end of a line, which are
-      skipped, and spaces at either end of a field, which are removed;
-    - a set without genes (a name and a description only), kept with no genes;
-    - UTF-8 text, with or without a byte-order mark, compressed by gzip or not
-      (recognised by the first bytes of the file, whatever its name).
-
-    A line with one field, a set without a name, or a name used for two sets is refused,
-    with the number of the line. :func:`~cytepool.write_gmt` writes the same format,
-    with ``"na"`` for a set without a description, so that :func:`~cytepool.read_gmt`
-    reads back the same sets and descriptions. A GMT file holds no name, version or
+    name, a description, and the set's genes. A GMT file holds no name, version or
     licence of the collection; they are given again when the file is read.
+    :func:`~cytepool.read_gmt` says what it reads, and :func:`~cytepool.write_gmt`
+    writes the same format, so that :func:`~cytepool.read_gmt` reads back the same sets
+    and descriptions.
 
 References:
     Subramanian A, Tamayo P, Mootha VK, Mukherjee S, Ebert BL, Gillette MA, Paulovich
@@ -101,9 +82,14 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
     """Named gene sets, with their descriptions and where the collection comes from.
 
     A read-only mapping of set name to the set's genes, a tuple of gene ids, so that
-    the gene-set functions of CytePool take it as their ``gene_sets``. The module
-    docstring says how ids, names and descriptions are read. ``read_gmt`` builds one
-    from a GMT file. Immutable.
+    the gene-set functions of CytePool take it as their ``gene_sets``. ``read_gmt``
+    builds one from a GMT file. Immutable.
+
+    A set's genes are gene ids (non-empty strings, compared exactly, case included),
+    each once, in the order given: a gene listed twice keeps its first place, and the
+    genes of a Python ``set`` are taken in sorted order, so that every run lists them
+    alike. Set names are non-empty strings. A description of ``"na"``, which GSEA
+    writes for a set without one, or an empty description, is None.
 
     Args:
         sets: Mapping of set name to the set's genes, as gene ids (strings): a list,
@@ -328,7 +314,9 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
                 Ensembl id.
         """
         if not isinstance(keep_empty, bool | np.bool_):
-            raise TypeError(f"keep_empty must be True or False, got {keep_empty!r}")
+            raise TypeError(
+                f"keep_empty must be True or False, got {type(keep_empty).__name__}"
+            )
         measured = set(gene_ids(genes, "genes")[0])
         kept: dict[str, tuple[str, ...]] = {}
         matched = 0
@@ -406,14 +394,11 @@ class GeneSets(Mapping[str, tuple[str, ...]]):
             digest = f", SHA-256 {self._sha256}" if self._sha256 else ""
             lines.append(f"  read from {self._file}{digest}")
         if sizes:
-            shown = [
+            described = [
                 f"{name} ({len(members):,})".replace(" ", KEEP_TOGETHER)
-                for name, members in list(self._sets.items())[:_SETS_SHOWN]
+                for name, members in self._sets.items()
             ]
-            more = count - len(shown)
-            lines.append(
-                "  sets: " + ", ".join(shown) + (f" and {more:,} more" if more else "")
-            )
+            lines.append("  sets: " + listing(described, limit=_SETS_SHOWN))
         return fitted_lines("\n".join(lines))
 
     def _record(self) -> dict[str, str | None]:
@@ -444,10 +429,22 @@ def read_gmt(
 
     One set per line: its name, a description and its genes, separated by tabs, as
     MSigDB, Reactome, WikiPathways and the GMT exports of the Gene Ontology write
-    them; the module docstring says what is read and how. The collection records the
-    name of the file and the SHA-256 digest of its bytes, and the name, version and
-    licence given here, which the file cannot hold: state them as the provider
-    documents them, so that results can say which sets they used.
+    them. It reads:
+
+    - fields separated by tabs only, so that names with spaces, such as Reactome's
+      pathway names, are read whole;
+    - lines that end in a line feed, a carriage return and line feed, or a carriage
+      return; blank lines are skipped;
+    - empty fields among the genes, such as a tab at the end of a line, which are
+      skipped, and spaces at either end of a field, which are removed;
+    - a set without genes (a name and a description only), kept with no genes;
+    - UTF-8 text, with or without a byte-order mark, compressed by gzip or not
+      (recognised by the first bytes of the file, whatever its name).
+
+    Names, genes and descriptions are then read as :class:`GeneSets` reads them. The
+    collection records the name of the file and the SHA-256 digest of its bytes, and
+    the name, version and licence given here, which the file cannot hold: state them
+    as the provider documents them, so that results can say which sets they used.
 
     Args:
         path: The GMT file, compressed by gzip or not.
@@ -556,7 +553,9 @@ def write_gmt(
     reject_masked(gene_sets, "gene_sets")
     collection = gene_sets if isinstance(gene_sets, GeneSets) else GeneSets(gene_sets)
     if not isinstance(overwrite, bool | np.bool_):
-        raise TypeError(f"overwrite must be True or False, got {overwrite!r}")
+        raise TypeError(
+            f"overwrite must be True or False, got {type(overwrite).__name__}"
+        )
     location = _file_path(path)
     lines = []
     for name, genes in collection.items():
@@ -662,7 +661,7 @@ def _size(value: Any, name: str) -> int:
         raise TypeError(f"{name} must be an integer, got {type(value).__name__}")
     size = int(value)
     if size < 0:
-        raise ValueError(f"{name} must be at least 0, got {size}")
+        raise ValueError(f"{name} must be non-negative, got {size}")
     return size
 
 
@@ -692,7 +691,7 @@ def _file_path(path: Any) -> Path:
         raise TypeError(f"path must be a str or os.PathLike, got {type(path).__name__}")
     text = os.fspath(path)
     if not isinstance(text, str):
-        raise TypeError("path must be text, not bytes")
+        raise TypeError("path must be text, got bytes")
     return Path(text)
 
 

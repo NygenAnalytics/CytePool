@@ -185,7 +185,7 @@ def test_dream_voom_matches_variance_partition_on_every_cell_type(variant: str) 
     data, _ = fixture("cube")
     cube, design = fixture_cube()
     # The fixture is dream(ddf = "Satterthwaite"); the default, "adaptive", would
-    # use Kenward and Roger's method in these groups of fewer than 20 samples.
+    # use Kenward-Roger's method in these groups of fewer than 20 samples.
     result = dream_voom(
         cube,
         design,
@@ -531,7 +531,7 @@ def test_dream_voom_records_its_settings_and_the_features_not_fitted() -> None:
     group = record["groups"][0]
     assert group["features_not_fitted"] == 1 and group["features_not_converged"] == 0
     assert group["voom_span"] == 1.0
-    # 12 samples: dream's adaptive choice is Kenward and Roger's method.
+    # 12 samples: dream's adaptive choice is Kenward-Roger's method.
     assert group["df_method"] == "kenward_roger"
     assert group["features_satterthwaite_fallback"] == 0 and group["f_test_df1"] == {}
     assert pickle.loads(pickle.dumps(result)).provenance == record

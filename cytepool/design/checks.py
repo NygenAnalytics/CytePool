@@ -3,65 +3,65 @@
 ``Design.check()`` returns a ``DesignReport``. Errors are problems that make some
 coefficient, contrast or variance impossible to estimate; warnings point at designs
 that can be fitted but deserve a second look. Each message says what is wrong and
-how to fix it.
+how to fix it. https://docs.nygen.io/CytePool/statistics/linear-models#design-checks
+explains why each matters.
 
 The leverage of a sample is its diagonal element of the hat matrix (Hoaglin and
 Welsch 1978). A contrast is estimable when it is a linear combination of the rows of
 the design matrix, that is, when it is orthogonal to the matrix's null space (Searle
 1971). Random effects are those of lme4's notation (Bates et al. 2015).
 
-Errors:
-    empty_design: the formula has no columns.
-    duplicate_columns: two columns have the same name.
-    rank_deficient: some columns are linear combinations of earlier ones (aliased),
-        so their coefficients cannot be estimated. A column is aliased when its part
-        orthogonal to the earlier columns has a norm at most 1e-7 times its own
-        norm, the rule of the pivoted QR decomposition that R's ``lm.fit`` and
-        limma's ``lmFit`` use, so the same columns are named.
-    no_residual_df: as many independent columns as samples, so no variance can be
-        estimated.
-    constant_variable: a variable has the same value in every sample and so makes
-        a column aliased (a warning when it does not, as in ``~ 0 + x``).
-    empty_level: a factor level has no samples, which gives a column of zeros.
-    confounded: two factors (main effects) group the samples so that one is
-        constant within every level of the other, or a covariate is constant within
-        every level of a factor, so their effects cannot be separated.
-    one_sample_per_level: a factor gives every sample its own level.
-    contrast_not_estimable: a contrast depends on effects the design cannot
-        separate.
-    random_single_group: a random-effect grouping with one group.
-    random_unreplicated: a random effect with at least as many effects (groups
-        times effect columns) as samples, lme4's rule, which includes one sample
-        per group.
-    random_confounded: the fixed effects already separate the groups of a random
-        effect.
-    random_duplicate: two random effects with the same effects and groupings that
-        split the samples identically.
+Errors, in ``DesignReport.errors``:
+    - ``empty_design``: the formula has no columns.
+    - ``duplicate_columns``: two columns have the same name.
+    - ``rank_deficient``: some columns are linear combinations of earlier ones
+      (aliased), so their coefficients cannot be estimated. A column is aliased when its
+      part orthogonal to the earlier columns has a norm at most 1e-7 times its own norm,
+      the rule of the pivoted QR decomposition that R's ``lm.fit`` and limma's ``lmFit``
+      use, so the same columns are named.
+    - ``no_residual_df``: as many independent columns as samples, so no variance can be
+      estimated.
+    - ``constant_variable``: a variable has the same value in every sample and so makes
+      a column aliased (a warning when it does not, as in ``~ 0 + x``).
+    - ``empty_level``: a factor level has no samples, which gives a column of zeros.
+    - ``confounded``: two factors (main effects) group the samples so that one is
+      constant within every level of the other, or a covariate is constant within every
+      level of a factor, so their effects cannot be separated.
+    - ``one_sample_per_level``: a factor gives every sample its own level.
+    - ``contrast_not_estimable``: a contrast depends on effects the design cannot
+      separate.
+    - ``random_single_group``: a random-effect grouping with one group.
+    - ``random_unreplicated``: a random effect with at least as many effects (groups
+      times effect columns) as samples, lme4's rule, which includes one sample per
+      group.
+    - ``random_confounded``: the fixed effects already separate the groups of a random
+      effect.
+    - ``random_duplicate``: two random effects with the same effects and groupings that
+      split the samples identically.
 
-Warnings:
-    single_sample_level: a factor level with a single sample, so no replicate.
-    unreplicated_sample: a sample that the model fits exactly (leverage 1), so it
-        tells nothing about the residual variance and the effects it determines
-        rest on it alone.
-    high_leverage: a sample with leverage above 0.99, nearly fitted exactly,
-        because of a covariate value far beyond the others (beyond them by more
-        than their range) or because the design has few residual degrees of
-        freedom.
-    numeric_codes: a numeric covariate whose values are a few consecutive whole
-        numbers, each shared by several samples, which is how codes for batches or
-        plates look; as a number it enters the model as one slope.
-    numeric_ids: a numeric covariate whose name says ids and whose values are at
-        least three whole numbers that are not consecutive, each shared by several
-        samples, as donor ids such as 101, 107 and 1015 are; as a number it enters
-        the model as one slope, where ids need a group each. A name says ids when
-        its last word is donor, patient, subject, individual, participant, sample,
-        batch, plate, lane, run or id (or their plurals), as in donor_id or
-        subjectID, or is number, no, nr or code after one of them, as in
-        run_number; donor_age names an age, and n_donors a count.
-    missing_label: a factor level such as "" or "NA" that looks like a missing
-        value, which then forms a group of its own.
-    similar_levels: factor levels that differ only in case or surrounding spaces,
-        which usually split one group in two.
+Warnings, in ``DesignReport.warnings``:
+    - ``single_sample_level``: a factor level with a single sample, so no replicate.
+    - ``unreplicated_sample``: a sample that the model fits exactly (leverage 1), so it
+      tells nothing about the residual variance and the effects it determines rest on it
+      alone.
+    - ``high_leverage``: a sample with leverage above 0.99, nearly fitted exactly,
+      because of a covariate value far beyond the others (beyond them by more than their
+      range) or because the design has few residual degrees of freedom.
+    - ``numeric_codes``: a numeric covariate whose values are a few consecutive whole
+      numbers, each shared by several samples, which is how codes for batches or plates
+      look; as a number it enters the model as one slope.
+    - ``numeric_ids``: a numeric covariate whose name says ids and whose values are at
+      least three whole numbers that are not consecutive, each shared by several
+      samples, as donor ids such as 101, 107 and 1015 are; as a number it enters the
+      model as one slope, where ids need a group each. A name says ids when its last
+      word is donor, patient, subject, individual, participant, sample, batch, plate,
+      lane, run or id (or their plurals), as in donor_id or subjectID, or is number, no,
+      nr or code after one of them, as in run_number; donor_age names an age, and
+      n_donors a count.
+    - ``missing_label``: a factor level such as "" or "NA" that looks like a missing
+      value, which then forms a group of its own.
+    - ``similar_levels``: factor levels that differ only in case or surrounding spaces,
+      which usually split one group in two.
 
 References:
     Hoaglin DC, Welsch RE (1978). The hat matrix in regression and ANOVA. The American
@@ -75,14 +75,14 @@ References:
 
 import re
 import textwrap
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._linear_algebra import RANK_TOLERANCE, column_space
-from .._messages import WIDTH, fitted_lines
+from .._messages import WIDTH, fitted_lines, listing
 from ..table import Table
 from .contrasts import Contrasts
 from .formula import RandomEffect
@@ -113,7 +113,6 @@ _EXACT_ALIAS = 1e-12  # relative remainders below this are rounding, not data
 _ROUNDING = (
     1e-10  # relation coefficients this small relative to the largest are rounding
 )
-_LISTED = 6  # items listed in a message before "and n more"
 _MISSING_LABELS = frozenset({"", "na", "n/a", "nan", "null", "<na>", "nat", "?"})
 # Words that name a column of ids, words that do after one of them (run_number),
 # and the words of a name: runs of letters, split where a capital starts a word
@@ -260,7 +259,7 @@ def check_design(design: "Design") -> DesignReport:
             DesignIssue(
                 "duplicate_columns",
                 "more than one column is named "
-                + _join(repr(name) for name in duplicates)
+                + listing([repr(name) for name in duplicates])
                 + "; coefficients and contrasts refer to columns by name, so rename "
                 "a variable or a level so that every column name is unique",
             )
@@ -345,7 +344,7 @@ def _relation(model: ModelMatrix, aliasing: _Aliasing, j: int) -> str:
         covariates = [name for name, level in model.coding[j] if level is None]
         if covariates and spread <= 1e-6 * float(np.max(np.abs(column))):
             text += (
-                f" up to {remainder:.2g} of its size: {_join(covariates)} hardly "
+                f" up to {remainder:.2g} of its size: {listing(covariates)} hardly "
                 "varies compared with its size, which R's QR also treats as aliased; "
                 "centering it (subtracting its mean) makes it estimable"
             )
@@ -359,18 +358,16 @@ def _relation(model: ModelMatrix, aliasing: _Aliasing, j: int) -> str:
 
 
 def _rank_message(model: ModelMatrix, aliasing: _Aliasing) -> DesignIssue:
-    relations = [_relation(model, aliasing, j) for j in aliasing.aliased[:_LISTED]]
-    more = len(aliasing.aliased) - len(relations)
+    relations = [_relation(model, aliasing, j) for j in aliasing.aliased]
     count = len(aliasing.aliased)
     text = (
         f"the design matrix has {_count(model.shape[1], 'column')} but rank "
         f"{len(aliasing.kept)}, so {_count(count, 'coefficient')} "
         f"{'is' if count == 1 else 'are'} not estimable. Aliased columns: "
-        + "; ".join(relations)
-        + (f"; and {more} more" if more else "")
+        + listing(relations, separator="; ")
         + ". The columns in each relation cannot be estimated separately; remove "
-        "or recode the variables behind them (see the other findings), or drop "
-        "terms from the formula"
+        "or recode the variables that make up these columns (see the other "
+        "findings), or drop terms from the formula"
     )
     return DesignIssue("rank_deficient", text)
 
@@ -467,10 +464,10 @@ def _variable_checks(
                 DesignIssue(
                     "empty_level",
                     f"{name} has no samples at level{'' if len(empty) == 1 else 's'} "
-                    + _join(repr(level) for level in empty)
+                    + listing([repr(level) for level in empty])
                     + (
                         ", so "
-                        + _join(zero_columns)
+                        + listing(zero_columns)
                         + " "
                         + ("is" if len(zero_columns) == 1 else "are")
                         + " zero in every sample"
@@ -503,16 +500,14 @@ def _variable_checks(
             single_sample.update(samples)
             described = [
                 f"{variable.levels[k]!r} ({names[sample]})"
-                for k, sample in zip(lonely[:_LISTED], samples, strict=False)
+                for k, sample in zip(lonely, samples, strict=True)
             ]
-            more = len(lonely) - len(described)
             warnings.append(
                 DesignIssue(
                     "single_sample_level",
                     f"{name} has a single sample at level"
                     f"{'' if len(lonely) == 1 else 's'} "
-                    + _join(described)
-                    + (f" and {more} more" if more else "")
+                    + listing(described)
                     + "; effects of such a level rest on one sample with no "
                     "replicate. Add replicates, merge the level with a similar one, "
                     "or remove the sample",
@@ -563,7 +558,7 @@ def _label_checks(name: str, observed: list[str], warnings: list[DesignIssue]) -
             DesignIssue(
                 "missing_label",
                 f"{name} has the level{'' if len(suspicious) == 1 else 's'} "
-                + _join(repr(level) for level in suspicious)
+                + listing([repr(level) for level in suspicious])
                 + ", which looks like a missing value and forms a group of its own; "
                 "if these samples lack a label, fill it in or remove them (a real "
                 "group with this name needs no change)",
@@ -574,7 +569,10 @@ def _label_checks(name: str, observed: list[str], warnings: list[DesignIssue]) -
         groups.setdefault(level.strip().casefold(), []).append(level)
     similar = [members for members in groups.values() if len(members) > 1]
     if similar:
-        listed = "; ".join(_join(repr(level) for level in group) for group in similar)
+        listed = listing(
+            [listing([repr(level) for level in group]) for group in similar],
+            separator="; ",
+        )
         warnings.append(
             DesignIssue(
                 "similar_levels",
@@ -593,20 +591,23 @@ def _confounded_factors(
         set(zip(outer.codes.tolist(), inner.codes.tolist()))
     ):
         pairs.setdefault(inner.levels[code_inner], []).append(outer.levels[code_outer])
-    listing = "; ".join(
-        f"{second} {level!r}: {first} " + _join(repr(value) for value in values)
-        for level, values in list(pairs.items())[:_LISTED]
+    listed = listing(
+        [
+            f"{second} {level!r}: {first} " + listing([repr(value) for value in values])
+            for level, values in pairs.items()
+        ],
+        separator="; ",
     )
     if both:
         return DesignIssue(
             "confounded",
-            f"{first} and {second} group the samples identically ({listing}), so "
+            f"{first} and {second} group the samples identically ({listed}), so "
             "their effects cannot be separated by any analysis; keep one of them in "
             "the formula, knowing that its effect is also the effect of the other",
         )
     return DesignIssue(
         "confounded",
-        f"every level of {first} holds a single level of {second} ({listing}), so "
+        f"every level of {first} holds a single level of {second} ({listed}), so "
         f"the effect of {second} cannot be separated from the {first} effects. Remove "
         f"{first} from the formula; if {first} groups repeated samples (donors, "
         f"batches), the right model has it as a random effect, random='(1 | {first})'; "
@@ -718,7 +719,7 @@ def _leverage_check(
     if exact:
         factors = [k for k, value in variables.items() if isinstance(value, _Factor)]
         described = []
-        for sample in exact[:_LISTED]:
+        for sample in exact:
             labels = []
             for name in factors:
                 factor = variables[name]
@@ -727,14 +728,12 @@ def _leverage_check(
             described.append(
                 names[sample] + (f" ({', '.join(labels)})" if labels else "")
             )
-        more = len(exact) - len(described)
         plural = len(exact) > 1
         warnings.append(
             DesignIssue(
                 "unreplicated_sample",
                 f"the model fits sample{'s' if plural else ''} "
-                + _join(described)
-                + (f" and {more} more" if more else "")
+                + listing(described)
                 + " exactly (leverage 1), so "
                 + ("they tell" if plural else "it tells")
                 + " nothing about the residual variance and the effects "
@@ -774,7 +773,7 @@ def _leverage_check(
             DesignIssue(
                 "high_leverage",
                 "the model nearly fits "
-                + _listing(extreme)
+                + listing(extreme)
                 + " exactly because of an extreme covariate value, so such a sample "
                 "decides that covariate's slope almost alone and barely informs the "
                 "residual variance. Check the value, or transform the covariate (for "
@@ -786,7 +785,7 @@ def _leverage_check(
             DesignIssue(
                 "high_leverage",
                 "the model nearly fits "
-                + _listing(crowded)
+                + listing(crowded)
                 + f" exactly: with {_count(df_residual, 'residual degree')} of "
                 "freedom, such a sample largely decides some coefficients and barely "
                 "informs the residual variance. Add samples or simplify the formula",
@@ -804,11 +803,6 @@ def _far_outside(values: np.ndarray, sample: int) -> bool:
     return bool(values[sample] < low - spread or values[sample] > high + spread)
 
 
-def _listing(items: list[str]) -> str:
-    more = len(items) - _LISTED
-    return _join(items[:_LISTED]) + (f" and {more} more" if more > 0 else "")
-
-
 def _contrast_checks(
     design: "Design", model: ModelMatrix, aliasing: _Aliasing, errors: list[DesignIssue]
 ) -> None:
@@ -821,7 +815,7 @@ def _contrast_checks(
                 "contrast_not_estimable",
                 f"contrast {contrasts.names[position]!r} is not estimable: it depends "
                 "on effects that the design cannot separate ("
-                + "; ".join(relations)
+                + listing(relations, separator="; ")
                 + "). Fix the design first, or choose a contrast that does not "
                 "separate the columns of these relations",
             )
@@ -845,7 +839,7 @@ def _contrast_violations(
 
     Returns:
         The position of each contrast that is not estimable, with the relations it
-        violates as text (the first ``_LISTED`` of them).
+        violates as text.
     """
     if not len(contrasts) or not aliasing.aliased:
         return {}
@@ -862,7 +856,7 @@ def _contrast_violations(
         if violated:
             violations[position] = [
                 _relation(model, aliasing, aliasing.aliased[index])
-                for index in violated[:_LISTED]
+                for index in violated
             ]
     return violations
 
@@ -987,7 +981,7 @@ def _random_confounded(
         what = f"every effect of the random effect {effect}"
         fix = "drop the random effect"
     else:
-        what = f"the {_join(parts)} of the random effect {effect}"
+        what = f"the {listing(parts)} of the random effect {effect}"
         fix = (
             "drop " + ("it" if len(parts) == 1 else "them") + " from the random effect"
         )
@@ -1062,11 +1056,3 @@ def _leverage_text(value: float) -> str:
 def _count(number: int, noun: str) -> str:
     """Write a count with its noun, as in "1 sample" and "2 samples"."""
     return f"{number} {noun}{'' if number == 1 else 's'}"
-
-
-def _join(items: Iterable[object]) -> str:
-    """Join items as "a, b and c"."""
-    values = [str(item) for item in items]
-    if len(values) <= 2:
-        return " and ".join(values)
-    return ", ".join(values[:-1]) + " and " + values[-1]

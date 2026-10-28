@@ -1,7 +1,5 @@
 """Replication of differential expression across studies.
 
-Most genes that one study finds are not found in the next (Nakatsuka et al. 2025), so a
-result of several studies says how well they agree next to what they find together.
 :func:`~cytepool.replication` reads the differential expression of one group (cell type)
 and contrast in every study of a collection, a :class:`~cytepool.StudyResults`, lined up
 gene by gene by :meth:`StudyResults.table <cytepool.StudyResults.table>`, and gives for
@@ -10,9 +8,11 @@ p-value that the effect is found in at least u studies in the same direction (Be
 and Heller 2008), how many studies find it and in which direction, and the heterogeneity
 of its log2 fold changes; for every pair of studies, pi1 of one study's p-values among
 the genes the other finds (Storey and Tibshirani 2003) and their sign agreement; and the
-number of genes found in at least k studies.
+number of genes found in at least k studies, in a :class:`~cytepool.ReplicationResult`.
 :func:`~cytepool.plotting.plot_study_agreement` and
 :func:`~cytepool.plotting.plot_replicated_genes` draw them.
+https://docs.nygen.io/CytePool/statistics/replication#replication-tables explains what
+each table answers.
 
 The genes:
     A study tested a gene when its table of the group and contrast has it; one that
@@ -29,31 +29,22 @@ The genes:
     Hochberg's procedure over the genes that have them.
 
 Agreement between studies:
-    For an ordered pair of studies, the discovery and the replication, the genes the
-    discovery finds that the replication tested are compared: pi1 = 1 - pi0 of their
-    p-values in the replication study, Storey's estimate of the proportion of them with
-    an effect there (:func:`~cytepool.stats.multiple_testing.proportion_of_true_nulls`),
-    which counts effects that the replication study is too small to find on its own; the
-    share of them whose log2 fold changes have the same sign; and how many it finds too.
-    pi1 measures replication in the replication study's p-values, so it is not
-    symmetric.
-
-    pi0 is estimated at lambda = 0.5 by default: the share of p-values above 0.5,
-    over 0.5 (Storey and Tibshirani 2003). qvalue's default, a smoother of the
-    estimates at lambda = 0.05, ..., 0.95 (``null_proportion={}``), reads the
-    largest lambdas, where the few dozen p-values of the genes one study finds
-    leave too few values, so that it often gives pi1 of 0 or 1 there.
+    For an ordered pair of studies, the discovery and the replication, pi1 = 1 - pi0
+    is Storey's estimate of the proportion with an effect among the replication
+    study's p-values of the genes that the discovery study finds
+    (:func:`~cytepool.stats.multiple_testing.proportion_of_true_nulls`), with pi0
+    estimated at lambda = 0.5 by default: the share of the p-values at least 0.5,
+    over 0.5 (Storey and Tibshirani 2003). qvalue's default (``null_proportion={}``),
+    a smoother of the estimates at lambda = 0.05, ..., 0.95 read at the largest
+    lambda, often gives pi1 of 0 or 1 on a few dozen p-values
+    (https://docs.nygen.io/CytePool/statistics/multiple-testing#multiple-testing-defaults).
+    https://docs.nygen.io/CytePool/statistics/replication#pi1-between-studies explains
+    pi1 and the sign agreement.
 
 Heterogeneity:
     Cochran's Q, its p-value, I^2 and tau^2 of the log2 fold changes and their
     standard errors, by :func:`~cytepool.stats.meta_analysis.fit_meta_analysis` with
     ``meta_method``, for the genes that two studies or more tested; NaN for the others.
-
-Not done:
-    The r-values of Heller, Bogomolov and Benjamini (2014), which claim replication
-    in a follow-up study of the genes a primary study selects. Held-out prediction
-    of case status from the genes the studies find (Nakatsuka et al. 2025) is
-    :func:`cytepool.held_out_prediction`.
 
 References:
     Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
@@ -294,8 +285,13 @@ def replication(
     gets its combined p-value, its partial conjunction p-value of an effect in at
     least ``at_least`` studies in one direction, the studies that find it, and the
     heterogeneity of its log2 fold changes; every pair of studies its pi1 and sign
-    agreement; and every k the features found in at least k studies. The module
-    description gives the methods.
+    agreement; and every k the features found in at least k studies. Each study's
+    two-sided p-values become one-sided ones by the sign of its log2 fold change, so
+    that effects in opposite directions count against each other; a study finds a
+    feature when its adjusted p-value is below ``alpha``; and pi1 is one minus
+    Storey's estimate of pi0, at lambda = 0.5 by default.
+    https://docs.nygen.io/CytePool/statistics/replication#replication-tables explains
+    the tables.
 
     Args:
         studies: The differential-expression result of every study of a
@@ -326,8 +322,9 @@ def replication(
         null_proportion: Options of
             :func:`~cytepool.stats.multiple_testing.proportion_of_true_nulls` for pi1:
             ``lambdas``, ``method``, ``smooth_df`` and ``smooth_log``. None, the
-            default, is ``{"lambdas": 0.5}``; ``{}`` takes qvalue's defaults (see
-            the module description).
+            default, is ``{"lambdas": 0.5}``; ``{}`` takes qvalue's defaults, a
+            smoother that often gives pi1 of 0 or 1 on the few genes one study
+            finds.
 
     Returns:
         The tables of features, pairs of studies, counts by number of studies and

@@ -338,7 +338,7 @@ def test_filter_by_size_keeps_the_sizes_in_its_range() -> None:
     assert list(sets.filter_by_size(17)) == []
     with pytest.raises(ValueError, match="max_size \\(4\\) is smaller than min_size"):
         sets.filter_by_size(5, 4)
-    with pytest.raises(ValueError, match="min_size must be at least 0"):
+    with pytest.raises(ValueError, match="min_size must be non-negative"):
         sets.filter_by_size(-1)
     with pytest.raises(TypeError, match="min_size must be an integer"):
         sets.filter_by_size(True)

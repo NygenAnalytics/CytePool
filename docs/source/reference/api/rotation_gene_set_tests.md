@@ -6,11 +6,8 @@ myst:
 
 # Rotation gene-set tests
 
-{func}`~cytepool.roast`, {func}`~cytepool.mroast` and {func}`~cytepool.romer` test gene
-sets by rotations of the residuals on one contrast of a linear model: of a group of a
-result of {func}`~cytepool.limma_voom` or {func}`~cytepool.limma_trend`, whose fit they
-compute again, or of values with a design and a contrast. romer takes sample weights
-only, so of the two results it tests those of limma-trend.
+limma's rotation tests roast, mroast and romer on one contrast of a linear model;
+[Gene-set tests](../statistics/gene-set-tests/#roast) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.rotation_gene_set_tests

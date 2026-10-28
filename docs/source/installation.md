@@ -5,9 +5,9 @@ description: Install CytePool from its repository with Python 3.13 or newer, set
 (installation)=
 # Installation
 
-CytePool needs Python 3.13 or newer. Its only required dependencies, numpy and numba,
-are installed with it. Nothing is released on PyPI yet, so install it from the
-repository.
+Install CytePool from its repository with uv or pip: it needs Python 3.13 or newer, and
+its only required dependencies, numpy and numba, are installed with it. Nothing is
+released on PyPI yet.
 
 ## With uv
 
@@ -43,7 +43,10 @@ uv pip install "cytepool[mudata] @ git+https://github.com/NygenAnalytics/CytePoo
 ```
 
 The `mudata` extra installs anndata too. CytePool imports them only when a
-conversion runs, and says which extra to install when one is missing.
+conversion runs, and says which extra to install when one is missing. anndata needs
+h5py and numcodecs, which have no wheels for Python 3.15 yet, so on Python 3.15 the
+`test` extra leaves anndata and mudata out and the tests of these conversions are
+skipped.
 
 The figures of `cytepool.plotting` need matplotlib, which the `plot` extra installs;
 it is imported only when a figure is drawn.
@@ -58,10 +61,12 @@ temporary directory. Any change to the installed CytePool source starts a new ca
 
 Parallel routines use numba's threads: `from_cells`, the fits of linear models in
 which each gene needs its own fit (with observation weights, as from voom, or missing
-values), which `limma_voom` runs, and the fits of negative binomial models. Set
-`NUMBA_NUM_THREADS` before Python starts to cap them, for example on a shared machine,
-or pass `n_threads` to a function that takes it; results do not depend on the number
-of threads. With numba's OpenMP threading layer, a process that has run a parallel
+values), which `limma_voom` runs, the fits of negative binomial models and DESeq2's, the
+rotation gene-set tests, GSEA, the pathway scores and the activities. The fits of mixed
+models run on Python threads instead, in compiled code that releases the GIL, as many
+as numba's setting allows. Set `NUMBA_NUM_THREADS` before Python starts to cap them,
+for example on a shared machine, or pass `n_threads` to a function that takes it;
+results do not depend on the number of threads. With numba's OpenMP threading layer, a process that has run a parallel
 routine cannot fork worker processes that run one again: start workers with the
 "spawn" or "forkserver" method of `multiprocessing` instead. With one thread
 (`n_threads=1`, or `numba.set_num_threads(1)`), the fits of linear and negative

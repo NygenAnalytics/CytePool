@@ -1,11 +1,14 @@
 """SumRank of the differential expression of the studies of a collection.
 
-:func:`~cytepool.sumrank` ranks the genes of every study, sums each gene's best ranks
-and gives their p-values, as SumRank does (Nakatsuka et al. 2025), for one group (cell
-type) and contrast of the studies' results: a :class:`~cytepool.StudyResults`, such as
-:func:`~cytepool.analyse_each_study` gives, whose studies each analysed their aligned
-cube. :mod:`cytepool.stats.sumrank` describes the statistic, its Irwin-Hall p-values and
-its permutation p-values, which :func:`~cytepool.stats.sumrank.fit_sumrank` computes.
+:func:`~cytepool.sumrank` computes SumRank (Nakatsuka et al. 2025) for a
+:class:`~cytepool.StudyResults`, such as :func:`~cytepool.analyse_each_study` gives,
+whose studies each analysed their aligned cube, in one group (cell type) and contrast,
+and returns a :class:`~cytepool.SumRankResult`.
+:func:`~cytepool.stats.sumrank.fit_sumrank` computes the statistic, its Irwin-Hall
+p-values and its permutation p-values.
+https://docs.nygen.io/CytePool/statistics/replication#sum-of-ranks explains them, and
+https://docs.nygen.io/CytePool/statistics/replication#replication-limits how the
+permutations differ from the paper's.
 
 The studies' statistics:
     Each study ranks the genes by its signed -log10 p-value of the contrast:
@@ -20,32 +23,20 @@ Permutations:
     group, with a ``numpy.random.Generator``, and the study's analysis,
     ``limma_voom`` or ``limma_trend`` with the design and settings its result
     records, is run again on its aligned cube, for that group and contrast only.
-    The variable (``permute``) is read from the contrast when it compares two
-    levels of one factor in every study's design, such as ``conditioncase``, the
-    level ``case`` of ``condition`` against its reference; otherwise it is given.
+    Only designs without random effects are permuted, whose samples are exchangeable
+    under the null; a design with several samples of a donor would need the donors'
+    labels permuted instead. The variable (``permute``) is read from the contrast
+    when it compares two levels of one factor in every study's design, such as
+    ``conditioncase``, the level ``case`` of ``condition`` against its reference;
+    otherwise it is given.
     The permutations are drawn in a fixed order, permutation after permutation and
     study after study, so a seed gives the same permutations, and the analyses do
     not depend on the number of threads.
 
 Cost:
-    A permutation runs the analysis of every study once, for one group: with
-    ``limma_voom``, 0.21 s for a study of 40 samples and 10,000 genes on a laptop on
-    2 threads (``limma_trend`` 0.14 s; ``validation/sumrank.py --benchmark``), so 100
-    permutations of 20 such studies take about 7 minutes; the SumRank statistics of a
-    permutation take milliseconds. The memory is that of one study's analysis and a
-    few arrays of the genes, whatever the number of permutations.
-
-Deliberate differences from the paper:
-    - The labels are permuted among the samples of each study's fit of the group,
-      which keeps the number of cases and controls of the fit. The paper permutes
-      them among all the individuals of a dataset, for all its cell types at once,
-      and draws again until every cell type has at least two cases and two controls.
-
-Not done:
-    Studies are not weighted, a limit the paper notes too. Permutations re-run
-    designs without random effects only (``limma_voom`` and ``limma_trend``), whose
-    samples are exchangeable under the null; a design with several samples of a
-    donor needs the donors' labels permuted instead.
+    A permutation runs the analysis of every study once, for one group; the SumRank
+    statistics of a permutation take milliseconds. The memory is that of one study's
+    analysis and a few arrays of the genes, whatever the number of permutations.
 
 References:
     Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
@@ -255,16 +246,18 @@ def sumrank(
     :func:`~cytepool.analyse_each_study` gives. For the group and contrast, the
     studies whose results test them each rank the genes that every one of them
     tested by their signed -log10 p-value, and each gene's best ranks are summed, as
-    :func:`~cytepool.stats.sumrank.fit_sumrank` sums them; the module description
-    gives the statistic and its p-values.
+    :func:`~cytepool.stats.sumrank.fit_sumrank` sums them, with Irwin-Hall p-values.
+    https://docs.nygen.io/CytePool/statistics/replication#sum-of-ranks explains the
+    statistic and its p-values.
 
     With ``n_permutations``, the values of the design variable ``permute``, such as
     the condition, are permuted among the samples of each study's fit of the group,
     and each study's analysis is run again on its aligned cube with the design and
     settings its result records (``limma_voom`` or ``limma_trend``), for this group
     and contrast only; the SumRank statistics of every permutation make the null
-    distribution of the p-values. Each permutation costs one analysis of the group in
-    every study (see "Cost" in the module description).
+    distribution of the p-values. Each permutation runs the analysis of the group
+    once in every study; the permutations are drawn permutation after permutation
+    and study after study, so a seed gives the same permutations.
 
     Args:
         studies: The differential-expression result of every study of a
@@ -446,10 +439,10 @@ def sumrank(
 
 def _n_permutations(value: Any) -> int:
     if isinstance(value, bool | np.bool_):
-        raise TypeError("n_permutations must be a whole number, not bool")
+        raise TypeError("n_permutations must be a whole number, got bool")
     number = index_integer(value, "n_permutations", expected="a whole number")
     if number < 0:
-        raise ValueError(f"n_permutations must be at least 0, got {number}")
+        raise ValueError(f"n_permutations must be non-negative, got {number}")
     return number
 
 

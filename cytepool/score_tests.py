@@ -1,25 +1,12 @@
 """Tests of per-sample scores with a design: limma on pathway scores and activities.
 
-Pathway scores (:func:`~cytepool.gsva` and the others) and activities of regulators
-(:func:`~cytepool.ulm` and the others) give every sample of a cube's group one value per
-gene set or source, which differ between conditions as expression values do. GSVA's
-guide tests its scores with limma, as decoupler's guides test activities: a linear model
-of every set's scores on the design (``lmFit``), the contrast (``contrasts.fit``),
-moderated t-tests (``eBayes``, Smyth 2004) and a table of the results (``topTable``).
-:func:`~cytepool.limma` takes these steps in one call, with the
-:class:`~cytepool.Design` built for the cube: its rows are matched to the scores by
-``sample_id``, so that the samples a score leaves out, such as those with too few cells,
-leave the fit too.
-
-The fit:
-    The samples fitted are those of the scores that the design has, in the order of
-    the scores. The design matrix is the design's rows for them, so every column keeps
-    its meaning; when those rows do not determine every column (the samples left out
-    took a donor's every sample, say), the fit keeps the columns that span them, as
-    R's ``qr()`` keeps them and :func:`~cytepool.limma_voom` fits a group, and the
-    contrast is tested when it is estimable from these samples (see "The design of a
-    group" in the description of :func:`~cytepool.limma_voom`). Missing scores (NaN)
-    leave a set out of the fit of the samples they miss, as limma's ``lmFit`` does.
+:func:`~cytepool.limma` tests a contrast of a design on values of samples: pathway
+scores (:func:`~cytepool.gsva` and the others), activities (:func:`~cytepool.ulm` and the
+others) or an array, by limma's ``lmFit``, ``contrasts.fit``, ``eBayes`` (Smyth 2004)
+and ``topTable``, the steps that GSVA's guide takes to test its scores, and returns a
+table with one row per set, source or feature.
+https://docs.nygen.io/CytePool/statistics/pathway-scores#testing-scores explains the
+tests.
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing
@@ -76,9 +63,28 @@ def limma(
     limma's ``lmFit``, ``contrasts.fit``, ``eBayes`` and ``topTable(sort.by =
     "none")`` for one contrast: a linear model of the scores of every gene set,
     source or feature on the design, moderated t-tests of the contrast, and
-    Benjamini-Hochberg adjusted p-values over them. The module description says
-    which samples are fitted and how a design that its samples do not determine is
-    fitted. Sort the table to read it, as ``limma(scores, design).sort("p_value")``.
+    Benjamini-Hochberg adjusted p-values over them.
+    https://docs.nygen.io/CytePool/statistics/pathway-scores#testing-scores explains the
+    tests. Sort the table to read it, as ``limma(scores, design).sort("p_value")``.
+
+    The design's rows are matched to the scores by ``sample_id``, so that the samples a
+    score leaves out, such as those with too few cells, leave the fit too: the samples
+    fitted are those of the scores that the design has, in the order of the scores. The
+    design matrix is the design's rows for them, so every column keeps its meaning;
+    when those rows do not determine every column (the samples left out took a donor's
+    every sample, say), the fit keeps the columns that span them, as R's ``qr()`` keeps
+    them and :func:`~cytepool.limma_voom` fits a group, and the contrast is tested when
+    it is estimable from these samples
+    (https://docs.nygen.io/CytePool/statistics/linear-models#estimable-contrasts).
+    Missing scores (NaN) leave a set out of the fit of the samples they miss, as limma's
+    ``lmFit`` does.
+
+    The standard errors of the contrast are exact, as
+    :func:`~cytepool.stats.linear_models.contrasts_fit` computes them with
+    ``method="exact"``. They are limma's when one design fits every score: no missing
+    scores, and no weights or one weight per sample. Otherwise limma's
+    ``contrasts.fit`` approximates them where the contrast combines correlated
+    coefficients.
 
     Args:
         data: :class:`~cytepool.PathwayScores`, such as
@@ -154,7 +160,7 @@ def limma(
         raise ValueError(
             f"the contrast {name!r} is not estimable from the samples of the data, "
             "which cannot separate the effects it depends on: "
-            + "; ".join(violations[0])
+            + listing(violations[0], separator="; ")
         )
     columns = tuple(design.columns[j] for j in kept)
     fit = fit_linear_model(

@@ -6,6 +6,10 @@ myst:
 
 # Normalization and filtering
 
+Normalization factors, size factors, counts per million and the filter by expression;
+[Normalization and filtering](../statistics/normalization-and-filtering/#normalization-and-size-factors)
+explains them.
+
 ```{eval-rst}
 .. automodule:: cytepool.normalization
 ```

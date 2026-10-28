@@ -1,83 +1,23 @@
 """Negative binomial generalized linear models fitted to every gene, as edgeR's glmFit.
 
-For the count y_gi of gene g in sample i, the model is
-
-    y_gi ~ NB(mu_gi, phi_gi),    var(y_gi) = mu_gi + phi_gi mu_gi^2,
-    log(mu_gi) = x_i' beta_g + o_gi,
-
-with x_i the design row of sample i, phi_gi a known dispersion and o_gi an offset,
-usually the log effective library size log(N_i f_i) (McCarthy, Chen and Smyth 2012).
-The coefficients beta_g, on the natural log scale, maximize the log-likelihood weighted
-by prior weights w_gi; equivalently they minimize the deviance (Dunn and Smyth 2018)
-
-    D_g = sum_i w_gi d(y_gi, mu_gi, phi_gi),
-    d(y, mu, phi) = 2 [y log(y / mu) - (y + 1 / phi) log((1 + phi y) / (1 + phi mu))],
-
-whose limit at phi = 0 is the Poisson unit deviance 2 [y log(y / mu) - (y - mu)]. The
-log-likelihood is concave in beta_g, so its maximum is unique when it exists.
-
-Each gene is fitted as edgeR's documentation describes ``glmFit``:
-
-- When the rows of the design take as many distinct values as it has columns, the
-  design is a one-way layout in some parametrization: group means, groups against a
-  reference, an intercept alone, or one coefficient per sample. Each group's mean is
-  then fitted on its own (edgeR's ``mglmOneGroup`` and ``mglmOneWay``), starting from
-  the closed form of the Poisson fit, log(sum w y / sum w exp(o)), which is the answer
-  when the group's offsets and dispersions are equal, and solving the group's score
-  equation by Newton's method kept inside a bracket, to the last bits. The coefficients
-  solve the distinct rows of the design for the group means.
-- Other designs are fitted by Newton's method with Levenberg (1944) damping, from the
-  fit of one group of all samples, edgeR's default start (the null model). The iteration
-  works with an orthonormal basis Q of the design's column space, design = Q R, which
-  McCarthy, Chen and Smyth (2012) describe for ``glmFit``, so that neither the scale of
-  the columns nor how nearly collinear they are affects it; only the coefficients,
-  R^(-1) times those of the basis, carry the conditioning of the design. Each step
-  solves (X' W X) step = X' s, with s the scores and W the information of the
-  observations, from the triangular factor of a Householder QR factorization (Golub and
-  Van Loan 2013) of W^(1/2) X and with X' s formed directly; a least squares solution
-  would carry the rounding of residuals W^(-1/2) s that can be far larger than their
-  rows, as for zero counts with a large dispersion times mean. A column whose part
-  orthogonal to the columns before it has a norm of at most 1e-11 times its own is
-  aliased and not moved: a step along it would be rounding. Zero counts whose fitted
-  values are below 1e-30 of the largest are left out of the fit, since the deviance no
-  longer depends on them.
-- A step that would increase the deviance is damped, by adding a multiple of the
-  diagonal of the information matrix (Marquardt's scaling, Marquardt 1963), until it
-  does not. A step is shortened so that it raises no log fitted value, and lowers none
-  of a positive count, by more than 2, where the quadratic model of the step can fail;
-  lowers no fitted value of a zero count below a thousandth of that 1e-30 level, beyond
-  which lowering it further would only enlarge the coefficients, and with them the
-  rounding of every fitted value; and changes no log fitted value by more than 1e3. A
-  whole step that lowers the deviance by more than 1.1 times what it predicts is doubled
-  while the deviance keeps falling: so it does where fitted values of zero counts tend
-  to zero, and the deviance falls exponentially. The weights of each gene are divided by
-  a power of two that brings the largest into [0.5, 1), which changes no fitted value,
-  so that the tolerances refer to weights of order one.
-- The steps are Newton's: they use the observed information where edgeR's
-  documentation describes Fisher scoring, which uses the expected information. For
-  this model the observed information, w mu (1 + phi y) / (1 + phi mu)^2 for each
-  observation, is positive too, and it is the exact curvature of the log-likelihood.
-  The expected information, w mu / (1 + phi mu), misjudges it by the factor
-  (1 + phi y) / (1 + phi mu), so that with dispersions and weights that differ between
-  observations Fisher scoring can stop far from the maximum, as edgeR's fits do on
-  such genes (below). Both methods have the same maximum.
-- A fit stops, as converged, when a step would change no log fitted value by more than
-  1e-10 (leaving out zero counts below the 1e-30 level), when the decrease of the
-  deviance that it predicts is below 1e-16 of the deviance, or when the deviance has
-  fallen below 1e-16 of its starting value, as it does where every count can be fitted
-  exactly in the limit. That last step is taken too unless it would raise the
-  deviance by more than rounding: 1e-12 of it plus twice its rounding error, which the
-  linear predictors' rounding sets, the same slack with which any step is accepted. A
-  fit does not converge if its deviance is infinite, or if the deviance still falls
-  along an aliased direction. A fit converges in about 4 to 8 steps when its maximum
-  is finite.
+:func:`fit_negative_binomial_model` fits one negative binomial log-linear model to every
+gene at given dispersions, as edgeR's ``glmFit`` does (McCarthy, Chen and Smyth 2012),
+into a :class:`NegativeBinomialFit` with the maximum likelihood coefficients, the
+coefficients shrunk by a prior count (Phipson 2013), the fitted values and the
+deviances. :func:`negative_binomial_deviance` and
+:func:`negative_binomial_unit_deviance` compute the deviances exactly (Dunn and Smyth
+2018), which edgeR's ``nbinomDeviance`` and ``nbinomUnitDeviance`` approximate.
+https://docs.nygen.io/CytePool/statistics/count-models#negative-binomial-model gives
+the model, and
+https://docs.nygen.io/CytePool/statistics/count-models#count-models-limits how the fits
+differ from edgeR's.
 
 Counts of zero:
 
 - A group of a one-way layout whose counts are all zero has fitted values of zero. Its
-  log mean, minus infinity, is represented by -1e8, as edgeR represents it (found by
-  probing), so that the coefficients stay finite and reproduce the fitted values;
-  coefficients that involve such a group are therefore near -1e8 or 1e8.
+  log mean, minus infinity, is represented by -1e8, as edgeR represents it, so that the
+  coefficients stay finite and reproduce the fitted values; coefficients that involve
+  such a group are therefore near -1e8 or 1e8.
 - In other designs the maximum lies at infinity when the fitted values of some samples
   with zero counts can tend to zero while the others stay, as when a group's counts
   are all zero, or a count is the only one at one end of a covariate. Each step then
@@ -85,51 +25,22 @@ Counts of zero:
   predicts falls below 1e-16 of the deviance: typically 10 to 20 steps, after which the
   fitted values that tend to zero are below about 1e-15 of the largest and the deviance
   is at its limit to rounding. The coefficients that reach them are large and depend on
-  where the fit stops; the other fitted values and the deviance do not. edgeR stops
-  earlier, ``glmFit`` with such fitted values near 1e-7 (found by probing).
+  where the fit stops; the other fitted values and the deviance do not.
 - A gene without counts has fitted values and deviance of zero. Its coefficients are
   those of the constant log mean -1e8 when a vector of ones lies in the column space of
   the design, by the rank rule of R's qr() (an intercept, or group indicators that add
-  up to one), as edgeR's one-way fit gives them; edgeR's Levenberg fit returns NA there
-  (found by probing). Otherwise the iteration finds its maximum from coefficients of
-  zero.
+  up to one), as edgeR's one-way fit gives them. Otherwise the iteration finds its
+  maximum from coefficients of zero.
 
-Deliberate differences from edgeR, found by probing:
-
-- The deviance is exact. edgeR adds 1e-8 to each count and mean, so that the unit
-  deviance of a zero count is up to about 5e-7 lower than it should be, and a small
-  fraction of it for means below about 1e-8. Below a dispersion of 1e-4 it uses an
-  approximation whose relative error grows with the dispersion times the mean: about
-  1e-6 at 1e-3, 1e-4 at 1e-2 and 1e-2 at 0.1; from about 1 it is wrong by factors, and
-  from about 10 it gives zero counts no deviance. From a dispersion times the mean of
-  1e6 it uses the limit of the gamma distribution, which gives zero counts 1.6 to 2.6
-  times their deviance.
-- The fits of other designs than one-way layouts converge to the maximum. On the
-  validation's data, edgeR's ``glmFit`` stops with coefficients up to about 3e-4 from
-  it (1e-3 with a dispersion of 2e-5), 1e-2 with dispersions and weights per
-  observation, and 1.6 with a covariate such as a date next to an intercept, where
-  fitted values that should tend to zero stay near 1e2. ``mglmLevenberg`` with a
-  lower tolerance (its ``tol``) stops about 2e-7 from it, but 2e-3 with dispersions
-  and weights per observation, 2e-6 with sparse counts, 1e-5 with a date or for counts
-  near 1e8, and 2e-3 with a dispersion of 2e-5, where the errors of its deviance are
-  largest. With dispersions and weights per observation, ``glmFit`` also reports for
-  a few genes a deviance that is not that of its own fitted values.
-- Inputs that edgeR runs on without end, infinite dispersions or offsets, raise
-  errors here.
-
-Known limits:
-
-- Where weights differ by many orders of magnitude between samples, the coefficients
-  that only the samples of small weight determine are found to a relative accuracy of
-  about 1e-16 times the factor between the weights (1e-6 for a factor of 1e10), as
-  rounding in the scores of the other samples, which carry most of the information,
-  swamps theirs. Beyond a factor of about 1e14 those coefficients are not determined,
-  although the fit can report convergence. edgeR is less accurate still (found by
-  probing).
-- Where a zero count's dispersion times mean is so large, above about 1e22, that its
-  information is below rounding next to that of the other samples while its deviance
-  still falls with its fitted value, its direction is aliased from the start and the
-  fit is reported as not converged.
+Matching edgeR:
+    The fits match edgeR 4.4.0's ``glmFit``: its documentation describes the method,
+    and running it on chosen inputs settled the conventions it leaves open. A design
+    whose rows take as many distinct values as it has columns, a one-way layout, is
+    fitted group by group, as ``mglmOneGroup`` and ``mglmOneWay`` fit it, to the last
+    bits; other designs are fitted by Newton's method with Levenberg (1944) damping,
+    from the fit of all samples as one group, edgeR's default start, in an orthonormal
+    basis of the design's columns, as McCarthy, Chen and Smyth (2012) describe for
+    ``glmFit``.
 
 References:
     McCarthy DJ, Chen Y, Smyth GK (2012). Differential expression analysis of
@@ -257,8 +168,9 @@ class NegativeBinomialFit:
         coefficients: ``(n_features, n_coefficients)`` maximum likelihood estimates,
             on the natural log scale: ``fitted_values`` is ``exp(design @
             coefficients.T + offsets)``. edgeR reports them as
-            ``unshrunk.coefficients``. A coefficient whose estimate is infinite is
-            large and finite instead; see the module description.
+            ``unshrunk.coefficients``. A coefficient whose estimate is infinite, as
+            for a group whose counts are all zero, is large and finite instead (near
+            -1e8 or 1e8 in a one-way layout).
         shrunk_coefficients: ``(n_features, n_coefficients)`` coefficients estimated
             after adding ``prior_count`` to the counts as edgeR's ``predFC`` does
             (Phipson 2013), which shrinks log fold changes towards zero and keeps them
@@ -327,12 +239,60 @@ def fit_negative_binomial_model(
     """Fit a negative binomial log-linear model to every gene, as edgeR's glmFit.
 
     Every gene is fitted with the same design, with its own dispersions, offsets and
-    weights; the module description gives the model and the methods. The dispersions
-    are taken as known: give estimates, such as
-    :func:`~cytepool.stats.quasi_likelihood.common_dispersion`, or a
-    value from similar data (edgeR's User's Guide gives biological coefficients of
-    variation of 0.4 for human samples, 0.1 for genetically identical model organisms
-    and 0.01 for technical replicates; the dispersion is their square).
+    weights, by maximum likelihood: y_gi ~ NB(mu_gi, phi_gi), with
+    var(y_gi) = mu_gi + phi_gi mu_gi^2 and log(mu_gi) = x_i' beta_g + o_gi for gene g
+    in sample i, and the coefficients minimize the deviance
+    sum_i w_gi d(y_gi, mu_gi, phi_gi) of :func:`negative_binomial_deviance`. The
+    dispersions are taken as known: give estimates, such as
+    :func:`~cytepool.stats.quasi_likelihood.common_dispersion`, or a value from similar
+    data, the square of a biological coefficient of variation.
+    https://docs.nygen.io/CytePool/statistics/count-models#negative-binomial-model
+    explains the model and gives typical values.
+
+    Fits:
+        - A one-way layout fits each group's mean on its own, from the closed form of
+          the Poisson fit, log(sum w y / sum w exp(o)), which is the answer when the
+          group's offsets and dispersions are equal, by Newton's method kept inside a
+          bracket, to the last bits; the coefficients solve the distinct rows of the
+          design for the group means.
+        - Other designs are fitted by Newton's method from the fit of all samples as
+          one group. The iteration works with an orthonormal basis Q of the design's
+          column space, design = Q R, so that neither the scale of the columns nor how
+          nearly collinear they are affects it; only the coefficients, R^(-1) times
+          those of the basis, carry the conditioning of the design. Each step solves
+          (X' W X) step = X' s, with s the scores and W the observed information of the
+          observations, w mu (1 + phi y) / (1 + phi mu)^2, from the triangular factor of
+          a Householder QR factorization (Golub and Van Loan 2013) of W^(1/2) X. A
+          column whose part orthogonal to the columns before it has a norm of at most
+          1e-11 times its own is aliased and not moved. Zero counts whose fitted values
+          are below 1e-30 of the largest are left out of the fit, since the deviance no
+          longer depends on them.
+        - A step that would increase the deviance is damped, by adding a multiple of
+          the diagonal of the information matrix (Marquardt 1963), until it does not.
+          A step is shortened so that it raises no log fitted value, and lowers none
+          of a positive count, by more than 2; lowers no fitted value of a zero count
+          below a thousandth of that 1e-30 level; and changes no log fitted value by
+          more than 1e3. A whole step that lowers the deviance by more than 1.1 times
+          what it predicts is doubled while the deviance keeps falling. The weights of
+          each gene are divided by a power of two that brings the largest into
+          [0.5, 1), which changes no fitted value.
+        - A fit stops, as converged, when a step would change no log fitted value by
+          more than 1e-10 (leaving out zero counts below the 1e-30 level), when the
+          decrease of the deviance that it predicts is below 1e-16 of the deviance,
+          or when the deviance has fallen below 1e-16 of its starting value. A fit
+          does not converge if its deviance is infinite, or if the deviance still
+          falls along an aliased direction. A fit converges in about 4 to 8 steps
+          when its maximum is finite.
+
+    Where weights differ by many orders of magnitude between samples, the
+    coefficients that only the samples of small weight determine are found to a
+    relative accuracy of about 1e-16 times the factor between the weights (1e-6 for a
+    factor of 1e10), as rounding in the scores of the other samples swamps theirs, and
+    beyond a factor of about 1e14 they are not determined, although the fit can report
+    convergence. Where a zero count's dispersion times mean is above about 1e22, its
+    information is below rounding next to that of the other samples while its
+    deviance still falls with its fitted value, and the fit is reported as not
+    converged.
 
     Args:
         counts: ``(n_samples, n_features)`` counts: finite and non-negative, integer or
@@ -379,7 +339,8 @@ def fit_negative_binomial_model(
         ValueError: If shapes disagree, counts are negative or not finite, the design
             is not finite, has random effects or is not of full column rank (the
             message names the aliased columns), a dispersion is negative or not
-            finite, an offset is not finite, a weight is not positive and finite, both
+            finite, an offset is not finite (edgeR's fit runs without end on an
+            infinite dispersion or offset), a weight is not positive and finite, both
             offsets and library sizes or normalization factors are given, a library
             size is zero, or ``prior_count`` or ``max_iterations`` is out of range.
     """
@@ -399,9 +360,7 @@ def fit_negative_binomial_model(
         w = weight_matrix(weights, n_samples, n_features)
         prior = non_negative_number(prior_count, "prior_count")
         reject_masked(max_iterations, "max_iterations")
-        limit = positive_integer(
-            max_iterations, "max_iterations", expected="a positive integer"
-        )
+        limit = positive_integer(max_iterations, "max_iterations")
         layout = _layout(x)
 
         counts_by_gene = np.ascontiguousarray(y.T)
@@ -453,8 +412,9 @@ def negative_binomial_unit_deviance(
 
     If mu and phi are the true mean and dispersion, the unit deviance is
     approximately chi-squared on one degree of freedom. edgeR's
-    ``nbinomUnitDeviance`` computes the same quantity with an offset and
-    approximations; see the module description. The arguments broadcast with numpy's
+    ``nbinomUnitDeviance`` computes the same quantity with 1e-8 added to the counts
+    and means, an approximation below a dispersion of 1e-4, and the gamma limit from
+    a dispersion times mean of 1e6. The arguments broadcast with numpy's
     rules: with counts of shape ``(n_samples, n_features)``, one dispersion per gene
     has shape ``(n_features,)``.
 

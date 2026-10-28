@@ -1,172 +1,63 @@
 """Linear mixed models with random intercepts, fitted to many features by REML or ML.
 
-Every feature (gene) of a samples x features matrix is fitted with the same model,
+:func:`fit_mixed_model` fits every feature (gene) of a samples x features matrix with
+the same linear mixed model, the fixed effects and random intercepts of a
+:class:`~cytepool.Design`, by restricted maximum likelihood (REML; Patterson and
+Thompson 1971) or maximum likelihood, as lme4's ``lmer`` does (Bates et al. 2015), into
+a :class:`MixedModelFit`. :func:`fixed_effect_tests` tests contrasts of the fixed
+effects one at a time by t-tests, into a :class:`FixedEffectTests`, and
+:func:`fixed_effect_f_test` several at once by F-tests, into a
+:class:`FixedEffectFTest`, with Satterthwaite's degrees of freedom, as lmerTest computes
+them (Kuznetsova et al. 2017), or Kenward-Roger's, as pbkrtest computes them
+(Halekoh and Hojsgaard 2014). :mod:`cytepool.stats.dream` builds dream's precision
+weights and moderated tests on these fits (Hoffman and Roussos 2021).
+https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-model-reml gives the model
+and the methods.
 
-    y = X beta + Z_1 b_1 + ... + Z_K b_K + e,
-    b_k ~ N(0, sigma_k^2 I),    e ~ N(0, sigma^2 W^-1),
+Weights:
+    With precision weights w, the residual variance of an observation is sigma^2 / w.
+    The criterion, the fixed effects and the variance components do not change when
+    every weight of a feature is multiplied by the same constant; only sigma^2 scales
+    with it.
 
-where X is the fixed-effects design, Z_k assigns each sample to a level of the k-th
-grouping factor (one random intercept per level, as ``(1 | donor)`` in lme4), and W
-holds the feature's precision weights (the identity without weights). The grouping
-factors may be nested, such as ``(1 | donor/sample)``, or crossed, such as
-``(1 | donor) + (1 | batch)``. The variance parameters are estimated by restricted
-maximum likelihood (REML; Patterson and Thompson 1971), or by maximum likelihood
-(``method="ml"``), and the fixed effects by generalised least squares given them, as
-lme4's ``lmer`` with ``REML = TRUE`` (or ``FALSE``) does (Bates et al. 2015). Contrasts
-of the fixed effects are tested one at a time by t-tests (:func:`fixed_effect_tests`),
-or several at once by F-tests (:func:`fixed_effect_f_test`), with Satterthwaite's
-degrees of freedom, as lmerTest computes them (Kuznetsova et al. 2017), or Kenward and
-Roger's, as pbkrtest computes them (Halekoh and Hojsgaard 2014). variancePartition's
-``dream`` uses both for repeated measures in gene expression (Hoffman and Roussos
-2021); :mod:`cytepool.stats.dream` builds dream's precision weights and moderated
-tests on these fits.
+Matching lme4, lmerTest and pbkrtest:
+    The results match lme4 2.0.6 and lmerTest 3.2.1, and pbkrtest 0.5.3 with lmerTest
+    3.1-3 and lme4 1.1-38: their documentation gives the methods, and running them on
+    chosen inputs settled the conventions it leaves open.
 
-The REML criterion:
-    With theta_k = sigma_k / sigma, the relative standard deviations that lme4
-    estimates, and V = W^-1 + sum_k theta_k^2 Z_k Z_k', the fixed effects and sigma^2
-    are profiled out: beta(theta) is the generalised least squares estimate,
-    r^2(theta) = (y - X beta)' V^-1 (y - X beta), and sigma^2(theta) = r^2 / (n - p).
-    The criterion minimised is lme4's profiled REML deviance (Bates et al. 2015,
-    section 3.4),
+    - The criterion minimized is lme4's profiled REML deviance (Bates et al. 2015,
+      section 3.4), whose value at the estimates is lme4's ``REMLcrit``, or for maximum
+      likelihood its profiled deviance, lme4's ``deviance`` of a fit with
+      ``REML = FALSE``. A variance component estimated at zero is held exactly at zero,
+      where lme4 reports a singular fit.
+    - Satterthwaite's degrees of freedom (Satterthwaite 1946; Giesbrecht and Burns 1985)
+      take the asymptotic covariance of the variance parameters as twice the inverse of
+      the Hessian of the deviance, as lmerTest does. lmerTest parametrizes them by
+      (theta, sigma), in which the deviance is an even function of each theta_k, so a
+      component estimated at zero contributes nothing; with every component at zero
+      the degrees of freedom are n - p, those of the fixed-effects model.
+    - Kenward-Roger's method (Kenward and Roger 1997), as pbkrtest computes it,
+      takes the inverse of the expected information of REML, and a variance component
+      estimated at zero takes part. With weights, pbkrtest builds the covariance matrix
+      of the observations without the prior weights of an lme4 fit, with the residual
+      variance of an observation of weight one, while it takes the covariance matrix
+      of the coefficients from the fit; lmerTest's Kenward-Roger tests are pbkrtest's.
+    - With Satterthwaite's method, the F-test of :func:`fixed_effect_f_test` is
+      lmerTest's ``contestMD``: the contrasts are replaced by the eigenvectors of their
+      covariance matrix L C L' with positive eigenvalues (in the order of R's
+      ``eigen``, the largest first), whose estimates are uncorrelated; F is the mean of
+      their squared t-statistics, and its denominator degrees of freedom are
+      2 E / (E - l) with E = sum nu_m / (nu_m - 2) over their degrees of freedom
+      (Fai and Cornelius 1996): their mean when they differ by less than 1e-8, and 2
+      when one is at most 2, as lmerTest's ``get_Fstat_ddf`` documents. These depend
+      on how the contrasts span the hypothesis, as lmerTest's do; Kenward-Roger's
+      F-test, as pbkrtest's ``KRmodcomp``, does not. The F-test of one contrast is its
+      t-test, on the same degrees of freedom even below 2, as ``contestMD`` gives it.
 
-        log det V + log det(X' V^-1 X) + (n - p) (1 + log(2 pi r^2 / (n - p))),
-
-    whose value at the estimate is lme4's ``REMLcrit``. With weights, log det V
-    includes -sum(log w), so the criterion, the fixed effects and the variance
-    components do not change when every weight is multiplied by the same constant;
-    only sigma^2 scales with it. Maximum likelihood minimises the profiled deviance
-    log det V + n (1 + log(2 pi r^2 / n)), lme4's ``deviance`` of a fit with ``REML =
-    FALSE``, and estimates sigma^2 by r^2 / n.
-
-Computation:
-    The criterion, its gradient and its Hessian are computed from weighted cross-
-    products of the samples, without forming any n x n matrix. The random effects of
-    the grouping factor with the most levels are absorbed in closed form: the
-    covariance matrix of the samples of one of its levels is a diagonal matrix plus a
-    matrix of rank one. The random effects of the other factors, and the fixed
-    effects, enter a dense Cholesky factorisation whose size is their number of
-    levels plus the number of coefficients, as in the penalised least squares
-    formulation of lme4 (Bates et al. 2015, section 3). With one grouping factor each
-    evaluation costs O(levels x coefficients^2). The fixed effects are handled in an
-    orthonormal basis of the columns of X, which keeps the cross-products as well
-    conditioned as X itself, and the estimates are transformed back.
-
-    The derivatives of the criterion with respect to gamma_k = theta_k^2 are the
-    classical ones of REML (Harville 1977): with P = V^-1 - V^-1 X (X' V^-1 X)^-1 X'
-    V^-1, they need only Z_k' P Z_l and Z_k' P y; those of maximum likelihood take the
-    traces and norms of Z_k' V^-1 Z_l in place of those of Z_k' P Z_l, which the same
-    factorisation gives before its fixed-effect pivots. Newton's method minimises the
-    criterion over u_k = log(1 + c_k gamma_k), where c_k is the mean total weight of a
-    level of factor k: in a balanced one-way design the criterion is convex in u, and
-    the boundary gamma_k = 0 is u_k = 0. A component whose gradient points outward at
-    the boundary is held there (projected Newton method, Bertsekas 1982), so variance
-    components at zero are exactly zero. An indefinite Hessian is made positive definite
-    by taking the absolute values of its eigenvalues, a step changes no u_k by more than
-    5, and a backtracking line search ensures descent.
-    The fit converges when a step moves no u_k by more than 1e-10, as a full
-    Newton step or where the full step promises no decrease beyond rounding; as
-    Newton's method converges quadratically, the estimates are then as accurate as
-    the cross-products allow. Those of the absorbed factor are taken about the means
-    of its levels, which keeps them accurate however much the levels differ; those
-    of the other factors enter the Cholesky factorisation scaled by their theta, as
-    in lme4, and lose about as many digits as theta^2 times their levels' weights
-    has. Every fit starts at theta_k = 1 relative to the residual standard deviation
-    of an observation of average weight: lme4's default start (theta = 1) when there
-    are no weights, and one that keeps the fit independent of the scale of the
-    weights. Like lme4's optimiser, Newton's method finds a local minimum: when the
-    criterion has several, the fit can stop at one that is not the lowest. When the
-    fixed and random effects together reproduce a feature's values, the criterion
-    has no minimum (it decreases without bound as sigma^2 goes to zero), so such a
-    feature is left unfitted; see :class:`MixedModelFit`.
-
-Fitted values and residual degrees of freedom:
-    The random effects are predicted at the estimates by their best linear unbiased
-    predictors, b_k = gamma_k Z_k' P y (Henderson 1975), and the fitted values are
-    X beta + sum_k Z_k b_k, lme4's ``fitted``. Their hat matrix H, on the scale of the
-    weighted values, gives the approximate residual degrees of freedom tr((I - H)'
-    (I - H)), variancePartition's ``rdf.merMod``, which ``dream`` moderates on: with
-    I - H = W^-1/2 P W^-1/2 and P V P = P,
-
-        tr((I - H)' (I - H)) = n - p - 2 sum_k gamma_k tr(Z_k' P Z_k)
-                               + sum_kl gamma_k gamma_l |Z_k' P Z_l|^2,
-
-    which is n - p with every component at zero, and in a balanced one-way design
-    q (m - 1) + (q - 1) / (1 + m gamma)^2 for q groups of m samples.
-
-Satterthwaite's degrees of freedom:
-    For a contrast c of the fixed effects with estimated variance v = c' C c, where
-    C is the covariance matrix of the estimates, the degrees of freedom are
-    2 v^2 / (g' A g) (Satterthwaite 1946; Giesbrecht and Burns 1985), where g holds
-    the derivatives of v with respect to the variance parameters and A is their
-    asymptotic covariance matrix: twice the inverse of the Hessian of the REML
-    deviance (the observed information, as lmerTest computes it), or of the deviance
-    of maximum likelihood for such a fit. The degrees of
-    freedom do not depend on how the variance parameters are parametrised; here
-    they are the variances (sigma_1^2, ..., sigma_K^2, sigma^2). lmerTest
-    parametrises them by (theta, sigma), in which the deviance is an even function
-    of each theta_k, so a component estimated at zero contributes nothing to g' A g;
-    such components are left out here in the same way, and with every component at
-    zero the degrees of freedom are n - p, those of the fixed-effects model (found
-    by probing lmerTest). lmerTest computes the derivatives numerically; here they
-    are exact.
-
-Kenward and Roger's method:
-    With few samples the variance parameters are estimated imprecisely, and the
-    covariance matrix C of the estimates, computed as if they were known,
-    understates the variance of the fixed effects. Kenward and Roger (1997) add to C
-    a correction for its own bias and for the variability of the variance parameters,
-    of order 1 / n, to second order in their estimation error, whose covariance they
-    take as the inverse of the expected information of REML; the t-statistic of a
-    contrast uses the adjusted matrix, and its degrees of freedom are Satterthwaite's
-    formula with that expected information in place of the observed one. For an
-    F-test of l contrasts they scale the Wald statistic and match its first two
-    moments to an F distribution on (l, m) degrees of freedom. The covariance matrix
-    of the observations is linear in the variance parameters, so the second
-    derivatives that their formula also allows for vanish. A variance component
-    estimated at zero takes part, as in pbkrtest, so that the degrees of freedom are
-    smaller than Satterthwaite's, which leave it out. In balanced designs, such as a
-    randomised block design, the adjustment vanishes and the method gives the tests
-    of the analysis of variance, which are exact there.
-
-    With weights, pbkrtest builds the covariance matrix of the observations without
-    the prior weights of an lme4 fit, with the residual variance of an observation
-    of weight one, while it takes C from the fit, which the weights enter (found by
-    probing pbkrtest 0.5.3); lmerTest's Kenward-Roger tests are pbkrtest's. dream
-    divides each feature's weights by their mean before it fits, so that its tests
-    are those of every observation at the average weight, which do not depend on the
-    scale of the weights. ``kenward_roger_weights="average"`` computes these.
-    ``"precision"`` uses each observation's own weight, the covariance
-    matrix of the model fitted: Kenward and Roger's method for it, which pbkrtest
-    gives for the same model fitted without weights to the values, fixed effects and
-    random effects multiplied by the square roots of the weights. With voom's
-    weights the two can differ by tens of percent in the degrees of freedom and by
-    several percent in the standard errors, and the first can make standard errors
-    smaller than the unadjusted ones, which the second never does (the Validation
-    page gives sizes). Each feature costs O(n^3) operations for n samples, as in
-    pbkrtest.
-
-F-tests:
-    :func:`fixed_effect_f_test` tests that the contrasts L beta are all zero. With
-    Satterthwaite's method, as lmerTest's ``contestMD``, the contrasts are replaced by
-    the eigenvectors of their covariance matrix L C L' with positive eigenvalues
-    (in the order of R's ``eigen``, the largest first), whose estimates are
-    uncorrelated; F is the mean of their squared t-statistics, and its denominator
-    degrees of freedom are 2 E / (E - l) with E = sum nu_m / (nu_m - 2) over their
-    Satterthwaite degrees of freedom nu_m, which matches the mean of F (Fai and
-    Cornelius 1996): their mean when they differ by less than 1e-8, and 2 when one is
-    at most 2, as lmerTest's ``get_Fstat_ddf`` documents. These depend on how the
-    contrasts span the hypothesis, as lmerTest's do. Kenward and Roger's F-test, as
-    pbkrtest's ``KRmodcomp``, does not. The F-test of one contrast is its t-test, on
-    the same degrees of freedom even below 2, as ``contestMD`` gives it (found by
-    running it).
-
-Limits of this version:
-    Random slopes are not implemented yet.
-    :mod:`cytepool.stats.variance_fractions` partitions the variance of these fits.
-    Every feature needs a value for every sample, with a positive weight. Designs
-    whose fixed and random effects together span every sample, and so reproduce
-    every feature exactly, are refused, although their criterion can have a minimum
-    (lme4 fits them).
+Differences from lme4 and lmerTest:
+    https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-models-limits lists
+    them; :func:`fit_mixed_model` and :class:`MixedModelFit` give the data they refuse
+    and the features they leave unfitted.
 
 References:
     Bates D, Maechler M, Bolker B, Walker S (2015). Fitting linear mixed-effects models
@@ -395,14 +286,14 @@ class FixedEffectTests:
         contrast_names: Names of the contrasts.
         df_method: How the degrees of freedom were computed: ``"satterthwaite"`` or
             ``"kenward_roger"``.
-        kenward_roger_weights: For Kenward and Roger's method, how its adjustment
+        kenward_roger_weights: For Kenward-Roger's method, how its adjustment
             took the weights: ``"average"`` or ``"precision"`` (see
             :func:`fixed_effect_tests`); None for Satterthwaite's.
         estimate: ``(n_features, n_contrasts)`` estimates c' beta.
         standard_error: ``(n_features, n_contrasts)`` standard errors
             (c' C c)^(1/2), with C the covariance matrix of the coefficients:
-            the fit's (``cov_coefficients``) for Satterthwaite's method, Kenward
-            and Roger's adjusted one for theirs.
+            the fit's (``cov_coefficients``) for Satterthwaite's method, and the
+            adjusted one for Kenward-Roger's.
         t: ``(n_features, n_contrasts)`` t-statistics, the estimates over their
             standard errors.
         df: ``(n_features, n_contrasts)`` degrees of freedom; NaN where they are
@@ -450,7 +341,7 @@ class FixedEffectFTest:
         kenward_roger_weights: ``"average"`` or ``"precision"`` for Kenward and
             Roger's method, as in :class:`FixedEffectTests`; None for
             Satterthwaite's.
-        f_statistic: ``(n_features,)`` F-statistics; Kenward and Roger's are
+        f_statistic: ``(n_features,)`` F-statistics; Kenward-Roger's are
             scaled by ``scaling``.
         df1: The numerator degrees of freedom, the number of linearly independent
             contrasts.
@@ -493,9 +384,45 @@ def fit_mixed_model(
 
     Each column of ``y`` is fitted with the fixed effects and the random intercepts
     of ``design``, as lme4's ``lmer(y ~ ... + (1 | donor), REML = TRUE, weights =
-    w)`` fits one feature: see the module docstring for the model, the criterion
-    and the algorithm. Test contrasts of the fixed effects with
+    w)`` fits one feature: y = X beta + Z_1 b_1 + ... + Z_K b_K + e, with
+    b_k ~ N(0, sigma_k^2 I) and e ~ N(0, sigma^2 W^-1). With theta_k = sigma_k / sigma
+    and V = W^-1 + sum_k theta_k^2 Z_k Z_k', the fixed effects and sigma^2 are
+    profiled out, and the criterion minimized is lme4's profiled REML deviance,
+    log det V + log det(X' V^-1 X) + (n - p) (1 + log(2 pi r^2 / (n - p))) with
+    r^2 = (y - X beta)' V^-1 (y - X beta), or for maximum likelihood
+    log det V + n (1 + log(2 pi r^2 / n)). Test contrasts of the fixed effects with
     :func:`fixed_effect_tests`.
+    https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-model-reml explains
+    the model.
+
+    Algorithm:
+        The criterion, its gradient and its Hessian are computed from weighted
+        cross-products of the samples, without forming any n x n matrix. The random
+        effects of the grouping factor with the most levels are absorbed in closed
+        form: the covariance matrix of the samples of one of its levels is a diagonal
+        matrix plus a matrix of rank one. The random effects of the other factors,
+        and the fixed effects, enter a dense Cholesky factorisation whose size is their
+        number of levels plus the number of coefficients, as in the penalised least
+        squares formulation of lme4 (Bates et al. 2015, section 3). The fixed effects
+        are handled in an orthonormal basis of the columns of X, and the estimates are
+        transformed back. The derivatives with respect to gamma_k = theta_k^2 are the
+        classical ones of REML (Harville 1977). Newton's method minimizes the
+        criterion over u_k = log(1 + c_k gamma_k), where c_k is the mean total weight
+        of a level of factor k: in a balanced one-way design the criterion is convex
+        in u, and the boundary gamma_k = 0 is u_k = 0. A component whose gradient
+        points outward at the boundary is held there (projected Newton method,
+        Bertsekas 1982). An indefinite Hessian is made positive definite by taking the
+        absolute values of its eigenvalues, a step changes no u_k by more than 5, and
+        a backtracking line search ensures descent. The fit converges when a step
+        moves no u_k by more than 1e-10. Every fit starts at theta_k = 1 relative to
+        the residual standard deviation of an observation of average weight, lme4's
+        default start without weights. Like lme4's optimiser, Newton's method finds a
+        local minimum: when the criterion has several, the fit can stop at one that is
+        not the lowest. The random effects are predicted by their best linear unbiased
+        predictors (Henderson 1975). The variance components of the factors other
+        than the absorbed one enter the factorisation scaled by their theta, as in
+        lme4, and lose about as many digits as theta^2 times their levels' weights
+        has.
 
     Args:
         y: ``(n_samples, n_features)`` expression values on a log scale, such as
@@ -522,10 +449,11 @@ def fit_mixed_model(
             thread they are fitted on the calling thread.
 
     Returns:
-        The fits. They store, for every feature, the derivatives of the covariance
-        matrix of the coefficients with respect to each variance parameter:
-        ``n_features * (n_components + 1) * n_coefficients**2`` floats, and the
-        fitted values, as many floats as ``y``.
+        The fits. They store, for every feature, the covariance matrix of the
+        coefficients and its derivatives with respect to each variance parameter:
+        ``n_features * (n_components + 2) * n_coefficients**2`` floats, 23 MB for
+        20,000 genes, two random intercepts and 6 coefficients; and the fitted values,
+        as many floats as ``y``.
 
     Raises:
         TypeError: If ``design`` is not a ``Design``, an input is not real-valued,
@@ -679,13 +607,22 @@ def fixed_effect_tests(
     For a contrast c, the t-statistic is c' beta / (c' C c)^(1/2). With
     ``df_method="satterthwaite"``, C is the fit's covariance matrix and the degrees
     of freedom are Satterthwaite's, as lmerTest's ``contest(fit, L, joint = FALSE)``
-    and ``summary`` compute them. With ``"kenward_roger"``, C is Kenward and Roger's
+    and ``summary`` compute them. With ``"kenward_roger"``, C is Kenward-Roger's
     adjusted covariance matrix, which allows for the estimation of the variance
     parameters, and the degrees of freedom are theirs, as lmerTest's ``contest1D(fit,
     L, ddf = "Kenward-Roger")`` computes them with pbkrtest's ``vcovAdj`` and
-    ``get_Lb_ddf``. The module docstring gives both methods. Without contrasts, each
-    coefficient is tested, as in lmerTest's coefficient table.
-    :func:`fixed_effect_f_test` tests several contrasts at once.
+    ``get_Lb_ddf``. Without contrasts, each coefficient is tested, as in lmerTest's
+    coefficient table. :func:`fixed_effect_f_test` tests several contrasts at once.
+    https://docs.nygen.io/CytePool/statistics/mixed-models#kenward-roger explains both
+    methods.
+
+    Satterthwaite's degrees of freedom are 2 v^2 / (g' A g) for v = c' C c, with g the
+    derivatives of v with respect to the variance parameters and A twice the inverse
+    of the Hessian of the deviance. Kenward-Roger's method inverts each feature's
+    n x n covariance matrix of the observations, as pbkrtest does: O(n^3) operations
+    per feature for n samples, so that its tests of many samples take far longer than
+    Satterthwaite's. The Validation page times both on 20,000 genes, at 18 and at 120
+    samples (https://docs.nygen.io/CytePool/validation#validation-timings).
 
     Contrasts that name the coefficients they weigh are matched to
     ``fit.coefficient_names`` by name, as by
@@ -695,7 +632,7 @@ def fixed_effect_tests(
     its index. Weights without names are taken in the order of the coefficients.
 
     Args:
-        fit: A fit from :func:`fit_mixed_model`; by REML for Kenward and Roger's
+        fit: A fit from :func:`fit_mixed_model`; by REML for Kenward-Roger's
             method.
         contrasts: The contrasts, one per column of a ``(n_coefficients,
             n_contrasts)`` matrix: a ``Contrasts``, a pandas DataFrame, a mapping of
@@ -705,14 +642,16 @@ def fixed_effect_tests(
             ``Contrasts``; see ``contrasts_fit``.
         df_method: ``"satterthwaite"`` (lmerTest's default) or
             ``"kenward_roger"``.
-        kenward_roger_weights: How Kenward and Roger's adjustment and degrees of
+        kenward_roger_weights: How Kenward-Roger's adjustment and degrees of
             freedom take a fit's weights: ``"average"`` computes them with every
             observation at its feature's average weight, as variancePartition's
             ``dream`` does with pbkrtest, which leaves out the weights of an lme4 fit
             (lmerTest's ``ddf = "Kenward-Roger"`` gives the same for weights of mean
             one); ``"precision"`` with each observation's own weight, the covariance
             of the model fitted. The two agree without weights or with equal
-            weights; see the module docstring. Ignored for Satterthwaite's method.
+            weights. With voom's weights the first can make standard errors smaller
+            than the unadjusted ones, and the second never does. Ignored for
+            Satterthwaite's method.
 
     Returns:
         The estimates, standard errors, t-statistics, degrees of freedom and
@@ -723,7 +662,7 @@ def fixed_effect_tests(
             ``names`` is not valid or is or holds a numpy masked array.
         ValueError: If the contrasts do not match the coefficients or are not
             finite, ``df_method`` or ``kenward_roger_weights`` is unknown, or
-            Kenward and Roger's method is asked of a maximum likelihood fit.
+            Kenward-Roger's method is asked of a maximum likelihood fit.
     """
     fit = _checked_fit(fit)
     matrix, contrast_names = _contrasts_of(fit, contrasts, names)
@@ -766,15 +705,16 @@ def fixed_effect_f_test(
     contrasts that span the hypothesis (Fai and Cornelius 1996; Kuznetsova et al.
     2017). With ``"kenward_roger"`` it is pbkrtest's ``KRmodcomp(fit, L)`` (and
     lmerTest's ``contestMD(fit, L, ddf = "Kenward-Roger")``): the Wald statistic with
-    the adjusted covariance matrix, scaled, on Kenward and Roger's degrees of freedom.
-    The module docstring gives both. Contrasts that are linear combinations of the
+    the adjusted covariance matrix, scaled, on Kenward-Roger's degrees of freedom.
+    https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-model-f-tests explains
+    both. Contrasts that are linear combinations of the
     others add nothing to the hypothesis: the numerator degrees of freedom are the
     number of independent contrasts, by the rank rule of R's ``qr()``.
 
     Contrasts are matched to the coefficients as by :func:`fixed_effect_tests`.
 
     Args:
-        fit: A fit from :func:`fit_mixed_model`; by REML for Kenward and Roger's
+        fit: A fit from :func:`fit_mixed_model`; by REML for Kenward-Roger's
             method.
         contrasts: The contrasts, one per column of a ``(n_coefficients,
             n_contrasts)`` matrix, in any form :func:`fixed_effect_tests` takes.
@@ -837,7 +777,7 @@ def _contrasts_of(
 def _inference_parts(
     fit: MixedModelFit, df_method: Any, kenward_roger_weights: Any
 ) -> tuple[InferenceParts, str | None]:
-    """The parts of the tests by the method asked for, and how Kenward and Roger's
+    """The parts of the tests by the method asked for, and how Kenward-Roger's
     adjustment took the weights (None for Satterthwaite's method)."""
     method = checked_choice(df_method, "df_method", ("satterthwaite", "kenward_roger"))
     variant = checked_choice(
@@ -847,7 +787,7 @@ def _inference_parts(
         return satterthwaite_parts(fit), None
     if fit.method != "reml":
         raise ValueError(
-            "Kenward and Roger's method is defined for REML fits, and this fit "
+            "Kenward-Roger's method is defined for REML fits, and this fit "
             "maximised the likelihood; fit with method='reml', as lmerTest and "
             "pbkrtest require (pbkrtest refits such a model by REML)"
         )
@@ -1971,7 +1911,9 @@ def _estimates(
 
     # The Hessian of the REML (or ML) deviance in (gamma_k of the free components,
     # sigma^2), twice its inverse, then mapped to (sigma_1^2, ..., sigma_K^2, sigma^2)
-    # by the Jacobian of sigma_k^2 = gamma_k sigma^2.
+    # by the Jacobian of sigma_k^2 = gamma_k sigma^2. A component at zero is left out,
+    # as in lmerTest, whose deviance is even in each theta_k: with every component at
+    # zero, Satterthwaite's degrees of freedom are n - p (found by probing lmerTest).
     norms_of_pairs = work.frobenius_v if ml else work.frobenius
     free = work.free
     n_free = np.int64(0)

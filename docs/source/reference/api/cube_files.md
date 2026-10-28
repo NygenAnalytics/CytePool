@@ -6,11 +6,10 @@ myst:
 
 # Cube files
 
-A cube file is a Zarr v3 group that any Zarr v3 reader can open.
-{func}`~cytepool.write_cube` saves a cube and {func}`~cytepool.read_cube` opens one,
-leaving its layers on disk until they are used; a read then opens only the chunks that
-hold the selected groups and features. `cytepool.io.zarr` is the minimal Zarr v3
-reader and writer behind them.
+Cube files, and the Zarr v3 reader and writer they use; [Cube files and provenance
+records](../reference/cube-files/#cube-file-format) specifies the format, and
+[Pseudobulk profiles and cubes](../statistics/cubes/#cubes-larger-than-memory)
+explains how a cube larger than memory is read.
 
 ```{eval-rst}
 .. autofunction:: cytepool.write_cube

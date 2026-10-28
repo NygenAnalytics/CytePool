@@ -7,9 +7,10 @@ Every public name must earn a place in a page, or be listed with the reason it n
 none. The public names are those the API reference must document (the names of the
 top level, ``cytepool.__all__``, and of a module's ``__all__``, or else the public
 functions and classes it defines, as ``tests/test_documentation.py`` defines them) and
-the public methods of their classes. A name is covered when a guide or tutorial uses it (its code imports it, or
-its prose links to it) or an explanation links to it (``page_index.py``); index
-pages, such as the capability matrix and the glossary, do not count.
+the public methods of their classes. A name is covered when a guide or tutorial uses it
+(its code imports it, or its prose links to it) or an explanation links to it
+(``page_index.py``); index pages, such as the Validation page and the glossary, do not
+count.
 
 ``coverage_exemptions.toml`` lists the names that need no page, each with its reason
 (``[exempt]``), and the names a page that is planned will cover, each with that page

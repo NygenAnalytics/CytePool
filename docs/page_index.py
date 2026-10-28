@@ -13,9 +13,9 @@ reference (``docs/source/reference/api``) link to each other through this index:
 - The API reference lists under each entry the pages that use it and the pages that
   explain it (``docs/source/reference/api/conf.py``). A guide or tutorial uses a
   name when its code imports it from CytePool, or when its prose links to it with
-  the role or a link to the API reference; an explanation (the pages of "How the
-  statistics work" and the reference of cube files) explains the names its prose
-  links to. Index pages, which list or point to many names (the overview,
+  the role or a link to the API reference; an explanation (the chapters of
+  "Understand the methods" and the reference of cube files) explains the names its
+  prose links to. Index pages, which list or point to many names (the overview,
   installation, and the reference pages other than cube files), give no such links.
 - ``coverage_report.py`` lists the public names that no guide, tutorial or
   explanation uses or explains.
@@ -49,18 +49,20 @@ DOCS = Path(__file__).resolve().parent
 SOURCE = DOCS / "source"
 API_SOURCE = SOURCE / "reference" / "api"
 
-# The top-level groups of the navigation, in order (myst.yml).
+# The top-level groups of pages in the navigation, in order (myst.yml). The API
+# reference follows them, as a link whose pages the site build adds.
 SECTIONS = (
     "Start here",
     "Build and share cubes",
     "Compare conditions",
-    "Other designs and data",
-    "How the statistics work",
+    "Combine studies",
+    "Understand the methods",
     "Reference",
 )
+API_REFERENCE = "API reference"
 # Pages whose prose explains the names it links to: their links become "Explained
 # in" on the API entries.
-EXPLANATION_SECTIONS = frozenset({"How the statistics work"})
+EXPLANATION_SECTIONS = frozenset({"Understand the methods"})
 EXPLANATION_PAGES = frozenset({"reference/cube_files.md"})
 # Pages that list or point to many names without using or explaining them: their
 # links give no backlinks and do not count as coverage.
@@ -69,10 +71,8 @@ INDEX_PAGES = frozenset(
         "index.md",
         "installation.md",
         "validation.md",
-        "reference/capabilities.md",
         "reference/datasets.md",
         "reference/related_software.md",
-        "reference/literature.md",
         "reference/bibliography.md",
         "reference/glossary.md",
         "reference/citing.md",

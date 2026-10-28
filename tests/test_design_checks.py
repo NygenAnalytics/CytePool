@@ -431,9 +431,11 @@ def test_labels_that_differ_only_in_case_or_spaces() -> None:
 
 
 def test_many_single_sample_levels_are_reported_once() -> None:
-    labels = [f"L{i}" for i in range(8)] + ["L9", "L9"]
+    # Ten levels of one sample: the message names eight, as every list of a message
+    # does, and counts the others.
+    labels = [f"L{i}" for i in range(10)] + ["L10", "L10"]
     report = Design(
-        {"g": labels, "sample_id": [f"S{i}" for i in range(10)]}, "~ g"
+        {"g": labels, "sample_id": [f"S{i}" for i in range(12)]}, "~ g"
     ).check()
     assert report.kinds() == ("single_sample_level",)
     assert report.warnings[0].message.endswith(
@@ -587,3 +589,20 @@ def test_high_leverage_from_few_residual_degrees_of_freedom() -> None:
     assert message.startswith("the model nearly fits S1 (leverage 0.99")
     assert "with 1 residual degree of freedom" in message
     assert "rin =" not in message and "log scale" not in message
+
+
+def test_many_aliased_columns_are_named_up_to_eight_and_counted() -> None:
+    # Eleven multiples of one covariate leave ten columns aliased: the message
+    # names the relations of eight, as every list of a message does, and counts the
+    # others after the separator of the relations.
+    values = [0.5, 1.5, 2.0, 3.5, 4.0, 6.0, 7.0, 8.5, 9.0, 11.0, 12.5, 13.0, 15.0]
+    samples: dict[str, list[Any]] = {
+        f"c{i}": [value * (i + 1) for value in values] for i in range(11)
+    }
+    samples["sample_id"] = [f"S{i}" for i in range(len(values))]
+    report = Design(samples, "~ " + " + ".join(f"c{i}" for i in range(11))).check()
+
+    message = _issue(report, "rank_deficient").message
+    named = re.findall(r"c(\d+) = (\d+)\*c0", message)
+    assert named == [(str(i), str(i + 1)) for i in range(1, 9)]
+    assert "c8 = 9*c0; and 2 more. The columns" in message

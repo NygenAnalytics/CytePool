@@ -12,55 +12,26 @@ reads and writes both:
   samples as its observations, as LIANA's ``liana.multi.adata_to_views`` (Dimitrov et
   al. 2024) makes it: ``to_mudata`` and ``from_mudata``.
 
+An export keeps a record in ``uns["cytepool"]`` from which an import gives back the
+same cube, fingerprint included, as
+https://docs.nygen.io/CytePool/reference/cube-files#anndata-record specifies. An
+import takes only sums and counts of cells, since a cube's layers are sums
+(https://docs.nygen.io/CytePool/statistics/cubes#profiles-from-other-tools explains
+why); ``from_anndata`` gives the rules, and ``to_anndata`` and ``to_mudata`` the
+layouts they write.
+
 anndata and mudata are optional dependencies: install CytePool's ``anndata`` or
 ``mudata`` extra, or the packages themselves. Only ``to_anndata`` and ``to_mudata``
 import them; ``from_anndata`` and ``from_mudata`` read the object they are given.
-
-What an import takes:
-    A cube's layers are sums over the cells of each sample and group, so an import
-    takes only what is such a sum or gives one exactly: summed counts, the number of
-    cells detecting each feature, and sums of normalized or log-normalized values.
-    The source of a cube layer is ``X`` or a layer of the AnnData (of every modality,
-    for a MuData), read as sums, except where its name says what scanpy or decoupler
-    stored in it:
-
-    - ``count_nonzero`` (scanpy) counts the cells with a nonzero value, and gives
-      ``detected`` only;
-    - ``psbulk_props`` (decoupler) is the fraction of cells with a nonzero value. It
-      gives ``detected`` with the cell numbers: each fraction times its number of
-      cells must be a whole number, to within the precision the fractions are stored
-      in, and rounding it recovers the number of cells exactly;
-    - ``mean``, ``var`` and ``median`` hold means, variances and medians, which are
-      refused. A variance or a median gives no sum, and a mean times its number of
-      cells gives the sum exactly only where the sum is a whole number; every tool
-      that gives means gives sums too: aggregate with ``func="sum"`` (scanpy) or
-      ``mode="sum"`` (decoupler).
-
-    Counts and ``detected`` become integers, as ``from_cells`` makes them: uint32
-    when every value fits, uint64 otherwise, and float64 for counts that are not
-    whole numbers; sums of whole numbers that a tool stored as floats become
-    integers. Counts are checked against the cells that ``detected`` counts: a sum
-    of counts is positive exactly where a cell has a positive count, and a sum of
-    whole counts (counts that come as integers, or from a recognised layout) is at
-    least the number of such cells, which means, medians and counts of other cells
-    break.
-
-    A combination of sample and group without a row is an entry without cells,
-    which only cell numbers can record: an import with such a combination and no
-    cell numbers is refused. A row removed after pooling, as by decoupler's
-    ``filter_samples`` or LIANA's ``min_cells``, is such a combination too, so its
-    cells are then missing from merged groups and pooled samples of the cube:
-    import the profiles before filtering them, and leave out samples with few cells
-    in the analysis instead (``limma_voom`` has ``min_cells``).
 
 Recognised layouts:
     The arguments left as None take their values from the layout of the data; a
     long AnnData that CytePool did not make still needs ``sample_column=`` and
     ``group_column=``, the columns of its labels.
 
-    - CytePool's own export, which ``uns["cytepool"]`` marks (see "The record in
-      uns" below): every layer, the cell numbers, the tables, the normalization and
-      the label columns, as they were exported.
+    - CytePool's own export, which ``uns["cytepool"]`` marks: every layer, the cell
+      numbers, the tables, the normalization and the label columns, as they were
+      exported.
     - ``decoupler.pp.pseudobulk`` (an ``obs`` column ``psbulk_cells``, or
       ``psbulk_n_cells`` as older versions name it): counts from ``X``, cell numbers
       from that column, and ``detected`` from ``psbulk_props``. Whatever ``layers``
@@ -86,65 +57,13 @@ Recognised layouts:
     import counts that are not, or to read a ``sum`` of normalized values. Data of
     no recognised layout need ``layers``.
 
-Export:
-    ``to_anndata`` writes a row for every entry with cells (every entry of a cube
-    without cell numbers), the rows of each group together, groups and samples in
-    the cube's order. Entries without cells have no row, as in
-    ``scanpy.get.aggregate``. ``obs`` holds ``sample_id`` and ``group_id``, as
-    categorical columns, the other columns of the sample and group tables, and
-    ``n_cells``; ``obs_names`` are ``<sample id>_<group id>``, or the row positions
-    when those repeat. ``var`` holds the feature table, indexed by feature id, and
-    each layer of the cube is a layer of the same name. ``X`` is left empty, so
-    that no layer is stored twice, unless ``x_layer`` names a layer to copy into it:
-    ``to_anndata(cube, x_layer="counts")`` gives tools that read ``X`` the counts.
-
-    ``to_mudata`` writes a modality per group, named by the group id, whose
-    observations are the samples with cells in that group (every sample, without
-    cell numbers), named by sample id, with ``n_cells`` in its ``obs``, every layer
-    under its own name, and ``X`` empty. Its ``var_names`` are ``<group id>:<feature
-    id>``, as LIANA writes them, so that they are unique across modalities; ``var``
-    holds the other columns of the feature table. The columns of the sample table
-    are on the MuData's ``obs``. A MuData file cannot store a modality whose name
-    holds ``/`` or NUL, or is ``.`` or ``..``: rename such a group first with
-    ``Cube.regroup``.
-
-    anndata writes only some columns, so table columns are written in a form it
-    stores and reads back as they were: datetimes as ISO 8601 text (ISO 2019), ``NaT``
-    where missing, timedeltas as int64 counts of their unit, and a text column without
-    any value as float64 NaN. Column names have ``_`` in place of ``/`` and NUL,
-    and ``.``, ``..`` and ``_index``, which anndata reserves, end in ``_``. A sample
-    or group column whose name is taken is prefixed with ``sample_`` or ``group_``.
-
-The record in uns:
-    ``uns["cytepool"]`` (of the AnnData, or of the MuData) holds ``format``
-    (``"cytepool.cube.anndata"`` or ``"cytepool.cube.mudata"``), ``format_version``
-    (1), the cube's ``fingerprint``, and as JSON text its ``provenance`` and
-    ``normalization``, its ``layers`` with the type of each, whether it has cell
-    numbers (``n_cells``), its ``samples`` and ``groups`` tables, with the samples
-    and groups that have no row, and the name, ``var`` column and type of each
-    column of its ``features`` table. Only text and integers are stored, which
-    every anndata writer keeps.
-
-    Reading the record, an import gives back the cube: the same tables (column
-    types included), layers of the same types and the same values, so the same
-    fingerprint, unless the data were changed in between. A layer converted to
-    another type is converted back when that keeps its values; a layer whose values
-    its type no longer holds was changed, and is refused (give ``layers`` to read
-    it as what it holds). Every argument overrides what the record gives. The
-    tables of samples and groups come from the record, so ``obs`` columns added
-    later are not read; features come from ``var``, so a subset of features gives a
-    cube of those features. The provenance is the exported cube's, followed by a
-    record of the import with the fingerprint that the export stored:
-    ``cube.fingerprint() == adata.uns["cytepool"]["fingerprint"]`` says whether the
-    AnnData still holds the exported cube.
-
 Example:
     >>> import numpy as np
-    >>> from cytepool.cube import from_cells
+    >>> from cytepool import from_cells
     >>> cube = from_cells(
     ...     np.array([[1, 0], [3, 2], [0, 4]]),
-    ...     samples=["S1", "S1", "S2"],
-    ...     groups=["B", "T", "B"],
+    ...     sample_labels=["S1", "S1", "S2"],
+    ...     group_labels=["B", "T", "B"],
     ...     layers=["counts", "detected"],
     ... )
     >>> adata = to_anndata(cube)  # doctest: +SKIP
@@ -239,16 +158,27 @@ _TOTAL_SLACK = 1e-9
 def to_anndata(cube: Cube, *, x_layer: str | None = None) -> Any:
     """Return a cube as a long AnnData, with a row per sample and group with cells.
 
-    The rows of each group come together, groups and samples in the cube's order; a
-    cube without cell numbers gives a row for every entry. ``obs`` holds
-    ``sample_id`` and ``group_id`` (categorical), the other columns of the sample and
-    group tables, and ``n_cells``; ``var`` the feature table, indexed by feature id;
-    each layer of the cube is a layer of the same name, and ``X`` is empty unless
-    ``x_layer`` names a layer to copy into it, as tools that read ``X`` need.
-    ``uns["cytepool"]`` holds the cube's fingerprint and provenance, and what
-    ``from_anndata`` needs to give back the cube with the same fingerprint. The
-    module documentation describes the layout ("Export") and the record ("The record
-    in uns").
+    The rows of each group come together, groups and samples in the cube's order.
+    Entries without cells have no row, as in ``scanpy.get.aggregate``, and a cube
+    without cell numbers gives a row for every entry. ``obs`` holds ``sample_id`` and
+    ``group_id`` (categorical), the other columns of the sample and group tables, and
+    ``n_cells``; ``obs_names`` are ``<sample id>_<group id>``, or the row positions
+    when those repeat. ``var`` holds the feature table, indexed by feature id, and each
+    layer of the cube is a layer of the same name. ``X`` is empty, so that no layer is
+    stored twice, unless ``x_layer`` names a layer to copy into it, as tools that read
+    ``X`` need.
+
+    anndata writes only some columns, so table columns are written in a form it
+    stores and reads back as they were: datetimes as ISO 8601 text (ISO 2019),
+    ``NaT`` where missing, timedeltas as int64 counts of their unit, and a text column
+    without any value as float64 NaN. Column names have ``_`` in place of ``/`` and
+    NUL, and ``.``, ``..`` and ``_index``, which anndata reserves, end in ``_``. A
+    sample or group column whose name is taken is prefixed with ``sample_`` or
+    ``group_``.
+
+    ``uns["cytepool"]`` holds the cube's fingerprint, its provenance and what
+    ``from_anndata`` needs to give back the cube with the same fingerprint, the record
+    that https://docs.nygen.io/CytePool/reference/cube-files#anndata-record specifies.
 
     Args:
         cube: The cube. A lazy cube is read one group at a time.
@@ -336,10 +266,61 @@ def from_anndata(
     Each row is the profile of the cells of one sample and group, as
     ``scanpy.get.aggregate`` and ``decoupler.pp.pseudobulk`` make them; a combination
     without a row is an entry without cells. With the defaults, the layout of the
-    AnnData chooses the source of each layer and of the cell numbers, and an AnnData
-    that ``to_anndata`` made gives back its cube with the same fingerprint. The
-    module documentation says what each source may hold ("What an import takes") and
-    which layouts are recognised.
+    AnnData chooses the source of each layer and of the cell numbers (the module
+    documentation lists the layouts it recognises), and an AnnData that
+    ``to_anndata`` made gives back its cube with the same fingerprint.
+
+    What an import takes:
+        A cube's layers are sums over the cells of each sample and group, so an import
+        takes only what is such a sum or gives one exactly
+        (https://docs.nygen.io/CytePool/statistics/cubes#profiles-from-other-tools):
+        summed counts, the number of cells detecting each feature, and sums of
+        normalized or log-normalized values. The source of a cube layer is ``X`` or a
+        layer of the AnnData, read as sums, except where its name says what scanpy or
+        decoupler stored in it:
+
+        - ``count_nonzero`` (scanpy) counts the cells with a nonzero value, and gives
+          ``detected`` only;
+        - ``psbulk_props`` (decoupler) is the fraction of cells with a nonzero value.
+          It gives ``detected`` with the cell numbers: each fraction times its number
+          of cells must be a whole number, to within the precision the fractions are
+          stored in, and rounding it recovers the number of cells exactly;
+        - ``mean``, ``var`` and ``median`` hold means, variances and medians, which
+          are refused, as the chapter linked above explains; every tool that gives
+          means gives sums too: aggregate with ``func="sum"`` (scanpy) or
+          ``mode="sum"`` (decoupler).
+
+        Counts and ``detected`` become integers: uint32 when every value fits, uint64
+        otherwise, and float64 for counts that are not whole numbers, as ``from_cells``
+        makes counts; sums of whole numbers that a tool stored as floats become
+        integers. Counts are checked against the cells that ``detected`` counts: a sum
+        of counts is positive exactly where a cell has a positive count, and a sum of
+        whole counts (counts that come as integers, or from a recognised layout) is at
+        least the number of such cells, which means, medians and counts of other cells
+        break.
+
+        A combination of sample and group without a row is an entry without cells,
+        which only cell numbers can record: an import with such a combination and no
+        cell numbers is refused. A row removed after pooling, as by decoupler's
+        ``filter_samples`` or LIANA's ``min_cells``, is such a combination too, so its
+        cells are then missing from merged groups and pooled samples of the cube:
+        import the profiles before filtering them, and leave out samples with few
+        cells in the analysis instead (``limma_voom`` has ``min_cells``).
+
+    An AnnData that CytePool exported:
+        Reading the record in ``uns["cytepool"]``, an import gives back the cube: the
+        same tables (column types included), layers of the same types and the same
+        values, so the same fingerprint, unless the data were changed in between. A
+        layer converted to another type is converted back when that keeps its values;
+        a layer whose values its type no longer holds was changed, and is refused
+        (give ``layers`` to read it as what it holds). Every argument overrides what
+        the record gives. The tables of samples and groups come from the record, so
+        ``obs`` columns added later are not read; features come from ``var``, so a
+        subset of features gives a cube of those features. The provenance is the
+        exported cube's, followed by a record of the import with the fingerprint that
+        the export stored, so that
+        ``cube.fingerprint() == adata.uns["cytepool"]["fingerprint"]`` says whether
+        the AnnData still holds the exported cube.
 
     Args:
         adata: The AnnData.
@@ -372,8 +353,9 @@ def from_anndata(
     Returns:
         A cube. Its provenance holds ``source`` and how the AnnData was read; for
         an AnnData that CytePool made, it is the provenance of the exported cube,
-        followed by a record of this import (``cytepool.cube.provenance``
-        documents both).
+        followed by a record of this import
+        (https://docs.nygen.io/CytePool/reference/cube-files#provenance-keys
+        specifies both).
 
     Raises:
         TypeError: If ``adata`` is not an AnnData, an argument has the wrong type,
@@ -511,11 +493,14 @@ def to_mudata(cube: Cube) -> Any:
     group (every sample, for a cube without cell numbers), named by sample id, with
     ``n_cells`` in its ``obs``, every layer of the cube under its own name, ``X``
     empty, and the feature table in ``var``, whose names are ``<group
-    id>:<feature id>`` as LIANA writes them. The columns of the sample table are on
-    the MuData's ``obs``, and ``uns["cytepool"]`` holds the cube's fingerprint,
-    provenance and what ``from_mudata`` needs to give back the cube with the same
-    fingerprint (see "Export" and "The record in uns" in the module
-    documentation).
+    id>:<feature id>`` as LIANA writes them, so that they are unique across
+    modalities. The columns of the sample table are on the MuData's ``obs``, and
+    table columns and their names are written as ``to_anndata`` writes them. A MuData
+    file cannot store a modality whose name holds ``/`` or NUL, or is ``.`` or
+    ``..``: rename such a group first with ``Cube.regroup``. ``uns["cytepool"]``
+    holds the cube's fingerprint, its provenance and what ``from_mudata`` needs to
+    give back the cube with the same fingerprint
+    (https://docs.nygen.io/CytePool/reference/cube-files#anndata-record).
 
     Args:
         cube: The cube. A lazy cube is read one group at a time.
@@ -588,8 +573,10 @@ def from_mudata(
     ``var_names``, without the prefix ``<modality name>:`` that LIANA adds. The
     feature table is the ``var`` of the first modality, and the samples' metadata
     the columns of the MuData's ``obs``. With the defaults, the layout chooses the
-    sources, and a MuData that ``to_mudata`` made gives back its cube with the same
-    fingerprint (see the module documentation).
+    sources (the module documentation lists the layouts it recognises), and a MuData
+    that ``to_mudata`` made gives back its cube with the same fingerprint. Every
+    modality is read as ``from_anndata`` reads an AnnData ("What an import takes"
+    and "An AnnData that CytePool exported" there).
 
     Args:
         mdata: The MuData.

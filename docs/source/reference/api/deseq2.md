@@ -6,13 +6,8 @@ myst:
 
 # DESeq2
 
-{func}`~cytepool.stats.deseq2.fit_deseq2` estimates DESeq2's dispersions and fits every
-gene as `DESeq()` does; {func}`~cytepool.stats.deseq2.deseq2_wald_test` tests a
-coefficient or a contrast and {func}`~cytepool.stats.deseq2.deseq2_likelihood_ratio_test`
-a reduced design against the full one, such as all the levels of a factor at once, each
-with the columns of `results()`. {func}`~cytepool.stats.deseq2.deseq2_dispersions` gives
-the dispersion estimates of every stage, and takes given values for each stage, as
-DESeq2's lower-level functions do.
+DESeq2's dispersions, fits, Wald tests and likelihood ratio tests; [edgeR and
+DESeq2](../statistics/count-models/#deseq2) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.deseq2

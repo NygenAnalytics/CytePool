@@ -1,13 +1,17 @@
 """Building cubes from a cell-level count matrix or from bulk counts.
 
+:func:`~cytepool.from_cells` pools a cells x features count matrix into a cube, and
+:func:`~cytepool.from_bulk` wraps a samples x features count matrix as a cube with a
+single group; https://docs.nygen.io/CytePool/statistics/cubes#cube-layers defines the
+layers they compute.
+
 ``from_cells`` pools the cells of every sample and group in one pass over the
 stored counts. Cells are sorted by sample and group, and each thread pools whole
 sample x group entries into rows of the result that no other thread writes, so no
 atomic updates are needed. The entries are shared among the threads by the
 longest-processing-time rule (Graham 1969); repeated entries of a row of a sparse
 matrix are summed through a sparse-set index (Briggs and Torczon 1993), and log1p is
-computed as Goldberg (1991, Theorem 4) shows. ``from_bulk`` wraps a samples x features
-count matrix as a cube with a single group.
+computed as Goldberg (1991, Theorem 4) shows.
 
 References:
     Graham RL (1969). Bounds on multiprocessing timing anomalies. SIAM Journal on
@@ -154,7 +158,8 @@ def from_cells(
         without a normalized layer. Its provenance holds ``source`` and the
         settings: the number of cells, the layers, ``target_sum``, where library
         sizes came from, how samples and groups were ordered and where feature ids
-        came from (``cytepool.cube.provenance`` documents the record).
+        came from (https://docs.nygen.io/CytePool/reference/cube-files#provenance-keys
+        specifies the record).
 
     Raises:
         TypeError: If ``counts`` is neither a numeric array nor a CSR matrix (a CSC
@@ -346,7 +351,9 @@ def from_bulk(
         to 2**32 - 1, uint64 for larger whole numbers (up to 2**63 - 1), and
         float64 when a count is not a whole number (or, for float input, is at
         least 2**53). Its provenance holds ``source`` and where the sample and
-        feature ids came from (``cytepool.cube.provenance`` documents the record).
+        feature ids came from
+        (https://docs.nygen.io/CytePool/reference/cube-files#provenance-keys
+        specifies the record).
 
     Raises:
         TypeError: If ``counts`` is not numeric, ``source`` is not a mapping or

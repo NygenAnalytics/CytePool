@@ -100,8 +100,8 @@ def thread_limit(n_threads: int | None) -> Iterator[int]:
         yield numba.get_num_threads()
         return
     if isinstance(n_threads, bool):
-        raise TypeError("n_threads must be a positive integer or None, not bool")
-    limit = index_integer(n_threads, "n_threads", expected="a positive integer or None")
+        raise TypeError("n_threads must be an integer or None, got bool")
+    limit = index_integer(n_threads, "n_threads", expected="an integer or None")
     if limit < 1:
         raise ValueError(f"n_threads must be at least 1, got {limit}")
     previous = numba.get_num_threads()

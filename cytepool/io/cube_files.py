@@ -1,101 +1,20 @@
 """Cube files: a cube saved as a Zarr v3 group and read as it is used.
 
-A cube file is a directory, by convention named ``<name>.cube.zarr``, holding a Zarr v3
-group, as the Zarr core specification (Miles et al. 2025) defines it, that any Zarr v3
-reader can open. ``write_cube`` saves a cube. ``read_cube`` opens one: it reads the
-metadata and the sample, group and feature tables, and leaves the layers on disk as
-``ZarrArray`` objects that the cube reads one group at a time, and only the chunks
-that hold the features it needs, so a cube far larger than memory can be opened and
-analysed group by group, or for a few features of every group.
+``write_cube`` saves a cube as a cube file: a directory, by convention named
+``<name>.cube.zarr``, holding a Zarr v3 group, as the Zarr core specification (Miles et
+al. 2025) defines it, that any Zarr v3 reader can open. ``read_cube`` opens one: it
+reads the metadata and the sample, group and feature tables, and leaves the layers on
+disk as ``ZarrArray`` objects that the cube reads one group at a time, and only the
+chunks that hold the features it needs, so a cube far larger than memory can be opened
+and analysed group by group, or for a few features of every group. Reading checks what
+it reads against the digests stored with the file, and writing is atomic.
 
-Format ``cytepool.cube``, version 1::
-
-    <name>.cube.zarr/
-      zarr.json      the root group; its attributes are listed below
-      samples/       a group with one 1-D array per sample column
-      groups/        a group with one 1-D array per group column
-      features/      a group with one 1-D array per feature column
-      n_cells        integers (n_samples, n_groups); absent from bulk cubes
-      layers/        a group with one array per layer
-        counts       (n_groups, n_samples, n_features)
-        ...          detected, log_sum, log_sum_sq and linear_sum, when present
-
-Root attributes (others are ignored, so a publisher may add, say, a title):
-
-- ``format``: ``"cytepool.cube"``.
-- ``format_version``: ``1``. A reader rejects other versions; any change to the layout
-  increments the version.
-- ``axes``: ``["groups", "samples", "features"]``, the axes of every layer, in order.
-- ``layers``: the layer names, in the order ``LAYER_NAMES`` gives them.
-- ``has_n_cells``: whether the ``n_cells`` array is present (false for bulk cubes,
-  where cell numbers are unknown).
-- ``normalization``: the cube's normalization mapping, or null.
-- ``provenance``: the cube's provenance mapping (``cytepool.cube.provenance``).
-- ``digests``: the digests of the cube's tables, cell numbers, normalization and of
-  each group of each layer, and the fingerprint they make, as ``Cube.digests()``
-  returns them (``cytepool.cube.fingerprints`` documents them). ``write_cube``
-  computes them while it writes the layers. A file written before CytePool stored
-  digests has none; it is read all the same, and its fingerprint is computed from
-  its values when it is asked for.
-
-Tables. Each table group holds one 1-D array per column, with ``dimension_names`` set
-to the table's axis (``["samples"]``, ``["groups"]`` or ``["features"]``). Its
-attributes give the columns in table order: ``columns`` lists the column names and
-``arrays`` the name of each column's array. An array takes its column's name when that
-name is portable: ASCII letters, digits, ``_``, ``.`` and ``-``, at most 64
-characters, not starting with ``.``, ``-`` or ``__``, not ending with ``.``, not a
-Windows device name (``con``, ``nul``, ``com1``, ...), not ``zarr.json`` in any case,
-not of the form ``column_<n>``, and not equal to another column's name when case is
-ignored.
-Otherwise the array is named ``column_<position>``, counting from 0. Columns are stored
-as:
-
-- text: int32 codes with the attribute ``levels``, the distinct values in order of
-  first appearance; code ``i`` stands for ``levels[i]`` and ``-1`` for a missing value;
-- datetimes and timedeltas: int64 counts of their unit, with the attribute
-  ``numpy_dtype`` (for example ``"datetime64[s]"``); NaT is ``-2**63``, as in numpy;
-- booleans and numbers: their own data type.
-
-Layers have ``dimension_names`` ``["groups", "samples", "features"]`` and chunks of one
-group, every sample and up to 4,096 features, so reading one group reads only its own
-chunks, and reading some features of it only the chunks that hold them. (A chunk holds
-fewer samples only where it would otherwise exceed 256 MiB, ``LAYER_CHUNK_BYTES``:
-beyond 8,192 samples of float64 values.) ``n_cells`` is int32
-(int64 if a value does not fit), with ``dimension_names`` ``["samples", "groups"]``.
-
-Every array has the default chunk key encoding with ``/``, a fill value of zero
-(``false`` for bool) and the ``bytes`` codec, little endian, followed by ``gzip`` (the
-default, level 4), ``zstd`` (level 3, with checksums; Python 3.14 or newer) or no
-compression: the codecs of the Zarr specifications (Zarr developers 2023;
-Maitin-Shepard 2025), which store gzip streams (RFC 1952; Deutsch 1996) and Zstandard
-frames (RFC 8878; Collet and Kucherawy 2021). Chunks that hold only zeros are not
-stored, as Zarr allows, and read as zeros.
-
-Reading is strict: the format name and version, every attribute above, every node's
-metadata (see ``cytepool.io.zarr``), dimension names, data types and text codes are
-checked, and so are the values of every layer group when the cube reads it. The
-tables, cell numbers and normalization are checked against their stored digests when
-the file is opened, and each group of a layer whenever a read covers all of it, in
-any order, so a file changed after it was written is reported, not read as if it
-were the cube it held; ``Cube.verify_fingerprint()`` checks every group, also the
-groups that a selection of some samples or features reads in part. Digests describe values, not their
-encoding: a copy with other chunks, byte order or compression keeps them. A store
-replaced while ``read_cube`` reads it raises an error instead of mixing the tables of
-one cube with the layers of another, and so does a lazy layer whose file was replaced
-after it was opened.
-
-Writing is atomic: ``write_cube`` writes the store into a new hidden directory next to
-the target, ``.<name>.partial-<random>``, writes the root ``zarr.json`` last, and
-renames the directory to the target only when everything is written. A write that
-fails or is interrupted removes the partial directory and leaves nothing at the
-target. With ``overwrite=True``, which replaces only a cube file or an empty
-directory, the old store is renamed aside to ``.<name>.replaced-<random>``, the new one
-renamed into place and the old one deleted; if the new store cannot be moved into
-place, the old one is put back. A process killed outright can leave either hidden
-directory behind (between the two renames, the old store survives only under its
-hidden name); a partial directory has no root ``zarr.json``, so it does not open as a
-group. Files are not flushed to disk with fsync, so the guarantee covers failures of
-the writing process, not of the operating system.
+The format, ``cytepool.cube`` version 1, is specified, for programs that read or write
+cube files, at https://docs.nygen.io/CytePool/reference/cube-files#cube-file-format.
+Its arrays use the ``bytes`` and ``gzip`` codecs of the Zarr specifications (Zarr
+developers 2023), or the ``zstd`` codec of its extensions (Maitin-Shepard 2025), which
+store gzip streams (RFC 1952; Deutsch 1996) and Zstandard frames (RFC 8878; Collet and
+Kucherawy 2021).
 
 References:
     Miles A, Striebel J, Rzepka N, Maitin-Shepard J, Moore J, eds (2025). Zarr core
@@ -179,7 +98,10 @@ def write_cube(
     compression_level: int | None = None,
     overwrite: bool = False,
 ) -> None:
-    """Save a cube as a cube file, a Zarr v3 group (see the module documentation).
+    """Save a cube as a cube file, a Zarr v3 group.
+
+    https://docs.nygen.io/CytePool/reference/cube-files#cube-file-format specifies
+    the file.
 
     The store appears at ``path`` only once it is complete, so a write that fails
     leaves no store there; with ``overwrite=True`` it leaves the old store as it was.
@@ -213,7 +135,9 @@ def write_cube(
     if not isinstance(cube, Cube):
         raise TypeError(f"write_cube() saves a Cube, got {type(cube).__name__}")
     if not isinstance(overwrite, bool):
-        raise TypeError(f"overwrite must be True or False, got {overwrite!r}")
+        raise TypeError(
+            f"overwrite must be True or False, got {type(overwrite).__name__}"
+        )
     level = check_compression(compression, compression_level)
     target = local_path(path)
     if not target.parent.is_dir():

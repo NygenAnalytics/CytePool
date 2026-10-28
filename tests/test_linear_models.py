@@ -1070,8 +1070,8 @@ def test_per_feature_fits_do_not_depend_on_threads_or_chunks() -> None:
     ("n_threads", "error", "message"),
     [
         (0, ValueError, "n_threads must be at least 1, got 0"),
-        (1.5, TypeError, "n_threads must be a positive integer or None, got float"),
-        (True, TypeError, "n_threads must be a positive integer or None, not bool"),
+        (1.5, TypeError, "n_threads must be an integer or None, got float"),
+        (True, TypeError, "n_threads must be an integer or None, got bool"),
     ],
 )
 def test_thread_numbers_are_checked_before_any_fit(
@@ -1396,7 +1396,7 @@ def test_fit_object_checks_its_fields() -> None:
     }
     with pytest.raises(ValueError, match="no per-feature covariance matrices"):
         LinearModelFit(**{**stored, "exact_standard_errors": False})
-    with pytest.raises(TypeError, match="must be a bool"):
+    with pytest.raises(TypeError, match="must be True or False"):
         LinearModelFit(**{**fields, "exact_standard_errors": 1})
     flagged = LinearModelFit(**{**fields, "exact_standard_errors": np.True_})
     assert flagged.exact_standard_errors is True

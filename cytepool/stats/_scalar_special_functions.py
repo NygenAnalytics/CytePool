@@ -1,4 +1,4 @@
-"""The special functions of scalars behind the vectorised ones, compiled with numba.
+"""The special functions of scalars that the vectorised ones call, compiled with numba.
 
 These routines compute, for one value at a time, the logarithms and differences of
 gamma and beta functions and the regularized incomplete gamma and beta functions

@@ -6,26 +6,45 @@ myst:
 
 # Designs and contrasts
 
-A {class}`~cytepool.Design` joins a sample table, the fixed effects as an R formula,
-optional random effects in lme4 notation and named contrasts. Its model matrix has the
-columns and column names that R's `model.matrix` gives for the same level order.
-Without explicit levels, factor levels are sorted by code point, as R sorts them with
-`LC_COLLATE=C`; R's default follows the session's locale.
-{meth}`~cytepool.Design.check` reports problems such as aliased columns before anything
-is fitted.
+Designs, their formulas, model matrices, contrasts and checks; [Designs, linear models
+and contrasts](../statistics/linear-models/) explains them.
 
 ```{eval-rst}
 .. autoclass:: cytepool.Design
-```
 
-The parts of a design are in `cytepool.design`: its model matrix, its contrasts, its
-formula and random effects as they are read, and the report of its check.
-
-```{eval-rst}
 .. automodule:: cytepool.design
+   :no-members:
 ```
 
+## Formulas
+
 ```{eval-rst}
+.. automodule:: cytepool.design.formula
+   :no-members:
+   :no-index:
+
+.. autofunction:: cytepool.design.parse_formula
+
+.. autoclass:: cytepool.design.FormulaTerms
+
+.. autofunction:: cytepool.design.parse_random_effects
+
+.. autoclass:: cytepool.design.RandomEffect
+
+.. autofunction:: cytepool.design.formula.quote_name
+```
+
+## Model matrices
+
+```{eval-rst}
+.. automodule:: cytepool.design.model_matrix
+   :no-members:
+   :no-index:
+
+.. autofunction:: cytepool.design.model_matrix
+
+.. autoclass:: cytepool.design.ModelMatrix
+
 .. py:data:: INTERCEPT
    :module: cytepool.design
    :value: '(Intercept)'
@@ -33,10 +52,26 @@ formula and random effects as they are read, and the report of its check.
    The name of the intercept column of a model matrix, as R names it.
 ```
 
-Column names and term labels write a variable name that is not syntactic in R between
-backticks, as R does: a factor `cell type` gives columns such as `` `cell type`B ``,
-and a contrast refers to them by the same names.
+## Contrasts
 
 ```{eval-rst}
-.. autofunction:: cytepool.design.formula.quote_name
+.. automodule:: cytepool.design.contrasts
+   :no-members:
+   :no-index:
+
+.. autofunction:: cytepool.design.make_contrasts
+
+.. autoclass:: cytepool.design.Contrasts
+```
+
+## Design checks
+
+```{eval-rst}
+.. automodule:: cytepool.design.checks
+   :no-members:
+   :no-index:
+
+.. autoclass:: cytepool.design.DesignReport
+
+.. autoclass:: cytepool.design.DesignIssue
 ```

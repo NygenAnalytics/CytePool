@@ -6,10 +6,8 @@ myst:
 
 # Gene-set tests
 
-{func}`~cytepool.camera` and {func}`~cytepool.fry` test gene sets on one contrast of a
-linear model: of a group of a result of {func}`~cytepool.limma_voom` or
-{func}`~cytepool.limma_trend`, whose fit they compute again, or of values with a design
-and a contrast.
+limma's camera and fry on one contrast of a linear model; [Gene-set
+tests](../statistics/gene-set-tests/#camera) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.gene_set_tests

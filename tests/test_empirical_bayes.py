@@ -936,7 +936,7 @@ FIT_DATA = reference("two_groups")
             ([0.1, 0.2, 0.3], 4.0),
             {"winsor_tail_p": (0.05, 0.6)},
             ValueError,
-            "strictly between 0 and 0.5",
+            "winsor_tail_p must be in \\(0, 0.5\\)",
         ),
         (
             fit_f_distribution_robust,
@@ -985,7 +985,7 @@ FIT_DATA = reference("two_groups")
             ([0.1, 0.2, 0.3], 4.0),
             {"robust": "yes"},
             TypeError,
-            "robust must be a bool",
+            "robust must be True or False",
         ),
         (
             fit_f_distribution_likelihood,
@@ -1057,7 +1057,7 @@ def test_hyperparameter_functions_reject_invalid_input(
             moderated_statistics,
             {"proportion": 0.0},
             ValueError,
-            "strictly between 0 and 1",
+            "must be in \\(0, 1\\)",
         ),
         (moderated_statistics, {"proportion": True}, TypeError, "real number"),
         (
@@ -1088,7 +1088,7 @@ def test_hyperparameter_functions_reject_invalid_input(
         (treat, {"lfc": 1.0, "fc": 2.0}, ValueError, "not both"),
         (treat, {"fc": -1.0}, ValueError, "positive and finite"),
         (treat, {"lfc": np.nan}, ValueError, "finite"),
-        (treat, {"robust": "yes"}, TypeError, "robust must be a bool"),
+        (treat, {"robust": "yes"}, TypeError, "robust must be True or False"),
         (treat, {"prior_estimator": "fitFDist"}, ValueError, "prior_estimator must"),
         (
             moderated_statistics,

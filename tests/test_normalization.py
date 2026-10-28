@@ -660,7 +660,7 @@ def test_empty_samples_are_rejected() -> None:
         (dict(sum_trim=-0.1), ValueError, r"sum_trim must be in \[0, 0.5\)"),
         (dict(sum_trim=np.nan), ValueError, "sum_trim must be finite"),
         (dict(log_ratio_trim="0.3"), TypeError, "log_ratio_trim must be a real number"),
-        (dict(weighted=1), TypeError, "weighted must be a bool"),
+        (dict(weighted=1), TypeError, "weighted must be True or False"),
         (dict(a_cutoff=np.nan), ValueError, "a_cutoff must be a number"),
         (dict(a_cutoff=None), TypeError, "a_cutoff must be a real number"),
     ],

@@ -2,8 +2,9 @@
 
 No other tool computes a cube's fingerprint, so the reference is a separate program
 that reads cube files with zarr-python and recomputes every digest and the
-fingerprint with numpy and hashlib, following only the encoding documented in
-cytepool/cube/fingerprints.py; it imports nothing from CytePool. The script checks:
+fingerprint with numpy and hashlib, following only the encoding that the Cube files
+page of the documentation specifies (docs/source/reference/cube_files.md); it imports
+nothing from CytePool. The script checks:
 
 1. The digests that write_cube stores with each cube file equal the recomputed ones,
    part by part, and Cube.fingerprint() of each cube equals the recomputed

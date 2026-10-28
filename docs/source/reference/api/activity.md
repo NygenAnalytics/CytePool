@@ -6,16 +6,8 @@ myst:
 
 # Pathway and regulator activity
 
-{func}`~cytepool.ulm`, {func}`~cytepool.mlm` and {func}`~cytepool.weighted_aggregate`
-score every source of a network, a transcription factor or a pathway, in every
-profile: the samples of an expression matrix or of a cell type of a cube, or the
-contrasts of a differential-expression result, as decoupler's `mt.ulm`, `mt.mlm` and
-`mt.waggr` compute them. The activities, an {class}`~cytepool.Activities`, are profiles
-x sources, so that {func}`~cytepool.limma` tests the activities of samples with the
-design built for the cube; {func}`~cytepool.plotting.plot_activities` draws them as a
-heatmap and {func}`~cytepool.plotting.plot_top_activities` the top sources of a profile
-as bars. The networks are {class}`~cytepool.Network` objects, such as those of
-{func}`~cytepool.collectri` and {func}`~cytepool.progeny`.
+Activities of regulators and pathways by ULM, MLM and the weighted aggregate;
+[Activities from networks](../statistics/activities/#ulm) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.activity

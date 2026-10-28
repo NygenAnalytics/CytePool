@@ -538,17 +538,41 @@ def test_every_public_name_is_documented_under_its_own_name() -> None:
 
 def test_every_api_page_is_in_the_api_index() -> None:
     index = (API_SOURCE / "index.md").read_text()
-    toctree = re.search(r"```\{toctree\}\n(.*?)```", index, re.S)
-    assert toctree is not None
+    toctrees = re.findall(r"```\{toctree\}\n(.*?)```", index, re.S)
     listed = [
         line.strip()
-        for line in toctree[1].splitlines()
+        for toctree in toctrees
+        for line in toctree.splitlines()
         if line.strip() and not line.startswith(":")
     ]
+    captions = re.findall(r"^:caption: (.+)$", index, re.M)
 
     assert sorted(listed) == sorted(
         path.stem for path in API_SOURCE.glob("*.md") if path.stem != "index"
     )
+    # Every page is in one group, and the groups follow the parts of the book.
+    assert len(captions) == len(toctrees)
+    assert captions == [
+        "Cubes and files",
+        "Designs and linear models",
+        "Differential expression",
+        "Composition",
+        "Gene sets and pathways",
+        "Several studies",
+        "Figures",
+        "Building blocks on arrays",
+    ]
+
+
+def _validation_sections() -> dict[str, str]:
+    """The sections of the Validation page by label, each up to the next label or
+    heading of its level or above."""
+    page = (SOURCE / "validation.md").read_text()
+    parts = re.split(r"(?m)^\(([\w-]+)\)=\n", page)
+    return {
+        label: re.split(r"(?m)^##? ", body)[0] if body.startswith("###") else body
+        for label, body in zip(parts[1::2], parts[2::2], strict=True)
+    }
 
 
 def test_every_validation_script_is_listed_on_the_validation_page() -> None:
@@ -557,11 +581,17 @@ def test_every_validation_script_is_listed_on_the_validation_page() -> None:
         re.escape(REPOSITORY) + r"blob/master/validation/(\w+\.py)\)", page
     )
     scripts = {path.name for path in (ROOT / "validation").glob("*.py")}
+    sections = _validation_sections()
+    summary = page.split("## Summary", 1)[1].split("\n## ", 1)[0]
 
     assert set(linked) == scripts
-    # Each script has a row in the summary table and a section of its own.
+    # Each script has a section of its own, labelled after it, so that chapters can
+    # link it, which links the script and is linked from the summary.
     for script in scripts:
-        assert linked.count(script) >= 2, script
+        label = "validation-" + script.removesuffix(".py").replace("_", "-")
+        assert label in sections, script
+        assert f"validation/{script})" in sections[label], script
+        assert f"](#{label})" in summary, script
 
 
 def _anchors(page: Path) -> set[str]:
@@ -623,6 +653,27 @@ def test_links_between_pages_resolve() -> None:
 
     assert problems == []
     assert {"validation", "reproduce-validation", "quickstart"} <= labels
+
+
+def test_labels_are_unique_and_unlike_the_headings_of_other_pages() -> None:
+    # MyST resolves a link to #name against every page: a label that is also the id
+    # of a heading elsewhere can link to that heading instead.
+    labels: dict[str, list[str]] = defaultdict(list)
+    headings: dict[str, set[str]] = defaultdict(set)
+    for page in _site_pages():
+        text = _text(page)
+        where = page.relative_to(SOURCE).as_posix()
+        for label in LABEL.findall(text):
+            labels[label].append(where)
+        for heading in re.findall(r"^#+\s+(.+)$", text, re.M):
+            headings[re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")].add(where)
+
+    assert {label: pages for label, pages in labels.items() if len(pages) > 1} == {}
+    assert {
+        label: sorted(headings[label] - set(pages))
+        for label, pages in labels.items()
+        if headings[label] - set(pages)
+    } == {}
 
 
 def test_link_check_finds_broken_links() -> None:
@@ -917,6 +968,408 @@ def test_reference_checks_find_what_is_wrong() -> None:
     assert _variants(same_doi[:1] + same_work[:1]) == []
 
 
+# The copy rules (AGENTS.md, "Writing"): what a machine can check of them.
+
+# An em dash, or an en dash between spaces, as punctuation; ranges such as 1–5 are
+# not punctuation.
+PUNCTUATION_DASH = re.compile("\u2014|(?<=\\s)\u2013(?=\\s)")
+# A centred dot between words; 1.2·10^-5, as fgsea writes p-values, is a product.
+CENTRED_DOT = re.compile(r"[^\W\d_]\s*\u00b7\s*[^\W\d_]")
+STOCK_PHRASES = re.compile(r"\bunder the hood\b|\blives? in\b", re.I)
+
+
+def _copy_problems(text: str, where: str) -> list[str]:
+    """Where a text breaks the copy rules that a machine can check: dashes used as
+    punctuation, centred dots between words, stock phrases outside quotation marks,
+    and all-caps headings of more than one word."""
+    problems = []
+
+    def found(match: re.Match[str], rule: str) -> None:
+        line = text.count("\n", 0, match.start()) + 1
+        problems.append(f"{where}:{line}: {rule}: {match[0]!r}")
+
+    for match in PUNCTUATION_DASH.finditer(text):
+        found(match, "a dash used as punctuation")
+    for match in CENTRED_DOT.finditer(text):
+        found(match, "a centred dot between words")
+    # Quoting a phrase names it, as the rules themselves do.
+    unquoted = re.sub(r'"[^"\n]*"', lambda m: " " * len(m[0]), text)
+    for match in STOCK_PHRASES.finditer(unquoted):
+        found(match, "a stock metaphor")
+    for match in re.finditer(r"^#+\s+(.+)$", text, re.M):
+        words = re.sub(r"[^A-Za-z ]", "", match[1]).split()
+        if len(words) > 1 and all(word.isupper() for word in words):
+            found(match, "an all-caps heading")
+    return problems
+
+
+def _readable_texts() -> dict[str, str]:
+    """The prose that people read outside the package: every page, notebook prose
+    included, the API pages, the README and AGENTS.md."""
+    texts = {
+        path.relative_to(ROOT).as_posix(): _text(path)
+        for path in [*_site_pages(), *sorted(API_SOURCE.glob("*.md"))]
+    }
+    for name in ("README.md", "AGENTS.md"):
+        texts[name] = (ROOT / name).read_text()
+    return texts
+
+
+def _package_texts() -> dict[str, str]:
+    """The strings and comments of the package: docstrings, messages, figure labels
+    and reprs, by file."""
+    texts = {}
+    for path in sorted(PACKAGE.rglob("*.py")):
+        source = path.read_text()
+        strings = [
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        comments = [
+            token.string
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.COMMENT
+        ]
+        texts[path.relative_to(ROOT).as_posix()] = "\n".join(strings + comments)
+    return texts
+
+
+def test_pages_the_readme_and_agents_follow_the_copy_rules() -> None:
+    problems = [
+        problem
+        for where, text in _readable_texts().items()
+        for problem in _copy_problems(text, where)
+    ]
+
+    assert problems == []
+
+
+def test_docstrings_messages_and_figure_labels_follow_the_copy_rules() -> None:
+    problems = [
+        problem
+        for where, text in _package_texts().items()
+        for problem in _copy_problems(text, where)
+    ]
+
+    assert problems == []
+    # The scan read the package: its docstrings and messages are long.
+    assert sum(map(len, _package_texts().values())) > 1_000_000
+
+
+def test_the_copy_rule_scan_finds_what_is_wrong() -> None:
+    wrong = textwrap.dedent(
+        """\
+        # TWO WORDS
+        A gene \u2014 or a set.
+        Counts \u2013 and their sums.
+        Genes \u00b7 sets.
+        The model lives in a module, and the fit runs under the hood.
+        """
+    )
+    right = textwrap.dedent(
+        """\
+        # GSVA and ULM
+        A p-value of 1.2\u00b710^-5 for genes 1\u20135, a per-sample
+        Kenward-Roger test; avoid "X lives in Y".
+        """
+    )
+
+    assert [problem.split(": ")[1] for problem in _copy_problems(wrong, "x")] == [
+        "a dash used as punctuation",
+        "a dash used as punctuation",
+        "a centred dot between words",
+        "a stock metaphor",
+        "a stock metaphor",
+        "an all-caps heading",
+    ]
+    assert _copy_problems(right, "x") == []
+
+
+# Addresses of the site, as docstrings and the README give them.
+
+# An address ends before the punctuation of the sentence that gives it.
+SITE_ADDRESS = re.compile(
+    r"https://docs\.nygen\.io/CytePool/((?:[\w-]+(?:[./][\w-]+)*)?/?)"
+    r"(?:#((?:[\w-]+\.)*[\w-]+))?"
+)
+
+
+def _address_problem(path: str, anchor: str | None) -> str | None:
+    """Why an address of the site names no page, or no label or heading of its page,
+    or None when it resolves."""
+    pages = {page.url: SOURCE / page.file for page in page_index.pages()}
+    route = "/" + path.strip("/")
+    if route.startswith("/api/"):
+        api = _documented_objects()
+        page = route.removeprefix("/api/").removesuffix(".html") + ".md"
+        if not route.endswith(".html") or page not in api:
+            return f"no API page {route}"
+        names = api[page] | {f"module-{name}" for name in api[page]}
+        return None if anchor is None or anchor in names else f"no {anchor} on {route}"
+    if route not in pages:
+        return f"no page {route}"
+    if anchor is not None and anchor not in _anchors(pages[route]):
+        return f"no label or heading {anchor} on {route}"
+    return None
+
+
+def test_every_address_of_the_site_resolves() -> None:
+    pytest.importorskip("yaml")
+    texts = {**_package_texts(), **_readable_texts()}
+    found = [
+        (where, match)
+        for where, text in texts.items()
+        for match in SITE_ADDRESS.finditer(text)
+    ]
+    # The API reference, served under api/, links the pages relative to it.
+    found += [
+        (path.name, match)
+        for path in sorted(API_SOURCE.glob("*.md"))
+        for match in re.finditer(
+            r"\]\(\.\./([\w/-]*?)/?(?:#([\w-]+))?\)", path.read_text()
+        )
+    ]
+    problems = [
+        f"{where}: {match[0]}: {problem}"
+        for where, match in found
+        if (problem := _address_problem(match[1], match[2]))
+    ]
+
+    assert problems == []
+    # Docstrings give the addresses of the chapters that explain them, and API pages
+    # link their chapters.
+    assert any(where.startswith("cytepool/") for where, _ in found)
+    assert any(where == "voom.md" for where, _ in found)
+
+
+def test_the_address_check_finds_addresses_that_do_not_resolve() -> None:
+    pytest.importorskip("yaml")
+
+    assert _address_problem("statistics/limma-voom", "voom-span") is None
+    assert _address_problem("", None) is None
+    assert _address_problem("api/voom.html", "cytepool.stats.voom.voom") is None
+    assert _address_problem("statistics/limma-voom", "no-such-label") is not None
+    assert _address_problem("statistics/precision-weights", None) is not None
+    assert _address_problem("api/voom.html", "cytepool.stats.voom.nothing") is not None
+
+
+# The chapters of the book.
+
+DRAFT = re.compile(r"^% draft:", re.M)
+CLOSING_SECTIONS = [
+    "Defaults and choices",
+    "Limits and differences",
+    "Checks and further reading",
+]
+
+
+def _book_files() -> list[str]:
+    """The pages of "Understand the methods", in reading order."""
+    book = "Understand the methods"
+    return [page.file for page in page_index.pages() if page.section == book]
+
+
+def _paragraphs(text: str) -> list[str]:
+    """The paragraphs of a page's prose after its title, without front matter,
+    labels, comments and code."""
+    prose, _ = page_index.split_markdown(
+        re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    )
+    body = prose.split("\n# ", 1)[-1].split("\n", 1)[-1]
+    lines = [
+        line for line in body.splitlines() if not re.match(r"\(\S+\)=$|%", line.strip())
+    ]
+    return [p.strip() for p in re.split(r"\n\s*\n", "\n".join(lines)) if p.strip()]
+
+
+@pytest.mark.parametrize(
+    "file",
+    sorted(
+        path.relative_to(SOURCE).as_posix()
+        for path in (SOURCE / "statistics").glob("*.md")
+        if path.name != "choosing_a_method.md"
+    ),
+)
+def test_every_chapter_has_the_shape_of_the_book(file: str) -> None:
+    pytest.importorskip("yaml")
+    text = (SOURCE / file).read_text()
+    # Every chapter is final: a draft marker left in one fails.
+    assert not DRAFT.search(text), f"{file} still carries a '% draft:' line"
+    book = _book_files()
+    position = book.index(file)
+    previous = Path(book[position - 1]).name
+    following = Path(book[position + 1]).name if position + 1 < len(book) else None
+    description = re.match(r"\A---\ndescription: (.+)\n---\n", text)
+    headings = re.findall(r"^## (.+)$", text, re.M)
+    paragraphs = _paragraphs(text)
+    opening, closing = paragraphs[0], paragraphs[-1]
+
+    # One sentence that a link preview can show.
+    assert description and len(description[1]) <= 200
+    assert headings[-3:] == CLOSING_SECTIONS
+    assert len(headings) > 3, (
+        "a chapter has sections of its own before the closing ones"
+    )
+    # The opening places the chapter after the one before, names the default, and
+    # points to the guide that runs it; the end leads to the next chapter.
+    assert f"]({previous}" in opening, f"the opening links {previous}"
+    assert "{api}`" in opening
+    assert re.search(r"\]\(\.\./(guides/\w+|quickstart|why_pseudobulk)\.ipynb", opening)
+    if following:
+        assert f"]({following}" in closing, f"the last paragraph links {following}"
+    # The checks link the sections of the Validation page that give them.
+    checks = text.split("## Checks and further reading", 1)[1]
+    assert re.search(r"\]\(#validation-[\w-]+\)", checks)
+
+
+def test_the_map_opens_the_book_and_leads_to_its_first_chapter() -> None:
+    pytest.importorskip("yaml")
+    book = _book_files()
+    text = (SOURCE / book[0]).read_text()
+
+    assert book[0] == "statistics/choosing_a_method.md"
+    # It links every chapter, and ends with the first.
+    assert sorted(Path(file).name for file in book[1:]) == sorted(
+        name for name in {Path(file).name for file in book[1:]} if f"]({name}" in text
+    )
+    assert f"]({Path(book[1]).name}" in _paragraphs(text)[-1]
+    assert "(not-implemented-yet)=" in text
+
+
+# The specification of cube files.
+
+
+def _record_keys(record: dict[str, Any]) -> set[str]:
+    """The keys of a provenance record that CytePool writes, at every depth, without
+    the caller's source record and the maps whose keys are ids or layer names."""
+    keys = set(record)
+    construction = record.get("construction") or {}
+    keys |= set(construction)
+    for axis in ("samples", "groups", "obs_columns"):
+        if isinstance(construction.get(axis), dict):
+            keys |= set(construction[axis])
+    for study in (construction.get("studies") or {}).values():  # by study name
+        keys |= set(study)
+    for operation in record.get("operations", []):
+        keys |= set(operation) | {operation["operation"]}
+        if operation["operation"] == "with_columns":
+            for axis in ("samples", "groups", "features"):
+                keys |= set(operation[axis] or {})
+    return keys
+
+
+def test_the_cube_files_page_names_every_key_that_cytepool_writes(
+    tmp_path: Path,
+) -> None:
+    from cytepool import CubeCollection, from_bulk, from_cells, write_cube
+
+    page = (SOURCE / "reference" / "cube_files.md").read_text()
+    # A key is named when it is written as code: in a code span or a code block.
+    code = re.findall(r"```\w*\n(.*?)```|`([^`]+)`", page, re.S)
+    named = {
+        word
+        for block, span in code
+        for word in re.findall(r"[A-Za-z_][\w.]*", block or span)
+    }
+    counts = np.array([[1, 0, 2], [3, 2, 0], [0, 4, 1], [2, 2, 2], [5, 0, 1]])
+    cube = from_cells(
+        counts,
+        sample_labels=["S1", "S1", "S2", "S2", "S3"],
+        group_labels=["B", "T", "B", "T", "B"],
+        layers=["counts", "detected", "log_sum", "log_sum_sq", "linear_sum"],
+        source={"tool": "a test"},
+    )
+    derived = (
+        cube.select(features=["feature_0", "feature_1"])
+        .regroup({"lymphocytes": ["B", "T"]})
+        .with_columns(samples={"donor": ["D1", "D1", "D2"]})
+        .collapse_samples("donor")
+    )
+    write_cube(
+        derived.with_columns(
+            samples={"visit": np.array(["2026-01-02", "NaT"], dtype="datetime64[D]")}
+        ),
+        tmp_path / "derived.cube.zarr",
+    )
+    root = json.loads((tmp_path / "derived.cube.zarr" / "zarr.json").read_text())
+    attributes = root["attributes"]
+    samples = json.loads(
+        (tmp_path / "derived.cube.zarr" / "samples" / "zarr.json").read_text()
+    )
+    visit = json.loads(
+        (tmp_path / "derived.cube.zarr" / "samples" / "visit" / "zarr.json").read_text()
+    )
+    sample_id = json.loads(
+        (
+            tmp_path / "derived.cube.zarr" / "samples" / "sample_id" / "zarr.json"
+        ).read_text()
+    )
+    bulk = from_bulk(np.array([[1, 2], [3, 4]]))
+    stacked = CubeCollection(
+        {"a": cube, "b": cube}, group_names={"B": "B cells"}
+    ).stack()
+    digests = attributes["digests"]
+    written = (
+        set(attributes)
+        | set(attributes["layers"])
+        | set(samples["attributes"])
+        | set(visit["attributes"])
+        | set(sample_id["attributes"])
+        | _record_keys(attributes["provenance"])
+        | _record_keys(bulk.provenance)
+        | _record_keys(stacked.provenance)
+        | set(digests)
+        | {key for layer in digests["layers"].values() for key in layer}
+    )
+    assert sorted(written - named) == [], sorted(written - named)
+    assert {"construction", "operations", "with_columns", "numpy_dtype"} <= written
+    assert {"studies", "group_names"} <= written
+    # The import and export of AnnData and MuData, when they are installed.
+    ad = pytest.importorskip("anndata")
+    pd = pytest.importorskip("pandas")
+    from cytepool import from_anndata, from_mudata, to_anndata
+
+    exported = to_anndata(cube)
+    record = exported.uns["cytepool"]
+    written |= set(record) | _record_keys(from_anndata(exported).provenance)
+    written |= {key for column in json.loads(record["features"]) for key in column}
+    written |= {
+        key
+        for column in json.loads(record["samples"])["columns"]
+        for key in [*column, "columns"]
+    }
+    long = ad.AnnData(
+        obs=pd.DataFrame(
+            {
+                "sample": ["S1", "S2", "S1"],
+                "group": ["B", "B", "T"],
+                "n_obs_aggregated": [2, 1, 3],
+            },
+            index=["r0", "r1", "r2"],
+        ),
+        var=pd.DataFrame(index=["G0", "G1"]),
+        layers={"sum": np.array([[4.0, 0.0], [3.0, 1.0], [0.0, 2.0]])},
+    )
+    imported = from_anndata(long, sample_column="sample", group_column="group")
+    written |= _record_keys(imported.provenance)
+    mudata = pytest.importorskip("mudata")
+    views = mudata.MuData(
+        {
+            "B": ad.AnnData(
+                np.array([[4.0, 0.0], [3.0, 1.0]]),
+                obs=pd.DataFrame(index=["S1", "S2"]),
+                var=pd.DataFrame(index=["B:G0", "B:G1"]),
+            )
+        }
+    )
+    written |= _record_keys(from_mudata(views, layers={"counts": "X"}).provenance)
+
+    assert sorted(written - named) == [], sorted(written - named)
+    # The keys were read: the provenance of each construction and operation.
+    assert {"membership", "studies", "layout", "obs_columns", "modalities"} <= written
+
+
 # The navigation.
 
 
@@ -929,7 +1382,7 @@ def _toc() -> list[dict[str, Any]]:
 
 
 def test_the_navigation_has_the_agreed_sections() -> None:
-    overview, *sections = _toc()
+    overview, *sections, api = _toc()
 
     # MyST needs a file first: the Overview.
     assert overview == {"file": "index.md", "title": "Overview"}
@@ -939,6 +1392,28 @@ def test_the_navigation_has_the_agreed_sections() -> None:
     assert all(
         any("file" in child for child in entry["children"]) for entry in sections
     )
+    # The API reference is a section of its own, last, whose pages the site build
+    # adds from the API index in its groups.
+    assert api == {
+        "title": page_index.API_REFERENCE,
+        "url": "/api/index.html",
+        "open_in_same_tab": True,
+    }
+    # The book's parts follow the map of questions, in reading order.
+    book = sections[page_index.SECTIONS.index("Understand the methods")]["children"]
+    assert [entry["title"] for entry in book] == [
+        "Choosing a method",
+        "Foundations",
+        "Differential expression",
+        "Composition tests",
+        "Gene sets and pathways",
+        "Several studies",
+    ]
+    # No two pages share a title.
+    titles = [
+        title for _, title, _ in page_index.toc_pages({"project": {"toc": _toc()}})
+    ]
+    assert len(titles) == len(set(titles))
 
 
 def test_every_page_has_a_kind_and_the_lists_of_kinds_name_pages() -> None:
@@ -948,8 +1423,10 @@ def test_every_page_has_a_kind_and_the_lists_of_kinds_name_pages() -> None:
     assert sorted(page_index.EXPLANATION_PAGES - files) == []
     kinds = {page.file: page.kind for page in page_index.pages()}
     assert kinds["statistics/choosing_a_method.md"] == page_index.EXPLANATION
+    # A chapter in a part of the book is in the book's section.
+    assert kinds["statistics/limma_voom.md"] == page_index.EXPLANATION
     assert kinds["reference/cube_files.md"] == page_index.EXPLANATION
-    assert kinds["reference/capabilities.md"] == page_index.INDEX
+    assert kinds["validation.md"] == page_index.INDEX
     assert kinds["quickstart.ipynb"] == page_index.GUIDE
 
 
@@ -1391,6 +1868,36 @@ def test_the_notices_and_the_datasets_page_name_every_dataset() -> None:
     assert "use no dataset" not in notices
 
 
+def _missing_paths(text: str) -> list[str]:
+    """The paths of the repository that a text names in backticks, such as
+    `cytepool/plotting.py` or `tests/data/`, and that do not exist."""
+    named = re.findall(r"`((?:cytepool|validation|docs|tests)/[^`\s]*)`", text)
+    return [path for path in named if not (ROOT / path).exists()]
+
+
+def test_the_notices_name_files_that_exist() -> None:
+    # A file renamed or removed must not leave its notice behind, naming no file.
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text()
+
+    assert "`cytepool/plotting.py`" in notices
+    assert _missing_paths(notices) == []
+
+
+def test_the_notice_check_finds_files_that_do_not_exist() -> None:
+    # The notices of master before the files were renamed named these three.
+    text = (
+        "Adapted from fgsea in `cytepool/gsea.py`, checked by `validation/gsea.py`; "
+        "SumRank in `cytepool/sumrank.py` and `cytepool/held_out_prediction.py`, "
+        "with data in `tests/data/`."
+    )
+
+    assert _missing_paths(text) == [
+        "cytepool/gsea.py",
+        "cytepool/sumrank.py",
+        "cytepool/held_out_prediction.py",
+    ]
+
+
 def test_the_cache_must_be_outside_the_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1561,7 +2068,7 @@ def test_the_coverage_report_finds_names_listed_wrongly(tmp_path: Path) -> None:
         coverage.read_exemptions(path)
 
 
-# The capability matrix.
+# The summary of the Validation page.
 
 
 def _table_rows(text: str, header: str) -> list[list[str]]:
@@ -1576,38 +2083,36 @@ def _table_rows(text: str, header: str) -> list[list[str]]:
     return rows
 
 
-def _script(cell: str) -> str:
-    """The validation script a table cell links to."""
-    match = re.search(r"`(\w+\.py)`", cell)
-    assert match is not None, cell
-    return match[1]
-
-
-def test_the_capability_matrix_agrees_with_the_validation_summary() -> None:
-    summary = {
-        _script(row[0]): row[2]
-        for row in _table_rows((SOURCE / "validation.md").read_text(), "| Script |")
-        if "`" in row[0]
-    }
-    matrix = _table_rows(
-        (SOURCE / "reference" / "capabilities.md").read_text(), "| Method |"
-    )
+def test_the_validation_summary_agrees_with_its_sections() -> None:
+    sections = _validation_sections()
+    rows = _table_rows((SOURCE / "validation.md").read_text(), "| Method |")
     problems = []
-    for method, _, checked, tier, script_cell in matrix:
-        script = _script(script_cell)
-        if script not in summary:
-            problems.append(f"{method}: {script} is not on the Validation page")
+    for method, functions, checked, tier, where in rows:
+        labels = re.findall(r"\]\(#([\w-]+)\)", where)
+        if not labels or not set(labels) <= set(sections):
+            problems.append(f"{method}: links no section of the page: {where}")
             continue
-        # Every reference and version named is one the script was run against.
+        text = " ".join("".join(sections[label] for label in labels).split())
+        # Every reference and version named is one the section was run against.
         for tool in re.findall(r"[\w-]+ \d[\w.-]*\d", checked):
-            if tool not in summary[script]:
-                problems.append(f"{method}: {tool} is not among {summary[script]}")
-        if not re.match(r"(exact|close|calibrated)\b", tier):
-            problems.append(f"{method}: the tier {tier!r} is not a tier")
+            if tool not in text:
+                problems.append(f"{method}: {tool} is not in its section")
+        # A tier, with the bound of its checks.
+        if not re.match(r"(exact|close|calibrated): ", tier) or not re.search(
+            r"\de-\d|identical|standard (deviations|errors)", tier
+        ):
+            problems.append(f"{method}: {tier!r} is not a tier with its bound")
+        if "{api}`" not in functions:
+            problems.append(f"{method}: names no function")
 
     assert problems == []
-    # Every script of the Validation page has a row.
-    assert sorted(set(summary) - {_script(row[4]) for row in matrix}) == []
+    # Every section of a script is in the summary.
+    linked = {label for row in rows for label in re.findall(r"#([\w-]+)\)", row[4])}
+    scripts = {
+        "validation-" + path.stem.replace("_", "-")
+        for path in (ROOT / "validation").glob("*.py")
+    }
+    assert sorted(scripts - linked) == []
 
 
 @pytest.mark.parametrize("base_url", ["", "/CytePool"])
@@ -1618,11 +2123,16 @@ def test_api_pages_join_the_staged_guide_navigation(
 
     api = tmp_path / "docs" / "build" / "api"
     api.mkdir(parents=True)
+    # Sphinx writes a caption before the list of each captioned table of contents.
     (api / "index.html").write_text(
         '<nav class="docs-api-tree"><ul><li>'
+        '<a href="overview.html">Overview</a></li></ul>'
+        '<p aria-level="2" class="caption" role="heading">'
+        '<span class="caption-text">Cubes &amp; files</span></p><ul><li>'
         '<a href="cubes.html"><span>Cubes API reference</span></a>'
         '</li><li><a href="import_export.html">Import &amp; export</a>'
-        "</li></ul></nav>"
+        '</li></ul><p class="caption"><span class="caption-text">Figures</span></p>'
+        '<ul><li><a href="plotting.html">Figures</a></li></ul></nav>'
     )
     site = tmp_path / "site"
     site.mkdir()
@@ -1630,12 +2140,8 @@ def test_api_pages_join_the_staged_guide_navigation(
         "project": {
             "toc": [
                 {"file": "index.md"},
-                {
-                    "title": "Reference",
-                    "children": [
-                        {"url": f"{base_url}/api/index.html", "title": "API reference"}
-                    ],
-                },
+                {"title": "Reference", "children": [{"file": "glossary.md"}]},
+                {"title": "API reference", "url": f"{base_url}/api/index.html"},
             ]
         }
     }
@@ -1646,19 +2152,31 @@ def test_api_pages_join_the_staged_guide_navigation(
     build_docs.include_api_navigation(site)
 
     toc = yaml.safe_load((site / "myst.yml").read_text())["project"]["toc"]
-    assert toc[0] == {"file": "index.md"}
-    assert toc[1]["children"][0]["children"] == [
+    assert toc[:2] == config["project"]["toc"][:2]
+
+    def page(title: str, file: str) -> dict[str, Any]:
+        url = f"{base_url}/api/{file}"
+        return {"title": title, "url": url, "open_in_same_tab": True}
+
+    # Pages before the first caption come first; each caption is a group of its pages.
+    assert toc[2]["children"] == [
+        page("Overview", "overview.html"),
         {
-            "title": "Cubes API reference",
-            "url": f"{base_url}/api/cubes.html",
-            "open_in_same_tab": True,
+            "title": "Cubes & files",
+            "children": [
+                page("Cubes API reference", "cubes.html"),
+                page("Import & export", "import_export.html"),
+            ],
         },
-        {
-            "title": "Import & export",
-            "url": f"{base_url}/api/import_export.html",
-            "open_in_same_tab": True,
-        },
+        {"title": "Figures", "children": [page("Figures", "plotting.html")]},
     ]
+    # A caption without pages is an error, not an empty group.
+    (api / "index.html").write_text(
+        '<nav class="docs-api-tree"><p class="caption">'
+        '<span class="caption-text">Empty</span></p></nav>'
+    )
+    with pytest.raises(ValueError, match="groups without pages"):
+        build_docs.include_api_navigation(site)
 
 
 @pytest.mark.parametrize("base_url", ["", "/CytePool"])

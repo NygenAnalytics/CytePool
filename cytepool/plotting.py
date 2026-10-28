@@ -1,5 +1,5 @@
-"""Figures of pseudobulk and bulk analyses, drawn as limma, edgeR, DESeq2, speckle,
-metafor, variancePartition, fgsea and decoupler draw them.
+"""Figures of pseudobulk and bulk analyses, each drawn as the tool whose method it shows
+draws it.
 
 Each function draws one figure from the objects that CytePool's analyses return: a
 cube, a voom result, a fit, the table of a differential-expression or gene-set test,
@@ -183,11 +183,6 @@ References:
     Proceedings of the National Academy of Sciences 100, 9440-9445.
     doi:10.1073/pnas.1530509100
 
-    Nakatsuka N, Adler D, Jiang L, Hartman A, Cheng E, Klann E, Satija R (2025).
-    Improving reproducibility of differentially expressed genes in single-cell
-    transcriptomic studies of neurodegenerative diseases through meta-analysis.
-    Nature Communications 16, 7436. doi:10.1038/s41467-025-62579-z
-
     Pearson K (1901). On lines and planes of closest fit to systems of points in space.
     The London, Edinburgh, and Dublin Philosophical Magazine and Journal of Science 2,
     559-572. doi:10.1080/14786440109462720
@@ -212,7 +207,7 @@ from ._options import (
     checked_choice,
     checked_flag,
     integral_number,
-    number_at_least,
+    non_negative_number,
     positive_integer,
     real_number,
 )
@@ -614,7 +609,7 @@ def _fraction(value: Any, name: str) -> float:
 def _min_cells(value: Any) -> int:
     number = integral_number(value, "min_cells")
     if number < 0:
-        raise ValueError(f"min_cells must be at least 0, got {number}")
+        raise ValueError(f"min_cells must be non-negative, got {number}")
     return number
 
 
@@ -737,8 +732,9 @@ def plot_mds(
     coordinates of a dimension are an eigenvector of the doubly centred matrix of
     squared distances, -1/2 J D J, times the square root of its eigenvalue, and the
     axis labels give each eigenvalue's share of their sum, limma's
-    ``var.explained``. A dimension's sign is arbitrary; here its largest coordinate is
-    positive.
+    ``var.explained``. A dimension's sign is arbitrary; here its coordinate of largest
+    absolute value is positive, the first of those within a relative 1e-9 of the
+    largest when several nearly tie.
 
     A cube gives the pseudobulk samples of one group, prepared as the edgeR User's Guide
     prepares counts for ``plotMDS``: samples with fewer than ``min_cells`` cells or no
@@ -767,7 +763,7 @@ def plot_mds(
             12 levels.
         labels: True to write each sample's id next to it (numbers from 1 for data
             other than a cube), or one label per sample.
-        top: The number of genes behind each distance, at least 1.
+        top: The number of genes that each distance uses, at least 1.
         gene_selection: ``"pairwise"`` or ``"common"``.
         dimensions: The two dimensions to plot, counted from 1 in decreasing order of
             their eigenvalues.
@@ -914,7 +910,8 @@ def _mds(values: FloatArray, top: int, pairwise: bool) -> tuple[FloatArray, Floa
     order = np.argsort(eigenvalues)[::-1]
     eigenvalues, vectors = eigenvalues[order], vectors[:, order]
     coordinates: FloatArray = vectors * np.sqrt(np.maximum(eigenvalues, 0.0))
-    # The largest coordinate of each dimension is positive; of near ties, the first.
+    # The coordinate of largest absolute value of each dimension is positive; of near
+    # ties, the first.
     magnitude = np.abs(coordinates)
     largest = np.argmax(magnitude >= magnitude.max(axis=0) * (1.0 - 1e-9), axis=0)
     signs = np.sign(coordinates[largest, np.arange(n)])
@@ -1438,7 +1435,7 @@ def plot_residual_variances(
     whose two-sided p-value as a variance of the prior, from the F distribution on the
     gene's residual and the prior's degrees of freedom (those of the genes that are not
     outliers), is below 0.5 once adjusted by Benjamini and Hochberg (1995), as limma
-    marks them (found by probing). Of a differential-expression result, the moderation
+    marks them. Of a differential-expression result, the moderation
     of one group, which :meth:`~cytepool.DifferentialExpressionResult.fit` computes
     again.
 
@@ -1942,7 +1939,7 @@ def plot_volcano(
     level = _fraction(alpha, "alpha")
     count = integral_number(top, "top")
     if count < 0:
-        raise ValueError(f"top must be at least 0, got {count}")
+        raise ValueError(f"top must be non-negative, got {count}")
     if labels is not None:
         reject_masked(labels, "labels")
     x = _require(tests.log2_fold_change, "log2_fold_change", "plot_volcano")
@@ -2271,8 +2268,8 @@ def plot_barcode(
     where the statistic is below -sqrt(2) or above sqrt(2); a bar at the rank of every
     gene of the set; and above them the enrichment worm, the relative enrichment of
     the set along the ranking: the moving average of the set's indicator over the
-    ranked genes, with tricube weights over a window of ``span`` of the genes (limma's
-    ``tricubeMovingAverage``, whose weights were found by probing), divided by the
+    ranked genes, with tricube weights over a window of ``span`` of the genes, as
+    limma's ``tricubeMovingAverage`` weighs them, divided by the
     set's share of all genes. A worm above 1 (the dashed line) at the right shows a
     set enriched among the genes with large statistics. The worm is drawn above the
     bars, scaled to its largest value, which the axis gives, as limma draws it. The
@@ -2739,7 +2736,7 @@ def plot_enrichment(
             contrast.
     """
     _check_axes(ax)
-    power = number_at_least(exponent, "exponent", 0.0)
+    power = non_negative_number(exponent, "exponent")
     reject_masked(gene_set, "gene_set")
     if isinstance(gene_set, str) or isinstance(gene_set, Mapping):
         raise TypeError(
@@ -2848,7 +2845,7 @@ def plot_gsea_table(
     if not isinstance(table, Table):
         raise TypeError(f"table must be a Table, got {type(table).__name__}")
     count = positive_integer(top, "top")
-    power = number_at_least(exponent, "exponent", 0.0)
+    power = non_negative_number(exponent, "exponent")
     reject_masked(gene_sets, "gene_sets")
     collection = gene_set_collection(gene_sets)
     needed = (
@@ -4243,7 +4240,7 @@ def _chosen_features(
     for gene in list(genes):
         if isinstance(gene, bool | np.bool_):
             raise TypeError(
-                "features must be feature ids, symbols or positions, not bool"
+                "features must be feature ids, symbols or positions, got bool"
             )
         if isinstance(gene, numbers.Integral):
             position = int(gene)
@@ -4430,7 +4427,7 @@ def plot_sumrank(
     reject_masked(top, "top")
     named = integral_number(top, "top")
     if named < 0:
-        raise ValueError(f"top must be at least 0, got {named}")
+        raise ValueError(f"top must be non-negative, got {named}")
     table = result.features
     ids = [str(value) for value in table["feature_id"].tolist()]
     names = ids
@@ -4719,11 +4716,11 @@ def plot_pca(
     DESeq2's ``plotPCA`` (Love et al. 2014): the samples' coordinates on two components
     of :func:`~cytepool.principal_components`, which takes the ``top`` genes of largest
     variance over the samples, centres each on its mean, and decomposes them by singular
-    values (Pearson 1901); the sign of each component makes its largest coordinate
-    positive. The axes are labelled as ``plotPCA`` labels them, with each component's
-    share of the variance rounded to a whole percent, as in "PC1: 45% variance", and
-    drawn to the same scale, as ``plotPCA`` draws them, so that the distances between
-    samples are drawn true. The coordinates are those of ``principal_components``; pass
+    values (Pearson 1901); the sign of each component makes its coordinate of largest
+    absolute value positive. The axes are labelled as ``plotPCA`` labels them, with each
+    component's share of the variance rounded to a whole percent, as in "PC1: 45%
+    variance", and drawn to the same scale, as ``plotPCA`` draws them, so that the
+    distances between samples are drawn true. The coordinates are those of ``principal_components``; pass
     its result as ``data`` to draw the components it holds.
 
     Draws the samples as points (gid ``"samples"``), coloured by ``color_by`` and

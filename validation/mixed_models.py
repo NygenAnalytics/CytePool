@@ -27,9 +27,12 @@ compared to 1e-5 because lmerTest differentiates numerically in theta (see
 lme4's own optimum, which inherit the optimiser's precision where a variance is small,
 and the variance components and degrees of freedom with lme4's default tolerances.
 
-With ``--benchmark``, the script times ``fit_mixed_model`` on one thread on 20,000
-genes x 120 samples with observation weights, for one, two crossed and two nested
-random intercepts, and lmerTest's ``lmer`` and ``summary`` on 100 of the genes.
+With ``--benchmark``, the script times ``fit_mixed_model`` and ``fixed_effect_tests``,
+by Satterthwaite's and by Kenward-Roger's method, on one thread on 20,000 genes x 120
+samples with observation weights, for one, two crossed and two nested random
+intercepts, and on 20,000 genes x 18 samples with one random intercept, a study small
+enough for dream's default to take Kenward-Roger's method; and lmerTest's ``lmer`` and
+``summary`` on 100 of the genes of each.
 
 Deliberate differences, printed as such: CytePool refuses a zero weight (lme4's REML
 criterion is then infinite) and a missing value (lme4 drops the sample); it leaves
@@ -832,7 +835,8 @@ def write_fixtures(
 
 
 def benchmark(n_genes: int = 20_000, n_timed: int = 100) -> None:
-    """Time fit_mixed_model on one thread, and lmerTest on ``n_timed`` of the genes."""
+    """Time fit_mixed_model and its tests on one thread, and lmerTest on ``n_timed`` of
+    the genes."""
     rng = np.random.default_rng(20261028)
     donor = np.repeat(np.arange(40), 3)
     samples = {
@@ -855,6 +859,18 @@ def benchmark(n_genes: int = 20_000, n_timed: int = 100) -> None:
     for case in cases:
         y = simulate(rng, case.design, n_genes, random_sd=2.0)
         case.y, case.weights = with_weights(rng, y)
+    # A small study, of 6 donors x 3 samples, in which dream's default takes
+    # Kenward-Roger's method (fewer than 20 samples).
+    small_donor = np.repeat(np.arange(6), 3)
+    small_samples = {
+        "donor": labels("D", small_donor),
+        "condition": np.tile(np.array(["a", "b", "c"], dtype=object), 6),
+        "age": rng.normal(50.0, 10.0, small_donor.size),
+    }
+    small = Case("small", small_samples, formula, "(1 | donor)", None)
+    y = simulate(rng, small.design, n_genes, random_sd=2.0)
+    small.y, small.weights = with_weights(rng, y)
+    cases.append(small)
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         for case in cases:
@@ -871,18 +887,19 @@ def benchmark(n_genes: int = 20_000, n_timed: int = 100) -> None:
         )
         lines = (root / "seconds.txt").read_text().splitlines()
         theirs = {line.split()[0]: float(line.split()[1]) for line in lines}
-    n = cases[0].y.shape[0]
-    print(f"Benchmark: {n_genes} genes x {n} samples, observation weights, one thread")
+    print(f"Benchmark: {n_genes} genes, observation weights, one thread")
     print(
-        "| random effects | CytePool fit (s) | CytePool tests (s) | lmerTest per gene "
-        "(s) | lmerTest for every gene (min) |"
+        "| random effects | samples | CytePool fit (s) | Satterthwaite's tests (s) | "
+        "Kenward-Roger's tests (s) | lmerTest per gene (s) | lmerTest for every gene "
+        "(min) |"
     )
-    print("| --- | --- | --- | --- | --- |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
     for case in cases:
         warm = fit_mixed_model(
             case.y[:, :10], case.design, weights=case.weights[:, :10]
         )
         fixed_effect_tests(warm)
+        fixed_effect_tests(warm, df_method="kenward_roger")
         seconds = []
         for _ in range(3):
             start = time.perf_counter()
@@ -893,11 +910,14 @@ def benchmark(n_genes: int = 20_000, n_timed: int = 100) -> None:
         start = time.perf_counter()
         fixed_effect_tests(fit)
         tests = time.perf_counter() - start
+        start = time.perf_counter()
+        fixed_effect_tests(fit, df_method="kenward_roger")
+        kenward_roger = time.perf_counter() - start
         per_gene = theirs[case.name]
         random = case.random.replace("|", "\\|")
         print(
-            f"| {random} | {np.median(seconds):.2f} | {tests:.2f} | "
-            f"{per_gene:.3f} | {per_gene * n_genes / 60:.1f} |"
+            f"| {random} | {case.y.shape[0]} | {np.median(seconds):.2f} | {tests:.2f} | "
+            f"{kenward_roger:.2f} | {per_gene:.3f} | {per_gene * n_genes / 60:.1f} |"
         )
 
 
@@ -907,7 +927,9 @@ def main() -> int:
         "--write-fixtures", action="store_true", help="write test fixtures"
     )
     parser.add_argument(
-        "--benchmark", action="store_true", help="time 20,000 genes x 120 samples"
+        "--benchmark",
+        action="store_true",
+        help="time 20,000 genes x 120 and x 18 samples",
     )
     arguments = parser.parse_args()
     if arguments.benchmark:

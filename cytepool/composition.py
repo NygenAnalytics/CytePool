@@ -1,29 +1,12 @@
 """Tests of differences in cell-type composition between conditions, by propeller.
 
-:func:`~cytepool.propeller` tests, for every group (cell type) of a cube, whether the
-share of a sample's cells that belong to the group differs between conditions, as
-speckle's ``propeller`` does (Phipson et al. 2022). It reads only the number of cells of
-every sample in every group (``Cube.n_cells``), or a table of them, and fits one linear
-model to all groups at once:
-
-1. Proportions. Sample j, with x_ij cells of group i and N_j cells in all, has the
-   proportion p_ij = x_ij / N_j of group i.
-2. Transform. The logit transform, log(q_ij / (1 - q_ij)), takes the proportions
-   after half a cell is added to every count, q_ij = (x_ij + 0.5) / sum_i (x_ij +
-   0.5), so that a group absent from a sample has a finite value; the arcsine
-   square-root transform, arcsin(sqrt(p_ij)), takes the proportions as they are
-   (Phipson et al. 2022, supplementary section 1).
-3. Linear model. The transformed proportions of every group are fitted with the
-   design by least squares (limma's ``lmFit``), and the contrasts are formed
-   (``contrasts.fit``).
-4. Moderation. The residual variances of the groups are moderated by empirical
-   Bayes, robustly by default, as speckle calls limma's ``eBayes(robust = TRUE)``
-   (Smyth 2004; Phipson et al. 2016).
-5. Tests. Each contrast is tested by its moderated t-statistic, as
-   ``propeller.ttest`` does. ``f_tests`` names factors whose levels are tested for
-   equal means by the moderated F-statistic, as ``propeller.anova`` does, and
-   ``propeller`` with more than two groups. The p-values of a test are adjusted by
-   the method of Benjamini and Hochberg over the groups (speckle's ``FDR``).
+:func:`~cytepool.propeller` runs speckle's ``propeller`` (Phipson et al. 2022) on the
+number of cells of every sample in every group (cell type) of a cube
+(``Cube.n_cells``), or on a table of them, and returns a
+:class:`~cytepool.CompositionResult`.
+https://docs.nygen.io/CytePool/statistics/composition#propeller-steps gives the
+steps, and https://docs.nygen.io/CytePool/statistics/composition#composition-limits
+how the results differ from speckle's.
 
 Samples and groups:
     The design's sample table must have a ``sample_id`` column; its samples are
@@ -35,63 +18,15 @@ Samples and groups:
     used is left out too: it is not observed in the experiment, and speckle, which
     reads the label of every cell, never sees it. At least two groups must remain.
 
-Descriptive columns:
-    Each table also gives speckle's descriptive columns, whose definitions were found
-    by probing speckle 1.6.0. The baseline proportion of a group is its share of all
-    the cells of the samples used (speckle's ``BaselineProp``). The mean proportion
-    of a level of a factor is the mean of p_ij over the samples at that level
-    (``PropMean``), taken over the samples as they are, whatever the other terms of
-    the design. A contrast *compares the levels* of a factor when it is a
-    combination, with weights d_l that sum to zero, of the differences between the
-    levels of a factor that enters the formula as a main effect only; for example
-    ``conditionstim`` in ``~ donor + condition``, ``conditionstim -
-    conditionctrl`` in ``~ 0 + condition``, or ``(groupA + groupB)/2 - groupC``,
-    but not ``groupA + groupB``. The proportion ratio of such a contrast is the
-    product of the mean proportions m_l of its levels raised to their weights,
-    prod_l m_l^d_l (``PropRatio``): m_stim / m_ctrl for stim against ctrl, and
-    sqrt(m_A m_B) / m_C for ``(groupA + groupB)/2 - groupC``. The table of such a
-    contrast gives the mean proportion of each level with a weight other than zero,
-    and the ratio; the table of another contrast, such as a covariate's slope, gives
-    neither.
-
-Deliberate differences from speckle:
-    ``validation/composition_tests.py`` reports each of them.
-
-    - speckle's ``PropMean`` are the coefficients of the proportions regressed on
-      the columns of the design matrix that the contrast weighs, and its
-      ``PropRatio`` is their product raised to the contrast's weights (found by
-      probing). Where those columns indicate groups of samples, as in a design
-      without an intercept whose first columns are the groups, the coefficients
-      are the groups' mean proportions and the ratio is the one above. Otherwise
-      they are not: for ``groupA + groupB``, which compares nothing, speckle
-      reports the product m_A m_B as a ratio; for ``(Intercept) + groupB`` in ``~
-      group + age``, the mean of the samples outside B and a difference of means;
-      and for a contrast that weighs a single column, such as ``conditionstim`` in
-      ``~ condition`` or a covariate, it stops with an error. Here the levels a
-      contrast compares are found from the design's coding, so every
-      parametrisation of the same comparison gives the same table, and a contrast
-      that compares no levels is tested without descriptive columns.
-    - A group without cells in any sample is left out. speckle keeps an unused level
-      of a factor of cell labels, tests it, and with the logit transform its half
-      cells change the transformed proportions of every other group (found by
-      probing).
-    - A sample without cells is left out. speckle keeps an unused level of a factor
-      of sample labels: with the arcsine transform its proportions are NaN and limma
-      leaves it out too, but with the logit transform every group of that sample has
-      the proportion 1 / (number of groups), which enters the fit as data (found by
-      probing).
-    - Data that the design fits exactly in every group, up to rounding, as when the
-      samples of each condition are copies of one another, raise an error: no
-      variance can be estimated. speckle returns statistics of the rounding errors
-      (t-statistics near 1e15, for example) or NaN.
-
-Accuracy:
-    The transforms are computed as log((x_ij + 0.5) / (N_j - x_ij + 0.5 (I - 1)))
-    for I groups and as arctan2(sqrt(x_ij), sqrt(N_j - x_ij)): the formulas above,
-    without the cancellation in 1 - q_ij and the loss of digits of arcsin near 1.
-    They agree with speckle's values to rounding, and stay within a few units in
-    the last place where those lose digits, for a group that holds nearly all the
-    cells of a sample. Cell numbers are summed exactly, in float64 up to 2**53.
+Matching speckle:
+    The results match speckle 1.6.0's ``propeller``, ``propeller.ttest`` and
+    ``propeller.anova``, with limma 3.62.1. Running speckle settled the conventions
+    that its documentation leaves open, such as the definitions of its descriptive
+    columns, which :class:`~cytepool.CompositionResult` gives. With two groups of
+    samples, ``propeller`` tests the first level against the second, and with more,
+    the F-test of their factor. The transforms equal speckle's formulas, computed
+    without the cancellation in 1 - q and the loss of digits of arcsin near 1, and
+    cell numbers are summed exactly.
 
 References:
     Phipson B, Sim CB, Porrello ER, Hewitt AW, Powell J, Oshlack A (2022). propeller:
@@ -175,15 +110,25 @@ class CompositionResult:
     - ``group_id``;
     - ``baseline_proportion``: the group's share of all the cells of the samples
       used (speckle's ``BaselineProp``);
-    - for a contrast that compares the levels of a factor (see "Descriptive columns" in
-      the description of :func:`propeller`), ``mean_proportion_<level>`` for each level
-      it weighs, in level order: the mean proportion of the group over the samples at
-      that level (``PropMean``), and ``proportion_ratio``: the product of these means
-      raised to the weights of their levels, such as m_stim / m_ctrl (``PropRatio``);
+    - for a contrast that compares the levels of a factor, ``mean_proportion_<level>``
+      for each level it weighs, in level order: the mean proportion of the group over
+      the samples at that level, taken over the samples as they are, whatever the
+      other terms of the design (``PropMean``); and ``proportion_ratio``: the product
+      of these means m_l raised to the weights d_l of their levels, prod_l m_l^d_l,
+      such as m_stim / m_ctrl, or sqrt(m_A m_B) / m_C for ``(groupA + groupB)/2 -
+      groupC`` (``PropRatio``);
     - ``t`` and ``p_value``: the moderated t-statistic of the contrast on the
       transformed proportions and its two-sided p-value (``Tstatistic``,
       ``P.Value``);
     - ``adjusted_p_value``: Benjamini-Hochberg over the groups (``FDR``).
+
+    A contrast compares the levels of a factor when it is a combination, with
+    weights d_l that sum to zero, of the differences between the levels of a factor
+    that enters the formula as a main effect only: ``conditionstim`` in ``~ donor +
+    condition``, ``conditionstim - conditionctrl`` in ``~ 0 + condition``, or
+    ``(groupA + groupB)/2 - groupC``, but not ``groupA + groupB``. The table of
+    another contrast, such as the slope of a covariate, has neither mean proportions
+    nor a ratio.
 
     The table of an F-test (``tables`` and ``table``, by the name of its factor) has
     ``group_id``, ``baseline_proportion``, ``mean_proportion_<level>`` for every level
@@ -345,8 +290,8 @@ class CompositionResult:
         levels and the contrasts between them), or null; the samples used, in the
         order fitted, and those left out with the reason; and the groups tested
         and those left out with the reason. The fingerprint, and the digest of
-        ``n_cells``, say whether a cube at hand holds the cell numbers behind the
-        tables (``Cube.verify_fingerprint``).
+        ``n_cells``, say whether a cube at hand holds the cell numbers that the
+        tables were computed from (``Cube.verify_fingerprint``).
         """
         record: dict[str, Any] = json.loads(self._record)
         return record
@@ -414,8 +359,11 @@ def propeller(
     with the design, and its contrasts are tested by moderated t-statistics, and the
     levels of a factor by a moderated F-statistic, after empirical Bayes moderation
     of the residual variances across groups: speckle's ``propeller``,
-    ``propeller.ttest`` and ``propeller.anova``. The module documentation describes
-    the steps, the descriptive columns and the deliberate differences from speckle.
+    ``propeller.ttest`` and ``propeller.anova``.
+    https://docs.nygen.io/CytePool/statistics/composition#propeller-steps gives the
+    steps; :class:`CompositionResult` defines the descriptive columns, and
+    https://docs.nygen.io/CytePool/statistics/composition#composition-limits states
+    the differences from speckle.
 
     As in speckle, ``propeller(clusters, sample, group)`` with two groups tests the
     first level against the second: ``Design(samples, "~ 0 + group",
@@ -424,23 +372,28 @@ def propeller(
     followed by covariates is a design such as ``~ 0 + group + age`` with a
     contrast between groups, and ``propeller.anova`` the F-test of ``group`` in
     it. The same comparisons in another parametrisation, such as ``~ group + age``
-    with the contrast ``groupB``, give the same tables.
+    with the contrast ``groupB``, give the same tables. As in limma, the
+    t-statistics have ``df_residual + df_prior`` degrees of freedom, capped at the
+    residual degrees of freedom of all the groups together, and the F-statistics
+    ``df_residual + df_prior`` denominator degrees of freedom, not capped.
 
     Provenance:
         The result records the cube's fingerprint, the digests it is built from and its
         own provenance, as :func:`~cytepool.limma_voom` does, although the test reads
         only the cell numbers. For a cube opened with :func:`~cytepool.read_cube` this
         reads nothing, as the file stores the digests; a cube in memory hashes its
-        layers once, at about 1 s per GB of values where the processor has SHA
-        instructions, and keeps the digests.
+        layers once (see "Cost" in :meth:`Cube.fingerprint
+        <cytepool.Cube.fingerprint>`), and keeps the digests.
 
     Args:
-        data: The number of cells of every sample in every group: a
-            :class:`~cytepool.Cube` that records them (``n_cells``), or a table with one
-            row per sample, a text column ``sample_id`` and one column of cell numbers
-            (integers) per group, named by its group id: a ``Table``, a mapping of
-            columns, or a pandas DataFrame. A DataFrame without a ``sample_id`` column
-            is read with its index as the sample ids, as
+        data: The number of cells of every sample in every group, as whole numbers
+            (proportions with assumed totals, as speckle's ``convertDataToList``
+            takes them, are not read): a :class:`~cytepool.Cube` that records them
+            (``n_cells``), or a table with one row per sample, a text column
+            ``sample_id`` and one column of cell numbers (integers) per group, named
+            by its group id: a ``Table``, a mapping of columns, or a pandas
+            DataFrame. A DataFrame without a ``sample_id`` column is read with its
+            index as the sample ids, as
             ``pandas.crosstab(cells["sample_id"], cells["cell_type"])`` gives it.
         design: A :class:`~cytepool.Design` whose sample table has a
             ``sample_id`` column with sample ids of the data; its rows may be some
@@ -459,7 +412,9 @@ def propeller(
             every count, or ``"asin"`` for the arcsine square root.
         robust: Whether to estimate the prior of the moderation robustly, as
             speckle does by default (``eBayes(robust = TRUE)``), which protects
-            against groups whose variance is unusually large.
+            against groups whose variance is unusually large. With fewer than 10
+            groups the robust estimate is the ordinary one, and two groups are not
+            moderated, as in limma.
         trend: Whether the prior variance follows the mean transformed proportion
             of the groups (``eBayes(trend = TRUE)``).
 
@@ -771,6 +726,11 @@ def _fit(cells: np.ndarray, matrix: np.ndarray, design: Design, transform: str) 
             "a sample has 2**53 cells or more, more than float64 counts exactly; "
             "propeller needs exact proportions"
         )
+    # Samples and groups without cells are left out. speckle keeps an unused level of
+    # a factor of labels: it tests an unused group, whose half cells change the logits
+    # of the others, and gives an unused sample the logit of 1 / (number of groups)
+    # in every group, or NaN with the arcsine, which limma leaves out (found by
+    # probing).
     used = totals > 0.0
     group_cells = cells[used].sum(axis=0)
     tested = group_cells > 0
@@ -996,6 +956,11 @@ def _descriptive(
     (only the levels it weighs are shown, with the ratio), the factor of an F-test
     with weights None (every level is shown), or None.
     """
+    # speckle's BaselineProp, PropMean and PropRatio (found by probing speckle 1.6.0).
+    # Its PropMean are the coefficients of the proportions regressed on the columns
+    # that a contrast weighs, mean proportions only where those columns indicate
+    # groups of samples (found by probing); here they are always the means of the
+    # levels compared.
     columns = {
         "group_id": group_ids[fit.tested],
         "baseline_proportion": fit.cells.sum(axis=0) / float(fit.cells.sum()),

@@ -11,8 +11,8 @@ the functions never raise for numeric input. Arguments that are not real numbers
 (strings, complex numbers, objects) raise ``TypeError``, and so do numpy masked arrays,
 whose mask numpy would drop: NaN marks a missing value instead.
 
-The compiled scalar routines behind the public functions are named ``<function>_scalar``
-and can be called from other compiled code.
+Each public function calls a compiled scalar routine named ``<function>_scalar``,
+which other compiled code can call too.
 
 Methods:
     - ``lgamma`` is the C library's ``lgamma``.

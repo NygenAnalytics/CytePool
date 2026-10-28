@@ -2,16 +2,17 @@
 their target genes, as decoupler computes them: the univariate and multivariate
 linear models (ULM, MLM) and the weighted aggregate.
 
-A network (:class:`~cytepool.Network`), such as CollecTRI's regulons or PROGENy's
-pathway signatures (:func:`~cytepool.collectri`, :func:`~cytepool.progeny`), gives each
-source, a transcription factor or a pathway, a signed weight on each of its target
-genes. A source is active in a profile, the expression of a sample or the statistics of
-a contrast, when its targets are high where their weights are positive and low where
-they are negative. Each function scores every source in every profile, as decoupler
-2.2.0's ``mt.ulm``, ``mt.mlm`` and ``mt.waggr`` do (Badia-i-Mompel et al. 2022), and
-returns an :class:`~cytepool.Activities`, profiles x sources, which the linear models
-take as they take pathway scores, and which :func:`~cytepool.plotting.plot_activities`
-draws as a heatmap and :func:`~cytepool.plotting.plot_top_activities` as bars.
+:func:`~cytepool.ulm`, :func:`~cytepool.mlm` and :func:`~cytepool.weighted_aggregate`
+score every source of a network (:class:`~cytepool.Network`, such as
+:func:`~cytepool.collectri` or :func:`~cytepool.progeny` returns) in every profile, as
+decoupler 2.2.0's ``mt.ulm``, ``mt.mlm`` and ``mt.waggr`` do (Badia-i-Mompel et al.
+2022). Each returns an :class:`~cytepool.Activities`, profiles x sources, which
+:func:`~cytepool.limma` tests with a design when the profiles are samples, and which
+:func:`~cytepool.plotting.plot_activities` draws as a heatmap and
+:func:`~cytepool.plotting.plot_top_activities` as bars.
+https://docs.nygen.io/CytePool/statistics/activities#ulm explains the methods, and
+https://docs.nygen.io/CytePool/statistics/activities#activities-limits how they differ
+from decoupler's.
 
 The profiles:
     - A samples x genes array, one profile per row, with one gene id per column.
@@ -27,7 +28,8 @@ The profiles:
     Each profile's genes are those with an id and a value: NaN marks a missing value,
     and a gene that a group did not test has none in that group's profiles. Genes
     whose values are zero in every profile are left out, as decoupler leaves them
-    out: in sparse data they are genes that were not detected.
+    out: in sparse data they are genes that were not detected. A profile without
+    genes, or whose values are all zero, has NaN scores.
 
 The network's targets:
     Targets are matched to the genes' ids exactly. An edge whose weight is zero is no
@@ -36,61 +38,10 @@ The network's targets:
     as decoupler's ``tmin`` leaves it out; ``n_targets`` gives each source's targets
     among each profile's genes.
 
-ULM (:func:`~cytepool.ulm`):
-    For each source and profile, a linear model of the profile's n genes on the
-    source's weights, zero for the genes that are not its targets:
-
-        y_g = b_0 + b_1 x_g + e_g,
-
-    fitted by least squares. The activity score is the t-statistic of the slope,
-    t = b_1 / se(b_1) = r sqrt((n - 2) / (1 - r^2)), with r the correlation of y and
-    x, and its p-value is two-sided, from Student's t distribution on n - 2 degrees
-    of freedom. ``estimates`` are the slopes b_1.
-
-MLM (:func:`~cytepool.mlm`):
-    One linear model of each profile's genes on the weights of all its sources at
-    once, with an intercept, y_g = b_0 + sum_s b_s x_gs + e_g, so that each source's
-    score, the t-statistic of b_s on n - m - 1 degrees of freedom for m sources, is
-    that of its targets beyond what the other sources explain. The model is fitted by
-    a QR decomposition. Sources whose weights over the genes are linear combinations
-    of the weights of other sources, such as two sources with the same targets and
-    weights, cannot be told apart, and are refused: the message names them.
-
-Weighted aggregate (:func:`~cytepool.weighted_aggregate`):
-    The weighted mean of the values of a source's targets, sum_g w_g y_g /
-    sum_g |w_g|, or their weighted sum, sum_g w_g y_g, the score of the original
-    PROGENy method (Schubert et al. 2018). With ``n_permutations`` random
-    permutations of the genes, each permutation giving every gene the value of
-    another, as decoupler draws them (its ``seed`` is ``rng``), the score is
-    normalized by the scores of the permutations, (ES - mean) / sd, the standard
-    deviation with n - 1 in its denominator, and the p-value doubles the smaller
-    of the two one-sided permutation p-values, (1 + b) / (1 + n_permutations), with b
-    the permutations whose score is at least, or at most, the observed one (Phipson
-    and Smyth 2010). ``estimates`` keep the weighted means or sums.
-
 Adjusted p-values:
     ``adjusted_p_value`` are Benjamini and Hochberg's (1995) over the sources of each
-    profile, as decoupler adjusts them.
-
-Deliberate differences from decoupler 2.2.0:
-    - decoupler reports MLM's p-values without adjusting them, under the name of its
-      adjusted p-values; here they are ``p_value``, and ``adjusted_p_value`` are
-      adjusted as for the other methods.
-    - decoupler keeps adjusted p-values in single precision, and computes MLM's
-      p-values as one minus the distribution function, which gives 0 below about
-      1e-16; here both are in double precision, from the upper tail.
-    - decoupler counts the permutations of the weighted aggregate whose absolute
-      score exceeds the absolute observed score, and then folds that share as it
-      would fold a one-sided one, so that a score near zero, which most permutations
-      exceed, gets a p-value near 2 / n_permutations; here the p-value doubles the
-      smaller one-sided p-value. When every permutation scores alike, decoupler's
-      normalized score is infinite, or 0 for a score of 0; here it is NaN.
-    - decoupler adds 2.2e-16 to 1 - r and 1 + r in ULM's t-statistic; here it is
-      exact, which changes the score only for |r| within about 1e-6 of 1.
-    - decoupler refuses missing values and leaves out samples whose values are all
-      zero; here each profile uses its observed genes, and a profile without genes
-      has NaN scores. Where MLM cannot separate sources, decoupler stops with a
-      singular matrix; here the message names them.
+    profile, for every method, as decoupler adjusts those of ULM; decoupler leaves
+    MLM's unadjusted.
 
 References:
     Badia-i-Mompel P, Velez Santiago J, Braunger J, Geiss C, Dimitrov D, Mueller-Dott S,
@@ -168,9 +119,10 @@ class Activities:
     """Activities of the sources of a network in every profile.
 
     Rows of the arrays are profiles, in the order of ``profiles``, and columns are
-    sources, in the order of ``network.sources``, so that
-    :func:`~cytepool.stats.linear_models.fit_linear_model` takes ``scores`` as its
-    values, with a design built from ``profiles``. The arrays are read-only.
+    sources, in the order of ``network.sources``. The activities of samples, such as
+    those of a cube's group, are tested with a design by :func:`~cytepool.limma`,
+    with the design built for the cube, whose rows it matches to ``profiles`` by
+    ``sample_id``. The arrays are read-only.
 
     Attributes:
         scores: ``(n_profiles, n_sources)`` activity scores: the t-statistics of ULM
@@ -335,11 +287,19 @@ def ulm(
     """Score the sources of a network in every profile by univariate linear models
     (ULM).
 
-    As decoupler's ``mt.ulm`` (Badia-i-Mompel et al. 2022): for each source, the
-    values of a profile's genes are regressed on the source's weights, zero for the
-    genes that are not its targets, and the score is the t-statistic of the slope.
-    The module docstring gives the profiles, the matching of targets and the
-    deliberate differences from decoupler.
+    As decoupler's ``mt.ulm`` (Badia-i-Mompel et al. 2022): for each source and
+    profile, a linear model of the values of the profile's n genes on the source's
+    weights, zero for the genes that are not its targets,
+
+        y_g = b_0 + b_1 x_g + e_g,
+
+    fitted by least squares. The score is the t-statistic of the slope,
+    t = b_1 / se(b_1) = r sqrt((n - 2) / (1 - r^2)), with r the correlation of y and
+    x, and its p-value is two-sided, from Student's t distribution on n - 2 degrees
+    of freedom. https://docs.nygen.io/CytePool/statistics/activities#ulm explains the
+    method, the module documentation gives the profiles and the matching of targets,
+    and https://docs.nygen.io/CytePool/statistics/activities#activities-limits the
+    differences from decoupler.
 
     Args:
         data: ``(n_profiles, n_genes)`` values, such as log-expression values of
@@ -464,12 +424,22 @@ def mlm(
     """Score the sources of a network in every profile by one multivariate linear
     model (MLM).
 
-    As decoupler's ``mt.mlm`` (Badia-i-Mompel et al. 2022): the values of a
-    profile's genes are regressed on the weights of all the sources at once, with an
-    intercept, and each source's score is the t-statistic of its coefficient, which
-    measures its targets beyond what the other sources explain. The module docstring
-    gives the profiles, the matching of targets and the deliberate differences from
-    decoupler.
+    As decoupler's ``mt.mlm`` (Badia-i-Mompel et al. 2022): one linear model of each
+    profile's genes on the weights of all its m sources at once, with an intercept,
+    y_g = b_0 + sum_s b_s x_gs + e_g, fitted by a QR decomposition, so that each
+    source's score, the t-statistic of b_s on n - m - 1 degrees of freedom, is that of
+    its targets beyond what the other sources explain. Sources whose weights over the
+    genes are linear combinations of the weights of other sources, such as two
+    sources with the same targets and weights, cannot be told apart, and are refused:
+    the message names them. https://docs.nygen.io/CytePool/statistics/activities#mlm
+    explains the method, the module documentation gives the profiles and the
+    matching of targets, and
+    https://docs.nygen.io/CytePool/statistics/activities#activities-limits the
+    differences from decoupler.
+
+    Memory: the design of the genes and sources of each set of profiles that observe
+    the same genes, and its QR factor, take 16 x genes x sources bytes, about 190 MB
+    for 15,000 genes and 800 sources.
 
     Args:
         data: The profiles, as for :func:`ulm`.
@@ -497,9 +467,9 @@ def mlm(
         ValueError: If the values are not 2-D or hold an infinite value, the ids do
             not match the values, an id names two genes, an option is out of range or
             applies to another kind of data, a table lacks a column, no source has
-            ``min_targets`` targets among the genes, a profile has no more genes than
-            sources, or the weights of some sources are linear combinations of
-            those of others.
+            ``min_targets`` targets among the genes, a profile has fewer than two more
+            genes than sources, which leaves no residual degrees of freedom, or the
+            weights of some sources are linear combinations of those of others.
         KeyError: If the cube has no such group or features column, or the result
             has no such group or contrast.
     """
@@ -568,11 +538,22 @@ def weighted_aggregate(
     their targets' values.
 
     As decoupler's ``mt.waggr`` (Badia-i-Mompel et al. 2022): the weighted mean of
-    the values of a source's targets, sum w y / sum |w|, or their weighted sum,
-    sum w y, which is how PROGENy scores its pathways (Schubert et al. 2018); with
-    permutations of the genes, normalized by the scores of the permutations, with a
-    permutation p-value. The module docstring gives the permutations, the p-values
-    and the deliberate differences from decoupler.
+    the values of a source's targets, sum_g w_g y_g / sum_g |w_g|, or their weighted
+    sum, sum_g w_g y_g, which is how PROGENy scores its pathways (Schubert et al.
+    2018). With ``n_permutations`` random permutations of the genes, each giving every
+    gene the value of another, as decoupler draws them, the score is normalized by
+    the scores of the permutations, (ES - mean) / sd, the standard deviation with
+    n - 1 in its denominator, and the p-value doubles the smaller of the two
+    one-sided permutation p-values, (1 + b) / (1 + n_permutations), with b the
+    permutations whose score is at least, or at most, the observed one (Phipson and
+    Smyth 2010). If the permutations all score alike, so that their standard deviation
+    is zero, the normalized score is NaN, where decoupler gives infinity, or 0 for an
+    observed score of 0.
+    https://docs.nygen.io/CytePool/statistics/activities#weighted-aggregate
+    explains the method, the module documentation gives the profiles and the
+    matching of targets, and
+    https://docs.nygen.io/CytePool/statistics/activities#activities-limits the
+    differences from decoupler.
 
     Args:
         data: The profiles, as for :func:`ulm`.
@@ -1163,7 +1144,8 @@ def _fit_pattern(
         raise ValueError(
             f"MLM fits {m} sources and an intercept to the {n} genes of profile(s) "
             f"{quoted(ids)}, which leaves no residual degrees of freedom; it needs "
-            "more genes than sources: use ulm, or a network with fewer sources"
+            "at least two more genes than sources: use ulm, or a network with fewer "
+            "sources"
         )
     position = np.full(observed.shape[1], -1, dtype=np.int64)
     position[genes] = np.arange(n)
