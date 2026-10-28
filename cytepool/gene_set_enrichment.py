@@ -1,16 +1,18 @@
 """Gene set enrichment analysis (GSEA) of genes ranked by a statistic, as fgsea computes
 it.
 
-:func:`~cytepool.gsea` asks of each gene set whether its genes gather at the top or at
-the bottom of a ranking of all genes by a statistic, such as the moderated t-statistic
-of a contrast: preranked GSEA (Subramanian et al. 2005) as fgsea 1.32.2 computes it
-(Korotkevich et al. 2021), with p-values by fgsea's default multilevel method
-(``fgseaMultilevel``) or by permutations of the genes (``fgseaSimple``). Results match
-fgsea's exactly when CytePool is given the random seeds that fgsea draws, and within
-Monte Carlo error otherwise, except where noted under "Deliberate differences". The
-routines port fgsea's (MIT licence), as ``THIRD_PARTY_NOTICES.md`` records.
-:func:`~cytepool.plotting.plot_enrichment` and
-:func:`~cytepool.plotting.plot_gsea_table` draw its figures.
+:func:`~cytepool.gsea` computes preranked GSEA (Subramanian et al. 2005) as fgsea 1.32.2
+computes it (Korotkevich et al. 2021), for genes ranked by a statistic such as the
+moderated t-statistic, with p-values by fgsea's default multilevel method
+(``fgseaMultilevel``) or by permutations of the genes (``fgseaSimple``), in a table with
+one row per set tested. :func:`~cytepool.plotting.plot_enrichment` and
+:func:`~cytepool.plotting.plot_gsea_table` draw its figures. The routines port fgsea's
+(MIT licence), as ``THIRD_PARTY_NOTICES.md`` records: the results are fgsea's exactly
+when CytePool is given the random seeds that fgsea draws, and within Monte Carlo error
+otherwise. https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#gsea
+explains the method, and
+https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#over-representation-and-gsea-limits
+how it differs from fgsea.
 
 The genes and the sets:
     The statistics come from a group and contrast of a
@@ -19,70 +21,63 @@ The genes and the sets:
     with equal statistics keep the order in which they are given, as in fgsea: the score
     of a set whose genes tie with other genes depends on that order, and a warning says
     how many statistics tie. Rows without a gene id or without a statistic (NaN) are
-    left out, where fgsea refuses them; infinite statistics and ids on two rows are
-    refused. Each set's genes are matched to the ranked genes, and a set is tested when
-    ``min_size`` to ``max_size`` of its genes are ranked (fgsea's ``minSize`` and
-    ``maxSize``); a set of every ranked gene is never tested, as its score is not
-    defined. The table keeps the order of ``gene_sets``, where fgsea orders the sets by
-    name.
+    left out; infinite statistics and ids on two rows are refused. Each set's genes are
+    matched to the ranked genes, and a set is tested when ``min_size`` to ``max_size``
+    of its genes are ranked (fgsea's ``minSize`` and ``maxSize``); a set of every ranked
+    gene is never tested, as its score is not defined.
 
 The enrichment score:
-    With weights |r|^p of the statistics r, p the ``exponent`` (fgsea's
-    ``gseaParam``), the walk down the ranking rises at each gene of a set by its share
-    of the set's weight and falls at each other gene by 1 / (N - m), for m of the N
-    genes in the set. The enrichment score (ES) is the walk's largest deviation from
-    zero: with ``score_type="std"``, its maximum where that exceeds the absolute
-    minimum, its minimum where the absolute minimum is larger, and 0 where they are
-    equal; ``"pos"`` and ``"neg"`` take the maximum and the minimum, for one-sided
-    tests. An exponent of 0 gives the unweighted statistic of Mootha et al. (2003), 1
-    the weighted one of Subramanian et al. (2005). The leading edge is the set's genes
-    from the top of the ranking down to the maximum, for a positive score, or from
-    the minimum to the bottom, for a negative one, listed from the most extreme
-    statistic inwards: the genes that drive the score.
+    With weights |r|^p of the statistics r, p the ``exponent`` (fgsea's ``gseaParam``),
+    the walk down the ranking rises at each gene of a set by its share of the set's
+    weight and falls at each other gene by 1 / (N - m), for m of the N genes in the set.
+    The enrichment score (ES) is the walk's largest deviation from zero: with
+    ``score_type="std"``, its maximum where that exceeds the absolute minimum, its
+    minimum where the absolute minimum is larger, and 0 where they are equal; ``"pos"``
+    and ``"neg"`` take the maximum and the minimum, for one-sided tests. The leading
+    edge is the set's genes from the top of the ranking down to the maximum, for a
+    positive score, or from the minimum to the bottom, for a negative one, listed from
+    the most extreme statistic inwards.
 
 Random gene sets:
-    The null distribution of a set's score is that of random sets of the same size
-    (gene permutation). As fgsea does, each of the ``n_permutations`` permutations
-    draws one random sample of as many genes as the largest set, and the scores of all
-    its first genes, one score for each size, are computed together in
-    O(K^(3/2)) time for K genes, from the upper convex hulls of the walk in blocks
-    of about sqrt(K) genes (fgsea's ``calcGseaStatCumulative``).
-
-    The normalized enrichment score (NES) divides the ES by the mean of the random
-    scores of its sign: of those at least 0 for a positive ES, of the absolute values
-    of those at most 0 otherwise; it is NaN where that mean is 0 or there is no such
-    score. The permutation p-value is (1 + b) / (1 + n), with b the random scores at
-    least as extreme as the ES and n those of its sign, so that it is conditional on
-    the sign of the score, as GSEA's is.
+    The null distribution of a set's score is that of random sets of the same size. As
+    fgsea does, each of the ``n_permutations`` permutations draws one random sample of
+    as many genes as the largest set, and the scores of all its first genes, one score
+    for each size, are computed together in O(K^(3/2)) time for K genes, from the upper
+    convex hulls of the walk in blocks of about sqrt(K) genes (fgsea's
+    ``calcGseaStatCumulative``). The normalized enrichment score (NES) divides the ES
+    by the mean of the random scores of its sign: of those at least 0 for a positive
+    ES, of the absolute values of those at most 0 otherwise; it is NaN where that mean
+    is 0 or there is no such score. The permutation p-value is (1 + b) / (1 + n), with
+    b the random scores at least as extreme as the ES and n those of its sign, so that
+    it is conditional on the sign of the score, as GSEA's is.
 
 P-values by the multilevel method:
-    ``method="multilevel"`` (fgsea's default) starts from the permutation p-values of
-    ``n_permutations`` permutations. A set with fewer than 10 random scores of the sign
-    of its ES gets NaN for its p-value and NES. A set goes to adaptive multilevel
-    splitting (Korotkevich et al. 2021) when its permutation p-value would be less
-    accurate than the multilevel estimate: with b' of the n random scores beyond its ES
-    on its side, when half the larger distance from log2 of (b' + 1) / (n + 1) to the
-    ends of a 95% interval of the proportion (from the 2.5% and 97.5% quantiles of beta
-    distributions) exceeds the expected error of the multilevel estimate, as fgsea
-    decides; with fgsea's defaults, when b' is at most 23. For each set size,
-    ``sample_size`` random sets
-    are drawn; at each level the half with the lower positive scores (the largest
-    deviation of the walk above zero) is replaced by copies of the other half, each
-    of which a Markov chain then moves, swapping one gene at a time and keeping its
-    score above the level's median, about ``sample_size`` times the size moves in all.
-    The levels continue until the median reaches the ES, the median stops rising, or
-    the p-value would fall below ``eps``. The probability of each level, about 1/2, is
-    estimated on the log scale by the expected logarithm of an order statistic of
-    uniform variables, psi(k) - psi(n + 1) for the k-th of n with psi the digamma
-    function, and the p-value is the product over the levels, times the share of the
-    sampled sets beyond the ES whose signed score is positive, divided by the share of
-    random scores of the ES's sign among the permutations. ``log2_error`` gives the
-    expected standard deviation of log2 of the p-value: from the number of levels for
-    the multilevel method, and from the trigamma function of the counts for the
-    permutation p-values (fgsea's ``log2err``). It is NaN where fewer than half of the
-    last level's sets have a positive signed score, which makes the p-value likely
-    too large, and where the p-value is below ``eps``, which is then its value: when
-    the multilevel method has run, p-values below ``eps`` are reported as ``eps``.
+    ``method="multilevel"`` starts from the permutation p-values of ``n_permutations``
+    permutations. A set with fewer than 10 random scores of the sign of its ES gets NaN
+    for its p-value and NES. A set goes to adaptive multilevel splitting (Korotkevich et
+    al. 2021) when its permutation p-value would be less accurate than the multilevel
+    estimate: with b' of the n random scores beyond its ES on its side, when half the
+    larger distance from log2 of (b' + 1) / (n + 1) to the ends of a 95% interval of the
+    proportion (from the 2.5% and 97.5% quantiles of beta distributions) exceeds the
+    expected error of the multilevel estimate, as fgsea decides; with fgsea's defaults,
+    when b' is at most 23. For each set size, ``sample_size`` random sets are drawn;
+    at each level the half with the lower positive scores (the largest deviation of the
+    walk above zero) is replaced by copies of the other half, which a Markov chain then
+    moves, swapping one gene at a time and keeping each score above the level's
+    median, about ``sample_size`` times the size moves in all. The levels continue
+    until the median reaches the ES, the median stops rising, or the p-value would fall
+    below ``eps``. The probability of each level, about 1/2, is estimated on the log
+    scale by the expected logarithm of an order statistic of uniform variables,
+    psi(k) - psi(n + 1) for the k-th of n with psi the digamma function, and the
+    p-value is the product over the levels, times the share of the sampled sets beyond
+    the ES whose signed score is positive, divided by the share of random scores of the
+    ES's sign among the permutations. ``log2_error`` gives the expected standard
+    deviation of log2 of the p-value: from the number of levels for the multilevel
+    method, and from the trigamma function of the counts for the permutation p-values
+    (fgsea's ``log2err``). It is NaN where fewer than half of the last level's sets
+    have a positive signed score, which makes the p-value likely too large, and where
+    the p-value is below ``eps``, which is then its value: when the multilevel method
+    has run, p-values below ``eps`` are reported as ``eps``.
 
 Random numbers:
     ``rng`` draws the seeds of the random sets: two distinct integers from 1 to 10^9
@@ -96,20 +91,6 @@ Random numbers:
     ``sample.int(10^9, 1)``, the results are fgsea's: ``validation/gsea.py`` replays
     them. A seeded ``rng`` gives the same results every time, with any number of
     threads.
-
-Deliberate differences from fgsea:
-    - Adjusted p-values are Benjamini and Hochberg's over the sets with a p-value.
-      When no set goes to the multilevel method, fgsea adjusts them over the sets
-      before it removes those with fewer than 10 random scores of their sign, as
-      though those sets had been tested; its adjusted p-values are then smaller or
-      larger than those of the sets it reports.
-    - fgsea tests a single set with random sets from R's ``sample.int``, and several
-      sets with its own sampler; CytePool uses fgsea's sampler for one set too, so
-      that the two agree within Monte Carlo error.
-    - Random samples of at least half of the genes are put in random order by the
-      Fisher-Yates shuffle (Durstenfeld 1964) with fgsea's random integers, where
-      fgsea calls C++'s ``std::shuffle``, whose algorithm the standard leaves to each
-      library; the results agree within Monte Carlo error.
 
 References:
     Subramanian A, Tamayo P, Mootha VK, Mukherjee S, Ebert BL, Gillette MA, Paulovich
@@ -156,7 +137,7 @@ from ._masked_arrays import reject_masked
 from ._messages import PACKAGE_DIRECTORY, fitted_message, quoted
 from ._options import (
     checked_choice,
-    number_at_least,
+    non_negative_number,
     positive_integer,
     random_generator,
     real_number,
@@ -249,8 +230,12 @@ def gsea(
     (Korotkevich et al. 2021): whether the genes of each set gather at the top or the
     bottom of the ranking, with the enrichment score, its leading edge, the score
     normalized by those of random sets of the same size, and p-values by fgsea's
-    multilevel method or by permutations of the genes. The module docstring gives the
-    method, the random numbers and the deliberate differences from fgsea.
+    multilevel method or by permutations of the genes.
+    https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#gsea
+    explains the method, the module documentation its rules and the random numbers,
+    and
+    https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#over-representation-and-gsea-limits
+    the differences from fgsea.
 
     Args:
         statistics: The statistics that rank the genes: a
@@ -1622,7 +1607,7 @@ def _settings(
                 f"max_size ({largest}) is smaller than min_size ({smallest}), so no "
                 "set could be tested"
             )
-    power = number_at_least(exponent, "exponent", 0.0)
+    power = non_negative_number(exponent, "exponent")
     kind = _SCORE_TYPES.index(checked_choice(score_type, "score_type", _SCORE_TYPES))
     how = checked_choice(method, "method", _METHODS)
     count = positive_integer(n_permutations, "n_permutations")

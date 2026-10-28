@@ -6,15 +6,8 @@ myst:
 
 # Held-out prediction
 
-{func}`~cytepool.held_out_prediction` leaves each study of a
-{class}`~cytepool.StudyResults` out in turn, chooses genes up and down in each cell
-type from the results of the other studies, by SumRank and by a random-effects
-meta-analysis, scores every case and control of the held-out study by how high its
-profiles rank those genes, as UCell scores them, and gives the area under the ROC
-curve of cases against controls, by study and method, as Nakatsuka et al. (2025)
-compare methods. The cases and controls are the two levels that the contrast compares.
-{func}`~cytepool.plotting.plot_held_out_auc` draws the AUC of every held-out study by
-method.
+The prediction of cases in held-out studies by genes chosen from the others;
+[Replication](../statistics/replication/#held-out-prediction) explains it.
 
 ```{eval-rst}
 .. automodule:: cytepool.held_out_studies

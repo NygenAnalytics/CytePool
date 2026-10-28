@@ -186,14 +186,17 @@ def prepare_group(
             return fit.stop(
                 "fixed_effects_not_estimable",
                 "the samples of this group cannot separate the fixed effects: "
-                + "; ".join(relations),
+                + listing(relations, separator="; "),
             ), None
     else:
+        # limma's contrasts.fit refuses an estimable contrast that weighs an aliased
+        # column, and every contrast passed with it (found by probing); it is
+        # computed here, from the fit on the kept columns.
         violations = _contrast_violations(model, aliasing, contrasts)
         for position, relations in violations.items():
             fit.not_estimable[contrasts.names[position]] = (
                 "not estimable from the samples of this group, which cannot separate "
-                "the effects it depends on: " + "; ".join(relations)
+                "the effects it depends on: " + listing(relations, separator="; ")
             )
         estimable = [p for p in range(len(contrasts)) if p not in violations]
         if not estimable:
@@ -255,6 +258,8 @@ def left_out(
     counts: np.ndarray, cells: np.ndarray | None, min_cells: int, min_counts: float
 ) -> list[str]:
     """Why each sample is left out of a group's fit, or "" when it is used."""
+    # A sample with exactly min_cells cells or min_counts counts is kept, as
+    # decoupler's filter_samples keeps it (found by probing).
     has_counts = counts.any(axis=1)
     # Totals over every feature, exact for whole counts, as R's colSums gives them.
     totals = library_sizes(counts) if min_counts > 0.0 and counts.size else None
@@ -319,10 +324,10 @@ def group_positions(cube: Cube, groups: str | Sequence[str] | None) -> list[int]
 def min_cells_setting(value: Any) -> int:
     """The fewest cells a sample needs in a group, a whole number of at least 0."""
     if isinstance(value, bool | np.bool_):
-        raise TypeError("min_cells must be a whole number of cells, not bool")
+        raise TypeError("min_cells must be a whole number of cells, got bool")
     number = index_integer(value, "min_cells", expected="a whole number of cells")
     if number < 0:
-        raise ValueError(f"min_cells must be at least 0, got {number}")
+        raise ValueError(f"min_cells must be non-negative, got {number}")
     return number
 
 
@@ -369,8 +374,8 @@ def threads_setting(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool | np.bool_):
-        raise TypeError("n_threads must be a positive integer or None, not bool")
-    number = index_integer(value, "n_threads", expected="a positive integer or None")
+        raise TypeError("n_threads must be an integer or None, got bool")
+    number = index_integer(value, "n_threads", expected="an integer or None")
     if number < 1:
         raise ValueError(f"n_threads must be at least 1, got {number}")
     return number

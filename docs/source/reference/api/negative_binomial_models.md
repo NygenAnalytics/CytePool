@@ -6,11 +6,8 @@ myst:
 
 # Negative binomial models
 
-{func}`~cytepool.stats.negative_binomial_models.fit_negative_binomial_model` fits the
-same negative binomial log-linear model to every gene, with known dispersions, as
-edgeR's `glmFit` does: one-way layouts group by group, other designs by Newton's method
-with Levenberg damping. It is the first step of edgeR's quasi-likelihood pipeline;
-dispersion estimation and the tests come next.
+Negative binomial models of every gene, as edgeR's `glmFit` fits them; [edgeR and
+DESeq2](../statistics/count-models/#negative-binomial-model) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.negative_binomial_models

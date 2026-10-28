@@ -703,9 +703,9 @@ def small():
     [
         ({"dispersion": 0.1, "top_proportion": 0.5}, ValueError, "not both"),
         ({"top_proportion": 1.5}, ValueError, r"top_proportion must be in \(0, 1\]"),
-        ({"robust": 1}, TypeError, "robust must be a bool"),
+        ({"robust": 1}, TypeError, "robust must be True or False"),
         ({"trend": [1.0, 2.0]}, ValueError, "one covariate value per feature"),
-        ({"trend": ["a"] * 20}, TypeError, "trend must be a bool or real"),
+        ({"trend": ["a"] * 20}, TypeError, "trend must be True, False or real"),
         ({"dispersion": -0.1}, ValueError, "dispersion must be finite"),
         ({"dispersion": 2e4}, ValueError, "dispersion must be at most 10000"),
         ({"prior_count": -1.0}, ValueError, "prior_count must be non-negative"),

@@ -1,116 +1,51 @@
 """Meta-analysis of the effects of many features across studies, as metafor computes it.
 
-:func:`fit_meta_analysis` combines, for every feature (gene), the estimates of one
-effect in several studies, each with its standard error, into an estimate of a common
-effect, with the between-study variance and the heterogeneity statistics, as metafor's
-``rma.uni`` does for one feature without moderators (Viechtbauer 2010).
+:func:`fit_meta_analysis` meta-analyses, for every feature (gene), the estimates of
+one effect in several studies, each with its standard error, by the fixed-effect or a
+random-effects model, with the estimate of the between-study variance tau^2 and the
+heterogeneity statistics that metafor's ``rma.uni`` reports for a model without
+moderators (Viechtbauer 2010), into a :class:`MetaAnalysisFit`;
 :func:`cytepool.meta_analysis` does it for the differential-expression results of
-several studies, such as the same cell types in several cohorts, tissues or
-platforms, matched by group, contrast and feature id.
-
-The model:
-    Study i estimates the effect of a feature by y_i, with standard error s_i, and its
-    sampling variance v_i = s_i^2 is taken as known. In the random-effects model the
-    true effects of the studies vary around a mean mu with the between-study variance
-    tau^2: y_i = mu + u_i + e_i, with u_i ~ N(0, tau^2) and e_i ~ N(0, v_i)
-    (DerSimonian and Laird 1986). With the weights w_i = 1 / (v_i + tau^2), mu is
-    estimated by mu_hat = sum w_i y_i / sum w_i, with standard error
-    1 / sqrt(sum w_i). The fixed-effect model, which assumes one true effect (metafor's
-    equal-effects model, ``method = "EE"``), is the case tau^2 = 0: the
-    inverse-variance weighted mean.
-
-The between-study variance (``method``), over the k studies that measured a feature:
-    - ``"reml"``, metafor's default: the restricted maximum likelihood estimate
-      (Viechtbauer 2005), the tau^2 >= 0 that maximizes
-      -1/2 sum log(v_i + tau^2) - 1/2 log(sum w_i) - 1/2 sum w_i (y_i - mu_hat)^2.
-      This function can have more than one maximum, as when an imprecise study lies
-      far from precise ones that agree. Its maxima are zero, where the score is not
-      positive there, and the roots where the score, sum w_i^2 (y_i - mu_hat)^2 -
-      tr(P), with P = W - w w' / sum w_i for the diagonal matrix W of the weights,
-      falls from positive to negative. The score is negative beyond
-      sum (y_i - y_bar)^2 / (k - 1) + 2 max(v_i). The roots are bracketed by the
-      signs of the score at 8 points per decade of tau^2, from 1e-3 min(v_i) to twice
-      that bound, so that rounding cannot hide one near the bound; each is found by
-      Newton's method with the observed information, kept in its bracket by
-      bisection, and the estimate is the maximum with the largest restricted
-      likelihood.
-    - ``"dl"``: the DerSimonian and Laird (1986) estimate, the method of moments
-      with the weights 1 / v_i: max(0, (Q - (k - 1)) / (sum w_i - sum w_i^2 /
-      sum w_i)), with Q below.
-    - ``"pm"``: the Paule and Mandel (1982) estimate, at which the generalized Q
-      statistic sum w_i (y_i - mu_hat)^2 equals its expectation k - 1, or 0 where Q
-      is at most k - 1. The statistic falls with tau^2 and is convex, and the root
-      lies between sum (y_i - y_bar)^2 / (k - 1) minus the largest and minus the
-      smallest v_i, so Newton's method from the lower end converges to it from below.
-    - ``"fixed"``: tau^2 = 0.
-
-Tests and confidence intervals (``test``):
-    - ``"z"``: z = mu_hat / SE against the standard normal distribution, and the
-      interval mu_hat +/- z_(1 - alpha / 2) SE, as metafor's default ``test = "z"``.
-    - ``"knapp_hartung"``: the standard error is multiplied by sqrt(q), with
-      q = sum w_i (y_i - mu_hat)^2 / (k - 1), and the statistic is referred to a t
-      distribution with k - 1 degrees of freedom (Hartung 1999; Sidik and Jonkman
-      2002; Knapp and Hartung 2003; metafor's ``test = "knha"``), which metafor's
-      documentation recommends for few studies. Where q < 1, as when the studies
-      agree more closely than their standard errors imply, the adjusted standard
-      error is smaller than the unadjusted one; with the fixed-effect model it is
-      the standard error scaled by sqrt(Q / (k - 1)), which metafor computes with a
-      warning that the method is not meant for that model.
-
-Heterogeneity:
-    Cochran's (1954) Q = sum (y_i - mu_fixed)^2 / v_i, with the fixed-effect estimate
-    mu_fixed, and its p-value from the chi-squared distribution with k - 1 degrees of
-    freedom. I^2 and H^2 are those metafor reports: I^2 = tau^2 / (tau^2 + s^2) and
-    H^2 = (tau^2 + s^2) / s^2, where s^2 = (k - 1) sum w_i / ((sum w_i)^2 -
-    sum w_i^2), with w_i = 1 / v_i, is the typical within-study variance (Higgins and
-    Thompson 2002, equation 9), so that they follow the estimate of tau^2. For the
-    fixed-effect model they are I^2 = max(0, (Q - (k - 1)) / Q) and H^2 = Q / (k - 1),
-    the conventional definitions, which equal the others for DerSimonian-Laird where
-    Q > k - 1; where Q <= k - 1, I^2 is 0 for both, and H^2 is Q / (k - 1) for the
-    fixed effect and 1 for DerSimonian-Laird. I^2 is a proportion here; metafor
-    reports it in percent.
+several studies. https://docs.nygen.io/CytePool/statistics/meta-analysis explains the
+model, the estimators and the tests, and
+https://docs.nygen.io/CytePool/statistics/meta-analysis#meta-analysis-limits how they
+differ from metafor's.
 
 Studies that did not measure a feature:
-    NaN marks them, in the effect or the standard error. Each feature is analysed
-    over the k studies that measured it, as metafor leaves out studies with missing
-    values. A feature measured in one study has that study's estimate and standard
-    error and its z-test, also with ``"knapp_hartung"``, which needs two studies;
-    tau^2 = 0, Q = 0 with a p-value of 1, I^2 = 0 and H^2 = 1: metafor's results for
-    one study (found by probing). A feature measured in no study has NaN.
+    NaN marks them, in the effect or the standard error. Each feature is analysed over
+    the k studies that measured it, as metafor leaves out studies with missing values.
+    A feature measured in one study has that study's estimate and standard error and
+    its z-test, also with ``"knapp_hartung"``, which needs two studies; tau^2 = 0,
+    Q = 0 with a p-value of 1, I^2 = 0 and H^2 = 1: metafor's results for one study. A
+    feature measured in no study has NaN.
 
-Accuracy:
-    Every estimate is computed for the deviations of the effects from their mean and
-    the standard errors divided, exactly, by a power of two near the largest of them,
-    so that the results do not depend on the scale of the data, and no square
-    overflows or underflows however much larger the spread of the effects is than
-    their standard errors. The sums sum w_i - sum w_i^2 / sum w_i and tr(P^2), which
-    cancel when one study is far more precise than the others, are formed from the
-    sum of the weights of the other studies for each study, which does not cancel.
+The REML estimate:
+    The restricted log-likelihood, -1/2 sum log(v_i + tau^2) - 1/2 log(sum w_i) -
+    1/2 sum w_i (y_i - mu_hat)^2 with w_i = 1 / (v_i + tau^2), can have more than one
+    maximum. Its maxima are zero, where the score is not positive there, and the roots
+    where the score, sum w_i^2 (y_i - mu_hat)^2 - tr(P), with P = W - w w' / sum w_i
+    for the diagonal matrix W of the weights, falls from positive to negative. The
+    score is negative beyond sum (y_i - y_bar)^2 / (k - 1) + 2 max(v_i). The roots are
+    bracketed by the signs of the score at 8 points per decade of tau^2, from
+    1e-3 min(v_i) to twice that bound, so that rounding cannot hide one near the bound;
+    each is found by Newton's method with the observed information, kept in its
+    bracket by bisection, and the estimate is the maximum with the largest restricted
+    likelihood. The Paule-Mandel statistic falls with tau^2 and is convex, and its root
+    lies between sum (y_i - y_bar)^2 / (k - 1) minus the largest and minus the smallest
+    v_i, so Newton's method from the lower end converges to it from below.
 
-Deliberate differences from metafor (``validation/meta_analysis.py`` reports them):
-    - The REML estimate is the largest maximum of the restricted likelihood. metafor
-      finds a maximum by Fisher scoring from the Hedges estimate,
-      max(0, sum (y_i - y_bar)^2 / (k - 1) - mean(v_i)), and replaces it by zero, with
-      a warning that Fisher scoring "may have gotten stuck at a local maximum", where
-      the restricted likelihood is larger at zero (found by probing). Where the
-      likelihood has another, larger maximum, metafor's estimate is the smaller one or
-      zero. Fisher scoring also oscillates without converging where the observed
-      information exceeds twice the expected one: metafor then stops with an error,
-      or, at its default threshold, within the oscillation, and its help page's remedy
-      ``control = list(stepadj = 0.5)`` converges to the estimate here.
-    - The iterative estimates converge to rounding. metafor stops REML when tau^2
-      changes by less than 1e-5 from one step to the next, and Paule-Mandel at the
-      tolerance of R's ``uniroot``, about 1.2e-4 on tau^2; ``control = list(threshold
-      = 1e-13)`` and ``control = list(tol = 1e-14)`` make it converge to the values
-      here.
-    - Where the restricted likelihood is largest at zero although the Hedges estimate
-      is positive, the REML estimate is zero; metafor's step halving approaches zero
-      and stops near its threshold, at about 1e-6 by default (found by probing).
-    - metafor's Paule-Mandel search stops with an error when the root lies above
-      max(100, 10 mad(y)^2); here it has no upper limit.
-    - Standard errors must be positive and finite where they are given. For a zero
-      standard error metafor stops (fixed effect, DerSimonian-Laird, Paule-Mandel) or
-      fits without Q, I^2 and H^2 (REML); for an infinite one it stops.
+Matching metafor:
+    The results match metafor 5.0.1 run to convergence, with
+    ``control = list(threshold = 1e-13)`` for REML and
+    ``control = list(tol = 1e-14)`` for Paule-Mandel: by default metafor stops REML
+    when tau^2 changes by less than 1e-5 from one step to the next, and Paule-Mandel
+    at the tolerance of R's ``uniroot``, about 1.2e-4 on tau^2. Its documentation
+    gives the methods, and running it on chosen inputs settled the conventions it
+    leaves open, such as its results for one study above. I^2 and H^2 follow the
+    estimate of tau^2, as metafor reports them (Higgins and Thompson 2002, equation 9).
+    The Knapp-Hartung adjustment of the fixed-effect model scales the standard error
+    by sqrt(Q / (k - 1)), which metafor computes with a warning that the method is
+    not meant for that model.
 
 References:
     Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
@@ -273,8 +208,45 @@ def fit_meta_analysis(
     For every feature, the effects of the studies that measured it are combined into
     an estimate of a common effect by the fixed-effect or a random-effects model, with
     the between-study variance tau^2, Cochran's Q and its p-value, I^2 and H^2, as
-    ``rma.uni(yi, sei = ..., method = ..., test = ...)`` gives them; the module
-    description gives the model, the estimators of tau^2 and the tests.
+    ``rma.uni(yi, sei = ..., method = ..., test = ...)`` gives them. Study i estimates
+    the effect by y_i with the sampling variance v_i = s_i^2, taken as known; in the
+    random-effects model y_i = mu + u_i + e_i, with u_i ~ N(0, tau^2) and
+    e_i ~ N(0, v_i). With the weights w_i = 1 / (v_i + tau^2), the estimate is
+    mu_hat = sum w_i y_i / sum w_i, with standard error 1 / sqrt(sum w_i).
+
+    The estimators of tau^2 (``method``), over the k studies that measured a feature:
+    ``"reml"``, the restricted maximum likelihood estimate (Viechtbauer 2005), the
+    largest maximum of the restricted likelihood (see the module docstring);
+    ``"dl"``, DerSimonian and Laird's, max(0, (Q - (k - 1)) / (sum w_i - sum w_i^2 /
+    sum w_i)) with w_i = 1 / v_i; ``"pm"``, Paule and Mandel's (1982), at which the
+    generalized Q statistic sum w_i (y_i - mu_hat)^2 equals its expectation k - 1, or
+    0 where it is at most k - 1; and ``"fixed"``, tau^2 = 0.
+
+    The tests (``test``): ``"z"``, z = mu_hat / SE against the standard normal
+    distribution, with the interval mu_hat +/- z_(1 - alpha / 2) SE; or
+    ``"knapp_hartung"``, the standard error times sqrt(q), with q = sum w_i (y_i -
+    mu_hat)^2 / (k - 1), against a t distribution with k - 1 degrees of freedom
+    (Hartung 1999; Sidik and Jonkman 2002; Knapp and Hartung 2003). Where q < 1 the
+    adjusted standard error is the smaller.
+
+    Heterogeneity: Cochran's (1954) Q = sum (y_i - mu_fixed)^2 / v_i, with the
+    fixed-effect estimate mu_fixed, and its p-value from the chi-squared distribution
+    with k - 1 degrees of freedom. I^2 = tau^2 / (tau^2 + s^2) and H^2 = (tau^2 + s^2)
+    / s^2, where s^2 = (k - 1) sum w_i / ((sum w_i)^2 - sum w_i^2), with w_i = 1 / v_i,
+    is the typical within-study variance (Higgins and Thompson 2002). For the
+    fixed-effect model they are I^2 = max(0, (Q - (k - 1)) / Q) and H^2 = Q / (k - 1),
+    which equal the others for DerSimonian-Laird where Q > k - 1; where Q <= k - 1, I^2
+    is 0 for both, and H^2 is Q / (k - 1) for the fixed effect and 1 for
+    DerSimonian-Laird. https://docs.nygen.io/CytePool/statistics/meta-analysis
+    explains the model.
+
+    Every estimate is computed for the deviations of the effects from their mean and
+    the standard errors divided, exactly, by a power of two near the largest of them,
+    so that the results do not depend on the scale of the data, and no square
+    overflows or underflows however much larger the spread of the effects is than
+    their standard errors. Sums that cancel when one study is far more precise than
+    the others, such as sum w_i - sum w_i^2 / sum w_i, are formed from the sum of the
+    weights of the other studies for each study, which does not cancel.
 
     Args:
         effects: ``(n_studies, n_features)`` estimates of the effect of every feature
@@ -731,6 +703,8 @@ def _meta_analyse(
 
         tau2 = 0.0
         if k == 1:
+            # metafor's results for one study, the z-test of its estimate also with
+            # the Knapp-Hartung adjustment (found by probing).
             q = 0.0
             q_p_value = 1.0
             i_squared = 0.0

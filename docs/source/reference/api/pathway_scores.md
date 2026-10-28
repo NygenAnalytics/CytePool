@@ -6,13 +6,8 @@ myst:
 
 # Pathway scores
 
-{func}`~cytepool.gsva`, {func}`~cytepool.ssgsea`, {func}`~cytepool.combined_z_scores`
-and {func}`~cytepool.plage` turn the expression values of every sample into one score
-per gene set, as the four methods of the R package GSVA compute them, from a samples x
-genes matrix or a cell type of a cube. The scores, a {class}`~cytepool.PathwayScores`,
-are profiles x sets, so that {func}`~cytepool.limma` tests them with the design built
-for the cube, and {func}`~cytepool.plotting.plot_pathway_scores` draws them as a
-heatmap.
+Scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE;
+[Pathway scores per sample](../statistics/pathway-scores/#gsva) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.pathway_scores

@@ -1,22 +1,26 @@
 ---
-description: What a CytePool cube holds, why every layer is a sum over cells, how merging cell types and pooling samples stay exact, the principal components of its samples and the dot plot of its cells, and how the cubes of several studies are aligned.
+description: What a cube of pseudobulk profiles holds, why each of its layers is a sum over cells, and what it records so that a result can be traced to its data.
 ---
 
-# The cube and its additive layers
+# Pseudobulk profiles and cubes
 
-A cube holds one pseudobulk profile for every sample and group (usually a cell type):
-the sums, over the cells of that sample and group, of each feature's counts and of a few
-statistics of its normalized values. {api}`from_cells` builds it from a cells x features
-count matrix and the sample and group label of every cell; {api}`from_bulk` wraps a
-samples x features matrix as a cube with one group. [Pool cells into pseudobulk
-profiles](../guides/pool_cells.ipynb) shows these steps on data.
+[Choosing a method](choosing_a_method.md) lists the questions a study asks of its
+samples. Every method that answers them starts from a cube, which holds, for every
+sample, group (usually a cell type) and feature (usually a gene), sums over the sample's
+cells of that group ([Why pseudobulk](../why_pseudobulk.ipynb) says why the tests
+compare samples). {api}`from_cells` builds a cube from the counts of the cells and the
+sample and group of each cell, and {api}`from_bulk` wraps a samples x features matrix of
+bulk counts as a cube with one group. [Pool cells
+into pseudobulk profiles](../guides/pool_cells.ipynb) builds one from a simulated study.
 
+(cube-layers)=
 ## The layers
 
 For sample $j$, group $g$ and feature $f$, let $C_{jg}$ be the cells of that sample and
-group, $y_{cf}$ the count of cell $c$, $L_c$ its library size (its total count, or a
-given value) and $T$ the target sum (10,000 by default). Each cell's normalized value is
-$x_{cf} = y_{cf} T / L_c$, and the layers are
+group, $y_{cf}$ the count of cell $c$, and $L_c$ the cell's library size: its total
+count, or a value given as `library_sizes`. Each cell's counts are scaled to a target
+sum $T$, 10,000 by default, so that its normalized values are $x_{cf} = y_{cf} T / L_c$,
+and the layers, with the number of cells of each profile, are
 
 $$
 \begin{aligned}
@@ -29,124 +33,204 @@ n_{jg} &= |C_{jg}|.
 \end{aligned}
 $$
 
-Layers are stored as groups x samples x features, so that one group is a samples x
-features matrix, the shape a per-group model fits. The counts layer is the one every
-cube needs; the others are optional. Bulk cubes have counts only and no cell numbers.
+{api}`Cube.n_cells` gives the numbers of cells. Layers are stored as groups x samples x
+features, so that one group is a samples x features matrix, the shape that the model of
+one cell type is fitted to, and {api}`Cube.layer` returns a layer for one group or for
+every group. The counts are the one layer that every cube needs, and the other layers
+describe the cells. A cube from {api}`from_bulk` has counts only, and no cell numbers.
 
-{api}`Cube.layer` returns a layer, for one group or all. From the sums come the
-quantities of every entry: {api}`Cube.mean` (the mean normalized value, on the log or
-the linear scale), {api}`Cube.variance` (the sample variance of the log values,
-$(\text{log\_sum\_sq} - \text{log\_sum}^2 / n) / (n - 1)$),
-{api}`Cube.fraction_detected` (detected over $n$) and {api}`Cube.library_sizes` (the
-counts summed over features).
-
+(exact-regrouping)=
 ## Exact regrouping
 
 Every layer is a sum over cells, so the profile of a union of cells is the sum of the
-profiles of its parts. Merging two cell types into one, or pooling the samples of a
-donor, needs no cells:
+profiles of its parts:
 
 $$
 \text{layer}(C_{jg} \cup C_{jh}) = \text{layer}(C_{jg}) + \text{layer}(C_{jh}).
 $$
 
+Merging two cell types into one, or pooling the samples of a donor, therefore needs no
+cells, and gives the profiles that pooling the cells would have given.
 {api}`Cube.regroup` merges groups, {api}`Cube.collapse_samples` pools the samples that
-share a value of a sample column, and {api}`Cube.select` keeps some samples, groups and
-features. Integer layers are summed exactly, and a sum that would exceed the largest
-64-bit integer raises an error instead of wrapping around. Means and variances, which
-are not sums, cannot be merged this way; that is why the cube keeps sums and derives
-them.
+share the values of sample columns, such as the tissues of one donor,
+{api}`Cube.with_columns` adds a column to pool by, and {api}`Cube.select` keeps some
+samples, groups and features. A mean or a variance cannot be merged this way, which is
+why a cube keeps sums and derives the rest from them. Integer layers are summed exactly,
+in 64-bit integers.
 
-## Samples and cells at a glance
+(what-the-sums-give)=
+## What the sums give
 
-Two figures show a cube's data before any test. {api}`principal_components` places the
-samples of one cell type on the principal components of their most variable genes
-[@pearson1901], as DESeq2's `plotPCA` does [@love2014]. The samples are prepared as
-for an MDS plot: those with fewer than 10 cells are left out, genes are kept by
-{api}`filter_by_expression`, and the values are log-CPM with TMM factors and an average
-count of 2 added. The `top` genes of largest variance over the samples (500 by
-default), each centred on its mean, form a samples x genes matrix $X = U S V^\top$;
-the samples' coordinates are $U S$, each component's share of the variance is its
-squared singular value over their sum, and the result, a {api}`PrincipalComponents`,
-keeps the loadings $V$ of the genes. The sign of a component is arbitrary; the
-coordinate of largest absolute value is made positive. `plot_pca` draws two
-components, labelled with their shares as `plotPCA` labels them.
+The sums give the statistics that describe the cells of each profile, with $n$ its
+number of cells: {api}`Cube.mean`, the mean normalized value on the log or the linear
+scale, $\text{log\_sum} / n$ or $\text{linear\_sum} / n$; {api}`Cube.variance`, the
+sample variance of the log values,
+$(\text{log\_sum\_sq} - \text{log\_sum}^2 / n) / (n - 1)$;
+{api}`Cube.fraction_detected`, the share of the cells with a positive count,
+$\text{detected} / n$; and {api}`Cube.library_sizes`, the counts of each profile summed
+over the features.
 
-The dot plot shows, for chosen genes and cell types, the fraction of the cells that
-express each gene and their mean expression, as scanpy draws it [@wolf2018]. A cube
-holds what it needs without the cells. Because every layer is a sum, the fraction and
-the mean over the cells of all the samples pooled,
+(dot-plot)=
+### The dot plot
+
+A dot plot shows, for chosen genes and cell types, the fraction of the cells that
+express each gene and their mean expression, as scanpy draws it [@wolf2018]. Because
+every layer is a sum, the fraction and the mean over the cells of all the samples
+pooled,
 
 $$
 f_{gf} = \frac{\sum_j \text{detected}_{gjf}}{\sum_j n_{jg}}, \qquad
 m_{gf} = \frac{\sum_j \text{log\_sum}_{gjf}}{\sum_j n_{jg}},
 $$
 
-are those computed from the cells themselves, and so is the mean over the cells that
-express the gene, $\sum_j \text{log\_sum}_{gjf} / \sum_j \text{detected}_{gjf}$,
-since $\log(1 + 0) = 0$ for the others. {api}`Cube.fraction_detected` and {api}`Cube.mean`
-give the same quantities per sample. `plot_dotplot` draws them, pooled over every sample
-or some, with scanpy's scaling of the means by gene or by cell type and its groups of
-genes.
+are those computed from the cells themselves, and so is the mean over only the cells
+that express it, $\sum_j \text{log\_sum}_{gjf} / \sum_j \text{detected}_{gjf}$, since
+$\log(1 + 0) = 0$ for the others. A cube therefore draws the dot plot without its cells:
+{api}`plot_dotplot` pools every sample or some, and scales the means by gene or by cell
+type and draws groups of genes, as scanpy does.
 
-## What a cube carries
+(what-a-cube-records)=
+## What a cube records
 
-- **Tables.** Samples, groups and features each have a table ({api}`Table`) with a
-  unique text id (`sample_id`, `group_id`, `feature_id`) and any other columns, such as
-  donor and condition. Designs are built from the sample table and matched to the cube
-  by `sample_id`, never by position.
-- **A fingerprint.** {api}`Cube.fingerprint` is a SHA-256 digest of the tables, cell
-  numbers, normalization and every layer [@nist2015]. Two cubes with the same values
-  have the same fingerprint however they were made, so a result can name the cube it
-  came from. Its byte-level encoding is documented, so another program can compute it
-  ([Cube files and provenance records](../reference/cube_files.md)).
-- **A provenance record.** {api}`Cube.provenance` says where the data came from (a
-  record the caller gives as `source`), how the cube was built, and every operation
-  since, each with the fingerprint of the cube it was applied to. {api}`Cube.history`
-  prints it in plain terms.
+Besides its layers, a cube keeps what is needed to trace a result to its data.
 
+- **Tables.** Samples, groups and features each have a table ({api}`Table`), with a
+  unique text id (`sample_id`, `group_id` and `feature_id`) and any other columns: each
+  sample's donor and condition, each group's Cell Ontology id, by which the cell types
+  of several studies are aligned ([Aligning studies](aligning_studies.md)), or each
+  gene's symbol. A design takes its variables from the sample table, and is matched to
+  the cube's samples by `sample_id` ([The design](linear_models.md#designs-and-formulas)).
+- **A fingerprint.** {api}`Cube.fingerprint` is a SHA-256 digest [@nist2015] of
+  everything an analysis reads (the tables, the cell numbers, the normalization of the
+  normalized layers, and every layer) but not of the provenance: cubes that hold the
+  same values share a fingerprint, whatever their history, and a result, such as those
+  of {api}`limma_voom` and {api}`propeller`, names by it the cube it came from. The
+  fingerprint is built from one digest for each table, for the cell numbers, for the
+  normalization and for each group of each layer ({api}`Cube.digests`). A cube file
+  stores the digests, so that one group can be checked when it is read, without reading
+  the others, where a single digest of the whole cube would need every layer read to
+  check any part of it. The encoding is specified byte by byte, so that another program
+  can compute a fingerprint ([Fingerprints](../reference/cube_files.md#fingerprint-encoding)).
+- **A provenance record.** {api}`Cube.provenance` says how the values were made, under
+  three keys: `source`, where the data came from, as the caller recorded it;
+  `construction`, the function that built the cube and its settings; and `operations`,
+  one entry per later operation, oldest first, each naming its input by fingerprint
+  when that is known without reading lazy layers ([Provenance
+  records](../reference/cube_files.md#provenance-keys) says when). A chain of operations
+  can then be checked link by link, back to the cube it started from.
+  {api}`Cube.history` gives the record in plain terms, as text to print.
+
+(profiles-from-other-tools)=
+## Profiles pooled by other tools
+
+scanpy's `get.aggregate` and decoupler's `pp.pseudobulk` pool cells into an AnnData
+with one row per sample and cell type, and LIANA into a MuData with one modality per
+cell type [@virshup2024; @bredikhin2022]. {api}`from_anndata` and {api}`from_mudata`
+read these layouts into a cube, and {api}`to_anndata` and {api}`to_mudata` write a cube
+in them, with a record that lets an import restore the same cube, down to its
+fingerprint. Since a cube's layers are sums, an import takes only what is a sum or gives
+one exactly: summed counts, the number of cells that detect each feature, and sums of
+normalized values. Means, variances and medians are refused: a variance or a median
+gives no sum, and a mean times the number of cells gives the sum exactly only where the
+sum is a whole number, while the tools that give means give sums too. [Work with
+AnnData and MuData](../guides/anndata_and_mudata.ipynb) converts cubes both ways.
+
+(cubes-larger-than-memory)=
 ## Cubes larger than memory
 
-{api}`write_cube` saves a cube as a Zarr v3 store [@miles2025], in chunks of one group,
-every sample and up to 4,096 features, and {api}`read_cube` opens it without reading the
-layers: an analysis then reads one group at a time, and only the chunks that hold the
-features it needs. The differential-expression functions keep one group in memory at a
-time. A layer can also be any array-like with `shape`, `dtype` and indexing, such as a
-numpy memmap or an HDF5 or Zarr array, read as needed; {api}`Cube.to_memory` reads every
-lazy layer at once.
+{api}`write_cube` saves a cube as a Zarr v3 store [@miles2025], in chunks of one group
+and up to 4,096 features, and {api}`read_cube` opens it without reading its layers: a
+group is read when an analysis needs it, and of that group only the chunks of the
+features it selects. The analyses of every cell type hold one cell type in memory at a
+time, so they run on cubes larger than memory, also on a cube whose layers are other
+array-likes read as needed, such as a numpy memmap or an HDF5 dataset ({api}`Cube`).
+[Cube files and provenance records](../reference/cube_files.md) specifies the file.
 
-{api}`to_anndata` and {api}`to_mudata` convert a cube to the pseudobulk layouts of
-scverse, and {api}`from_anndata` and {api}`from_mudata` read them back.
+(cubes-defaults)=
+## Defaults and choices
 
-## Several studies
+- **Layers.** {api}`from_cells` computes all five. The tests need only the counts and
+  the cell numbers, and the dot plot also `detected` and `log_sum`; a cube of counts
+  alone takes an eighth of the memory of all five layers (`layers=["counts"]`).
+- **Normalization of the cells.** Each cell is scaled to `target_sum`, 10,000, by its
+  total count, and its log values are $\log(1 + x)$, as scanpy's `normalize_total` and
+  `log1p` compute them. `library_sizes` gives other
+  totals, such as those over every gene when the counts hold only some genes. Only the
+  normalized layers depend on it; the counts, and the tests, do not.
+- **Samples and groups.** By default the distinct labels, sorted. A sample table
+  (`samples=`) or group table (`groups=`) sets their order, carries the variables of
+  the design, and gives a sample without cells a profile of zeros.
+- **Rare cell types.** A cell type with few cells in most samples gives noisy
+  profiles; {api}`Cube.regroup` merges it into its lineage, exactly, as [Pool cells into
+  pseudobulk profiles](../guides/pool_cells.ipynb) does.
+- **Files.** {api}`write_cube` compresses with gzip at level 4 by default;
+  `compression="zstd"` uses zstd, on Python 3.14 and newer, and `compression=None`
+  stores the values as they are. {api}`Cube.to_memory` reads every lazy layer at once,
+  for analyses that read the same groups many times.
 
-Results of one study often do not replicate in the next [@nakatsuka2025], and studies
-are compared or combined only once their samples, genes and cell types are aligned.
-Aligned by hand, they go wrong in two ways: donor ids repeat across studies, and genes
-that a study did not measure are read as zeros. {api}`CubeCollection` aligns the cubes
-of several studies and keeps each as it was given:
+(cubes-limits)=
+## Limits and differences
 
-- **Samples** are named `study::sample_id`, and so are the values of the columns of ids
-  that `within_study` names, such as donors: donor `D1` of one study is not donor `D1`
-  of another.
-- **Genes** are aligned by `feature_id`, such as Ensembl ids, and
-  {api}`CubeCollection.measured` says which study measured which: a gene that a study's
-  cube lacks, or marks as not measured in its feature column `measured`, is missing in
-  that study, not zero.
-- **Cell types** are aligned by their Cell Ontology ids [@diehl2016] when every cube
-  has them, by group id otherwise, or by a mapping for each study. Groups of one study
-  that share an id are merged, exactly, since every layer is a sum.
+- **Memory.** {api}`from_cells` needs the counts of the cells in memory, and returns
+  dense layers: 32 bytes per sample, group and feature with all five layers.
+- **Whole numbers.** Integer layers and cell numbers hold whole numbers up to
+  $2^{63} - 1$, the largest signed 64-bit integer, and a sum beyond it raises an error
+  instead of wrapping around. Normalization works in float64, which is exact for counts
+  up to $2^{53}$.
+- **Variances from sums.** {api}`Cube.variance` computes the variance from raw moments,
+  which lose digits when the values of a profile are nearly constant and far from zero.
+  Log-normalized expression is far from that case ([Validation](#validation-cube)
+  gives the bound).
+- **Profiles without cells.** The fraction detected of a profile without cells is NaN,
+  zero cells out of zero, where decoupler reports 0.
+- **Scattered reads.** A read decompresses every chunk that holds a selected feature.
+  A few neighbouring genes are therefore quick to read, but genes scattered over a file
+  decompress nearly every chunk of each group, and a few samples of every gene every
+  chunk ([Timings](#validation-timings)).
+- **What a read checks.** Reading a whole group of a cube file checks it against the
+  group's digest; reading some samples or features of a group does not, and
+  {api}`Cube.verify_fingerprint` checks those too. A cube in memory is hashed once, by
+  the first operation applied to it ({api}`Cube.fingerprint` gives the cost).
+- **Other array-likes.** A lazy layer of another array-like is read with its
+  orthogonal indexing when it has one, as zarr-python's arrays do, and otherwise a whole
+  group per read, and the cube copies what it returns. Such an array can change,
+  so its fingerprint is computed anew on every call, and the operations applied to it
+  record no input fingerprint.
+- **Profiles filtered before an import.** Profiles that another tool removed after
+  pooling, such as by a filter of samples with few cells, are missing from merged
+  groups and pooled samples: import the profiles first, and leave such samples out in
+  the analysis.
 
-Each study is then analysed on its own: {api}`CubeCollection.aligned_cube` gives its
-cube with the aligned cell types and the genes it measured, and with its own samples and
-library sizes, and an analysis such as {api}`limma_voom` with the study's own design
-gives results keyed by the aligned cell types. {api}`analyse_each_study` runs one on
-every study, and the {api}`StudyResults` it returns lines them up gene by gene
-({api}`StudyResults.table`) for {api}`meta_analysis`, which combines them
-([Meta-analysis](meta_analysis.md)). For a joint model with the study as a covariate,
-{api}`CubeCollection.stack` puts the studies into one cube with the genes that every
-study measured and the cell types that every study has: a cube holds no missing values,
-so it refuses the others rather than fill them with zeros. The collection's provenance
-names each study's cube by its fingerprint, with the alignment, and so does the
-provenance of a stacked cube. [Combine studies](../guides/combine_studies.ipynb) aligns
-six cohorts this way.
+(cubes-checks)=
+## Checks and further reading
+
+Each part of a cube is compared with an independent implementation, run as a separate
+program on the same data:
+
+- The layers, merged groups and pooled samples, and the means, variances and fractions
+  they give: scanpy 1.12.4, exact (identical counts, 1e-10 otherwise)
+  ([Validation](#validation-cube)).
+- {api}`from_cells` and {api}`from_bulk`: scanpy 1.12.4 and decoupler 2.2.0, exact
+  ([Validation](#validation-pool-cells)).
+- Cube files, and reads of selected features: zarr-python 3.4.1, identical, and 1e-12
+  for merged groups and pooled samples that a read gives
+  ([Validation](#validation-cube-files) and [Validation](#validation-cube-reads)).
+- Fingerprints: a second implementation written from the specification, which reads
+  cube files with zarr-python 3.4.1, identical digests
+  ([Validation](#validation-cube-fingerprints)).
+- Conversions to and from AnnData and MuData: scanpy 1.12.4, decoupler 2.2.0, LIANA
+  1.10.0, anndata 0.13.4 and mudata 0.4.1, exact
+  ([Validation](#validation-anndata-conversion)).
+- The dot plot: scanpy 1.12.4, exact ([Validation](#validation-pca-and-dot-plots)).
+
+Further reading:
+
+- @wolf2018 introduced scanpy, the toolkit for single-cell analysis whose aggregation
+  of cells and dot plot the cube is compared with.
+- @virshup2024 described anndata, the annotated data matrices in which scverse tools
+  keep cells and their pseudobulk profiles.
+- @miles2025 specify version 3 of Zarr, the format of cube files, which any Zarr v3
+  reader can open.
+
+[Designs, linear models and contrasts](linear_models.md) turns the questions asked of
+these profiles into one model for every gene.

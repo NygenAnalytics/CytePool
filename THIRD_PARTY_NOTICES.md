@@ -57,7 +57,7 @@ SOFTWARE.
 
 ### fgsea
 
-`cytepool/gsea.py` ports the algorithms of fgsea 1.32.2
+`cytepool/gene_set_enrichment.py` ports the algorithms of fgsea 1.32.2
 (https://bioconductor.org/packages/fgsea, https://github.com/ctlab/fgsea), keeping their
 structure, constants and order of operations, so that given fgsea's seeds it gives
 fgsea's results: from `src/fastGSEA.cpp`, the block prefix sums (`SegmentTree`), the
@@ -169,8 +169,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### SumRank
 
-`cytepool/sumrank.py` and `cytepool/held_out_prediction.py` implement SumRank and its
-held-out prediction from Nakatsuka et al. (2025), following conventions of the authors'
+`cytepool/stats/sumrank.py`, `cytepool/sumrank_across_studies.py` and
+`cytepool/held_out_studies.py` implement SumRank and its held-out prediction from
+Nakatsuka et al. (2025), following conventions of the authors'
 code (https://github.com/nathan-nakatsuka/scRNA_Reproducibility, commit 46392f66;
 `SumRank.R`, `CalibratePValueswithPermutations.R`, `PermutingCaseControlStatus.R`,
 `UCell_AUC_code.R`): ties ranked by their average rank, floor(p k) of the studies summed

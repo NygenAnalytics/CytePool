@@ -32,22 +32,52 @@ differential-expression analysis.
 ```
 
 ```{toctree}
+:caption: Cubes and files
 :maxdepth: 1
 
 cubes
 cube_files
 anndata
+```
+
+```{toctree}
+:caption: Designs and linear models
+:maxdepth: 1
+
 designs
-normalization
 linear_models
-mixed_models
+empirical_bayes
+multiple_testing
+```
+
+```{toctree}
+:caption: Differential expression
+:maxdepth: 1
+
+differential_expression
+normalization
+principal_components
 voom
-dream
 sample_weights
 negative_binomial_models
 quasi_likelihood
 deseq2
-empirical_bayes
+mixed_models
+dream
+variance_partitioning
+```
+
+```{toctree}
+:caption: Composition
+:maxdepth: 1
+
+composition
+```
+
+```{toctree}
+:caption: Gene sets and pathways
+:maxdepth: 1
+
 gene_sets
 gene_set_tests
 rotation_gene_set_tests
@@ -57,18 +87,31 @@ pathway_scores
 networks
 activity
 score_tests
-multiple_testing
-combined_p_values
-differential_expression
-variance_partitioning
-principal_components
-composition
-meta_analysis
+```
+
+```{toctree}
+:caption: Several studies
+:maxdepth: 1
+
 study_results
+meta_analysis
+combined_p_values
 replication
 sumrank
 held_out_prediction
+```
+
+```{toctree}
+:caption: Figures
+:maxdepth: 1
+
 plotting
+```
+
+```{toctree}
+:caption: Building blocks on arrays
+:maxdepth: 1
+
 distributions
 smoothing
 ```

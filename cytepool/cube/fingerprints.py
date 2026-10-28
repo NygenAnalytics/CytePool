@@ -1,107 +1,15 @@
 """Content fingerprints of cubes: what they cover and how they are encoded.
 
-A cube's fingerprint identifies the values an analysis reads: the sample, group and
-feature tables (ids included), the cells pooled into each entry (``n_cells``), the
-normalization that defines the normalized layers, and every layer. It leaves out the
-provenance, which records how the cube was made, so two cubes with the same values
-have the same fingerprint however they were made, and a result can name the cube it
-was computed from by its fingerprint. ``Cube.fingerprint()`` returns it and
-``Cube.digests()`` the digests it is built from.
-
-Parts and digests:
-    The fingerprint is built from the digests of the cube's parts: each table, the
-    cell numbers, the normalization, and each group of each layer. ``write_cube``
-    computes the digests while it writes the cube and stores them with the cube file,
-    so the fingerprint of a saved cube needs no pass over its data. ``read_cube``
-    checks the tables, cell numbers and normalization against their digests when it
-    opens the file, and every read that covers a whole group of a layer, in any
-    order, against the group's digest. One group can thus be checked without
-    reading the others, and an analysis that reads whole groups checks exactly what
-    it read. (A read of some samples or features of a group cannot be checked on
-    its own; ``Cube.verify_fingerprint()`` reads such groups whole.) A single digest
-    of the whole cube would need every layer read to check any of it.
-
-Encoding, version 1 (``FINGERPRINT_VERSION``):
-    A digest is the SHA-256 hash (National Institute of Standards and Technology
-    2015) of a byte string, written as ``sha256:`` and 64 lowercase hexadecimal
-    digits. Numbers in byte strings are little endian: ``u64`` and ``i64`` are
-    unsigned and signed 8-byte integers. Text is UTF-8 (Yergeau 2003), written as
-    its length in bytes (``u64``) followed by its bytes; a lone surrogate, which a
-    Python string can hold but a cube file cannot, is written in its 3-byte form, as
-    Python's ``surrogatepass`` error handler writes it. Strings are taken as they
-    are, without Unicode normalization.
-
-    Tables (samples, groups and features): the number of rows and of columns
-    (``u64`` each), then for each column, in table order, its name (text), its type
-    (text) and its values:
-
-    - text, type ``text``: the length in bytes of each value (``i64``, -1 for a
-      missing value), then the bytes of the values present, one after another;
-    - ``bool``: one byte per value, 0 or 1;
-    - ``int8`` to ``int64`` and ``uint8`` to ``uint64``: the values in that type;
-    - ``float16``, ``float32`` and ``float64``: the values in that type, the binary
-      formats of IEEE 754 (IEEE 2019), with -0.0 written as 0.0 and every NaN as the
-      quiet NaN (``0x7E00``, ``0x7FC00000`` or ``0x7FF8000000000000``);
-    - ``complex64`` and ``complex128``: the real and imaginary parts of each value,
-      as floats of half the size written as above; a value with a NaN part is
-      missing, and both its parts are written as the quiet NaN;
-    - datetimes and timedeltas, of type ``datetime64[unit]`` or ``timedelta64[unit]``
-      (numpy's name, such as ``datetime64[ms]``): the values as ``i64``, NaT being
-      -2**63.
-
-    The type is numpy's name for the column's dtype. These are the column types
-    cube files store, and the only ones a cube's tables accept. Two tables have the
-    same digest exactly when ``Table.equals`` finds them equal: the same names in the
-    same order, the same types, and equal values, with missing values equal.
-
-    Cell numbers: the number of samples and of groups (``u64`` each), then
-    ``n_cells`` as ``i64``, sample by sample.
-
-    Normalization: the mapping as a JSON value (Bray 2017), each value written as a
-    tag byte and a payload: ``n`` for null; ``f`` and ``t`` for false and true;
-    ``i`` and the decimal digits of the number as text (with a leading ``-`` when
-    negative) for a number with a whole value, such as 10000 or 10000.0; ``d`` and
-    its 8 bytes as a float64 for any other number; ``s`` and the text for a string;
-    ``a``, the number of items (``u64``) and the items for an array; ``o``, the
-    number of members (``u64``) and, in the order of the UTF-8 bytes of their keys,
-    each key (text) and value for an object. A number is thus taken by its value,
-    however a JSON writer spells it.
-
-    Layers: one digest for each group of each layer, of the group's samples x
-    features block: the number of samples and of features (``u64`` each), then the
-    values sample by sample, as ``i64`` for an integer layer and as float64, with
-    -0.0 written as 0.0, for a float layer. An integer layer holds the same numbers
-    whatever the width of its dtype (``Cube`` accepts integers from 0 to 2**63 - 1,
-    and merging or pooling makes them int64), so a uint32 group and an int64 group
-    with the same values have the same digest.
-
-    Manifest: UTF-8 text with one line per part, each ending with a line feed
-    (``\\n``)::
-
-        cytepool cube fingerprint 1
-        shape <groups> <samples> <features>
-        samples <digest>
-        groups <digest>
-        features <digest>
-        n_cells <digest, or none without cell numbers>
-        normalization <digest, or none without normalization>
-        layer <name> <int64 or float64> <group position> <digest>
-
-    with a ``layer`` line for each group of each layer: layers in the order of
-    ``LAYER_NAMES`` (counts, detected, log_sum, log_sum_sq, linear_sum), and groups in
-    the cube's order, counted from 0. The fingerprint is the digest of the manifest.
-
-Digest records:
-    ``Cube.digests()`` returns, and a cube file stores as the root attribute
-    ``digests``, a JSON object with everything the manifest lists (the order of its
-    members does not matter)::
-
-        {"version": 1, "shape": [<groups>, <samples>, <features>],
-         "samples": <digest>, "groups": <digest>, "features": <digest>,
-         "n_cells": <digest or null>, "normalization": <digest or null>,
-         "layers": {<name>: {"type": "int64" or "float64",
-                             "groups": [<digest of each group>]}},
-         "fingerprint": <digest of the manifest>}
+``Cube.fingerprint()`` returns a cube's fingerprint, a SHA-256 digest (National
+Institute of Standards and Technology 2015) of the values an analysis reads, and
+``Cube.digests()`` the digests it is built from: those of each table, of the cell
+numbers, of the normalization and of each group of each layer.
+https://docs.nygen.io/CytePool/statistics/cubes#what-a-cube-records explains what a
+fingerprint covers and why, and
+https://docs.nygen.io/CytePool/reference/cube-files#fingerprint-encoding specifies the
+encoding, version ``FINGERPRINT_VERSION``, for other programs: text as UTF-8 (Yergeau
+2003), the normalization as a JSON value (Bray 2017) and floats in the binary formats
+of IEEE 754 (IEEE 2019).
 
 References:
     National Institute of Standards and Technology (2015). Secure Hash Standard (SHS).
@@ -158,7 +66,9 @@ _FLOAT_TYPES = frozenset({"float16", "float32", "float64", "complex64", "complex
 
 
 def _table_digest(table: Table) -> str:
-    """Return the digest of a table, as the module documentation describes."""
+    """Return the digest of a table, encoded as
+    https://docs.nygen.io/CytePool/reference/cube-files#fingerprint-encoding specifies.
+    """
     hasher = hashlib.sha256(_u64(len(table)) + _u64(len(table.columns)))
     for name in table.columns:
         column = table[name]

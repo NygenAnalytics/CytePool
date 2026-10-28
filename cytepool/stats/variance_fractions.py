@@ -1,94 +1,49 @@
 """Variance partitioning: the share of each gene's variance that each variable explains.
 
-Which variables drive the differences between samples, and which must be adjusted
-for? For every gene, variance partitioning (Hoffman and Schadt 2016) fits one linear
-mixed model with every variable of the design, so that each is assessed together with
-all the others, and reports the fraction of the gene's variance that each variable
-explains, and the residual fraction. It is what variancePartition's
-``fitExtractVarPartModel`` computes.
+:func:`variance_fractions` fits every feature of a samples x features matrix of
+log-expression values with one linear mixed model that holds every variable of a design
+(Hoffman and Schadt 2016), with the model of :mod:`cytepool.stats.mixed_models` (Bates
+et al. 2015), and returns, in a :class:`VarianceFractions`, the fraction of the
+feature's variance that each variable explains and the residual fraction, as
+variancePartition's ``fitExtractVarPartModel`` computes them;
+:func:`cytepool.variance_partitioning` does it for every group (cell type) of a cube.
+https://docs.nygen.io/CytePool/statistics/mixed-models#variance-fractions explains the
+model and the fractions.
 
-:func:`variance_fractions` partitions the variance of every feature of a samples x
-features matrix of log-expression values, and :func:`cytepool.variance_partitioning`
-of every group (cell type) of a cube, after the steps of
-:func:`~cytepool.dream_voom` up to voom's precision weights.
+The fractions of a feature sum to one, and a random effect whose variance is estimated
+at zero (a singular fit in lme4) has a fraction of exactly zero. They do not change when
+the weights of a feature are multiplied by a constant, when the levels of a factor are
+relabelled, or when the values of a feature are multiplied by a constant or shifted.
 
-The model:
-    Every feature is fitted with the model of
-    :mod:`cytepool.stats.mixed_models`,
+Matching variancePartition:
+    The fractions match variancePartition 1.36.2 with lme4 1.1-38: its documentation
+    gives the method, and running it on chosen inputs settled the conventions it leaves
+    open.
 
-        y = X beta + Z_1 b_1 + ... + Z_K b_K + e,
-        b_k ~ N(0, sigma_k^2 I),    e ~ N(0, sigma^2 W^-1),
+    - The variances are estimated by maximum likelihood, as ``fitExtractVarPartModel``
+      does by default (``REML = FALSE``): its help page says that maximum likelihood
+      gave unbiased fractions, where REML (Patterson and Thompson 1971) can show
+      substantial bias.
+    - The variance of a fixed-effect term is the weighted variance of its fitted
+      contribution, with the denominator of a maximum likelihood variance; in a mixed
+      model the terms share the variance of all the fitted fixed effects in proportion
+      to their own, and in a linear model each term has its own (``calcVarPart`` of
+      ``lmer`` and ``lm`` fits).
+    - ``fitExtractVarPartModel`` divides each gene's precision weights by their mean,
+      as ``dream`` does (Hoffman and Roussos 2021), so the residual variance is that of
+      an observation of average weight and the fractions do not depend on the scale of
+      the weights. Without random effects the residual variance is the weighted mean of
+      the squared residuals, the maximum likelihood estimate.
+    - A design with random effects must give every categorical variable as a random
+      effect: a factor among its fixed effects is refused, as variancePartition refuses
+      it ("Must model either _all_ or _no_ categorical variables as random effects"),
+      and so is a formula without an intercept. Without random effects, factors are
+      fixed effects of the linear model.
 
-    where categorical variables, such as the donor, the condition or the batch, are
-    random intercepts, ``(1 | donor)``, and continuous variables, such as age, are
-    fixed effects (``~ age``). Without random effects it is a linear model, fitted by
-    weighted least squares. The variances are estimated by maximum likelihood, as
-    ``fitExtractVarPartModel`` does by default (``REML = FALSE``): its documentation
-    explains that REML, which estimates the random effects after removing the fixed
-    effects, biases the fractions of variance, while maximum likelihood estimates
-    the fixed and random effects together. ``method="reml"`` fits by REML instead.
-
-The fractions:
-    Each variable contributes a variance, and its fraction is that variance over
-    their sum:
-
-    - a random effect k, its variance component sigma_k^2;
-    - the residual, sigma^2 / mean(w): the residual variance of an observation of
-      the feature's average weight (sigma^2 itself without weights);
-    - a fixed-effect term j, the variance of its fitted contribution X_j beta_j
-      over the samples, the post hoc variance of Hoffman and Schadt (2016). The
-      variances of fitted values are weighted, sum_i w_i (v_i - v_w)^2 / sum_i w_i
-      about the weighted mean v_w, with the denominator of a maximum likelihood
-      variance (n without weights). With random effects, the terms share the
-      variance of all fitted fixed effects, X beta, in proportion to the variances
-      of their own contributions; without random effects, each term has the
-      variance of its own contribution. The two agree when the terms are
-      uncorrelated over the samples.
-
-    The fractions of a feature sum to one, and a random effect whose variance is
-    estimated at zero (a singular fit in lme4) has a fraction of exactly zero. They
-    do not change when the weights of a feature are multiplied by a constant, when
-    the levels of a factor are relabelled, or when the values of a feature are
-    multiplied by a constant or shifted.
-
-Conventions found by probing variancePartition 1.36.2, with lme4 1.1-38, as a black
-box, where its documentation leaves them open:
-
-- The variances of the fixed effects are those above: weighted, with the
-  denominator of a maximum likelihood variance, and shared among the terms in a
-  mixed model but not in a linear model (``calcVarPart`` of ``lmer`` and ``lm``
-  fits).
-- ``fitExtractVarPartModel`` divides each gene's precision weights by their mean,
-  as ``dream`` does, so the residual variance is that of an observation of average
-  weight and the fractions do not depend on the scale of the weights. Without
-  random effects the residual variance is the weighted mean of the squared
-  residuals, the maximum likelihood estimate.
-- A design with random effects must give every categorical variable as a random
-  effect: a factor among its fixed effects is refused, as variancePartition
-  refuses it ("Must model either _all_ or _no_ categorical variables as random
-  effects"), and so is a formula without an intercept. Without random effects,
-  factors are fixed effects of the linear model.
-- variancePartition lists the random effects in alphabetical order, then the fixed
-  effects; here they are in the order of the design.
-
-Deliberate differences from variancePartition, reported by
-``validation/variance_partitioning.py``:
-
-- A feature that the fixed and random effects reproduce, such as one that is
-  constant within every donor, has no maximum likelihood estimate (see
-  :class:`~cytepool.stats.mixed_models.MixedModelFit`) and its fractions are NaN.
-  lme4 fits it with a residual variance near zero, which gives it a fraction near
-  one for the donor.
-- ``method="reml"`` without random effects takes the REML estimate of the residual
-  variance, the residual sum of squares over n - p. variancePartition fits such a
-  design with ``lm`` and takes the residual sum of squares over n whatever ``REML``
-  says.
-
-Limits of this version:
-    Random slopes, which variancePartition uses to partition the variance within
-    subsets of the samples, such as ``(tissue + 0 | donor)``, generalized linear
-    mixed models, and bootstrap confidence intervals of the fractions
-    (``varPartConfInf``) are not implemented yet.
+Differences from variancePartition:
+    https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-models-limits lists
+    them; :func:`variance_fractions` and :class:`VarianceFractions` give those that
+    change the results.
 
 References:
     Hoffman GE, Schadt EE (2016). variancePartition: interpreting drivers of variation
@@ -206,8 +161,16 @@ def variance_fractions(
     is fitted with the design's fixed effects and random intercepts, by maximum
     likelihood as lme4's ``lmer(REML = FALSE)`` fits it (see
     :func:`~cytepool.stats.mixed_models.fit_mixed_model`), and its variance is
-    partitioned among the random effects, the fixed-effect terms and the residual,
-    as the module documentation describes. Categorical variables are given as random
+    partitioned among the random effects, the fixed-effect terms and the residual.
+    Each variable contributes a variance, and its fraction is that variance over their
+    sum: a random effect k its variance component sigma_k^2; a fixed-effect term j the
+    variance of its fitted contribution X_j beta_j over the samples, weighted,
+    sum_i w_i (v_i - v_w)^2 / sum_i w_i about the weighted mean v_w, and with random
+    effects scaled so that the terms share the variance of all the fitted fixed
+    effects, X beta, in proportion to their own; and the residual sigma^2 / mean(w),
+    the residual variance of an observation of the feature's average weight.
+    https://docs.nygen.io/CytePool/statistics/mixed-models#variance-fractions explains
+    the fractions. Categorical variables are given as random
     effects and continuous ones as fixed effects, as in ``Design(samples, "~ age",
     random="(1 | donor) + (1 | condition)")``. A design without random effects is
     fitted by weighted least squares, and its factors are fixed effects.
@@ -226,7 +189,9 @@ def variance_fractions(
             variance of an observation is sigma^2 / weight. They must be finite
             and positive; only their ratios within a feature matter.
         method: ``"ml"`` for maximum likelihood, variancePartition's default, or
-            ``"reml"`` for restricted maximum likelihood.
+            ``"reml"`` for restricted maximum likelihood. Without random effects,
+            ``"reml"`` divides the residual sum of squares by n - p, where
+            variancePartition divides it by n whatever its ``REML`` says.
         n_threads: The most threads for fitting features, as for
             ``fit_mixed_model``; the result does not depend on it.
 
@@ -432,6 +397,10 @@ def _mixed_fractions(
         if weights is None
         else _positive_weight_rows(weights, (parts.x.shape[0], n_features))
     )
+    # In a mixed model the fixed-effect terms share the variance of all the fitted
+    # fixed effects; the residual variance is that of an observation of average
+    # weight, as fitExtractVarPartModel divides the weights by their mean (found by
+    # probing).
     fixed = _fixed_variances(parts.x, terms, fit.coefficients, rows, apportioned=True)
     residual = fit.residual_variance / fit.mean_weights
     variances = np.column_stack([fit.variance_components, fixed, residual])
@@ -449,6 +418,8 @@ def _linear_fractions(
     """The fractions of weighted least squares fits of a design without random
     effects."""
     n, p = x.shape
+    # In a linear model each term has the variance of its own contribution, as
+    # calcVarPart gives it for an lm fit (found by probing).
     fixed = _fixed_variances(x, terms, fit.coefficients, rows, apportioned=False)
     # sigma^2 is the residual variance of an observation of weight one, sum w r^2 /
     # (n - p); maximum likelihood takes the sum over n.

@@ -1,16 +1,18 @@
 """Differential expression between samples, one group (cell type) of a cube at a time.
 
-:func:`~cytepool.limma_voom` and :func:`~cytepool.limma_trend` run the limma workflows
-for RNA-seq counts (Ritchie et al. 2015) on the pseudobulk counts of each group of a
-cube: limma-voom, which gives every observation a precision weight from the
-mean-variance trend of the log counts per million (Law et al. 2014), and limma-trend,
-which lets the prior variance of the empirical Bayes moderation follow that trend
-instead. :func:`~cytepool.dream_voom` runs variancePartition's dream (Hoffman and
-Roussos 2021), limma-voom with a linear mixed model in place of the linear model, for
-designs with random effects such as several samples of each donor. Each tests the named
-contrasts of a :class:`~cytepool.Design` and returns, for every group and contrast, a
-table of the tested features with ``topTable``'s statistics, together with a summary,
-the samples behind every fit and a provenance record.
+:func:`~cytepool.limma_voom` and :func:`~cytepool.limma_trend` run limma-voom (Law et
+al. 2014) and limma-trend, the limma workflows for RNA-seq counts (Ritchie et al.
+2015), on the pseudobulk counts of each group of a cube, and
+:func:`~cytepool.dream_voom` runs variancePartition's dream (Hoffman and Roussos 2021),
+which adds random effects to limma-voom's models, for designs such as several samples
+of each donor. Each tests the named contrasts of a :class:`~cytepool.Design` and
+returns a :class:`~cytepool.DifferentialExpressionResult`: for every group and
+contrast, a table of the tested features with ``topTable``'s statistics, together
+with a summary, the samples of every fit and a provenance record. The functions list
+their steps;
+https://docs.nygen.io/CytePool/statistics/limma-voom explains limma-voom and
+limma-trend, and https://docs.nygen.io/CytePool/statistics/mixed-models#dream explains
+dream.
 
 Samples:
     The design's sample table must have a ``sample_id`` column. Its samples are matched
@@ -19,29 +21,21 @@ Samples:
     fitted with its samples in the cube's order. In each group, a sample is left out
     of the fit when it has fewer than ``min_cells`` cells (when the cube records cell
     numbers), no counts, or fewer than ``min_counts`` counts in all (its total over
-    every feature of the cube), and the result records why. ``min_counts`` is 0 by
-    default; the scverse single-cell best practices (Heumos et al. 2023) keep samples
-    with at least 10 cells and 1,000 counts (``min_cells=10, min_counts=1000``), as
-    decoupler's ``filter_samples`` does, which keeps a sample with exactly as many
-    (found by probing).
+    every feature of the cube), and the result records why; a sample with exactly
+    ``min_cells`` cells or ``min_counts`` counts is kept, as decoupler's
+    ``filter_samples`` keeps it.
 
 The design of a group:
     The design matrix of a group is the rows of the full design matrix for the
     samples left in it, so every column keeps its meaning: factor levels, reference
-    levels and covariate values are those of the full design. With fewer samples that
-    matrix can be rank deficient, for example when every sample of one donor is left
-    out. Such a group is fitted on the column space of its design matrix, keeping the
-    columns that R's ``qr()`` keeps, as limma's ``lmFit`` does; each other column
-    (aliased) equals a combination of the kept columns before it. A contrast ``c`` is
-    estimable from the group's samples when it is orthogonal to the null space of the
-    group's design matrix (Searle 1971): when its weight on every aliased column is the
-    sum of its weights on the kept columns, weighted by that column's combination.
-    This is the rule of :meth:`Design.check <cytepool.Design.check>`. ``c``
-    applied to the coefficients then equals its weights on the kept columns applied to
-    the fit on the kept columns, whatever the coefficients that the samples cannot
-    separate, so its estimate and its exact standard error are those of any full-rank
-    parametrisation of the same model. A contrast that is not estimable is reported,
-    with the relations it violates, and not computed.
+    levels and covariate values are those of the full design. Where those rows are
+    rank deficient, as when every sample of one donor is left out, the group is
+    fitted on the columns that R's ``qr()`` keeps, as limma's ``lmFit`` does, and a
+    contrast is tested when the group's samples can estimate it (Searle 1971), which
+    :meth:`Design.check <cytepool.Design.check>` decides by the same rule; a contrast
+    that is not estimable is reported, with the relations it violates, and not
+    computed. https://docs.nygen.io/CytePool/statistics/linear-models#estimable-contrasts
+    explains the rule.
 
 Groups that are not fitted:
     A group is not fitted, and its status in the summary says why, when no sample is
@@ -51,89 +45,33 @@ Groups that are not fitted:
     no counts in the features that pass, or voom, the sample quality weights or the
     moderation fail on its data. A run never stops for one group.
 
-Steps:
-    For each group, with the R functions they match in the limma and edgeR User's
-    Guides:
-
-    1. Leave out samples, as above; the design matrix is the rows of the rest.
-    2. Filter features by expression with the group's design, by edgeR's
-       ``filterByExpr(y, design)`` (Chen, Lun and Smyth 2016) with its defaults
-       (``expression_filter``), and recompute the library sizes over the features
-       kept (``y[keep, , keep.lib.sizes = FALSE]``).
-    3. Normalization factors by TMM (Robinson and Oshlack 2010), edgeR's
-       ``calcNormFactors`` (``normalization``).
-    4. limma-voom: ``voom`` on the library sizes times the normalization factors,
-       with its LOWESS span chosen from the number of features tested, as limma's
-       ``voom`` chooses it by default since limma 3.66 (``span``), then ``lmFit``
-       with its weights. limma-trend: log2 counts per million with a prior count of
-       3, ``cpm(y, log = TRUE, prior.count = 3)`` as the limma User's Guide uses for
-       limma-trend, then ``lmFit``. Sample weights, when asked, enter here (below).
-    5. ``contrasts.fit``, ``eBayes`` (Smyth 2004), with ``trend = TRUE`` for
-       limma-trend and ``robust`` (Phipson et al. 2016) when asked, and
-       ``topTable(sort.by = "none")``: the Benjamini-Hochberg adjustment (Benjamini
-       and Hochberg 1995) runs over the tested features of one group and contrast,
-       and with ``adjust_across_groups`` also over every group (below).
-
 Sample weights:
-    Both kinds are off by default, and they are alternatives: limma's
-    ``voomWithQualityWeights`` takes no prior weights, and edgeR's ``voomLmFit``
-    refuses prior weights together with estimated sample weights (found by probing),
-    so CytePool refuses the two together too. The sample table and the record of
-    each fitted group hold the sample weights of its fit. With limma-voom, the
-    quality weights recorded are the final ones; ``voomWithQualityWeights`` estimates
-    them twice, and its first estimate only weights the fit of voom's second trend.
-    :func:`~cytepool.stats.voom.voom_with_quality_weights`, given the group's counts,
-    design rows and normalization factors, reproduces both.
+    Both kinds are off by default, and only one of them may be given
+    (https://docs.nygen.io/CytePool/statistics/limma-voom#limma-voom-defaults says
+    why). The sample table and the record of each fitted group hold the weights of
+    its fit.
 
-    - ``quality_weights``: sample quality weights, estimated in each group from how
-      closely each sample's values follow the linear model (Ritchie et al. 2006; Liu
-      et al. 2015), which a limma author recommends for pseudobulk data (Smyth 2025,
-      on the Bioconductor support site). limma-voom runs limma's
-      ``voomWithQualityWeights``
+    - ``quality_weights``: sample quality weights (Ritchie et al. 2006; Liu et al.
+      2015). limma-voom runs limma's ``voomWithQualityWeights``
       (:func:`~cytepool.stats.voom.voom_with_quality_weights`), gene by gene by
-      default, as limma does. limma-trend estimates them from the log2 counts per
-      million as limma's ``arrayWeights`` does
+      default, as limma does; it records the final weights, as
+      ``voomWithQualityWeights`` estimates them twice and its first estimate only
+      weights the fit of voom's second trend. limma-trend estimates them from the log2
+      counts per million as limma's ``arrayWeights`` does
       (:func:`~cytepool.stats.sample_weights.sample_quality_weights`), by REML by
       default, the method that ``arrayWeights`` chooses for such data, and passes
-      them to ``lmFit`` as sample weights. Where a donor has two samples, as in
-      ``~ donor + condition``, their residuals are equal and opposite (up to voom's
-      weights), so both get the low weight of an outlying sample. Where the weights
-      cannot be estimated, as with fewer than two residual degrees of freedom, they
-      are one, as limma's are, with a warning that names the group and that its
-      record keeps; where the estimate fails, as when a sample carries no
-      information about its variance and ``prior_n`` is 0, the group is not fitted.
+      them to ``lmFit`` as sample weights. Where the weights cannot be estimated, as
+      with fewer than two residual degrees of freedom, they are one, as limma's are,
+      with a warning that names the group and that its record keeps; where the
+      estimate fails, as when a sample carries no information about its variance and
+      ``prior_n`` is 0, the group is not fitted.
     - ``prior_weights="n_cells"``: each sample's number of cells in the group, as
-      prior weights. A pseudobulk profile sums the counts of its cells, so its log2
-      counts per million estimate the mean expression of those cells, whose
-      variance falls as one over their number: the precision of a profile is
-      proportional to its number of cells, as the dreamlet paper argues (Hoffman et
-      al. 2026, Methods), and dreamlet's ``processAssays`` weights its fits by the
-      number of cells of each sample, as its documentation describes.
-      limma-voom passes them to ``voom`` as ``weights``: they weight the fits
-      behind voom's trend, and the precision weights are the trend's times them,
-      as limma's help page says voom's weights modify prior weights, and as edgeR's
-      ``voomLmFit(prior.weights = ...)`` forms them (found by probing). limma-trend
+      prior weights, as dreamlet weights its fits (Hoffman et al. 2026). limma-voom
+      passes them to ``voom`` as ``weights``: they weight the least-squares fits from
+      which voom's trend is estimated, and the precision weights are the trend's times
+      them, as edgeR's ``voomLmFit(prior.weights = ...)`` forms them. limma-trend
       passes them to ``lmFit`` as sample weights. Only their ratios within a group
       matter: weights that are all ten times larger give the same results.
-
-dream:
-    :func:`~cytepool.dream_voom` takes the steps of limma-voom up to the normalization,
-    then those of variancePartition's ``voomWithDreamWeights``, ``dream``, ``eBayes``
-    and ``topTable``: precision weights from the mean-variance trend of the design's
-    mixed model, fitted to every feature by maximum likelihood
-    (:func:`~cytepool.stats.dream.voom_with_dream_weights`); the mixed model of every
-    feature fitted by REML with those weights
-    (:func:`~cytepool.stats.mixed_models.fit_mixed_model`); t-tests of the estimable
-    contrasts (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`) with the degrees
-    of freedom dream chooses by default (``ddf = "adaptive"``), Kenward and Roger's
-    (1997) in a group of fewer than 20 samples and Satterthwaite's (1946) otherwise;
-    F-tests of sets of contrasts; and their empirical Bayes moderation
-    (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The random effects of
-    a group are those of its samples: a grouping factor's levels without samples in the
-    group drop out. :mod:`cytepool.stats.dream` documents the conventions found by
-    probing variancePartition and the deliberate differences from it. Prior weights from
-    the number of cells are divided by their mean in each group, as variancePartition
-    divides prior weights, which changes no test.
 
 P-values adjusted across groups:
     ``adjusted_p_value`` adjusts the p-values of one group and contrast, as limma's
@@ -142,29 +80,14 @@ P-values adjusted across groups:
     Benjamini-Hochberg over every test of that contrast in the analysis: every
     feature tested in every group that was fitted and can estimate the contrast,
     stacked into one family. Each contrast is a family of its own, and groups left
-    out of ``groups`` are not in it. muscat reports both adjustments (Crowell et
-    al. 2020), whose comparison found the adjustment over all groups very
-    conservative. It is not larger for every test: a family with more small
-    p-values can lower an adjusted value.
+    out of ``groups`` are not in it.
 
-Deliberate differences from limma:
-    ``validation/differential_expression.py`` reports each of them.
-
-    - In a rank-deficient group, a contrast that is estimable but weighs an aliased
-      column is computed. limma's ``contrasts.fit`` stops with an error for such a
-      contrast, and with it for every contrast passed together with it (found by
-      probing), so in limma it needs a full-rank parametrisation.
-    - A contrast that is not estimable, but weighs no aliased column, is reported as
-      not estimable. limma computes it from the kept columns, whose meaning has then
-      changed: with every sample of the reference donor D1 left out of
-      ``~ donor + condition``, limma reports for the coefficient ``donorD2`` (donor D2
-      against D1) the difference between donor D2 and the last donor.
-    - With ``contrast_standard_errors="exact"``, the default of
-      :func:`~cytepool.limma_voom`, the standard errors of contrasts that combine
-      several coefficients are exact; limma's ``contrasts.fit`` approximates them when
-      weights differ between features, and ``"limma"`` reproduces it. limma's
-      approximation, unlike the exact value, depends on the parametrisation, so only
-      exact standard errors are the same in every parametrisation of a group's design.
+Differences from limma:
+    https://docs.nygen.io/CytePool/statistics/linear-models#estimable-contrasts says
+    what limma's ``contrasts.fit`` does with a group whose design lost rank, and
+    https://docs.nygen.io/CytePool/statistics/linear-models#contrasts why the standard
+    errors of contrasts are exact by default (``contrast_standard_errors``);
+    ``validation/differential_expression.py`` reports each difference.
 
 Memory:
     One group is in memory at a time: its counts layer, read from the cube when the
@@ -209,11 +132,6 @@ References:
     single-cell transcriptomics data using Dreamlet. Nature Communications 17, 9597.
     doi:10.1038/s41467-026-75680-8
 
-    Crowell HL, Soneson C, Germain PL, Calini D, Collin L, Raposo C, Malhotra D,
-    Robinson MD (2020). muscat detects subpopulation-specific state transitions from
-    multi-sample multi-condition single-cell transcriptomics data. Nature Communications
-    11, 6077. doi:10.1038/s41467-020-19894-4
-
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
     repeated measures designs. Bioinformatics 37, 192-201.
     doi:10.1093/bioinformatics/btaa687
@@ -235,15 +153,6 @@ References:
 
     Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
     restricted maximum likelihood. Biometrics 53, 983-997. doi:10.2307/2533558
-
-    Heumos L, Schaar AC, Lance C, Litinetskaya A, Drost F, Zappia L, Luecken MD,
-    Strobl DC, Henao J, Curion F, Single-cell Best Practices Consortium, Schiller HB,
-    Theis FJ (2023). Best practices for single-cell analysis across modalities. Nature
-    Reviews Genetics 24, 550-572. doi:10.1038/s41576-023-00586-w
-
-    Smyth GK (2025). Answer to "Guidance on limma for pseudobulk scRNA-seq with
-    multi-factor design", 11 September 2025. Bioconductor support site,
-    https://support.bioconductor.org/p/9162569/
 """
 
 import json
@@ -288,7 +197,7 @@ from ._messages import PACKAGE_DIRECTORY, fitted_lines, listing, quoted
 from ._options import (
     checked_choice,
     checked_flag,
-    number_at_least,
+    non_negative_number,
     positive_finite_number,
     positive_integer,
     real_number,
@@ -348,11 +257,11 @@ _FIXED_SETTINGS = {
 # TRUE).
 _DREAM_SETTINGS = {"weights_fit": "ml", "fit": "reml"}
 _DF_METHODS = ("adaptive", "satterthwaite", "kenward_roger")
-# dream's ddf = "adaptive" uses Kenward and Roger's method for fewer samples than this.
-# variancePartition 1.36.2 documents "<= 20 samples", but gives Kenward and Roger's
+# dream's ddf = "adaptive" uses Kenward-Roger's method for fewer samples than this.
+# variancePartition 1.36.2 documents "<= 20 samples", but gives Kenward-Roger's
 # degrees of freedom for 19 samples and Satterthwaite's for 20 (found by probing).
 _KENWARD_ROGER_SAMPLES = 20
-# dream tests a feature by Satterthwaite's method when Kenward and Roger's adjusted
+# dream tests a feature by Satterthwaite's method when Kenward-Roger's adjusted
 # covariance matrix of the coefficients is not positive definite or has a condition
 # number above this (variancePartition's NEWS for 1.31.16; the bound found by probing).
 _CONDITION_LIMIT = 1e6
@@ -367,7 +276,7 @@ class GroupFit:
 
     :meth:`DifferentialExpressionResult.fit` computes it again from the cube and
     design the result keeps, with the settings it records: the values, weights and
-    moderated statistics behind the group's tables, which figures such as
+    moderated statistics from which the group's tables come, which figures such as
     :func:`~cytepool.plotting.plot_mean_variance` and
     :func:`~cytepool.plotting.plot_residual_variances` draw. Rows of the arrays are
     the samples fitted, in the order of ``samples``, and columns the features
@@ -436,7 +345,7 @@ class DifferentialExpressionResult:
       (limma's B-statistic, ``B``).
 
     Tables from :func:`dream_voom` also give ``df``, the degrees of freedom of each
-    test (Satterthwaite's or Kenward and Roger's plus the prior's, ``df.total``),
+    test (Satterthwaite's or Kenward-Roger's plus the prior's, ``df.total``),
     after ``t``, and ``z_statistic``, the z-statistic with the test's p-value
     (``topTable``'s ``z.std``), after ``log_odds``; a feature whose mixed model has
     no minimum has NaN statistics. Its F-tests have tables of their own, whose
@@ -846,30 +755,40 @@ def limma_voom(
 ) -> DifferentialExpressionResult:
     """Test contrasts in every group of a cube by limma-voom.
 
-    For each group, the samples with fewer than ``min_cells`` cells or no counts are
-    left out, features are filtered by expression, the counts are normalized, voom
-    gives every observation a precision weight from the mean-variance trend of the
-    log2 counts per million, a weighted linear model is fitted to every feature, and
-    its contrasts are moderated by empirical Bayes: the steps of the limma User's
-    Guide for RNA-seq (``voom``, ``lmFit``, ``contrasts.fit``, ``eBayes``,
-    ``topTable``) after edgeR's ``filterByExpr`` and ``calcNormFactors``. The module
-    documentation describes the steps, rank-deficient groups and the deliberate
-    differences from limma.
+    The steps of the limma and edgeR User's Guides for RNA-seq, in each group (Law
+    et al. 2014; Ritchie et al. 2015), with the R functions they match:
 
-    voom smooths its mean-variance trend with a LOWESS span that, by default, it
-    chooses in each group from the number of features tested there, by limma's
-    ``chooseLowessSpan`` rule (:func:`~cytepool.stats.smoothing.choose_lowess_span`),
-    as limma's ``voom`` does by default since limma 3.66 (``adaptive.span = TRUE``).
-    ``span`` fixes it instead; limma's default before 3.66 was 0.5. The record of
-    each group gives the span its trend used, as ``voom_span``.
+    1. Leave out the samples with fewer than ``min_cells`` cells, no counts, or
+       fewer than ``min_counts`` counts; the design matrix is the rows of the rest
+       (the module documentation gives the rules for samples and for designs that
+       lose rank).
+    2. Filter the features by expression with that design matrix, as edgeR's
+       ``filterByExpr(y, design)`` does with its defaults (Chen, Lun and Smyth
+       2016), and take the library sizes over the features kept
+       (``y[keep, , keep.lib.sizes = FALSE]``).
+    3. Normalization factors by TMM, edgeR's ``calcNormFactors`` (Robinson and
+       Oshlack 2010).
+    4. ``voom`` on the library sizes times the normalization factors, whose LOWESS
+       span is chosen from the number of features tested by limma's
+       ``chooseLowessSpan`` rule (:func:`~cytepool.stats.smoothing.choose_lowess_span`),
+       as limma's ``voom`` chooses it by default since limma 3.66, then ``lmFit``
+       with its weights; sample weights, when asked, enter here (the module
+       documentation gives the rules).
+    5. ``contrasts.fit``, ``eBayes`` (Smyth 2004), robustly when asked (Phipson et
+       al. 2016), and ``topTable(sort.by = "none")``, whose Benjamini-Hochberg
+       adjustment (Benjamini and Hochberg 1995) runs over the tested features of one
+       group and contrast.
 
-    Options for pseudobulk data, each off by default so that the results are
-    limma's standard workflow unless asked: a minimum total count per sample
-    (``min_counts``), sample quality weights (``quality_weights``, limma's
-    ``voomWithQualityWeights``), prior weights from the number of cells behind each
-    profile (``prior_weights="n_cells"``, as dreamlet weights samples), and p-values
-    adjusted across groups as well as within each (``adjust_across_groups``). The
-    module documentation gives the rules and their sources.
+    The record of each group gives the span its trend used, as ``voom_span``. The
+    defaults are those of limma's workflow, but for ``min_cells``, which leaves out
+    samples of fewer than 10 cells, and for ``contrast_standard_errors``, which
+    computes the standard errors of contrasts exactly. The options for pseudobulk
+    data are off by default: a minimum total count per sample (``min_counts``),
+    sample quality weights (``quality_weights``), prior weights from the number of
+    cells of each profile (``prior_weights="n_cells"``), and p-values adjusted across
+    groups as well as within each (``adjust_across_groups``).
+    https://docs.nygen.io/CytePool/statistics/limma-voom explains the method and
+    when to choose each option.
 
     Provenance:
         The result records the cube's fingerprint, the digests it is built from and
@@ -877,12 +796,13 @@ def limma_voom(
         ``Cube.provenance``), computed after the fits. For a cube opened with
         :func:`~cytepool.read_cube` this reads nothing: the file stores the
         digests, and each group the fits read whole is checked against its digest.
-        A cube in memory hashes its layers once, at about 1 s per GB of values
-        where the processor has SHA instructions. A lazy cube derived from a cube
-        file with ``select``, ``regroup`` or ``collapse_samples`` reads, once, the
-        groups whose values its operations changed and that the fits did not read
-        whole: those of its other layers, and those of groups not analysed. A lazy
-        layer of another array-like, which can change, is read whole once more.
+        A cube in memory hashes its layers once (see "Cost" in
+        :meth:`Cube.fingerprint <cytepool.Cube.fingerprint>`). A lazy cube derived
+        from a cube file with ``select``, ``regroup`` or ``collapse_samples`` reads,
+        once, the groups whose values its operations changed and that the fits did
+        not read whole: those of its other layers, and those of groups not analysed.
+        A lazy layer of another array-like, which can change, is read whole once
+        more.
 
     Args:
         cube: A cube with a ``counts`` layer, such as one from
@@ -1021,17 +941,18 @@ def limma_trend(
 ) -> DifferentialExpressionResult:
     """Test contrasts in every group of a cube by limma-trend.
 
-    As :func:`limma_voom`, but the counts become log2 counts per million with a
-    prior count (edgeR's ``cpm(y, log = TRUE, prior.count = 3)``, the limma User's
-    Guide's choice for limma-trend), every feature is fitted without observation
-    weights, and the prior variance of the empirical Bayes moderation follows the
-    mean log2 CPM of the features (``eBayes(trend = TRUE)``). The standard errors of
-    contrasts are exact, as limma's are, also with sample weights. The result
-    records the cube's fingerprint and digests, at the cost "Provenance" in
-    :func:`limma_voom` gives.
-
-    The options for pseudobulk data are those of :func:`limma_voom`; sample weights
-    (prior or quality weights) enter ``lmFit`` as sample weights.
+    The steps of :func:`limma_voom`, but in step 4 the counts become log2 counts per
+    million with a prior count, as edgeR's ``cpm(y, log = TRUE, prior.count = 3)``
+    computes them for limma-trend in the limma User's Guide, and every feature is
+    fitted without observation weights; in step 5 the prior variance of the
+    empirical Bayes moderation follows the mean log2 CPM of the features
+    (``eBayes(trend = TRUE)``). The options for pseudobulk data are those of
+    :func:`limma_voom`; sample weights (prior or quality weights) enter ``lmFit`` as
+    sample weights, and the standard errors of contrasts are exact, as limma's are
+    then. The result records the cube's fingerprint and digests, at the cost
+    "Provenance" in :func:`limma_voom` gives.
+    https://docs.nygen.io/CytePool/statistics/limma-voom#limma-trend says when to
+    choose limma-trend over limma-voom.
 
     Args:
         cube: A cube with a ``counts`` layer.
@@ -1142,8 +1063,11 @@ def dream_voom(
     are tested (:func:`~cytepool.stats.mixed_models.fixed_effect_tests`) with the
     degrees of freedom of ``df_method``; and the tests are moderated by empirical
     Bayes as variancePartition's ``eBayes`` moderates them
-    (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`). The module
-    documentation gives the steps and the differences from variancePartition.
+    (:func:`~cytepool.stats.dream.moderated_fixed_effect_tests`).
+    https://docs.nygen.io/CytePool/statistics/mixed-models#dream explains the steps,
+    :mod:`cytepool.stats.dream` gives how they match variancePartition, and
+    https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-models-limits how they
+    differ from it.
 
     Every group's mixed model uses the random effects of the samples left in it: the
     levels of a grouping factor without samples there drop out, and a group whose
@@ -1153,11 +1077,10 @@ def dream_voom(
     is tested with NaN statistics; its group's record counts them.
 
     Degrees of freedom:
-        As dream's ``ddf``, by default (``"adaptive"``) Kenward and Roger's method
-        in a group with fewer than 20 samples and Satterthwaite's otherwise.
-        variancePartition documents "20 samples or fewer"; with 20 its ``dream``
-        uses Satterthwaite's (found by probing variancePartition 1.36.2). By
-        default (``kenward_roger_weights="average"``), Kenward and Roger's
+        As dream's ``ddf``, by default (``"adaptive"``) Kenward-Roger's method
+        in a group with fewer than 20 samples and Satterthwaite's otherwise, as
+        dream chooses them (:mod:`cytepool.stats.dream` compares its help page).
+        By default (``kenward_roger_weights="average"``), Kenward-Roger's
         adjustment is computed as dream computes it with pbkrtest, with every
         observation at its feature's average weight; with voom's weights that
         adjustment can make standard errors smaller than the unadjusted ones,
@@ -1165,18 +1088,20 @@ def dream_voom(
         :func:`~cytepool.stats.mixed_models.fixed_effect_tests`). As dream does, a
         feature whose adjusted covariance matrix is not positive definite or has a
         condition number above 1e6 is tested by Satterthwaite's method instead;
-        the group's record counts such features. That number depends on the units
-        of continuous covariates: centring and scaling them avoids it.
+        the group's record counts such features. The condition number is computed
+        exactly, where dream uses R's estimate, so the two can choose differently
+        within about 2% of 1e6. It depends on the units of continuous covariates:
+        centring and scaling them avoids the fallback.
 
     F-tests:
         ``f_tests`` names sets of contrasts to test at once, such as every
         difference among three time points: each is tested by dream's moderated
         F-statistic, which ``topTable`` gives for several coefficients (see
-        :mod:`cytepool.stats.dream`), in every group that can estimate all its
-        contrasts. Its table has, for every tested feature, ``feature_id`` (and
-        ``symbol``), ``log2_fold_change_<contrast>`` for each contrast,
-        ``average_log2_cpm``, ``f_statistic``, ``df`` (the denominator degrees of
-        freedom), ``p_value``, ``adjusted_p_value`` (and
+        :class:`~cytepool.stats.dream.ModeratedFixedEffectTests`), in every group
+        that can estimate all its contrasts. Its table has, for every tested
+        feature, ``feature_id`` (and ``symbol``), ``log2_fold_change_<contrast>``
+        for each contrast, ``average_log2_cpm``, ``f_statistic``, ``df`` (the
+        denominator degrees of freedom), ``p_value``, ``adjusted_p_value`` (and
         ``adjusted_p_value_across_groups``), and ``standardized_f_statistic``, the
         F-statistic on infinite denominator degrees of freedom with the same
         p-value (``F.std``). The numerator degrees of freedom are the number of
@@ -1207,19 +1132,22 @@ def dream_voom(
             0.5.
         prior_weights: ``"n_cells"`` to give each sample its number of cells in
             the group as a prior weight, as dreamlet weights samples, or None for
-            none. Needs a cube that records cell numbers.
+            none. Needs a cube that records cell numbers. The weights are divided
+            by their mean in each group, as variancePartition divides prior
+            weights, which changes no test.
         df_method: ``"adaptive"`` (dream's default, above), ``"satterthwaite"`` or
             ``"kenward_roger"`` (with dream's fallback, above) for every group.
-        kenward_roger_weights: ``"average"``, as dream computes Kenward and Roger's
+        kenward_roger_weights: ``"average"``, as dream computes Kenward-Roger's
             adjustment, or ``"precision"``, with each observation's own weight;
             see above.
         robust: Whether to estimate the prior of the moderation robustly, as
             ``eBayes(robust = TRUE)`` does.
         trend: Whether the prior variance of the moderation follows the mean log2
-            CPM of the features, as ``eBayes(trend = TRUE)`` does. dream moderates
-            the residual variance of an observation of average weight, which keeps
-            much of the mean-variance trend that voom's weights remove (see
-            :mod:`cytepool.stats.dream`); variancePartition's default is False.
+            CPM of the features, as ``eBayes(trend = TRUE)`` does; False by
+            default, as in variancePartition. The variances moderated keep voom's
+            mean-variance trend, which True lets the prior follow
+            (https://docs.nygen.io/CytePool/statistics/mixed-models#dream says
+            why).
         adjust_across_groups: Whether to add the column
             ``adjusted_p_value_across_groups``, as for :func:`limma_voom`.
         n_threads: The most threads for the mixed model fits of the features (see
@@ -1717,7 +1645,7 @@ def _dream_parts(
 ) -> InferenceParts:
     """The parts of the group's tests, with dream's choice of degrees of freedom.
 
-    With Kenward and Roger's method, a feature whose adjusted covariance matrix is
+    With Kenward-Roger's method, a feature whose adjusted covariance matrix is
     not positive definite or has a condition number above 1e6 takes Satterthwaite's
     parts, as dream does; ``fit`` records the method and how many features did.
     Call it within ``thread_limit``.
@@ -1786,6 +1714,8 @@ def _voom_weights(
     """
     quality = settings["quality_weights"]
     if quality is None:
+        # voom's weights times the prior weights, as edgeR's
+        # voomLmFit(prior.weights = ...) forms them (found by probing).
         return voom(y, x, norm_factors=factors, span=settings["span"], weights=prior)
     counts, sizes, fraction = voom_inputs(
         y, x, None, factors, settings["span"], "limma_voom"
@@ -1926,6 +1856,8 @@ def _sample_weight_settings(
     """The checked settings of the sample weights, which are alternatives."""
     prior_weight_setting(prior_weights)
     quality = _quality_settings(quality_weights, _QUALITY_METHODS[method])
+    # edgeR's voomLmFit refuses prior weights together with estimated sample weights
+    # (found by probing).
     if prior_weights is not None and quality is not None:
         raise ValueError(
             "give prior_weights or quality_weights, not both: quality weights "
@@ -1962,8 +1894,8 @@ def _quality_settings(value: Any, method: str) -> dict[str, Any] | None:
         "method": checked_choice(
             settings["method"], "quality_weights['method']", ("gene_by_gene", "reml")
         ),
-        "prior_n": number_at_least(
-            settings["prior_n"], "quality_weights['prior_n']", 0.0
+        "prior_n": non_negative_number(
+            settings["prior_n"], "quality_weights['prior_n']"
         ),
         "max_iterations": positive_integer(
             settings["max_iterations"], "quality_weights['max_iterations']"

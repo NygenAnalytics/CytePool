@@ -1,129 +1,60 @@
-"""edgeR's quasi-likelihood F-tests: glmQLFit and glmQLFTest as edgeR 4 runs them.
+"""edgeR's quasi-likelihood F-tests: glmQLFit and glmQLFTest as edgeR 4.4 runs them.
 
-The quasi-likelihood model of Lund, Nettleton, McCarthy and Smyth (2012) gives each gene
-g a negative binomial model for its counts with a second, gene-wise dispersion:
+:func:`fit_quasi_likelihood` fits negative binomial models of every gene with empirical
+Bayes quasi-dispersions (Lund, Nettleton, McCarthy and Smyth 2012), as edgeR's
+``glmQLFit`` does with its defaults (``legacy = FALSE``; Chen, Chen, Lun, Baldoni and
+Smyth 2025), into a :class:`QuasiLikelihoodFit`, and :func:`quasi_likelihood_f_test`
+tests coefficients or contrasts by F-tests, as ``glmQLFTest`` does, into a
+:class:`QuasiLikelihoodTest` with the columns of ``topTags``. :func:`common_dispersion`
+gives the Cox-Reid common dispersion (``estimateGLMCommonDisp``),
+:func:`average_log2_cpm` the average log2 counts per million (``aveLogCPM``), and
+:func:`negative_binomial_unit_deviance_moments` the exact mean and variance of the unit
+deviance in a :class:`UnitDevianceMoments`.
+https://docs.nygen.io/CytePool/statistics/count-models#quasi-likelihood gives the model
+and its steps, and
+https://docs.nygen.io/CytePool/statistics/count-models#count-models-limits how the
+results differ from edgeR's.
 
-    var(y_gi) = sigma_g^2 (mu_gi + phi mu_gi^2),
+Prior weights:
+    edgeR uses them in the fits as prior weights, and in the Cox-Reid likelihood as the
+    number of independent counts each count averages (edgeR's ``adjustedProfileLik``).
+    In the adjusted deviances it treats an observation of weight w as w technical
+    replicates: its moments are taken at the mean w mu / A, its unit deviance at the
+    dispersion w phi / A, and its leverage is that of the weight mu /
+    (1 + w phi mu / A) rather than of the weight of the fit; its adjusted unit deviance
+    is per unit of weight, so that the gene's adjusted deviance is the sum of the unit
+    values times the weights, and its degrees of freedom the plain sum. This module
+    follows edgeR in each. The weights are therefore not relative: multiplying all of
+    them by a constant changes the quasi-dispersions and the F-statistics, in both.
 
-with phi the negative binomial (NB) dispersion, shared by the genes, and sigma_g^2
-the quasi-dispersion. The quasi-dispersions are estimated from the deviances of the
-NB fits, moderated by empirical Bayes as limma moderates residual variances, and
-genes are tested with F-tests whose denominator is the posterior quasi-dispersion.
-:func:`fit_quasi_likelihood` and :func:`quasi_likelihood_f_test` follow edgeR 4.4's
-``glmQLFit`` and ``glmQLFTest`` with their defaults (``legacy = FALSE``), the method of
-Chen, Chen, Lun, Baldoni and Smyth (2025), as documented and, where the documentation
-is silent, as found by running edgeR 4.4.0 as a black box ("found by probing").
+Matching edgeR:
+    The results match edgeR 4.4.0, with limma 3.62.1, run on a matrix of counts: their
+    documentation gives the method, and running them on chosen inputs settled the
+    conventions it leaves open, which comments in the code record.
 
-The steps:
-
-1. Abundance. :func:`average_log2_cpm` is edgeR's ``aveLogCPM``: the log2 of the mean
-   count per million of a gene, fitted as one group of samples by a NB model after a
-   prior count of 2, scaled by library size, is added to every count (edgeR's
-   ``addPriorCount``). ``glmQLFit`` computes it once, at the given NB dispersion, or
-   at 0.05 when it estimates the dispersion (found by probing); it ranks the genes
-   and is the covariate of both trends below. The tests report it at the NB
-   dispersion.
-2. NB dispersion. Unless given, it is the Cox-Reid common dispersion
-   (:func:`common_dispersion`, edgeR's ``estimateGLMCommonDisp``) of the most highly
-   expressed genes: the ``ceiling(p G)`` of the G genes with the largest average log
-   CPM, with ``p = chooseLowessSpan(G sqrt(n - k), small.n = 20, min.span = 0.02)``
-   for n samples and k coefficients, as edgeR's help page says (the count of genes
-   is a ceiling, found by probing).
-3. Fits. Every gene gets the NB fit of
-   :func:`~cytepool.stats.negative_binomial_models.fit_negative_binomial_model` at
-   the working dispersion phi / A, where A is the average quasi-dispersion below.
-4. Bias-adjusted deviances. The unit deviance d_i of an observation is approximated
-   by a scaled chi-squared variable s_i chi^2(k_i) whose mean and variance are those
-   of the unit deviance (Chen et al. 2025): s_i = V_i / (2 E_i) and k_i = 2 E_i^2 /
-   V_i, with E_i and V_i from :func:`negative_binomial_unit_deviance_moments`. The
-   adjusted unit deviance is d_i / s_i and its degrees of freedom are k_i (1 - h_i),
-   with h_i the leverage of the observation. An observation of leverage 1, which the
-   fit reproduces, has a residual deviance and degrees of freedom of zero, as in
-   exact arithmetic, not the rounding of its fitted value. A gene's adjusted
-   residual deviance and degrees of freedom are their sums over its samples, and its
-   quasi-dispersion is their ratio, on degrees of freedom that are fractional and
-   differ between genes.
-   The moments are those of the divided counts (Baldoni et al. 2024): with
-   quasi-dispersion A, var(y) = A (mu + (phi / A) mu^2), and y / A follows a NB
-   distribution with mean mu / A and dispersion phi. E_i and V_i are taken at the
-   mean mu_i / A and the dispersion phi, and d_i at the working dispersion (found by
-   probing).
-5. Average quasi-dispersion (found by probing). A starts at 1 and is updated twice:
-   each time the genes are fitted at phi / A and their quasi-dispersions formed as in
-   step 4; the fourth roots of the quasi-dispersions of the genes with residual
-   degrees of freedom are smoothed against the abundance by R's ``lowess`` with a
-   span of 0.5 (three robustness iterations), and A becomes the fourth power of the
-   0.9 quantile of the smoothed values, or 1 if that is smaller. The fits of step 3
-   use the final A, which is edgeR's ``average.ql.dispersion``: its help page says
-   that it "scales the NB dispersion".
-6. Moderation. The quasi-dispersions are squeezed by limma's ``squeezeVar`` with its
-   estimator for unequal degrees of freedom (``fitFDistUnequalDF1``, ``legacy =
-   FALSE`` whatever the degrees of freedom; found by probing), through
-   :func:`~cytepool.stats.empirical_bayes.squeeze_variances` with
-   ``prior_estimator="likelihood"``: towards a trend in the abundance by default, and
-   robustly when asked. ``winsor.tail.p`` plays no part, as in edgeR (found by
-   probing).
-7. Tests. :func:`quasi_likelihood_f_test` fits the null model at the working
-   dispersion, without the tested coefficients or with the tested contrasts set to
-   zero, and divides the likelihood ratio statistic by its degrees of freedom r (the
-   rank of the contrasts) and by the posterior quasi-dispersion. The F-statistic is
-   referred to the F distribution on r and min(d0 + d_g, sum of n - k over the genes)
-   degrees of freedom, with d0 the prior and d_g the adjusted residual degrees of
-   freedom (found by probing). Log fold changes are the coefficients shrunk with a
-   prior count of 0.125 (Phipson 2013), divided by log 2, and adjusted p-values are
-   Benjamini and Hochberg's (1995), as edgeR's ``topTags`` gives them.
-
-Prior weights (found by probing). edgeR uses them in the fits as prior weights, and
-in the Cox-Reid likelihood as the number of independent counts each count averages
-(edgeR's ``adjustedProfileLik``). In the adjusted deviances it treats an observation
-of weight w as w technical replicates: its moments are taken at the mean w mu / A, its
-unit deviance at the dispersion w phi / A, and its leverage is that of the weight mu /
-(1 + w phi mu / A) rather than of the weight of the fit; its adjusted unit deviance is
-per unit of weight, so that the gene's adjusted deviance is the sum of the unit values
-times the weights, and its degrees of freedom the plain sum. This module follows edgeR
-in each. The weights are therefore not relative: multiplying all of them by a constant
-changes the quasi-dispersions and the F-statistics, in both.
-
-Deliberate differences from edgeR 4.4.0:
-
-- The mean and variance of the unit deviance are exact, to about 1e-14. edgeR
-  approximates them (found by probing): the scale implied by its adjusted unit
-  deviances is off by up to about 1.2e-3 at dispersions up to 0.2 and 1.3e-2 at a
-  dispersion of 1, and the degrees of freedom by up to about 2e-4 and 4e-3. The
-  adjusted deviances, quasi-dispersions and F-statistics inherit differences of up
-  to about 3e-3.
-- The Cox-Reid dispersion is the maximum of the adjusted profile likelihood, located
-  to about 1e-7 relative; edgeR's search stops within its tolerance of 1e-5. Where
-  edgeR approximates the deviance, below a dispersion of 1e-4, its likelihood is
-  noisy (found by probing), so that for counts close to Poisson the two estimates
-  differ by more than that, both being near zero.
-- The fits converge to the maximum, where edgeR's Levenberg fits stop short of it by
-  up to about 3e-4 in the coefficients (see
-  :mod:`cytepool.stats.negative_binomial_models`), so that the log fold changes of
-  designs that are not one-way layouts differ by up to about that. Fitted values
-  that tend to zero, as in a group without counts, are zero in both for one-way
-  layouts; otherwise they stop near 1e-8 in edgeR's fits and far lower here, and
-  both give such observations the leverages of the limit. Either way they carry
-  almost no degrees of freedom. A gene with no others, such as one counted in only
-  one condition of a paired design, has the ratio of their almost-zero deviances
-  and degrees of freedom as its quasi-dispersion, which therefore differs (0.053 in
-  edgeR and 0.021 here, for such a gene in eight paired samples). It enters the
-  average quasi-dispersion in both.
-- The robust prior tests only the genes with residual degrees of freedom for
-  outliers, as :func:`~cytepool.stats.empirical_bayes.fit_f_distribution_likelihood`
-  does; limma counts a gene without them, such as one without counts, as a zero
-  variance, which then lowers the outlier probabilities of the others.
-- With offsets per observation, edgeR's ``aveLogCPM`` gives the first gene a value
-  that does not depend on its offsets (found by probing: a copy of the gene in
-  another row gets the value computed here), which then enters the ranking, the
-  trends and the log CPM of that gene.
-
-Not implemented yet: edgeR's ``legacy = TRUE`` methods (the deviances of
-``glmQLFit`` in edgeR 3, with the degrees of freedom adjusted for groups without
-counts, and the Poisson bound of ``glmQLFTest``). This module follows edgeR's method
-for a matrix of counts. edgeR's method for a DGEList agrees with it, except when the
-DGEList holds a trended dispersion from ``estimateDisp``: it then takes one
-dispersion from that trend in place of the Cox-Reid estimate (found by probing).
+    - ``glmQLFit`` computes the average log CPM once, at the given dispersion or at 0.05
+      when it estimates the dispersion; it ranks the genes and is the covariate of both
+      trends. The tests report it at the negative binomial dispersion phi.
+    - The dispersion is estimated from the ``ceiling(p G)`` of the G genes with the
+      largest average log CPM, with ``p = chooseLowessSpan(G sqrt(n - k), small.n = 20,
+      min.span = 0.02)`` for n samples and k coefficients, as edgeR's help page says.
+    - The moments of a unit deviance are those of the counts divided by the average
+      quasi-dispersion A, at the mean mu / A and the dispersion phi (Baldoni, Chen and
+      Smyth 2024), and the unit deviance is taken at the working dispersion phi / A.
+    - A starts at 1 and is updated twice, each time from the quasi-dispersions of fits
+      at phi / A: the fourth roots of those of the genes with residual degrees of
+      freedom are smoothed against the abundance by R's ``lowess`` with a span of 0.5
+      (three robustness iterations), and A becomes the fourth power of the 0.9 quantile
+      of the smoothed values, or 1 if that is smaller.
+    - The quasi-dispersions are squeezed by limma's ``squeezeVar`` with its estimator
+      for unequal degrees of freedom (``fitFDistUnequalDF1``, ``legacy = FALSE``),
+      whatever the degrees of freedom, and ``winsor.tail.p`` plays no part.
+    - The F-statistic's denominator degrees of freedom are min(d0 + d_g, the sum of
+      n - k over the genes), with d0 the prior's and d_g the gene's adjusted residual
+      degrees of freedom.
+    - edgeR's method for a DGEList agrees with its method for a matrix of counts, but
+      for a DGEList that holds a trended dispersion from ``estimateDisp``: it then takes
+      one dispersion from that trend in place of the Cox-Reid estimate.
 
 References:
     Lund SP, Nettleton D, McCarthy DJ, Smyth GK (2012). Detecting differential
@@ -354,8 +285,7 @@ def negative_binomial_unit_deviance_moments(
     at 64, by Gauss-Legendre panels on the log of the count. The moments agree to
     about 1e-14 relative with sums at 30 digits for means up to 300, with the gamma
     limit of large means and with the large-mean expansion of the Poisson moments.
-    edgeR's approximations of them differ by up to about 1e-2 (see the module
-    description).
+    edgeR approximates them.
 
     Args:
         means: Means, finite and non-negative; at most 1e100.
@@ -893,6 +823,9 @@ def _adjusted_deviances(
     mu = np.asarray(fit.fitted_values)
     phi = np.broadcast_to(dispersion, mu.shape)
     working = phi / average
+    # The moments are those of the counts divided by the average quasi-dispersion, at
+    # the mean mu / A and the dispersion phi, and the unit deviance is taken at the
+    # working dispersion phi / A (found by probing).
     means = weights * mu / average
     scale, df = _chi_squared_match(means, dispersion)
     deviance = _unit_deviances_at(counts, mu, weights * working)
@@ -1077,22 +1010,24 @@ def common_dispersion(
     W_g the expected information of the fitted values, w mu / (1 + phi mu) with prior
     weights w. With prior weights each count is the average of w independent negative
     binomial counts, as for edgeR's ``adjustedProfileLik``: its log-likelihood is
-    that of w y under NB(w mu, phi / w). The adjustment, which a REML criterion
-    parallels, removes most of the downward bias of the maximum likelihood estimate
-    (Robinson and Smyth 2008). Observations whose fitted values tend to zero, below
-    1e-12 of the gene's largest, carry no information and are left out of the
-    determinant, whose remaining factor does not depend on phi.
+    that of w y under NB(w mu, phi / w). Observations whose fitted values tend to
+    zero, below 1e-12 of the gene's largest, carry no information and are left out of
+    the determinant, whose remaining factor does not depend on phi.
 
     As edgeR does (its help pages): genes with fewer than ``min_row_sum`` counts in all
     are left out; when more than ``subset`` genes remain, a systematic subset of them,
     evenly spaced in average log CPM, is used (``systematicSubset``: every s-th gene in
-    increasing average log CPM, s = floor(G / subset), from gene floor(s / 2) + 1; found
-    by probing), which keeps all G genes while G < 2 ``subset`` and from ``subset`` to
+    increasing average log CPM, s = floor(G / subset), from gene floor(s / 2) + 1),
+    which keeps all G genes while G < 2 ``subset`` and from ``subset`` to
     about 1.5 ``subset`` of them otherwise; and the maximum is searched over
     ``interval``. The search, Brent's (1973) method as R's ``optimize``, locates the
     maximum to about 1e-7 relative, as closely as the rounding of the likelihood allows;
-    edgeR's stops within its tolerance of 1e-5. A maximum at an end of the interval is
-    returned with a warning.
+    edgeR's stops within its tolerance of 1e-5. Below a dispersion of 1e-4, where edgeR
+    approximates the deviance, its likelihood is noisy, so that for counts close to
+    Poisson the two estimates differ by more than that, both being near zero. A
+    maximum at an end of the interval is returned with a warning.
+    https://docs.nygen.io/CytePool/statistics/count-models#cox-reid explains the
+    adjustment.
 
     Args:
         counts: ``(n_samples, n_features)`` counts, finite and non-negative.
@@ -1130,11 +1065,9 @@ def common_dispersion(
         low, high = _search_interval(interval)
         least = non_negative_number(min_row_sum, "min_row_sum")
         reject_masked(subset, "subset")
-        most = positive_integer(subset, "subset", expected="a positive integer")
+        most = positive_integer(subset, "subset")
         reject_masked(max_iterations, "max_iterations")
-        limit = positive_integer(
-            max_iterations, "max_iterations", expected="a positive integer"
-        )
+        limit = positive_integer(max_iterations, "max_iterations")
         log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
         w = weight_matrix(weights, n_samples, n_features)
         return _common_dispersion(
@@ -1278,7 +1211,8 @@ def _systematic_subset(n: int, order_by: FloatArray) -> npt.NDArray[np.int64]:
 
 
 def _top_genes(abundance: FloatArray, proportion: float) -> npt.NDArray[np.int64]:
-    """The ceiling(p G) genes with the largest average log CPM, in index order."""
+    """The ceiling(p G) genes with the largest average log CPM, in index order (a
+    ceiling, found by probing)."""
     n_top = min(abundance.size, math.ceil(proportion * abundance.size))
     order = np.argsort(-abundance, kind="stable")
     return np.sort(order[:n_top]).astype(np.int64)
@@ -1425,16 +1359,42 @@ def fit_quasi_likelihood(
     """Fit negative binomial models with empirical Bayes quasi-dispersions, as edgeR's
     glmQLFit.
 
-    edgeR 4's default method (``legacy = FALSE``), described in the module
-    description: the negative binomial dispersion phi is given or estimated as the
-    Cox-Reid common dispersion of the most highly expressed genes; every gene is
-    fitted at the working dispersion phi / A, with A the average quasi-dispersion;
-    its quasi-dispersion is its bias-adjusted deviance over its adjusted residual
-    degrees of freedom; and the quasi-dispersions are squeezed towards a prior that
-    follows the average log CPM, by limma's estimator for unequal degrees of
-    freedom. edgeR's help page says that a dispersion that is given should come from
-    a global model, common or trended, not from each gene on its own: the
-    quasi-dispersions carry the variation between genes.
+    edgeR 4.4's default method (``legacy = FALSE``; Chen et al. 2025), in which
+    var(y_gi) = sigma_g^2 (mu_gi + phi mu_gi^2) for a negative binomial dispersion phi
+    shared by the genes and a quasi-dispersion sigma_g^2 of each gene:
+
+    1. The average log CPM of every gene (:func:`average_log2_cpm`), at the given
+       dispersion or at 0.05 when it is estimated, ranks the genes and is the covariate
+       of the trends.
+    2. phi is given, or estimated as the Cox-Reid common dispersion
+       (:func:`common_dispersion`) of the ``top_proportion`` of the genes with the
+       largest average log CPM.
+    3. Every gene is fitted at the working dispersion phi / A
+       (:func:`~cytepool.stats.negative_binomial_models.fit_negative_binomial_model`),
+       where A, the average quasi-dispersion, starts at 1 and is updated twice from the
+       quasi-dispersions of such fits, as the 0.9 quantile of their smoothed fourth
+       roots, raised to the fourth power and at least 1.
+    4. Each unit deviance is approximated by a scaled chi-squared variable s chi^2(k)
+       with its exact mean and variance (:func:`negative_binomial_unit_deviance_moments`);
+       divided by s, it has k (1 - h) degrees of freedom for its leverage h. A gene's
+       quasi-dispersion is the sum of these adjusted unit deviances over the sum of
+       their degrees of freedom.
+    5. The quasi-dispersions are squeezed towards a prior that follows the average log
+       CPM (:func:`~cytepool.stats.empirical_bayes.squeeze_variances`), by limma's
+       estimator for unequal degrees of freedom.
+
+    edgeR's help page says that a dispersion that is given should come from a global
+    model, common or trended, not from each gene on its own: the quasi-dispersions
+    carry the variation between genes.
+
+    A gene whose counts are fitted exactly but for zero counts whose fitted values tend
+    to zero, such as one counted in only one condition of a paired design, has as its
+    quasi-dispersion the ratio of their almost-zero adjusted deviances and degrees of
+    freedom. The ratio depends on how far the fit lowered those fitted values, so it
+    differs from edgeR's, whose fits stop higher, and it enters the average
+    quasi-dispersion in both.
+    https://docs.nygen.io/CytePool/statistics/count-models#quasi-likelihood explains
+    the model.
 
     Args:
         counts: ``(n_samples, n_features)`` counts, finite and non-negative, integer or
@@ -1456,13 +1416,19 @@ def fit_quasi_likelihood(
             normalization factors: one value, one per sample, or one per
             observation.
         weights: Prior weights, positive and finite: one value, one per sample, or one
-            per observation; see the module description for how edgeR uses them.
+            per observation. As in edgeR, an observation of weight w counts as w
+            technical replicates in the adjusted deviances, so the weights are not
+            relative: multiplying all of them by a constant changes the results.
         trend: Whether the prior quasi-dispersion follows the average log CPM
             (edgeR's ``abundance.trend``), or ``(n_features,)`` covariate values for
             it to follow instead (``covariate.trend``).
         robust: Whether to estimate the prior robustly, so that genes whose
             quasi-dispersions are outliers count less (Phipson et al. 2016), as
-            edgeR's User's Guide recommends.
+            edgeR's User's Guide recommends. Only the genes with residual degrees
+            of freedom are tested as outliers, as by
+            :func:`~cytepool.stats.empirical_bayes.fit_f_distribution_likelihood`;
+            limma would test a gene without them, such as a gene without counts,
+            as a zero variance.
         prior_count: Average count added to each observation for the shrunk
             coefficients, whose differences are the log fold changes of the tests;
             at least 0.
@@ -1508,12 +1474,10 @@ def fit_quasi_likelihood(
                 "leaves no residual degrees of freedom to estimate quasi-dispersions"
             )
         reject_masked(robust, "robust")
-        checked_flag(robust, "robust", expected="a bool")
+        checked_flag(robust, "robust")
         prior = non_negative_number(prior_count, "prior_count")
         reject_masked(max_iterations, "max_iterations")
-        limit = positive_integer(
-            max_iterations, "max_iterations", expected="a positive integer"
-        )
+        limit = positive_integer(max_iterations, "max_iterations")
         log_sizes = offset_matrix(offsets, library_sizes, norm_factors, y)
         w = weight_matrix(weights, n_samples, n_features)
         covariate = _trend_values(trend, n_features)
@@ -1602,6 +1566,9 @@ def fit_quasi_likelihood(
             quasi = np.where(df > 0.0, adjusted.deviance / df, np.nan)
         _check_moderation(quasi, df)
         trend_values = abundance if covariate is True else covariate
+        # limma's estimator for unequal degrees of freedom whatever the degrees of
+        # freedom (fitFDistUnequalDF1, legacy = FALSE); winsor.tail.p plays no part
+        # (found by probing).
         squeezed = squeeze_variances(
             quasi,
             df,
@@ -1745,8 +1712,10 @@ def quasi_likelihood_f_test(
     full-rank parametrisation of the same null model gives the same deviance). The
     likelihood ratio statistic, the null deviance less the full one, over the rank r
     of the contrasts and the posterior quasi-dispersion, is referred to the F
-    distribution on r and ``df_total`` degrees of freedom (see the module
-    description). Several coefficients or contrasts are tested together, as edgeR's
+    distribution on r and ``df_total`` degrees of freedom, the prior's plus the gene's
+    adjusted residual degrees of freedom, at most the residual degrees of freedom of
+    all the genes together, as in edgeR. Several coefficients or contrasts are tested
+    together, as edgeR's
     matrix of contrasts is; test each named contrast in its own call for a table per
     contrast. A gene without counts gets an F-statistic of 0 and a p-value of 1 (NaN
     when the fit has at most two genes, whose quasi-dispersions are not moderated).
@@ -1817,6 +1786,8 @@ def quasi_likelihood_f_test(
     with np.errstate(divide="ignore", invalid="ignore"):
         f_statistic = likelihood_ratio / rank / posterior
     n_samples, n_features = model.fitted_values.shape
+    # The denominator degrees of freedom are capped at the residual degrees of freedom
+    # of all the genes together (found by probing).
     cap = float(n_features * (n_samples - n_coefficients))
     df_total = np.minimum(
         np.asarray(fit.df_prior) + np.asarray(fit.df_residual_adjusted), cap
@@ -1919,11 +1890,12 @@ def _trend_values(trend: Any, n_features: int) -> Any:
     values = unmasked_array(trend, "trend", missing="NaN")
     if values.dtype.kind not in "iuf":
         raise TypeError(
-            f"trend must be a bool or real covariate values, got dtype {values.dtype}"
+            "trend must be True, False or real covariate values, got dtype "
+            f"{values.dtype}"
         )
     if values.shape != (n_features,):
         raise ValueError(
-            "trend must be a bool or one covariate value per feature "
+            "trend must be True, False or one covariate value per feature "
             f"({n_features},), got shape {values.shape}"
         )
     return np.array(values, dtype=np.float64)

@@ -260,7 +260,7 @@ def test_missing_values_name_the_column_and_rows() -> None:
     }
     with pytest.raises(
         ValueError,
-        match=r"'age' in rows 1, 3 \(sample_id S2, S4\); 'g' in row 1 "
+        match=r"'age' in rows 1 and 3 \(sample_id S2 and S4\); 'g' in row 1 "
         r"\(sample_id S2\)\. Samples are not dropped silently",
     ):
         model_matrix(samples, "~ age + g")

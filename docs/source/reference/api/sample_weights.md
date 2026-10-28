@@ -6,6 +6,9 @@ myst:
 
 # Sample quality weights
 
+Sample quality weights of a matrix of log-expression values; [limma-voom and
+limma-trend](../statistics/limma-voom/#sample-quality-weights) explains them.
+
 ```{eval-rst}
 .. automodule:: cytepool.stats.sample_weights
 ```

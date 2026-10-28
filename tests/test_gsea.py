@@ -537,7 +537,7 @@ def test_more_permutations_are_suggested_only_where_they_can_help() -> None:
         ({"min_size": 0}, ValueError, "min_size must be at least 1"),
         ({"min_size": 1.5}, TypeError, "min_size must be an integer"),
         ({"min_size": 5, "max_size": 4}, ValueError, r"max_size \(4\) is smaller"),
-        ({"exponent": -1.0}, ValueError, "exponent must be finite and at least 0"),
+        ({"exponent": -1.0}, ValueError, "exponent must be non-negative"),
         ({"score_type": "up"}, ValueError, "score_type must be one of 'std'"),
         ({"method": "simple"}, ValueError, "method must be one of 'multilevel'"),
         ({"n_permutations": 0}, ValueError, "n_permutations must be at least 1"),

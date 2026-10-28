@@ -449,7 +449,7 @@ def test_a_cube_needs_its_group_and_enough_samples() -> None:
         principal_components(cube, group="Mono")
     with pytest.raises(ValueError, match="principal components need two or more"):
         principal_components(cube, group="pDC", min_cells=10_000)
-    with pytest.raises(ValueError, match="min_cells must be at least 0"):
+    with pytest.raises(ValueError, match="min_cells must be non-negative"):
         principal_components(cube, group="B", min_cells=-1)
 
 

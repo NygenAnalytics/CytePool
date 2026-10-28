@@ -1,47 +1,35 @@
 """Adjustment of p-values for multiple testing, and the proportion of true nulls.
 
-:func:`adjust_p_values` follows R's ``p.adjust`` exactly (R Core Team 2025),
-including its conventions for missing values and for families declared larger than
-the p-values observed in them, so adjusted p-values can be compared with R output
-directly.
+:func:`adjust_p_values` adjusts p-values as R's ``p.adjust`` does (R Core Team 2025),
+with its conventions for missing values and for families declared larger than the
+p-values observed in them, so that adjusted p-values can be compared with R's
+directly. :func:`proportion_of_true_nulls` estimates pi0, the proportion of the tests
+whose null hypothesis is true, from their p-values, as qvalue's ``pi0est`` does
+(Storey and Tibshirani 2003), and returns a :class:`TrueNullProportion`; 1 - pi0,
+pi1, is the proportion of the tests with an effect.
+https://docs.nygen.io/CytePool/statistics/multiple-testing explains both, and
+https://docs.nygen.io/CytePool/statistics/multiple-testing#multiple-testing-limits where
+the estimate of pi0 differs from qvalue's on purpose.
 
-:func:`proportion_of_true_nulls` estimates pi0, the proportion of the tests whose null
-hypothesis is true, from their p-values, as qvalue's ``pi0est`` (Storey and
-Tibshirani 2003); 1 - pi0, pi1, is the proportion with an effect, which the p-values
-of one study among the genes that another study finds measure as a replication rate.
+Matching qvalue:
+    :func:`proportion_of_true_nulls` matches qvalue 2.38.0's ``pi0est``, with its
+    defaults and options. Running qvalue settled the conventions that its
+    documentation leaves open:
 
-The proportion of true nulls:
-    Null p-values are uniform, so the m p-values at least lambda hold about
-    pi0 m (1 - lambda) null ones, and pi0(lambda) = #{p >= lambda} / (m (1 - lambda))
-    estimates pi0 with a bias that falls, and a variance that grows, as lambda rises
-    (Storey 2002). qvalue counts the p-values at least lambda, where the paper counts
-    those above it (found by probing). With one lambda this is the estimate; with
-    several, in increasing order:
-
-    - ``"smoother"`` (qvalue's default): the value at the largest lambda of a cubic
-      smoothing spline with ``smooth_df`` equivalent degrees of freedom through
-      pi0(lambda), or with ``smooth_log`` through log pi0(lambda), back-transformed
-      (Storey and Tibshirani 2003), as R's ``smooth.spline`` fits it (found by
-      probing; see ``cytepool.stats.smoothing``).
-    - ``"bootstrap"``: pi0(lambda) at the lambda that minimizes a bootstrap estimate
-      of its mean squared error (Storey, Taylor and Siegmund 2004), in closed form:
-      the variance of a binomial count, W (1 - W / m) / (m (1 - lambda))^2 for the
-      W = #{p >= lambda}, plus the square of pi0(lambda) minus a reference value,
-      which qvalue takes as the 10% quantile (R's type 7) of the pi0(lambda) (found by
-      probing); the smallest lambda where several minimize it.
-
-    The estimate is capped at 1.
-
-    Deliberate differences from qvalue 2.38.0:
-        - qvalue stops with an error where no p-value reaches the largest lambda, with
-          the smoother and the bootstrap alike (found by probing). Here a count of zero
-          enters the smoother as it is, and has no variance in the bootstrap; the
-          smoother of logarithms, which a count of zero leaves without a value,
-          refuses it.
-        - qvalue stops where the estimate is at most 0; here it is 0.
-        - With more than 49 values of lambda, R's smoother keeps a knot at some of
-          them only, a regression spline; here every lambda is a knot, as for fewer.
-          Duplicated values of lambda are refused.
+    - pi0(lambda) = #{p >= lambda} / (m (1 - lambda)) counts the p-values at least
+      lambda, where Storey (2002) counts those above it.
+    - With several values of lambda, ``"smoother"`` (qvalue's default) takes the
+      value at the largest lambda of a cubic smoothing spline with ``smooth_df``
+      equivalent degrees of freedom through pi0(lambda), or with ``smooth_log``
+      through log pi0(lambda), back-transformed (Storey and Tibshirani 2003), fitted
+      as R's ``smooth.spline`` fits it (``cytepool.stats.smoothing``).
+    - ``"bootstrap"`` takes pi0(lambda) at the lambda that minimizes a bootstrap
+      estimate of its mean squared error (Storey, Taylor and Siegmund 2004), in
+      closed form: the variance of a binomial count, W (1 - W / m) / (m (1 -
+      lambda))^2 for W = #{p >= lambda}, plus the square of pi0(lambda) minus the 10%
+      quantile (R's type 7) of the pi0(lambda); the smallest lambda where several
+      minimize it.
+    - The estimate is capped at 1.
 
 References:
     Holm S (1979). A simple sequentially rejective multiple test procedure. Scandinavian
@@ -98,7 +86,9 @@ _EULER_GAMMA = 0.5772156649015329
 _DEFAULT_LAMBDAS = np.append(0.05 + 0.05 * np.arange(18.0), 0.95)
 _PI0_METHODS = ("smoother", "bootstrap")
 _FEWEST_LAMBDAS = 4  # several lambdas must be at least this many, as for qvalue
-_BOOTSTRAP_QUANTILE = 0.1  # of the pi0(lambda), the reference of the bootstrap
+# The quantile of the pi0(lambda) that qvalue's bootstrap measures the bias from
+# (found by probing).
+_BOOTSTRAP_QUANTILE = 0.1
 
 # Accepted method names (lower case) and the procedure each one selects.
 _PROCEDURES = {
@@ -141,6 +131,8 @@ def adjust_p_values(
     - ``"none"``: ``p_(i)``.
 
     Every method takes O(m log m) time for m p-values, Hommel's included.
+    https://docs.nygen.io/CytePool/statistics/multiple-testing#error-rates explains
+    the error rates and when to use each method.
 
     Args:
         p_values: p-values in [0, 1]. NaN marks a missing value; it stays NaN and is
@@ -437,10 +429,19 @@ def proportion_of_true_nulls(
     Storey's (2002) estimate pi0(lambda) = #{p >= lambda} / (m (1 - lambda)), at one
     lambda or smoothed over several (Storey and Tibshirani 2003) or chosen by a
     bootstrap estimate of its mean squared error (Storey, Taylor and Siegmund 2004),
-    with the defaults and options of qvalue's ``pi0est``; the module description
-    gives the method and the deliberate differences from qvalue. 1 - pi0 (``pi1``) of
-    one study's p-values among the genes another study finds is the proportion of
-    those genes with an effect in it (Storey and Tibshirani 2003).
+    with the defaults and options of qvalue's ``pi0est``. The module documentation
+    states how the smoother and the bootstrap follow qvalue, and
+    https://docs.nygen.io/CytePool/statistics/multiple-testing#proportion-of-true-nulls
+    explains the estimate. 1 - pi0 (``pi1``) of one study's p-values among the genes
+    another study finds is the proportion of those genes with an effect in it
+    (Storey and Tibshirani 2003).
+
+    Some inputs on which qvalue stops with an error give an estimate here. A lambda
+    that no p-value reaches has pi0(lambda) = 0, which the smoother fits like any
+    other value and the bootstrap takes to have no variance; only ``smooth_log``
+    refuses it, as the logarithm of 0 has no value. An estimate at most 0 is
+    returned as 0. Every lambda is a knot of the smoother, also with more than 49 of
+    them, where R's ``smooth.spline`` keeps knots at only some, a regression spline.
 
     Args:
         p_values: p-values in [0, 1]; NaN marks a missing one, which is left out, as
@@ -488,10 +489,14 @@ def proportion_of_true_nulls(
             f"smooth_df must be above 1 and at most the number of lambdas "
             f"({grid.size}), got {df}"
         )
-    # W(lambda), the p-values at least lambda.
+    # W(lambda), the p-values at least lambda, as qvalue counts them, where Storey
+    # (2002) counts those above lambda (found by probing).
     counts = m - np.searchsorted(values, grid, side="left").astype(np.float64)
     pi0_lambda = counts / (m * (1.0 - grid))
     smooth = None
+    # qvalue stops with an error where no p-value reaches the largest lambda, with
+    # the smoother and the bootstrap alike (found by probing); a count of zero is
+    # used here as it is. qvalue's smoother is R's smooth.spline (found by probing).
     if grid.size == 1:
         estimate = float(pi0_lambda[0])
     elif chosen == "smoother":

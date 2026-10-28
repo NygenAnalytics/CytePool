@@ -640,7 +640,7 @@ def test_invalid_arguments_are_refused_with_a_reason() -> None:
         ({"feature_ids": genes[:3]}, ValueError, "one id per gene"),
         ({"inter_gene_correlation": 1.0}, ValueError, r"lie in \(-1, 1\)"),
         ({"inter_gene_correlation": True}, TypeError, "real number or None"),
-        ({"use_ranks": 1}, TypeError, "use_ranks must be a bool"),
+        ({"use_ranks": 1}, TypeError, "use_ranks must be True or False"),
     ]
     for changes, error, message in cases:
         arguments = {"data": y, "design": x, "contrast": 1, "gene_sets": sets} | changes
@@ -655,7 +655,7 @@ def test_fry_refuses_options_without_effect_and_unknown_standardizations() -> No
         fry(y, sets, design=x, contrast=1, standardize="none", trend=True)
     with pytest.raises(ValueError, match="standardize must be one of"):
         fry(y, sets, design=x, contrast=1, standardize="posterior.sd")
-    with pytest.raises(TypeError, match="robust must be a bool"):
+    with pytest.raises(TypeError, match="robust must be True or False"):
         fry(y, sets, design=x, contrast=1, robust="yes")
 
 

@@ -1,88 +1,61 @@
 """Precision weights for log counts from their mean-variance trend, as in limma's voom.
 
-For counts r_gi of feature g in sample i and effective library sizes R_i (library
-sizes times normalization factors), voom (Law, Chen, Shi and Smyth 2014) works with
-the log2 counts per million
+:func:`voom` gives the log2 counts per million of a samples x features matrix of
+counts with a precision weight for each observation, from the trend of their variance
+against their mean (Law, Chen, Shi and Smyth 2014), in a :class:`VoomResult`.
+:func:`voom_with_quality_weights` combines those weights with sample quality weights
+(Liu et al. 2015), as limma's ``voomWithQualityWeights`` does. A weighted least squares
+fit of the log2 counts per million with these weights, followed by empirical Bayes
+moderation, is limma-voom; https://docs.nygen.io/CytePool/statistics/limma-voom#voom
+gives the method.
 
-    y_gi = log2((r_gi + 0.5) / (R_i + 1) * 1e6).
+Matching limma:
+    The results match limma 3.62.1, called with ``adaptive.span = TRUE`` where the
+    span is chosen. limma's documentation (its help page and NEWS) gives some of the
+    conventions below, and running limma on chosen inputs gave the others.
 
-The design is fitted to every feature by ordinary least squares, which gives fitted
-values mu_gi and residual standard deviations s_g. The square roots s_g^(1/2) are
-smoothed by LOWESS against the average log2 count of each feature,
+    - Features with no counts in any sample are left out of the trend; their weights
+      are read from it at their fitted log2 counts, as for any other feature.
+    - The LOWESS is R's ``lowess`` with its defaults other than the span: three
+      robustness iterations, and interpolation within 1% of the range of x.
+    - The span that :func:`voom` chooses by default follows the number of features,
+      which counts every feature, also those without counts that the trend leaves
+      out, as limma's ``nrow(counts)`` does. limma's ``adaptive.span = TRUE``, which
+      chooses it, is an option since limma 3.60 and the default since 3.66 (limma's
+      NEWS); a span given as a number is used as it is, as with
+      ``adaptive.span = FALSE``.
+    - The trend is interpolated linearly between its points and held constant beyond
+      them. The interpolation averages the curve over tied values of x (limma's
+      NEWS); LOWESS gives tied points the same value, so each distinct x is one point
+      of the curve. The x are computed as R computes them, to the last bit, so that
+      their ties are limma's: LOWESS treats tied points differently from points a
+      rounding error apart.
+    - x averages every log2 count per million of a feature, those of zero prior
+      weight included, as limma's ``Amean`` does.
+    - A design that leaves no residual degrees of freedom gives every observation
+      weight one, times its prior weight, with a warning (limma's NEWS).
+    - There must be at least two features, as limma requires, and at least two with
+      counts (and residual degrees of freedom under the prior weights) to fit a
+      trend.
 
-    x_g = mean_i(y_gi) + mean_i(log2(R_i + 1)) - log2(1e6),
-
-and the smoothed curve lo() is interpolated linearly between its points and held
-constant beyond them. Each observation is then weighted by the inverse of its
-predicted variance, w_gi = lo(lambda_gi)^(-4), where
-
-    lambda_gi = log2(2^mu_gi (R_i + 1) / 1e6)
-
-is its fitted log2 count. A weighted least squares fit of the log2 counts per million
-with these weights, followed by empirical Bayes moderation, is limma-voom.
-
-With prior weights p_gi, for samples, observations or features, the design is fitted
-by weighted least squares with them, which gives the residual standard deviations
-and fitted values of the trend, and the weights are w_gi p_gi. limma's ``voom``
-returns w_gi alone, which its help page says modify the prior weights in a
-multiplicative fashion: limma's weights times the prior weights are CytePool's, the
-weights a fit needs.
-
-:func:`voom_with_quality_weights` combines the weights with sample quality weights
-(Liu et al. 2015), as limma's ``voomWithQualityWeights`` does (found by probing):
-voom; sample quality weights a from its log2 counts per million and weights, by
-:func:`~cytepool.stats.sample_weights.sample_quality_weights`; voom again, with a as
-prior weights; sample quality weights b from the new trend's weights w'; and the
-weights w'_gi b_i.
-
-Results match limma 3.62.1, called with ``adaptive.span = TRUE`` where the span is
-chosen. Conventions that the paper leaves open were settled from limma's
-documentation (its help page and NEWS) or by running limma as a black box; comments
-mark the latter "found by probing":
-
-- Features with no counts in any sample are left out of the trend (found by probing);
-  their weights are read from it at their fitted log2 counts, as for any other
-  feature.
-- The LOWESS is R's ``lowess`` with its defaults other than the span: three
-  robustness iterations, and interpolation within 1% of the range of x (found by
-  probing).
-- By default the span is chosen from the number of features n by limma's rule,
-  :func:`~cytepool.stats.smoothing.choose_lowess_span`: 1 up to 50 features, and
-  0.3 + 0.7 (50 / n)^(1/3) beyond. limma's voom chooses it so with
-  ``adaptive.span = TRUE``, an option since limma 3.60 and the default since 3.66
-  (limma's NEWS); its default span was 0.5 before. n counts every feature, also those
-  without counts that the trend leaves out, as limma's ``nrow(counts)`` does (its help
-  page; confirmed by probing). A span given as a number is used as it is, as with
-  ``adaptive.span = FALSE``.
-- The interpolation averages the curve over tied values of x (limma's NEWS); LOWESS
-  gives tied points the same value, so each distinct x is one point of the curve.
-  The x are computed as R computes them, to the last bit, so that their ties are
-  limma's: LOWESS treats tied points differently from points a rounding error apart.
-- x averages every log2 count per million of a feature, those of zero prior weight
-  included, as limma's ``Amean`` does (found by probing).
-- A design that leaves no residual degrees of freedom gives every observation weight
-  one, times its prior weight, with a warning (limma's NEWS).
-- There must be at least two features, as limma requires, and at least two with counts
-  (and residual degrees of freedom under the prior weights) to fit a trend.
-
-Deliberate deviations, where limma returns values without meaning or fails:
-
-- A sample whose library size is zero is an error. limma gives it the log2 counts per
-  million of a count of 0.5 in a library of one read.
-- A trend that is not positive where weights are read from it is an error. limma takes
-  its inverse fourth power anyway, which is positive for a negative trend.
-- When every feature in the trend has the same x, the curve is constant; limma fails.
-- A design that is not of full column rank is rejected by
-  :func:`~cytepool.stats.linear_models.fit_linear_model`; limma drops the aliased
-  columns.
-- ``span`` must lie in (0, 1], as limma documents; limma accepts larger values.
-- A feature whose prior weights leave no residual degrees of freedom is left out of
-  the trend. limma passes its missing standard deviation to R's ``lowess``, which
-  then returns a curve without meaning for every feature.
-- Where zero prior weights leave coefficients of a feature that its other samples
-  cannot estimate, its fitted values are those of the least squares fit over the
-  samples of positive weight, and its observations of zero prior weight get weight
-  zero. limma returns missing weights for every observation of such a feature.
+Differences from limma:
+    - A sample whose library size is zero is an error. limma gives it the log2 counts
+      per million of a count of 0.5 in a library of one read.
+    - A trend that is not positive where weights are read from it is an error. limma
+      takes its inverse fourth power anyway, which is positive for a negative trend.
+    - When every feature in the trend has the same x, the curve is constant; limma
+      fails.
+    - A design that is not of full column rank is rejected by
+      :func:`~cytepool.stats.linear_models.fit_linear_model`; limma drops the aliased
+      columns.
+    - ``span`` must lie in (0, 1], as limma documents; limma accepts larger values.
+    - A feature whose prior weights leave no residual degrees of freedom is left out of
+      the trend. limma passes its missing standard deviation to R's ``lowess``, which
+      then returns a curve without meaning for every feature.
+    - Where zero prior weights leave coefficients of a feature that its other samples
+      cannot estimate, its fitted values are those of the least squares fit over the
+      samples of positive weight, and its observations of zero prior weight get weight
+      zero. limma returns missing weights for every observation of such a feature.
 
 References:
     Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
@@ -262,10 +235,15 @@ def voom(
 ) -> VoomResult:
     """Log2 counts per million with precision weights from the mean-variance trend.
 
-    limma's ``voom`` (Law et al. 2014); the module docstring gives the method. The
-    design is fitted by :func:`~cytepool.stats.linear_models.fit_linear_model`,
-    which checks it. Filter out features with very low counts first, for example
-    with :func:`~cytepool.normalization.filter_by_expression`, as limma advises.
+    limma's ``voom`` (Law et al. 2014). The design is fitted to every feature by
+    :func:`~cytepool.stats.linear_models.fit_linear_model`, which checks it; the
+    square roots of the residual standard deviations are smoothed by LOWESS against
+    each feature's average log2 count; and each observation is weighted by the
+    inverse of the variance that this trend predicts at its fitted log2 count, times
+    its prior weight. https://docs.nygen.io/CytePool/statistics/limma-voom#voom gives
+    the equations, and the module documentation the conventions that match limma.
+    Filter out features with very low counts first, for example with
+    :func:`~cytepool.normalization.filter_by_expression`, as limma advises.
 
     Continue with ``fit_linear_model(result.log2_cpm, design,
     weights=result.weights)`` and
@@ -298,11 +276,13 @@ def voom(
         weights: Prior weights, as limma's ``voom(weights = ...)`` takes them:
             ``(n_samples,)`` sample weights, such as sample quality weights,
             ``(n_samples, n_features)`` observation weights, or ``(1, n_features)``
-            feature weights. Finite and non-negative; a zero weight leaves an
-            observation out of the fit of the trend and gives it weight zero. The
-            returned weights include them. A vector is always sample weights, also
-            when there are as many features as samples, where limma takes it for
-            feature weights.
+            feature weights. Finite and non-negative. They weight the least
+            squares fits from which the trend is estimated, so that a zero weight
+            leaves an observation out of them and gives it weight zero, and the
+            returned weights include them, the weights a fit needs (limma's
+            ``voom`` returns the trend's alone). A vector is always sample weights,
+            also when there are as many features as samples, where limma takes it
+            for feature weights.
 
     Returns:
         The log2 counts per million, their weights (finite and non-negative;
@@ -360,12 +340,16 @@ def voom_with_quality_weights(
 ) -> VoomResult:
     """voom's precision weights combined with sample quality weights.
 
-    limma's ``voomWithQualityWeights`` (Liu et al. 2015): the module docstring gives
-    the steps, and :func:`~cytepool.stats.sample_weights.sample_quality_weights`
-    the sample weights. Samples that follow the model less closely, such as
-    pseudobulk samples pooled from few cells or from an outlying donor, get lower
-    weights instead of being removed. Continue as after :func:`voom`, with
-    ``fit_linear_model(result.log2_cpm, design, weights=result.weights)``.
+    limma's ``voomWithQualityWeights`` (Liu et al. 2015), in its steps: :func:`voom`;
+    sample quality weights a from its log2 counts per million and weights, by
+    :func:`~cytepool.stats.sample_weights.sample_quality_weights`; :func:`voom`
+    again, with a as prior weights; sample quality weights b from the new trend's
+    weights w'; and the weights w'_gi b_i. Samples that follow the model less
+    closely, such as pseudobulk samples pooled from few cells or from an outlying
+    donor, get lower weights instead of being removed
+    (https://docs.nygen.io/CytePool/statistics/limma-voom#sample-quality-weights).
+    Continue as after :func:`voom`, with ``fit_linear_model(result.log2_cpm, design,
+    weights=result.weights)``.
 
     Args:
         counts: ``(n_samples, n_features)`` counts, as for :func:`voom`.

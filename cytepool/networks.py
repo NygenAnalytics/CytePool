@@ -2,48 +2,45 @@
 CollecTRI's transcription factors and PROGENy's pathways, downloaded from their
 releases, and networks given as tables.
 
-A :class:`~cytepool.Network` maps each source, a transcription factor or a pathway, to
-its targets, the genes it regulates or that respond to it, each with a weight whose sign
-says whether the source raises the gene (positive) or lowers it (negative). The activity
-functions (:func:`~cytepool.ulm`, :func:`~cytepool.mlm` and
-:func:`~cytepool.weighted_aggregate`) take one, as decoupler takes its networks
-(Badia-i-Mompel et al. 2022): a table with the columns ``source``, ``target`` and
-``weight``. A network records its name, version, where it comes from, its licence and
-its citation, and, for a network read from a file, the name of the file and its SHA-256
-digest.
+A :class:`~cytepool.Network` holds the target genes of its sources, transcription
+factors or pathways, with signed weights, as the activity functions
+(:func:`~cytepool.ulm`, :func:`~cytepool.mlm` and :func:`~cytepool.weighted_aggregate`)
+take it, and as decoupler takes its networks (Badia-i-Mompel et al. 2022): a table with
+the columns ``source``, ``target`` and ``weight``. A network records its name, version,
+where it comes from, its licence and its citation, and, for a network read from a file,
+the name of the file and its SHA-256 digest. :func:`~cytepool.collectri` and
+:func:`~cytepool.progeny` return the two networks that CytePool downloads.
+https://docs.nygen.io/CytePool/statistics/activities#regulator-networks explains the
+networks, https://docs.nygen.io/CytePool/statistics/activities#activities-limits how
+they differ from decoupler's, and
+https://docs.nygen.io/CytePool/reference/datasets#networks gives their files, licences
+and the terms of CollecTRI's resources.
 
 CollecTRI (:func:`~cytepool.collectri`):
-    The signed regulons of 1,186 human transcription factors, 43,175 interactions,
-    that Mueller-Dott et al. (2023) assembled from twelve resources of literature
-    curation and text mining: version 2.0 of the file ``CollecTRI_regulons.csv`` of
-    Zenodo record 8192729 (doi:10.5281/zenodo.8192729), which decoupler 2.2.0 reads
-    too, under the Creative Commons Attribution 4.0 licence. Each interaction has a
-    weight of 1 (activation) or -1 (repression), the resources that list it, the
-    PubMed ids of its references and how its sign was decided. The complexes AP1
-    and NFKB are sources of their own, as in the file.
-
-    Licence levels. Each resource keeps its own terms, which OmniPath records
-    (Tuerei et al. 2021). ``licence="commercial"``, the default, keeps the
-    interactions that at least one resource listed for commercial use supports:
-    every resource but GEREDB, which OmniPath lists for academic use (under the
-    Academic Free License 3.0), so that the 3,279 interactions that GEREDB alone
-    supports are left out, 39,896 remain. ``licence="academic"`` keeps every
-    interaction. The terms of the other resources, as OmniPath lists them: CC BY 4.0
-    (ExTRI, NTNU Curated, TFactS, SIGNOR, IntAct, CytReg, GOA and Pavlidis2021),
-    CC BY-SA 4.0 (TRRUST), LGPL 3.0 (HTRIdb) and an informal licence (DoRothEA's
-    level A). Use under any level is subject to these terms, such as attribution.
+    The signed regulons of human transcription factors that Mueller-Dott et al. (2023)
+    assembled from twelve resources of literature curation and text mining: version 2.0
+    of the file ``CollecTRI_regulons.csv`` of Zenodo record 8192729
+    (doi:10.5281/zenodo.8192729), which decoupler 2.2.0 reads too, under the Creative
+    Commons Attribution 4.0 licence. Each interaction has a weight of 1 (activation) or
+    -1 (repression), the resources that list it, the PubMed ids of its references and
+    how its sign was decided. The complexes AP1 and NFKB are sources of their own, as in
+    the file. Each resource keeps its own terms, which OmniPath records (Tuerei et al.
+    2021): ``licence="commercial"``, the default, keeps the interactions that at least
+    one resource listed for commercial use supports, which leaves out those that
+    GEREDB, listed for academic use, alone supports; ``licence="academic"`` keeps every
+    interaction. Use under any level is subject to the terms of the resources it keeps.
 
 PROGENy (:func:`~cytepool.progeny`):
     The weights of the genes that respond to 14 signalling pathways, from the
     perturbation experiments of Schubert et al. (2018), for human, and their
     transfer to mouse (Holland, Szalai and Saez-Rodriguez 2020): the data frames
-    ``model_human_full`` (22,479 genes) and ``model_mouse_full`` (17,426 genes) of
-    the R package progeny 1.28.0, from its Bioconductor 3.20 release, under the
-    Apache License 2.0, with a weight (a z-score) and a p-value for every gene and
-    pathway. By default the genes with a p-value below 0.05 are kept, as decoupler's
-    ``op.progeny`` keeps them; ``top`` keeps the genes of each pathway with the
-    smallest p-values, those tied with the last one included, as progeny's
-    ``getModel`` does (100 genes by default there).
+    ``model_human_full`` and ``model_mouse_full`` of the R package progeny 1.28.0, from
+    its Bioconductor 3.20 release, under the Apache License 2.0, with a weight (a
+    z-score) and a p-value for every gene and pathway. By default the genes with a
+    p-value below 0.05 are kept, as decoupler's ``op.progeny`` keeps them; ``top``
+    keeps the genes of each pathway with the smallest p-values, those tied with the
+    last one included, as progeny's ``getModel`` does (100 genes by default there).
+    Genes are named by the symbols that progeny 1.28.0 holds.
 
 Downloads and the cache:
     Each network is downloaded on first use from the address it was published at,
@@ -115,7 +112,7 @@ from . import __version__
 from ._columns import is_data_frame, text_column
 from ._gene_ids import is_missing, listed_values
 from ._masked_arrays import real_array, reject_masked
-from ._messages import KEEP_TOGETHER, close_matches, fitted_lines, quoted
+from ._messages import KEEP_TOGETHER, close_matches, fitted_lines, listing, quoted
 from ._options import checked_choice, positive_integer, real_number
 from .gene_sets import GeneSets
 from .table import Table
@@ -461,14 +458,11 @@ class Network(Mapping[str, Mapping[str, float]]):
         if self._file is not None:
             digest = f", SHA-256 {self._sha256}" if self._sha256 else ""
             lines.append(f"  read from {self._file}{digest}")
-        shown = [
+        described = [
             f"{source} ({len(self._targets[source]):,})".replace(" ", KEEP_TOGETHER)
-            for source in self._sources[:_SOURCES_SHOWN]
+            for source in self._sources
         ]
-        more = len(self._sources) - len(shown)
-        lines.append(
-            "  sources: " + ", ".join(shown) + (f" and {more:,} more" if more else "")
-        )
+        lines.append("  sources: " + listing(described, limit=_SOURCES_SHOWN))
         return fitted_lines("\n".join(lines))
 
     def _record(self) -> dict[str, str | None]:
@@ -497,21 +491,26 @@ def collectri(
     """The CollecTRI network of human transcription factors and their target genes.
 
     The signed regulons of Mueller-Dott et al. (2023), version 2.0 of its Zenodo
-    record, at the licence level asked for: the module docstring says what each
-    level holds and the terms of each resource. The file is downloaded on first use,
-    checked against its pinned size and SHA-256 digest, and kept in the cache.
+    record: 43,175 interactions of 1,186 transcription factors, each with a weight of
+    1 or -1, at the licence level asked for. Each of CollecTRI's twelve resources
+    keeps its own terms, which OmniPath records;
+    https://docs.nygen.io/CytePool/reference/datasets#networks lists them. The file
+    is downloaded on first use, checked against its pinned size and SHA-256 digest,
+    and kept in the cache.
 
     Args:
-        licence: ``"commercial"``, the interactions of resources that OmniPath lists
-            for commercial use (39,896), or ``"academic"``, every interaction
-            (43,175).
+        licence: ``"commercial"``, the interactions that at least one resource that
+            OmniPath lists for commercial use supports (39,896, which leaves out the
+            3,279 that GEREDB, listed for academic use, alone supports), or
+            ``"academic"``, every interaction (43,175).
         cache_dir: The directory that holds the downloaded file; by default
             ``cytepool/networks`` under ``XDG_CACHE_HOME`` or ``~/.cache``.
 
     Returns:
         A network with the columns ``source``, ``target``, ``weight`` (1 or -1),
         ``resources`` (the resources that list the interaction, separated by
-        ``";"``), ``references`` (PubMed ids, separated by ``";"``) and
+        ``";"``), ``references`` (PubMed ids, separated by ``";"``; empty for the 185
+        interactions that the file lists without any, which are kept) and
         ``sign_decision``, in the order of the file.
 
     Raises:
@@ -553,13 +552,14 @@ def progeny(
     them.
 
     The weights of the R package progeny 1.28.0 (Schubert et al. 2018; Holland,
-    Szalai and Saez-Rodriguez 2020), under the Apache License 2.0: each pathway's
-    genes in increasing order of their p-values, those with a p-value below
-    ``max_p_value``, as decoupler's ``op.progeny`` keeps them, and, with ``top``,
-    only the ``top`` genes with the smallest p-values, those tied with the last one
-    included, as progeny's ``getModel`` keeps them. The package is downloaded on
-    first use, checked against its pinned size and SHA-256 digest, and kept in the
-    cache.
+    Szalai and Saez-Rodriguez 2020), from Bioconductor 3.20, under the Apache
+    License 2.0, with genes named by the symbols that the package holds: each
+    pathway's genes in increasing order of their p-values, those with a p-value
+    below ``max_p_value``, as decoupler's ``op.progeny`` keeps them, and, with
+    ``top``, only the ``top`` genes with the smallest p-values, those tied with the
+    last one included, as progeny's ``getModel`` keeps them. The package is
+    downloaded on first use, checked against its pinned size and SHA-256 digest, and
+    kept in the cache.
 
     Args:
         organism: ``"human"`` or ``"mouse"``.

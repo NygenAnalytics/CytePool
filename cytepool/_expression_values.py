@@ -238,7 +238,7 @@ def _cube_values(
     kind = checked_choice(values, "values", VALUES)
     fewest = integral_number(min_cells, "min_cells")
     if fewest < 0:
-        raise ValueError(f"min_cells must be at least 0, got {fewest}")
+        raise ValueError(f"min_cells must be non-negative, got {fewest}")
     if isinstance(expression_filter, Mapping):
         filter_settings = filter_setting(expression_filter)
         check_sample_groups({"expression_filter": filter_settings}, cube.samples)

@@ -46,7 +46,10 @@ FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.intp]
 
 # A pivot of the QR decomposition this small relative to the norm of its column is
-# zero up to rounding; see _effects_of_last_coefficient.
+# zero up to rounding; see _effects_of_last_coefficient. limma computes most such
+# zeros exactly, but leaves rounding noise in a few percent of genes, a different few
+# in camera and in fry, so that its bases change with the last bits of the data there
+# (found by probing); counted as zero, they do not here.
 _ZERO_PIVOT = 1e-12
 
 
@@ -88,12 +91,8 @@ def gene_set_data(
     gives its values (and a VoomResult its weights), and ``design``, ``contrast`` and
     ``feature_ids`` are as given.
     """
-    with_trend = (
-        None if trend is None else checked_flag(trend, "trend", expected="a bool")
-    )
-    with_robust = (
-        None if robust is None else checked_flag(robust, "robust", expected="a bool")
-    )
+    with_trend = None if trend is None else checked_flag(trend, "trend")
+    with_robust = None if robust is None else checked_flag(robust, "robust")
     if isinstance(data, DifferentialExpressionResult):
         for name, value, owner in (
             ("design", design, "the design of its group's fit"),

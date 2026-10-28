@@ -4,17 +4,11 @@ myst:
     description: How well the studies of a CubeCollection replicate each other's differential expression in CytePool, gene by gene and study by study, with combined and partial conjunction p-values, sign agreement, heterogeneity, pi1 between studies and the genes found in at least k studies.
 ---
 
-# Replication across studies
+# Replication tables
 
-{func}`~cytepool.replication` reads one cell type and contrast of the studies' results,
-a {class}`~cytepool.StudyResults`, lined up gene by gene by {meth}`StudyResults.table
-<cytepool.StudyResults.table>`, and gives for every gene its combined p-value, its
-partial conjunction p-value of an effect in at least u studies in one direction, the
-studies that find it and the heterogeneity of its log2 fold changes; for every pair of
-studies, pi1 of one study's p-values among the genes the other finds, and their sign
-agreement; and the number of genes found in at least k studies.
-{func}`~cytepool.plotting.plot_study_agreement` and
-{func}`~cytepool.plotting.plot_replicated_genes` draw them.
+The replication tables of one cell type and contrast across the studies of a
+collection; [Replication](../statistics/replication/#replication-tables) explains what
+each table answers.
 
 ```{eval-rst}
 .. automodule:: cytepool.replication_across_studies

@@ -6,15 +6,9 @@ myst:
 
 # Pseudobulk cubes and tables
 
-A cube holds additive statistics of the cells of each sample and group (such as a
-cell type), for every feature: counts, detected cells, and sums of normalized and
-log-normalized expression. Because the statistics add up, groups can be merged and
-samples pooled without going back to the cells. {func}`~cytepool.from_cells` pools a
-cell-level count matrix in one pass, and {func}`~cytepool.from_bulk` wraps a samples x
-features count matrix as a cube with one group. Sample, group and feature metadata are
-{class}`~cytepool.Table` objects. {class}`~cytepool.CubeCollection` aligns the cubes of
-several studies by sample, gene and cell type, with what each study measured, for
-analyses of each study and for one cube of them all.
+Cubes, their tables, and the collections of the cubes of several studies;
+[Pseudobulk profiles and cubes](../statistics/cubes/) explains cubes, and [Aligning
+studies](../statistics/aligning-studies/) their collections.
 
 ```{eval-rst}
 .. autoclass:: cytepool.Cube
@@ -44,12 +38,9 @@ analyses of each study and for one cube of them all.
 
 ## Fingerprints and provenance
 
-A cube's fingerprint identifies its values, tables and cell numbers included, so a
-result can name the cube it was computed from, and its provenance records how the cube
-was made: the caller's record of the source, the settings of the function that built
-it, and every operation that derived it, with what it kept or pooled and the
-fingerprint of the cube it was applied to. {meth}`~cytepool.Cube.history` reads the
-record back in plain terms.
+The fingerprint that names a cube's values and the record of how it was made; [Cube
+files and provenance records](../reference/cube-files/#fingerprint-encoding) specifies
+both.
 
 ```{eval-rst}
 .. automodule:: cytepool.cube.fingerprints
@@ -61,7 +52,8 @@ record back in plain terms.
    :module: cytepool.cube.fingerprints
    :value: 1
 
-   The version of the encoding that this module documents and computes.
+   The version of the encoding of fingerprints that this module computes,
+   https://docs.nygen.io/CytePool/reference/cube-files#fingerprint-encoding.
 ```
 
 ```{eval-rst}

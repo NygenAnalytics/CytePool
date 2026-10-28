@@ -4,6 +4,11 @@ This module implements, with numpy and the standard library only, the part of th
 Zarr core specification, version 3.1 (Miles et al. 2025), that cube files need, with
 the ``bytes`` and ``gzip`` codecs of the Zarr specifications (Zarr developers 2023)
 and the ``zstd`` codec of its registered extensions (Maitin-Shepard 2025).
+:func:`open_array` opens an array for reading as a :class:`ZarrArray`,
+:func:`read_group_attributes` reads the attributes of a group, and
+:func:`write_group` and :func:`write_array` write groups and arrays;
+https://docs.nygen.io/CytePool/reference/cube-files#cube-file-format specifies the
+cube files made of them.
 
 Reading supports:
 
@@ -43,11 +48,6 @@ arrays whose chunks would hold more than 2 GiB (``MAX_CHUNK_BYTES``) are refused
 most the bytes a valid encoding of a chunk can take are read from disk, every
 decoding step stops just past the most bytes a valid chunk can produce, and a chunk
 may hold at most 1,024 gzip members or zstd frames (writers use one).
-
-Writing produces arrays with a regular chunk grid, the default chunk key encoding with
-``/``, a fill value of zero (``false`` for bool) and the ``bytes`` codec, little
-endian, followed by ``gzip``, ``zstd`` (with a checksum) or no compression. A chunk
-whose bytes are all zero equals the fill value and is not stored.
 
 References:
     Miles A, Striebel J, Rzepka N, Maitin-Shepard J, Moore J, eds (2025). Zarr core
@@ -548,9 +548,12 @@ def write_array(
 ) -> None:
     """Write an array as a new Zarr v3 array directory.
 
-    Chunks are written first and ``zarr.json`` last, so a write that fails leaves a
-    directory that does not open as an array. A chunk whose bytes are all zero is not
-    stored, since zero is the fill value.
+    The array has a regular chunk grid, the default chunk key encoding with ``/``, a
+    fill value of zero (``false`` for bool) and the ``bytes`` codec, little endian,
+    followed by ``gzip``, ``zstd`` (with a checksum) or no compression. Chunks are
+    written first and ``zarr.json`` last, so a write that fails leaves a directory
+    that does not open as an array. A chunk whose bytes are all zero equals the fill
+    value and is not stored.
 
     Args:
         path: The directory to create; its parent must exist and it must not.

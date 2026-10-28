@@ -1,16 +1,13 @@
 """Meta-analysis of the differential expression of several studies, feature by feature.
 
-The same cell types studied in several cohorts, tissues or platforms give, for every
-feature, a log2 fold change and its standard error in each study.
-:func:`~cytepool.meta_analysis` combines them into an estimate of a common log2 fold
-change for every group (cell type), contrast and feature, with the between-study
-variance and the heterogeneity statistics, as metafor's ``rma.uni`` does for one feature
-without moderators (Viechtbauer 2010);
-:func:`~cytepool.stats.meta_analysis.fit_meta_analysis` computes it, and its
-documentation gives the model, the estimators of the between-study variance and the
-tests. The studies are matched by group, contrast and feature id, and the result keeps
-the studies' results it combined, so that :func:`~cytepool.plotting.plot_forest` draws a
-feature's estimate in every study.
+:func:`~cytepool.meta_analysis` combines, for every group (cell type), contrast and
+feature, the log2 fold changes and standard errors of several studies' results into an
+estimate of a common log2 fold change with its between-study variance and
+heterogeneity statistics, as metafor's ``rma.uni`` computes them for a model without
+moderators (Viechtbauer 2010), and returns a :class:`~cytepool.MetaAnalysisResult`
+whose tables adjust the p-values over the features (Benjamini and Hochberg 1995);
+:func:`~cytepool.stats.meta_analysis.fit_meta_analysis` computes each meta-analysis.
+https://docs.nygen.io/CytePool/statistics/meta-analysis explains the method.
 
 References:
     Viechtbauer W (2010). Conducting meta-analyses in R with the metafor package.
@@ -280,8 +277,8 @@ def meta_analysis(
     """Meta-analyse the differential expression of several studies, feature by feature.
 
     Each study is the result of :func:`~cytepool.limma_voom` or
-    :func:`~cytepool.limma_trend` on its own cube, such as one cohort, tissue or
-    platform: a :class:`~cytepool.StudyResults` from
+    :func:`~cytepool.limma_trend` on its own cube, such as the cube of one population,
+    tissue or platform: a :class:`~cytepool.StudyResults` from
     :func:`~cytepool.analyse_each_study`, or a mapping of study name to result. For
     every group (cell type) and contrast, the log2 fold changes of the studies that
     tested it, with their standard errors (the tables' ``log2_fold_change`` and
@@ -634,7 +631,7 @@ def _check_table(table: Table, study: str, group: str, contrast: str) -> None:
 
 def _min_studies(value: Any) -> int:
     if isinstance(value, bool | np.bool_):
-        raise TypeError("min_studies must be a whole number of studies, not bool")
+        raise TypeError("min_studies must be a whole number of studies, got bool")
     number = index_integer(value, "min_studies", expected="a whole number of studies")
     if number < 1:
         raise ValueError(f"min_studies must be at least 1, got {number}")

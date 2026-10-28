@@ -9,12 +9,13 @@ Every area of CytePool has a script in
 [`validation/`](https://github.com/NygenAnalytics/CytePool/tree/master/validation) that
 compares it with an independent reference: the package that defined the method, run
 as a black box, or a high-precision computation. A script generates its inputs from
-fixed random seeds, runs the reference as a separate program on the same inputs,
+fixed random seeds, or reads published data, runs the reference as a separate program
+on the same inputs,
 exchanging data through files in a temporary directory (float64 values as binary, so
 they compare bit for bit), runs CytePool, prints a table with one row per check, and
 exits with an error when any check falls outside its tolerance.
 
-This page summarises the tables the scripts printed when they were run against the
+This page summarizes the tables the scripts printed when they were run against the
 package in this revision of the repository: on **2026-10-26** for `plotting.py`,
 `variance_partitioning.py`, `gene_set_files_and_ora.py`, `kenward_roger_and_f_tests.py`,
 `gsea.py`, `cube_collection.py`, `pathway_scores.py`,
@@ -32,52 +33,67 @@ cubes and their files (`cube.py`, `pool_cells.py`, `cube_files.py`, `cube_reads.
 same table again after changes to the code it checks; and on **2026-10-24** for the
 others, with the
 reference versions given in each section. Every script exited without a failure.
-Each row below is a family of checks: it gives the number of printed checks it
-covers and the largest difference among them. Run a script to see every check.
+In the table of each section, a row is a family of checks: it gives the number of
+printed checks it covers and the largest difference among them. Run a script to see
+every check.
 
 ## Summary
 
-| Script | Area | Reference | Checks | Outcomes | Run time | Peak memory |
-| --- | --- | --- | --- | --- | --- | --- |
-| [`cube.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube.py) | Pseudobulk cubes | scanpy 1.12.4 | 20 | 19 pass, 1 information | 12.5 s | 926 MiB |
-| [`pool_cells.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pool_cells.py) | Pooling cells into cubes | scanpy 1.12.4, decoupler 2.2.0 | 27 | 27 pass | 30.2 s | 1,725 MiB |
-| [`cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py) | Cube files | zarr-python 3.4.1 | 7 | 7 pass | 3.1 s | 146 MiB |
-| [`cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py) | Reads of selected features | zarr-python 3.4.1 | 5 | 5 pass | 1 min 46 s | 500 MiB |
-| [`cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py) | Cube fingerprints | the documented encoding, with zarr-python 3.4.1 | 7 | 7 pass | 4.4 s | 122 MiB |
-| [`anndata_conversion.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/anndata_conversion.py) | AnnData and MuData | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | 18 | 18 pass | 1 min 5 s | 1,483 MiB |
-| [`cube_collection.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_collection.py) | Several studies | anndata 0.13.4, pandas 3.1.0, limma 3.62.1, edgeR 4.4.0 | 15 | 14 pass, 1 control | 26.7 s | 495 MiB |
-| [`normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py) | Normalization and filtering | edgeR 4.4.0, DESeq2 1.46.0 | 50 | 46 pass, 3 deliberate differences, 1 control | 72.9 s | 745 MiB |
-| [`design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py) | Designs and contrasts | R 4.4.3, limma 3.62.1, lme4 2.0.6 | 27 | 26 pass, 1 information | 4.3 s | 221 MiB |
-| [`linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py) | Linear models | limma 3.62.1 | 218 | 200 pass, 18 information | 4.5 s | 177 MiB |
-| [`mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py) | Mixed models | R 4.4.3, lme4 2.0.6, lmerTest 3.2.1 | 135 | 102 pass, 29 information, 4 deliberate differences | 5 min 28 s | 330 MiB |
-| [`voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py) | Precision weights for counts | limma 3.62.1, edgeR 4.4.0 | 118 | 111 pass, 7 deliberate differences | 15.3 s | 310 MiB |
-| [`sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py) | Sample quality weights | limma 3.62.1, edgeR 4.4.0 | 89 | 83 pass, 6 deliberate differences | 12.1 s | 206 MiB |
-| [`negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py) | Negative binomial models | edgeR 4.4.0, mpmath 1.3.0 | 121 | 78 pass, 30 information, 13 deliberate differences | 14.2 s | 187 MiB |
-| [`quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py) | Quasi-likelihood F-tests | edgeR 4.4.0, limma 3.62.1, mpmath 1.3.0 | 223 | 210 pass, 13 deliberate differences | 5.1 s | 186 MiB |
-| [`deseq2_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/deseq2_tests.py) | DESeq2's dispersions and tests | DESeq2 1.46.0, PyDESeq2 0.5.4, mpmath 1.3.0 | 45 | 28 pass, 11 information, 6 deliberate differences | 2 min 16 s | 814 MiB |
-| [`empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py) | Empirical Bayes moderation | limma 3.62.1 | 150 | 146 pass, 4 deliberate differences | 4.8 s | 195 MiB |
-| [`gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py) | Gene-set tests | limma 3.62.1 | 93 | 79 pass, 8 deliberate differences, 6 information | 6.9 s | 278 MiB |
-| [`rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py) | Rotation gene-set tests | limma 3.62.1 | 103 | 81 pass, 20 deliberate differences, 2 information | 20.9 s | 190 MiB |
-| [`gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py) | Gene-set files and over-representation | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | 34 | 29 pass, 5 deliberate differences | 4.7 s | 297 MiB |
-| [`gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py) | Gene set enrichment analysis | R 4.4.3, fgsea 1.32.2 | 24 | 23 pass, 1 deliberate difference | 7 min 3 s | 323 MiB |
-| [`pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py) | Pathway scores | R 4.4.3, GSVA 2.0.0 | 24 | 19 pass, 3 deliberate differences, 2 information | 10.7 s | 949 MiB |
-| [`activity.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/activity.py) | Pathway and regulator activity | decoupler 2.2.0, progeny 1.28.0, scipy 1.18.1 | 89 | 82 pass, 5 deliberate differences, 2 information | 2 min 39 s | 987 MiB |
-| [`multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py) | Multiple testing | R 4.4.3 | 15 | 15 pass | 2 min 56 s | 202 MiB |
-| [`differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py) | Differential expression | limma 3.62.1, edgeR 4.4.0 | 32 | 28 pass, 4 deliberate differences | 1.8 s | 189 MiB |
-| [`differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py) | Options for pseudobulk differential expression | limma 3.62.1, edgeR 4.4.0 | 66 | 66 pass | 5.0 s | 182 MiB |
-| [`dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py) | dream | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | 63 | 53 pass, 5 information, 5 deliberate differences | 30.5 s | 390 MiB |
-| [`kenward_roger_and_f_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/kenward_roger_and_f_tests.py) | Kenward-Roger's tests and F-tests | R 4.4.3, variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3 | 143 | 115 pass, 16 information, 12 deliberate differences | 3 min 59 s | 390 MiB |
-| [`variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py) | Variance partitioning | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | 31 | 22 pass, 6 information, 3 deliberate differences | 63.1 s | 394 MiB |
-| [`interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py) | Differential expression on published data | limma 3.62.1, edgeR 4.4.0 | 41 | 17 pass, 24 information | 15.2 s | 617 MiB |
-| [`composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py) | Cell-type composition | speckle 1.6.0, limma 3.62.1 | 32 | 25 pass, 7 deliberate differences | 13.1 s | 860 MiB |
-| [`meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py) | Meta-analysis | metafor 5.0.1 | 75 | 52 pass, 20 information, 3 deliberate differences | 59.5 s | 256 MiB |
-| [`combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py) | Combined p-values and replication | scipy 1.18.1, mpmath 1.3.0, R 4.4.3, metap 1.1, qvalue 2.38.0, metafor 5.0.1 | 54 | 47 pass, 7 deliberate differences | 67.4 s | 444 MiB |
-| [`sumrank.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sumrank.py) | SumRank and held-out prediction | R 4.4.3, the authors' code (commit 46392f66), mpmath 1.3.0, scipy 1.18.1, scikit-learn 1.9.1 | 23 | 13 pass, 9 information, 1 deliberate difference | 44.9 s | 399 MiB |
-| [`plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py) | Figures | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, metafor 5.0.1, speckle 1.6.0 | 26 | 23 pass, 2 information, 1 deliberate difference | 25.4 s | 810 MiB |
-| [`pca_and_dot_plots.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pca_and_dot_plots.py) | Principal components and dot plots | R 4.4.3, DESeq2 1.46.0, edgeR 4.4.0, ggplot2 4.0.3, scanpy 1.12.4 | 13 | 11 pass, 1 deliberate difference, 1 information | 19.8 s | 671 MiB |
-| [`distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py) | Distributions and special functions | mpmath 1.3.0 | 51 | 51 pass | 12 min 28 s | 174 MiB |
-| [`smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) | LOWESS and spline bases | R 4.4.3 | 90 | 87 pass, 1 information, 2 deliberate differences | 1.5 s | 175 MiB |
-| **All** | | | **2,397** | **2,065 pass, none failed; 186 information, 144 deliberate differences, 2 controls** | | |
+Each method is listed with the functions that implement it, the reference it is checked
+against and its version, the tier with the bounds its checks use, and the section that
+gives every check. The sections are grouped as the chapters are, and each opens with the
+checks its script printed, their outcomes, its run time and its peak memory.
+
+| Method | Functions | Checked against | Tier and bound | Section |
+| --- | --- | --- | --- | --- |
+| Pseudobulk profiles pooled from cells | {api}`from_cells` | scanpy 1.12.4, decoupler 2.2.0 | exact: identical sums of whole counts, 1e-10 otherwise | [Pooling cells into cubes](#validation-pool-cells) |
+| Bulk counts as a cube | {api}`from_bulk` | decoupler 2.2.0 | exact: identical | [Pooling cells into cubes](#validation-pool-cells) |
+| Merging groups and pooling samples; means, variances and detection | {api}`Cube` | scanpy 1.12.4 | exact: identical counts, 1e-10; variances from raw moments to a bound derived for each case | [Pseudobulk cubes](#validation-cube) |
+| Cube files | {api}`write_cube`, {api}`read_cube` | zarr-python 3.4.1 | exact: identical | [Cube files](#validation-cube-files) |
+| Reads of selected features from cube files | {api}`read_cube`, {api}`Cube.select` | zarr-python 3.4.1 | exact: identical, 1e-12 for merged groups and pooled samples | [Reads of selected features](#validation-cube-reads) |
+| Fingerprints of cubes | {api}`Cube.fingerprint`, {api}`Cube.digests` | the documented encoding, with zarr-python 3.4.1 | exact: identical digests | [Cube fingerprints](#validation-cube-fingerprints) |
+| AnnData and MuData layouts of scanpy, decoupler and LIANA | {api}`to_anndata`, {api}`from_anndata`, {api}`to_mudata`, {api}`from_mudata` | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | exact: identical, 1e-10 for sums of normalized values | [Conversions to AnnData and MuData](#validation-anndata-conversion) |
+| Model matrices from R formulas, named contrasts, design checks | {api}`Design`, {api}`model_matrix`, {api}`make_contrasts`, {api}`Design.check` | R 4.4.3, limma 3.62.1, lme4 2.0.6 | exact: identical, 1e-10; 1e-8 (absolute) for the leverages of badly scaled designs | [Designs and contrasts](#validation-design) |
+| Linear models of every gene and their contrasts (limma's `lmFit`, `contrasts.fit`) | {api}`fit_linear_model`, {api}`contrasts_fit` | limma 3.62.1 | exact: 1e-10 | [Linear models](#validation-linear-models) |
+| Empirical Bayes moderation, moderated t and F, B-statistics, TREAT | {api}`moderated_statistics`, {api}`treat`, {api}`squeeze_variances`, {api}`fit_f_distribution`, {api}`fit_f_distribution_robust`, {api}`fit_f_distribution_likelihood` | limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust and likelihood priors | [Empirical Bayes moderation](#validation-empirical-bayes) |
+| Adjustment for multiple testing (R's `p.adjust`) | {api}`adjust_p_values` | R 4.4.3 | exact: 1e-10 | [Multiple testing](#validation-multiple-testing) |
+| TMM, upper-quartile and RLE factors; CPM and log-CPM; `filterByExpr` | {api}`tmm_factors`, {api}`upper_quartile_factors`, {api}`rle_factors`, {api}`cpm`, {api}`log2_cpm`, {api}`filter_by_expression` | edgeR 4.4.0 | exact: 1e-10, identical genes kept | [Normalization and filtering](#validation-normalization) |
+| DESeq2's median-of-ratios size factors | {api}`median_ratio_size_factors` | DESeq2 1.46.0 | exact: 1e-10 | [Normalization and filtering](#validation-normalization) |
+| voom's precision weights and limma's span rule | {api}`voom`, {api}`choose_lowess_span` | limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; close: 1e-6 on rarefied counts | [Precision weights for counts](#validation-voom) |
+| Sample quality weights (`arrayWeights`, `voomWithQualityWeights`) | {api}`sample_quality_weights`, {api}`voom_with_quality_weights` | limma 3.62.1, edgeR 4.4.0 | close: 1e-6; exact: 1e-10 for voom with prior weights, and for the log-CPM values and the span with quality weights | [Sample quality weights and prior weights](#validation-sample-quality-weights) |
+| limma-voom and limma-trend on every cell type of a cube | {api}`limma_voom`, {api}`limma_trend` | limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; close: 1e-6 with robust moderation | [limma-voom and limma-trend on cubes](#validation-differential-expression) |
+| Options for pseudobulk data: quality weights, weights from cell numbers, a minimum count, adjustment across cell types | {api}`limma_voom`, {api}`limma_trend` | limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; close: 1e-6 with quality weights | [Options for pseudobulk differential expression](#validation-differential-expression-options) |
+| limma-voom on published single-cell data (Kang et al. 2018) | {api}`from_cells`, {api}`limma_voom` | limma 3.62.1, edgeR 4.4.0 | exact: identical counts, 1e-10 | [Differential expression on published data](#validation-interferon-stimulated-pbmcs) |
+| Negative binomial models of every gene (edgeR's `glmFit`), deviances | {api}`fit_negative_binomial_model`, {api}`negative_binomial_deviance`, {api}`negative_binomial_unit_deviance` | edgeR 4.4.0, mpmath 1.3.0 | close: 1e-6; 1e-13 for unit deviances against mpmath | [Negative binomial models](#validation-negative-binomial-fits) |
+| Quasi-likelihood F-tests (edgeR 4's `glmQLFit`, `glmQLFTest`) | {api}`fit_quasi_likelihood`, {api}`quasi_likelihood_f_test`, {api}`common_dispersion`, {api}`average_log2_cpm` | edgeR 4.4.0, limma 3.62.1, mpmath 1.3.0 | close: 1e-6 where both programs compute the same quantity; up to 2e-2 where edgeR approximates the moments of the unit deviance, which CytePool computes exactly, and where edgeR's searches and fits stop short | [Quasi-likelihood F-tests](#validation-quasi-likelihood) |
+| DESeq2's dispersions, Wald tests and likelihood ratio tests | {api}`fit_deseq2`, {api}`deseq2_dispersions`, {api}`deseq2_wald_test`, {api}`deseq2_likelihood_ratio_test` | DESeq2 1.46.0, PyDESeq2 0.5.4, mpmath 1.3.0 | close: 1e-6, each stage given DESeq2's own inputs; 1e-5 for fitted values, Cook's distances and Wald tests, as DESeq2's fits stop up to 1.5e-6 from their fixed point; 1e-9 for deviances and likelihood ratio tests; exact: 1e-10 for size factors, the trend and the variance of the prior | [DESeq2's dispersions and tests](#validation-deseq2-tests) |
+| Mixed models with random intercepts by REML, Satterthwaite's t-tests (maximum likelihood fits are checked with dream) | {api}`fit_mixed_model`, {api}`fixed_effect_tests` | lme4 2.0.6, lmerTest 3.2.1 | close: 1e-6; 1e-5 for Satterthwaite's degrees of freedom and p-values and for fits with large variance ratios; exact: 1e-10 for the REML criterion and at given estimates | [Mixed models](#validation-mixed-models) |
+| Kenward-Roger's t-tests and F-tests, Satterthwaite's F-tests (pbkrtest's `vcovAdj` and `KRmodcomp`, lmerTest's `contestMD`); dream's choice of degrees of freedom and its F-tests | {api}`fixed_effect_tests`, {api}`fixed_effect_f_test`, {api}`dream_voom`, {api}`moderated_fixed_effect_tests` | pbkrtest 0.5.3, lmerTest 3.1-3, lme4 1.1-38, variancePartition 1.36.2, limma 3.62.1 | exact: 1e-10 at given estimates; close: 1e-6 at the optimum and for dream; 1e-5 for the degrees of freedom and p-values of Satterthwaite's F-tests | [Kenward-Roger's tests and F-tests](#validation-kenward-roger-and-f-tests) |
+| dream on every cell type of a cube | {api}`dream_voom`, {api}`voom_with_dream_weights`, {api}`moderated_fixed_effect_tests` | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | close: 1e-6; 1e-5 for Satterthwaite's degrees of freedom and the p-values and z-statistics that use them; exact: 1e-10 for the likelihoods at given estimates | [dream's weights, fits and tests](#validation-dream) |
+| Variance partitioning (`fitExtractVarPartModel`) on every cell type of a cube, and its figures (`plotVarPart`, `plotPercentBars`) | {api}`variance_fractions`, {api}`variance_partitioning`, {api}`plot_variance_fractions`, {api}`plot_feature_variance_fractions` | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | close: 1e-6; exact: 1e-10 at given estimates, for linear models and for the figures; 1e-3 for the widths of the violins | [Variance partitioning](#validation-variance-partitioning) |
+| Cell-type composition (speckle's propeller) | {api}`propeller` | speckle 1.6.0, limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust prior | [Cell-type composition](#validation-composition-tests) |
+| Gene-set tests camera and fry | {api}`camera`, {api}`fry` | limma 3.62.1 | exact: 1e-10; close: 1e-6 with robust moderation; 1e-3 for fry's default standardization, which differs on purpose; 0.1 (absolute) for fry's mixed p-values against random rotations | [Gene-set tests](#validation-gene-set-tests) |
+| Rotation gene-set tests roast, mroast and romer | {api}`roast`, {api}`mroast`, {api}`romer` | limma 3.62.1 | calibrated: within 4 standard deviations of the Monte Carlo difference, plus 2 / (B + 1) for B rotations; exact: 1e-12 given limma's rotations; 0.1 (absolute) for fry's mixed p-values against the rotation test | [Rotation gene-set tests](#validation-rotation-gene-set-tests) |
+| Gene-set files (GMT) read and written; collections matched to an analysis (limma's `ids2indices`) and filtered by size | {api}`read_gmt`, {api}`write_gmt`, {api}`GeneSets` | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | exact: identical, 1e-10 | [Gene-set files and over-representation](#validation-gene-set-files-and-ora) |
+| Over-representation analysis (limma's `kegga`) of the genes up, down or either way, and its dot plot | {api}`over_representation`, {api}`plot_over_representation` | limma 3.62.1, R 4.4.3 | exact: 1e-10 | [Gene-set files and over-representation](#validation-gene-set-files-and-ora) |
+| Gene set enrichment analysis of ranked genes (fgsea's `fgseaMultilevel` and `fgseaSimple`), with its enrichment plot and table (`plotEnrichment`, `plotGseaTable`) | {api}`gsea`, {api}`plot_enrichment`, {api}`plot_gsea_table` | fgsea 1.32.2 | exact: 1e-10 given fgsea's seeds, and for enrichment scores, leading edges and figures; calibrated: within 4 standard errors over 20 runs in which each program draws its own random sets | [Gene set enrichment analysis](#validation-gsea) |
+| Scores of gene sets in every sample (GSVA's `gsva` with `gsvaParam`, `ssgseaParam`, `zscoreParam` and `plageParam`), and their heatmap | {api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores`, {api}`plage`, {api}`plot_pathway_scores` | GSVA 2.0.0 | exact: 1e-10, PLAGE up to sign | [Pathway scores](#validation-pathway-scores) |
+| Activities of regulators and pathways (decoupler's `mt.ulm`, `mt.mlm` and `mt.waggr`) from samples, a cube's cell type or contrasts, the networks CollecTRI and PROGENy downloaded with their checksums and licences, and the bar plot of the top sources (`pl.barplot`) | {api}`ulm`, {api}`mlm`, {api}`weighted_aggregate`, {api}`collectri`, {api}`progeny`, {api}`plot_top_activities` | decoupler 2.2.0, progeny 1.28.0 | exact: 1e-10, normalized scores given decoupler's permutations; 1.2e-7 for ULM's adjusted p-values, which decoupler keeps in single precision | [Pathway and regulator activity](#validation-activity) |
+| Tests of pathway scores and activities with a design (limma's `lmFit`, `contrasts.fit` and `eBayes` on scores) | {api}`limma` | the linear models and moderation of this page: `tests/test_score_tests.py` checks that the results are theirs | exact: identical | none of its own; [Linear models](#validation-linear-models), [Empirical Bayes moderation](#validation-empirical-bayes) |
+| Several studies' cubes aligned by sample, gene and cell type, with what each study measured; stacked for a joint model; each study's results lined up gene by gene | {api}`CubeCollection`, {api}`StudyResults.table` | anndata 0.13.4, pandas 3.1.0, limma 3.62.1, edgeR 4.4.0 | exact: identical, 1e-10 | [Studies aligned in a collection](#validation-cube-collection) |
+| Meta-analysis by fixed and random effects (metafor's `rma.uni`) | {api}`meta_analysis`, {api}`fit_meta_analysis` | metafor 5.0.1 | exact: 1e-10; close: 1e-6 for REML and Paule-Mandel | [Meta-analysis](#validation-meta-analysis) |
+| Combined p-values of several studies (Fisher, Stouffer with weights, Tippett, Wilkinson, Pearson, Mudholkar and George, Simes), one-sided or two-sided with the directions of the effects; partial conjunctions, an effect in at least u studies | {api}`combine_p_values`, {api}`partial_conjunction` | scipy 1.18.1, metap 1.1, mpmath 1.3.0 | exact: 1e-10 | [Combined p-values and replication](#validation-combined-p-values-and-replication) |
+| The proportion of true nulls, pi0, and pi1 (qvalue's `pi0est`, its smoother and bootstrap) | {api}`proportion_of_true_nulls` | qvalue 2.38.0 | exact: 1e-10 | [Combined p-values and replication](#validation-combined-p-values-and-replication) |
+| Replication across the studies of a collection: combined and partial conjunction p-values, sign agreement, heterogeneity, pi1 between studies, genes found in k studies, and its figures | {api}`replication`, {api}`plot_study_agreement`, {api}`plot_replicated_genes` | metap 1.1, qvalue 2.38.0, metafor 5.0.1 | exact: 1e-10; close: 1e-6 for REML | [Combined p-values and replication](#validation-combined-p-values-and-replication) |
+| SumRank (Nakatsuka et al. 2025): every gene's best ranks summed across studies, with Irwin-Hall p-values and permutations that re-run each study's analysis; prediction of cases in held-out studies by genes chosen from the others, by SumRank and by meta-analysis; their figures | {api}`sumrank`, {api}`fit_sumrank`, {api}`held_out_prediction`, {api}`plot_sumrank`, {api}`plot_held_out_auc` | the authors' code (commit 46392f66), R 4.4.3, mpmath 1.3.0, scipy 1.18.1, scikit-learn 1.9.1 | exact: 1e-12; calibrated: within 4 standard errors for p-values from random permutations | [SumRank and held-out prediction](#validation-sumrank) |
+| Figures of limma, edgeR, DESeq2, speckle and metafor (MDS, voom's trend, plotSA, MD and volcano plots, barcode plots, dispersions, composition, forest plots) | {api}`cytepool.plotting` | limma 3.62.1, edgeR 4.4.0, DESeq2 1.46.0, speckle 1.6.0, metafor 5.0.1 | exact: 1e-10 for what is drawn; close: 1e-6 where an iterative fit enters, as for sample quality weights, plotSA's prior and REML | [Figures of limma, edgeR, DESeq2, speckle and metafor](#validation-plotting) |
+| Principal components of samples (DESeq2's `plotPCA`), of a matrix or a cell type of a cube, and their figure | {api}`principal_components`, {api}`plot_pca` | DESeq2 1.46.0, edgeR 4.4.0 | exact: 1e-10, up to the sign of each component | [Principal components and dot plots](#validation-pca-and-dot-plots) |
+| Dot plots of the fraction of cells that express each gene and their mean expression, per cell type, from a cube (scanpy's `dotplot`) | {api}`plot_dotplot` | scanpy 1.12.4 | exact: 1e-10 | [Principal components and dot plots](#validation-pca-and-dot-plots) |
+| Tails and quantiles of distributions, special functions | {api}`cytepool.stats.distributions`, {api}`cytepool.stats.special` | mpmath 1.3.0 | exact: 1e-15 to 1e-12 | [Distributions and special functions](#validation-distributions) |
+| LOWESS, natural spline bases | {api}`lowess`, {api}`natural_spline_basis` | R 4.4.3 | close: 1e-6 for LOWESS; exact: 1e-10 for spline bases | [LOWESS and spline bases](#validation-smoothing) |
+
+In all, the scripts printed 2,397 checks: 2,065 pass, none failed; 186 information, 144
+deliberate differences, 2 controls.
 
 Run time is the wall time of the whole script and peak memory the largest resident
 set of any of its processes, reference programs included, both measured with GNU
@@ -87,6 +103,7 @@ and the peak memory is the largest that the script measured itself: it restarts 
 peak of its own process before it runs `limma_voom`, which hides the earlier, higher
 peak from GNU `time`.
 
+(reading-the-tables)=
 ## How to read the tables
 
 Each check is printed with its tolerance. Most tolerances follow three tiers:
@@ -100,9 +117,13 @@ Each check is printed with its tolerance. Most tolerances follow three tiers:
 Some checks are stricter, such as the special functions (1e-15 to 1e-12) and counts
 or labels that must be identical (tolerance 0), and some use a bound derived for
 their case: the variances from raw moments in `cube.py`, and the leverages of badly
-scaled designs (1e-8, absolute). Differences are relative unless a row says
-otherwise; scripts that compare statistics near zero scale them as their sections
-describe. Besides **pass**, a printed check can be:
+scaled designs (1e-8, absolute). Differences are relative unless a section says
+otherwise. Two scalings recur, for values that can be near zero: a statistic, such as
+a t-statistic or a log fold change, is compared as its difference divided by
+max(\|reference\|, 1), and a p-value as its difference divided by
+max(p, 1e-300) max(1, \|log p\|), which is about the error in log p relative to
+\|log p\|. The sections say which values they scale so. Besides **pass**, a printed
+check can be:
 
 - **information**: a value reported for context, without a tolerance, such as how far
   limma's approximate standard errors are from exact ones;
@@ -115,10 +136,18 @@ describe. Besides **pass**, a printed check can be:
 Sections also list deliberate differences that passing checks confirm, such as
 formulas that CytePool rejects by design; the summary counts as deliberate
 differences only the checks that the scripts print as such. The calibrated checks are
-those of `rotation_gene_set_tests.py`, whose tests draw random rotations; the other
-methods implemented so far are deterministic.
+those of `rotation_gene_set_tests.py`, whose tests draw random rotations, of `gsea.py`
+where each program draws its own random sets, and of `sumrank.py` for p-values from
+random permutations; the other checks compare deterministic results.
 
-## Pseudobulk cubes
+## Cubes and files
+
+(validation-cube)=
+### Pseudobulk cubes
+
+The script printed 20 checks (19 pass and 1 information) in 12.5 s, with a peak memory
+of 926 MiB. [Pseudobulk profiles and cubes](statistics/cubes.md#exact-regrouping) explains
+what it checks.
 
 [`validation/cube.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube.py)
 builds a cube from 28,946 simulated cells x 2,000 genes (density 0.210, 8 samples x
@@ -146,7 +175,12 @@ tolerance is a worst-case bound, 64 eps (1 + r²). At r = 8e6 that bound exceeds
 so the last row only shows where raw moments stop being useful. Log-normalized
 expression has small r and stays in the exact tier.
 
-## Pooling cells into cubes
+(validation-pool-cells)=
+### Pooling cells into cubes
+
+The script printed 27 checks (27 pass) in 30.2 s, with a peak memory of 1,725 MiB.
+[Pseudobulk profiles and cubes](statistics/cubes.md#cube-layers) explains what it
+checks.
 
 [`validation/pool_cells.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pool_cells.py)
 pools 29,068 simulated cells x 2,000 genes (12,097,859 stored counts, density 0.208,
@@ -173,7 +207,12 @@ For an entry without cells, the cube reports the fraction of cells detecting a g
 as NaN (zero cells out of zero), where decoupler reports 0. The script also times
 `from_cells`; see [](#validation-timings).
 
-## Cube files
+(validation-cube-files)=
+### Cube files
+
+The script printed 7 checks (7 pass) in 3.1 s, with a peak memory of 146 MiB. [Cube
+files and provenance records](reference/cube_files.md#cube-file-format) explains what
+it checks.
 
 [`validation/cube_files.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_files.py)
 checks the Zarr v3 cube files against zarr-python, an independent implementation.
@@ -189,7 +228,12 @@ script skips those cases.
 | Chunks of those arrays left unstored because they equal the fill value | zarr-python | 295 of 840 chunks read as the fill value | more than 0 | 1 pass |
 | `read_cube` of copies that zarr-python made node by node, with other chunks, big-endian bytes and gzip then zstd | zarr-python | 0 values differ | 0 | 1 pass |
 
-## Reads of selected features
+(validation-cube-reads)=
+### Reads of selected features
+
+The script printed 5 checks (5 pass) in 1 min 46 s, with a peak memory of 500 MiB. [Cube
+files and provenance records](reference/cube_files.md#cube-file-reading-and-writing)
+explains what it checks.
 
 [`validation/cube_reads.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_reads.py)
 checks that reads of a selection take only what they need and return what zarr-python
@@ -212,12 +256,18 @@ Every chunk that holds a selected element is opened once, and no other: 40 chunk
 files for 50 neighbouring genes of the 20 groups, where reading whole groups opens all
 320. The script also measures each read; see [](#validation-timings).
 
-## Cube fingerprints
+(validation-cube-fingerprints)=
+### Cube fingerprints
+
+The script printed 7 checks (7 pass) in 4.4 s, with a peak memory of 122 MiB. [Cube
+files and provenance records](reference/cube_files.md#fingerprint-encoding) explains
+what it checks.
 
 No other tool computes the fingerprint of a cube, so
 [`validation/cube_fingerprints.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_fingerprints.py)
-checks it against a second implementation, written from the encoding that
-`cytepool.cube.fingerprints` documents: a separate program reads cube files with
+checks it against a second implementation, written from the encoding that [Cube files
+and provenance records](#fingerprint-encoding) specifies: a separate program reads cube
+files with
 zarr-python and recomputes every digest and the fingerprint with numpy and `hashlib`,
 without importing CytePool. Its encoder differs from CytePool's where it can: it finds
 NaN with `numpy.isnan` instead of comparing bits, splits complex values with `.real`
@@ -246,7 +296,13 @@ written after the text, every float of the normalization hashed as a float64, an
 reads of whole groups in another order (pooled samples) left unchecked. The first four
 each made five checks fail, and the last one the check of the changed files.
 
-## AnnData and MuData
+(validation-anndata-conversion)=
+### Conversions to AnnData and MuData
+
+The script printed 18 checks (18 pass) in 1 min 5 s, with a peak memory of 1,483 MiB.
+[Pseudobulk profiles and cubes](statistics/cubes.md#profiles-from-other-tools) explains
+what it checks, and [Work with AnnData and MuData](guides/anndata_and_mudata.ipynb)
+shows the conversions.
 
 [`validation/anndata_conversion.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/anndata_conversion.py)
 simulates 18,914 cells x 1,500 genes (8 samples x 10 cell types, with an empty sample
@@ -288,46 +344,224 @@ a missing profile: the import refuses them until cell numbers are given. decoupl
 gives its row without cells the metadata of another row (found by probing); CytePool
 reads a column as sample or cell-type metadata from the rows with cells.
 
-## Several studies
+## Designs and linear models
 
-[`validation/cube_collection.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_collection.py)
-simulates the cells of three studies of one stimulation (seed 20261026) and pools each
-with `from_cells`: `lupus`, 8 samples of 4 donors, each control and stimulated, 4 cell
-types with Cell Ontology ids and 700 genes; `covid`, 10 samples of 5 donors whose
-sample and donor ids repeat those of `lupus`, 5 cell types of which two share an
-ontology id and merge, and 750 genes, 40 of them filled with zeros and marked as not
-measured; and `atlas`, 6 unpaired samples with integer donor ids, 5 cell types without
-ontology ids, aligned by a mapping that leaves one out, and 950 genes. The collection
-aligns the cell types by ontology id and writes donor ids `study::donor`. anndata and
-pandas run as a separate program: each study's cube is exported with `to_anndata`, the
-genes marked as not measured are dropped, the rows of each sample and aligned cell type
-are summed, and the studies are joined with `anndata.concat` (outer and inner joins,
-labelled by study); pandas joins the sample tables. R runs limma-voom on each study's
-own counts, summing the cell types that share an aligned id, and on the stacked counts
-of `lupus` and `covid` with `~ donor + condition`, by the steps of
-`differential_expression.py`. Reference: anndata 0.13.4, pandas 3.1.0, numpy 2.5.4,
-Python 3.13.12; R 4.4.3, limma 3.62.1, edgeR 4.4.0. CytePool ran with numpy 2.5.4 and
-numba 0.68.0.
+(validation-design)=
+### Designs and contrasts
+
+The script printed 27 checks (26 pass and 1 information) in 4.3 s, with a peak memory of
+221 MiB. [Designs, linear models and
+contrasts](statistics/linear_models.md#designs-and-formulas) explains what it checks.
+
+[`validation/design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py)
+compares `cytepool.design` with R, limma and lme4 on a table of 24 samples: factors
+with 2 to 4 levels, including mixed-case labels, labels with spaces and a
+non-syntactic column name (`cell type`), a boolean, covariates that are multiples of
+1/16, an integer covariate, and 10 badly scaled or nearly collinear covariates; seed
+20261023. Reference: R 4.4.3, limma 3.62.1, lme4 2.0.6; R's session collation
+C.UTF-8.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
-| The sample table: ids `study::sample_id`, donors `study::donor`, the union of the columns, ages that are integers in two studies and floats in one as float64, and missing values where a study lacks a column | `pandas.concat` | 0 mismatches | 0 | 1 pass |
-| The genes, as a set and in the order in which the studies first list them, and which study measured which | `anndata.concat`, outer join (NaN where a study lacks a gene), `pandas.unique` | identical; 0 mismatches | 0 | 2 pass |
-| Every layer of each study's aligned cube: merged cell types, measured genes | the outer join's values | 0 | 1e-10 | 1 pass |
-| `stack()`: genes in order, cell types and samples; every layer; the cells of each entry, and an entry without cells | `anndata.concat`, inner join, kept to the cell types of every study | 0 | 0 and 1e-10 | 3 pass |
-| `limma_voom` on each study's aligned cube, lined up by `StudyResults.table`: logFC, AveExpr, t, P.Value, adj.P.Val, B and the standard error, in 12 cell types of 3 studies | limma, study by study | 3.8e-13 | 1e-10 | 3 pass |
-| The status of every gene of every study: tested, measured and left out, or not measured | limma's tables and each study's measured genes | 0 mismatches | 0 | 3 pass |
-| `limma_voom` on the stack of `lupus` and `covid`, `~ donor + condition` with donors `study::donor` | limma on the stacked counts | 1.4e-13 | 1e-10 | 1 pass |
-| The same with the donor ids as the studies give them | limma on the stacked counts, donors `study::donor` | 1.9 (log2 fold changes) | must exceed 1e-10 | 1 control |
+| Model matrices of main effects, numeric covariates, factor:factor, factor:numeric and numeric:numeric interactions, no intercept, nesting (`/`, `%in%`), powers, `-` removal, booleans, missing margins and badly scaled covariates, each under 3 level orders | R `model.matrix` | 342 of 342 identical in column names, `assign`, term labels and every entry | all identical | 12 pass |
+| 300 random formulas from the full grammar | R `model.matrix` | 300 of 300 identical | all identical | 1 pass |
+| Default level order, code points, without levels given | R with `LC_COLLATE=C` | 4 of 4 identical | all identical | 1 pass |
+| The same against R's default order in its session locale | R | 1 of 4 identical | n/a | 1 information |
+| Formulas R also rejects, and formulas CytePool rejects by design | R `model.matrix` | 6 of 6 and 8 of 8 rejected | all rejected | 2 pass |
+| `terms()` on 282 grammar cases without data (35 rejected by design, 11 by both) | R `terms` | 236 of 236 identical | all identical | 1 pass |
+| Rank of 646 matrices, and the aliased columns of the 346 that are rank-deficient | R `qr()` (tolerance 1e-7, pivoting as `lm.fit` does) | 646 of 646 and 346 of 346 identical | all identical | 2 pass |
+| Leverages of 604 matrices, and of 42 with badly scaled covariates | R `rowSums(qr.Q(qr(X))[, 1:rank]^2)` | 1e-13 and 6.3e-10 (absolute) | 1e-10 and 1e-8 | 2 pass |
+| Estimability of 1,038 contrasts on the 346 rank-deficient designs: `X'u` estimable, random and aliased-column contrasts not | contrasts drawn by R | 1,038 of 1,038 right | all right | 1 pass |
+| Random-effect terms of 21 specifications: grouping factors and effect columns | lme4 `lFormula` | 21 of 21 identical | all identical | 1 pass |
+| `make_contrasts` on 13 linear expressions, and their names | limma `makeContrasts` | 0; names identical | 1e-10 | 2 pass |
+| Expressions that are not linear: a constant, a product, a ratio, a power | limma `makeContrasts` | 4 of 4 rejected | all rejected | 1 pass |
 
-limma ran on each study's own counts, with the genes filled with zeros, and its tables
-equal those of the aligned cubes, which leave those genes out: genes without counts
-change no library size, expression filter or normalization factor, so a gene that a
-study did not measure can be marked missing without changing any other gene's result.
-The control shows why donor ids are written with their study: taken for one person,
-donor D1 of two studies changes the fit of every gene.
+Deliberate differences:
 
-## Normalization and filtering
+- Default level order is by code point in every locale, as R's is with
+  `LC_COLLATE=C`. R's own default follows the session's collation, and agreed in 1 of
+  the 4 formulas here.
+- Formulas that R accepts and CytePool rejects: a `-` that removes nothing (`~ a - b`,
+  `~ x - z`, `~ a + (-b)`), `^` of a single term (`~ x^2`, which R reads as `x`), a
+  fractional power (`~ (a + b)^2.5`), and function calls (`~ log(z)`, `~ I(x^2)`,
+  `~ factor(w)`), which CytePool's formulas do not support; transform the column in
+  the sample table instead.
+- Contrast expressions that limma turns into weights without meaning are rejected:
+  limma gives `groupB - 1` the weights (-1, 0, -1, -1, -1), `groupA*groupB` (0, 0, 0,
+  0, 0), `groupA/groupB` (Inf, 0, NaN, NaN, NaN) and `groupA^2` (1, 0, 0, 0, 0).
+
+(validation-linear-models)=
+### Linear models
+
+The script printed 218 checks (200 pass and 18 information) in 4.5 s, with a peak memory
+of 177 MiB. [Designs, linear models and
+contrasts](statistics/linear_models.md#one-model-per-gene) explains what it checks.
+
+[`validation/linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py)
+compares `fit_linear_model` with limma's `lmFit` and `contrasts_fit` with
+`contrasts.fit` on 15 cases of 2,000 genes and 6 to 20 samples from fixed seeds: two
+groups; groups with a covariate; covariates on a large scale; sample weights;
+observation weights; group means with observation weights; about 5% missing values,
+with and without sample weights, including genes that lose rank; a block correlation,
+alone and with sample weights, observation weights or missing values; zero observation
+weights;
+a zero sample weight; and large-scale covariates with weights and missing values.
+Reference: R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Coefficients, relative to the larger of their absolute value and standard error | `lmFit` | 9.7e-13 | 1e-10 | 15 pass |
+| `stdev.unscaled`, `sigma` and `Amean` | `lmFit` | 2.1e-13 | 1e-10 | 45 pass |
+| `df.residual` | `lmFit` | 0 genes differ | 0 | 15 pass |
+| `cov.coefficients`, relative to products of standard deviations | `lmFit` | 1.8e-14 | 1e-10 | 15 pass |
+| `contrasts_fit(method="limma")`: coefficients, unscaled standard errors and covariance | `contrasts.fit` | 9.7e-13 | 1e-10 | 45 pass |
+| Named contrasts whose coefficients are listed in another order (a `Contrasts` over the reversed columns): coefficients and unscaled standard errors | `contrasts.fit` of `makeContrasts` in limma's order | 9.7e-13 | 1e-10 | 30 pass |
+| `contrasts_fit(method="exact")`: coefficients and unscaled standard errors | `lmFit` on a design whose first coefficient is the contrast | 1.3e-12 | 1e-10 | 30 pass |
+| Exact contrasts that are finite although not estimable | `lmFit` with the columns reversed | 0 entries | 0 | 5 pass |
+| Coefficients limma reports although the data do not determine them, and estimable contrasts of such coefficients, which stay NaN | `lmFit` | up to 6 and 2 entries in a case | n/a | 10 information |
+| limma's contrast standard errors over the exact ones | `contrasts.fit` against a refit | 0.56 to 2.55; up to 46% of entries off by more than 5% | n/a | 8 information |
+
+Deliberate differences:
+
+- Weights that name their coefficients, such as a `Contrasts` object, are matched to the
+  fit's coefficients by name. limma's `contrasts.fit` takes the rows by position and
+  only warns when the names differ (found by probing).
+- A coefficient that a gene's observed values cannot estimate, because missing values
+  or zero weights leave its column collinear with others, is NaN. limma drops the
+  later of collinear columns and reports the rest, which can give a value for a
+  coefficient the data do not determine. The script confirms that the NaN entries are
+  exactly the coefficients whose limma value changes when the columns of the design
+  are reversed.
+- Contrast standard errors are exact by default: each comes from the gene's own
+  covariance matrix. limma's `contrasts.fit` combines a gene's standard errors with
+  the correlations of the coefficients in the design without weights. That is exact
+  when one factorization of the design serves every gene (no missing values, and no
+  weights or only positive sample weights) and for contrasts of uncorrelated coefficients,
+  such as group means; otherwise it is approximate, and here its values ranged from
+  0.56 to 2.55 times the exact ones. `method="limma"` reproduces it.
+
+With `--benchmark`, the script times both packages on 20,000 genes x 200 samples; see
+[](#validation-timings).
+
+(validation-empirical-bayes)=
+### Empirical Bayes moderation
+
+The script printed 150 checks (146 pass and 4 deliberate differences) in 4.8 s, with a
+peak memory of 195 MiB. [Empirical Bayes
+moderation](statistics/empirical_bayes.md#empirical-bayes-model) explains what it
+checks.
+
+[`validation/empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py)
+compares `moderated_statistics`, `treat`, `squeeze_variances`, `fit_f_distribution`,
+`fit_f_distribution_robust` and `fit_f_distribution_likelihood` with limma's `eBayes`,
+`treat`, `squeezeVar`, `fitFDist`, `fitFDistRobustly` and `fitFDistUnequalDF1`, with
+limma's `legacy` argument TRUE (the method of moments, `prior_estimator="moments"`),
+FALSE (the likelihood estimator, `"likelihood"`) or NULL (limma's default,
+`prior_estimator=None`, which takes the likelihood estimator when the positive residual
+degrees of freedom differ; genes without residual degrees of freedom do not count). Linear model cases (2,000 genes, 6 to 40 samples) are fitted by `lmFit`
+in R and `fit_linear_model` here, then moderated with a constant prior, a trend,
+robustly, and with both; they include several contrasts, some linearly dependent,
+hypervariable genes, an infinite prior df, missing values, observation weights (some of
+them zero), genes without residual df, an all-zero contrast, and 1 to 25 genes, which
+with one or two genes are not moderated (some of them all zero). Variance cases call
+the estimators directly on 2 to 6,000 variances, with and without a covariate, few
+distinct or infinite covariate values, zero, missing and unusable variances, fractional
+df from 0.05, prior weights, planted outliers with equal and unequal df, variances that
+vary less or more than any prior df explains, infinite robust prior df, three to five
+trended variances, two variances above zero among zeros, and covariates on scales of
+1e-5 and 1e-9. The weighted LOWESS of the likelihood estimator's trend is also compared
+with limma's `weightedLowess`. TREAT tests a fold change of 1.2. Reference: R 4.4.3,
+limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| t, p, B, F and its p-value, priors, posterior variances, total df and `var.prior`, with constant and trend priors, `legacy = TRUE` | `eBayes`, `treat` | 6.8e-13 | 1e-10 | 16 pass |
+| The same with robust priors | `eBayes`, `treat` | 5.1e-8 | 1e-6 | 7 pass |
+| One or two genes, not moderated, some of them all zero: NaN t-statistics and an infinite `var.prior` where limma gives them, with every option set | `eBayes`, `treat` | 1.3e-14 | 1e-10, robust 1e-6 | 12 pass |
+| Missing values and observation weights, constant and trend priors, `legacy = TRUE` | `eBayes`, `treat`; the exact F against limma's F of group means | 1.8e-13 | 1e-10 | 3 pass |
+| Missing values and observation weights, robust priors, `legacy = TRUE` | as above | 3.0e-11 | 1e-6 | 3 pass |
+| Missing values, zero observation weights and genes without residual df, by default (the likelihood estimator), constant and trend priors | `eBayes`, `treat`, `legacy = NULL` | 1.4e-12 | 1e-6 | 6 pass |
+| The same with robust priors, every gene with residual df | as above | 2.1e-12 | 1e-6 | 5 pass |
+| The likelihood estimator on equal residual df | `eBayes`, `treat`, `legacy = FALSE` | 2.8e-9 | 1e-6 | 3 pass |
+| Every component of `squeezeVar` and `fitFDist` | `squeezeVar`, `fitFDist` | 3.1e-13 | 1e-10 | 24 pass |
+| Every component of `fitFDistRobustly`, with two choices of Winsorized tails | `squeezeVar`, `fitFDistRobustly` | 8.4e-8 | 1e-6 | 20 pass |
+| Every component of `fitFDistUnequalDF1` and `squeezeVar`, with a constant prior and a trend, prior weights, fractional df, zero, missing and unusable variances | `squeezeVar`, `fitFDistUnequalDF1`, `legacy = FALSE` | 2.7e-12 | 1e-6 | 18 pass |
+| The same with `robust = TRUE`, every variance usable and no prior weights | as above | 4.6e-12 | 1e-6 | 8 pass |
+| Trends through three to five variances (a weighted straight line through at most four), two variances above zero among zeros (a constant prior, not robust), and covariates on scales of 1e-5 and 1e-9; constant and robust | as above | 2.6e-13 | 1e-6 | 13 pass |
+| The weighted LOWESS of the trend: ties, windows narrower than 1e-7, windows whose x barely vary, two distant clusters, the trend's weights | `weightedLowess` | 1.1e-15 | 1e-10 | 5 pass |
+| Robust likelihood fits with unusable variances or genes without residual df, against limma's fits of the usable features alone (the controls of the deliberate difference below) | `fitFDistUnequalDF1`, `eBayes` | 1.4e-12 | 1e-6 | 3 pass |
+| Robust likelihood fits with genes without residual df, unusable variances or prior weights | `eBayes`, `squeezeVar`, `fitFDistUnequalDF1` | 0.39 (B-statistics), 0.086 (prior variance) | n/a | 4 deliberate differences |
+
+Each row gives the largest difference over all outputs of a case. Differences are
+relative, except for t, B, F and outlier probabilities and p-values, scaled as
+[above](#reading-the-tables). NaN and infinite values must be in the
+same places, and a prior given as one value must be one value in both. The robust
+moment estimator is in the close tier because limma solves its Winsorized moment
+equation only to a tolerance. The likelihood estimator is in the close tier too: both
+programs search the prior df by the same steps of Brent's method, which stop at a
+tolerance, and agree to about 1e-12; the largest difference, 2.8e-9, is where the
+likelihood barely changes near the largest prior df searched, so that rounding can
+move the steps. Beyond these checks, with residual df of 1e7 and more limma's
+likelihood loses precision: its prior df differed from CytePool's by up to 1e-5 at 1e7
+and 5e-2 at 1e12, where CytePool's agreed with the likelihood computed to 60 digits.
+Deliberate differences:
+
+- The robust likelihood estimator leaves the genes without a usable variance out of its
+  test for outliers. limma 3.62.1 counts them there, a missing variance as a zero one,
+  which becomes an outlier and lowers the adjusted tail probabilities of the other
+  genes. With 40 of 2,000 genes without residual df, limma's robust prior df were 11.5%
+  larger with a constant prior, where limma also gave 45 genes smaller prior df as
+  outliers and CytePool gives every gene the same, and 6% to 10% larger with a trend.
+  The control rows show that without a trend CytePool's fit equals limma's of the usable
+  features alone. `fit_f_distribution_likelihood` also keeps prior weights in its second
+  robust fit, which limma's drops.
+- `fit_f_distribution_likelihood` raises an error where fewer than two usable variances
+  are above zero, where limma returns NA. With exactly two above zero both fit a
+  constant prior, but limma returns NaN when some other variances are not usable,
+  which CytePool leaves out. It moves infinite covariates one unit beyond the finite
+  range, as `fit_f_distribution` and limma's `fitFDist` do, where `fitFDistUnequalDF1`
+  returns NaN.
+- The moderated F-statistic of a fit with missing values or observation weights is
+  exact by default; `f_statistic="limma"` gives limma's approximation, which the
+  `eBayes` rows compare. The exact F has no limma counterpart, so it is checked
+  against limma's F of the same data coded as group means, whose coefficients are
+  uncorrelated for every gene.
+- `treat` reports a t-statistic of NaN for a coefficient that is NaN, and for an
+  all-zero contrast tested with a zero threshold, where limma reports 0.
+
+(validation-multiple-testing)=
+### Multiple testing
+
+The script printed 15 checks (15 pass) in 2 min 56 s, with a peak memory of 202 MiB.
+[Multiple testing](statistics/multiple_testing.md#error-rates) explains what it checks.
+
+[`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
+runs every method of `adjust_p_values` (Holm, Hochberg, Hommel, Bonferroni,
+Benjamini-Hochberg, Benjamini-Yekutieli and none) on each case and compares it with
+R's `p.adjust`. Each check covers all seven methods. Reference: R 4.4.3,
+`stats::p.adjust`.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| 2,000 uniform values; rounded values with ties, 0 and 1; 10% NaN; 10% exactly 0 or 1; n = 2,000 for 500 values with ties and NaN | `p.adjust` | 0 | 1e-10 | 5 pass |
+| All 9,330 vectors of length 1 to 5 over {0, 0.01, 0.03, 0.5, 1, NaN}, with the default n and with n = 6 | `p.adjust` | 0 | 1e-10 | 2 pass |
+| A 2,000 x 4 matrix adjusted by column, 0 to 50% NaN | `p.adjust` | 0 | 1e-10 | 1 pass |
+| 50 random families of 2 to 2,000 values, with the default n and with n = 2,500 | `p.adjust` | 1.4e-16 | 1e-10 | 2 pass |
+| 100,000 values, 10% duplicated | `p.adjust` | 0 | 1e-10 | 1 pass |
+| The small cases written as test fixtures | `p.adjust` | 0 | 1e-10 | 4 pass |
+
+Of the 290,224 p-values each method adjusted, all but 5 Hommel values were identical
+to R's to the last bit.
+
+## Differential expression
+
+(validation-normalization)=
+### Normalization and filtering
+
+The script printed 50 checks (46 pass, 3 deliberate differences and 1 control) in 72.9
+s, with a peak memory of 745 MiB. [Normalization and
+filtering](statistics/normalization_and_filtering.md#normalization-and-size-factors)
+explains what it checks.
 
 [`validation/normalization.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/normalization.py)
 compares `cytepool.normalization` with edgeR and DESeq2 on eight count matrices from
@@ -368,192 +602,12 @@ upper quartile of zero. Deliberate differences:
 - Both `group` and `design` given to `filterByExpr`: edgeR ignores the design;
   CytePool raises.
 
-## Designs and contrasts
+(validation-voom)=
+### Precision weights for counts
 
-[`validation/design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/design.py)
-compares `cytepool.design` with R, limma and lme4 on a table of 24 samples: factors
-with 2 to 4 levels, including mixed-case labels, labels with spaces and a
-non-syntactic column name (`cell type`), a boolean, covariates that are multiples of
-1/16, an integer covariate, and 10 badly scaled or nearly collinear covariates; seed
-20261023. Reference: R 4.4.3, limma 3.62.1, lme4 2.0.6; R's session collation
-C.UTF-8.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Model matrices of main effects, numeric covariates, factor:factor, factor:numeric and numeric:numeric interactions, no intercept, nesting (`/`, `%in%`), powers, `-` removal, booleans, missing margins and badly scaled covariates, each under 3 level orders | R `model.matrix` | 342 of 342 identical in column names, `assign`, term labels and every entry | all identical | 12 pass |
-| 300 random formulas from the full grammar | R `model.matrix` | 300 of 300 identical | all identical | 1 pass |
-| Default level order, code points, without levels given | R with `LC_COLLATE=C` | 4 of 4 identical | all identical | 1 pass |
-| The same against R's default order in its session locale | R | 1 of 4 identical | n/a | 1 information |
-| Formulas R also rejects, and formulas CytePool rejects by design | R `model.matrix` | 6 of 6 and 8 of 8 rejected | all rejected | 2 pass |
-| `terms()` on 282 grammar cases without data (35 rejected by design, 11 by both) | R `terms` | 236 of 236 identical | all identical | 1 pass |
-| Rank of 646 matrices, and the aliased columns of the 346 that are rank-deficient | R `qr()` (tolerance 1e-7, pivoting as `lm.fit` does) | 646 of 646 and 346 of 346 identical | all identical | 2 pass |
-| Leverages of 604 matrices, and of 42 with badly scaled covariates | R `rowSums(qr.Q(qr(X))[, 1:rank]^2)` | 1e-13 and 6.3e-10 (absolute) | 1e-10 and 1e-8 | 2 pass |
-| Estimability of 1,038 contrasts on the 346 rank-deficient designs: `X'u` estimable, random and aliased-column contrasts not | contrasts drawn by R | 1,038 of 1,038 right | all right | 1 pass |
-| Random-effect terms of 21 specifications: grouping factors and effect columns | lme4 `lFormula` | 21 of 21 identical | all identical | 1 pass |
-| `make_contrasts` on 13 linear expressions, and their names | limma `makeContrasts` | 0; names identical | 1e-10 | 2 pass |
-| Expressions that are not linear: a constant, a product, a ratio, a power | limma `makeContrasts` | 4 of 4 rejected | all rejected | 1 pass |
-
-Deliberate differences:
-
-- Default level order is by code point in every locale, as R's is with
-  `LC_COLLATE=C`. R's own default follows the session's collation, and agreed in 1 of
-  the 4 formulas here.
-- Formulas that R accepts and CytePool rejects: a `-` that removes nothing (`~ a - b`,
-  `~ x - z`, `~ a + (-b)`), `^` of a single term (`~ x^2`, which R reads as `x`), a
-  fractional power (`~ (a + b)^2.5`), and function calls (`~ log(z)`, `~ I(x^2)`,
-  `~ factor(w)`), which CytePool's formulas do not support; transform the column in
-  the sample table instead.
-- Contrast expressions that limma turns into weights without meaning are rejected:
-  limma gives `groupB - 1` the weights (-1, 0, -1, -1, -1), `groupA*groupB` (0, 0, 0,
-  0, 0), `groupA/groupB` (Inf, 0, NaN, NaN, NaN) and `groupA^2` (1, 0, 0, 0, 0).
-
-## Linear models
-
-[`validation/linear_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/linear_models.py)
-compares `fit_linear_model` with limma's `lmFit` and `contrasts_fit` with
-`contrasts.fit` on 15 cases of 2,000 genes and 6 to 20 samples from fixed seeds: two
-groups; groups with a covariate; covariates on a large scale; sample weights;
-observation weights; group means with observation weights; about 5% missing values,
-with and without sample weights, including genes that lose rank; a block correlation,
-alone and with sample weights, observation weights or missing values; zero observation
-weights;
-a zero sample weight; and large-scale covariates with weights and missing values.
-Reference: R 4.4.3, limma 3.62.1.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Coefficients, relative to the larger of their absolute value and standard error | `lmFit` | 9.7e-13 | 1e-10 | 15 pass |
-| `stdev.unscaled`, `sigma` and `Amean` | `lmFit` | 2.1e-13 | 1e-10 | 45 pass |
-| `df.residual` | `lmFit` | 0 genes differ | 0 | 15 pass |
-| `cov.coefficients`, relative to products of standard deviations | `lmFit` | 1.8e-14 | 1e-10 | 15 pass |
-| `contrasts_fit(method="limma")`: coefficients, unscaled standard errors and covariance | `contrasts.fit` | 9.7e-13 | 1e-10 | 45 pass |
-| Named contrasts whose coefficients are listed in another order (a `Contrasts` over the reversed columns): coefficients and unscaled standard errors | `contrasts.fit` of `makeContrasts` in limma's order | 9.7e-13 | 1e-10 | 30 pass |
-| `contrasts_fit(method="exact")`: coefficients and unscaled standard errors | `lmFit` on a design whose first coefficient is the contrast | 1.3e-12 | 1e-10 | 30 pass |
-| Exact contrasts that are finite although not estimable | `lmFit` with the columns reversed | 0 entries | 0 | 5 pass |
-| Coefficients limma reports although the data do not determine them, and estimable contrasts of such coefficients, which stay NaN | `lmFit` | up to 6 and 2 entries in a case | n/a | 10 information |
-| limma's contrast standard errors over the exact ones | `contrasts.fit` against a refit | 0.56 to 2.55; up to 46% of entries off by more than 5% | n/a | 8 information |
-
-Deliberate differences:
-
-- Weights that name their coefficients, such as a `Contrasts` object, are matched to the
-  fit's coefficients by name. limma's `contrasts.fit` takes the rows by position and
-  only warns when the names differ (found by probing).
-- A coefficient that a gene's observed values cannot estimate, because missing values
-  or zero weights leave its column collinear with others, is NaN. limma drops the
-  later of collinear columns and reports the rest, which can give a value for a
-  coefficient the data do not determine. The script confirms that the NaN entries are
-  exactly the coefficients whose limma value changes when the columns of the design
-  are reversed.
-- Contrast standard errors are exact by default: each comes from the gene's own
-  covariance matrix. limma's `contrasts.fit` combines a gene's standard errors with
-  the correlations of the coefficients in the design without weights. That is exact
-  when one factorisation of the design serves every gene (no missing values, and no
-  weights or only sample weights) and for contrasts of uncorrelated coefficients,
-  such as group means; otherwise it is approximate, and here its values ranged from
-  0.56 to 2.55 times the exact ones. `method="limma"` reproduces it.
-
-With `--benchmark`, the script times both packages on 20,000 genes x 200 samples; see
-[](#validation-timings).
-
-(validation-mixed-models)=
-## Mixed models
-
-[`validation/mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py)
-compares `fit_mixed_model` with lme4's `lmer` (REML) and `fixed_effect_tests` with
-lmerTest's Satterthwaite t-tests (`summary` for every coefficient, `contest1D` for a
-contrast), gene by gene, in 9 cases from fixed seeds: one random intercept (8 donors x
-3 samples, a condition within donors and an age per donor); unbalanced groups (12
-donors with 1 to 6 samples); two crossed random intercepts (10 donors x 4 samples over
-5 batches); two nested random intercepts (`(1 | donor/sample)`, 6 donors x 3 samples x
-2 replicates, with sample labels that repeat across donors); a design simulated
-without donor variance, so that most fits lie on the boundary; observation weights
-like voom's, with one and with two random intercepts; the crossed design with random
-intercepts up to 30 times the residual standard deviation; and 2,000 genes of 16
-donors x 4 samples with observation weights. The other cases have 100 genes each. The
-standard deviation of each random intercept is drawn per gene, and is zero for a fifth
-of the genes. Reference: R 4.4.3, lme4 2.0.6, lmerTest 3.2.1.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| REML criterion at the optimum | lme4 `REMLcrit` | 3.1e-13 | 1e-10 | 9 pass |
-| Genes whose criterion is above lme4's by more than 1e-10, relative | lme4 `REMLcrit` | 0 genes | 0 | 9 pass |
-| Coefficients, relative to the larger of their absolute value and standard error, and standard errors | lme4 `fixef`, `vcov` | 2.3e-7 | 1e-6 | 8 pass |
-| Variance components, relative to the larger of themselves and the residual variance, and the residual variance | lme4 `VarCorr`, `sigma` | 1.7e-7 | 1e-6 | 8 pass |
-| The same two families where the variance ratios are large | lme4 `fixef`, `vcov`, `VarCorr`, `sigma` | 1.1e-6 and 2.3e-6 | 1e-5 | 2 pass |
-| The theta of the gene with large ratios that differs most from lme4 | the optimum with 30 digits (mpmath) | 3.4e-13 | 1e-10 | 1 pass |
-| Genes where lme4 puts a variance at zero and CytePool does not | lme4 `getME(fit, "theta")` | 0 genes | 0 | 9 pass |
-| REML criterion at CytePool's estimates | lme4 `REMLcrit` | 3.6e-13 | 1e-10 | 9 pass |
-| Coefficients, standard errors and t-statistics (relative to max(\|t\|, 1)) at CytePool's estimates | lme4 `fixef`, `vcov`; lmerTest `summary` | 1.6e-11 | 1e-10 | 9 pass |
-| Satterthwaite df at CytePool's estimates | lmerTest `summary` | 1.3e-6 | 1e-5 | 9 pass |
-| p-values at CytePool's estimates | lmerTest `summary` | 7.3e-7 | 1e-5 | 9 pass |
-| A contrast: estimate, standard error and t-statistic | lmerTest `contest1D` | 1.6e-11 | 1e-10 | 9 pass |
-| A contrast: df and p-value | lmerTest `contest1D` | 6.6e-7 | 1e-5 | 9 pass |
-| df of the genes that differ most from lmerTest, with one and with two random intercepts | the definition with 30 digits (mpmath) | 9.7e-16 and 2.2e-11 | 1e-10 | 2 pass |
-| Fits with a variance at zero; Newton iterations; lme4's largest theta where CytePool's variance is zero | CytePool; lme4 `getME` | 12% to 54% of the genes of a case; 3.4 to 6.6 on average, at most 9; 4.4e-7 | n/a | 9 information |
-| Satterthwaite df at lme4's own optimum | lmerTest `summary` | 3.5e-6 | n/a | 9 information |
-| lme4 with its default tolerances: variance components; df | lme4 `VarCorr`; lmerTest `summary` | 1.0e-3; 8.5e-4 | n/a | 8 information |
-| lmerTest's df and lme4's theta at the genes checked with 30 digits | the definition with 30 digits (mpmath) | 1.3e-6 and 4.9e-7; 1.3e-6 | n/a | 3 information |
-| Deliberate differences, listed below | lme4 `lmer` | 3 inputs lme4 fits and CytePool refuses, 1 that lme4 fits with a warning and CytePool leaves unfitted | n/a | 4 deliberate differences |
-
-The script keeps two questions apart. The optimum is compared with lme4 fitted from its
-own start, with the tolerances of its default optimiser (BOBYQA from nloptr) tightened
-to `xtol_abs = xtol_rel = 1e-14` and `ftol_abs = ftol_rel = 1e-16`; with
-`xtol_abs = 1e-12` and `ftol_abs = 1e-14` alone, some of lme4's fits stopped with a
-criterion 3e-7 above the minimum. The computations at given estimates are compared
-with lme4 and lmerTest evaluated once at CytePool's estimates, which the script passes
-as lme4's starting values with a single evaluation allowed (`maxeval = 1`, and
-`restart_edge = FALSE` so that a variance of zero stays zero). There the criterion,
-the coefficients, their standard errors and the t-statistics are closed forms, while
-lmerTest computes Satterthwaite's degrees of freedom from numerical derivatives.
-p-values are compared scaled by max(p, 1e-300) max(1, \|log p\|), as for voom.
-
-Two bounds are looser than the tiers. The REML deviance computed with 30 significant
-digits (mpmath, from dense matrices) shows which program is exact in each:
-
-- Satterthwaite's degrees of freedom and the p-values that use them, 1e-5. lmerTest
-  differentiates the deviance numerically in theta, on which it depends only through
-  theta^2, so at an interior optimum its curvature in theta is about 4 theta^2 times
-  that in theta^2, and the numerical Hessian loses relative precision like 1 / theta^2
-  where a variance is small. At the genes whose df differ most from lmerTest's, with
-  one and with two random intercepts, CytePool's df agree with the definition to
-  9.7e-16 and 2.2e-11, and lmerTest's to 1.3e-6 and 4.9e-7. The second gene has large
-  variance ratios, where CytePool's factorisation of the second grouping factor loses
-  digits (see the module's documentation).
-- The estimates against lme4's own optimum where the variance ratios are large, 1e-5.
-  There the criterion is nearly flat in theta, and lme4's optimiser, which stops on
-  changes in the criterion, places theta to about 1e-6 only: at the gene that differs
-  most, CytePool's theta agree with the optimum computed with 30 digits to 3.4e-13,
-  and lme4's to 1.3e-6.
-
-The information rows count the fits with a variance at zero, which `fit_mixed_model`
-reports in `boundary` and lme4 approaches without always reaching (its theta there was
-at most 4.4e-7), and the Newton iterations per fit. They also give the df at lme4's
-own optimum, which inherit its precision where a variance is small, and the fits of
-lme4 with its default tolerances, whose variance components were up to 1.0e-3 of the
-residual variance from the optimum and whose df up to 8.5e-4 from those at the
-optimum.
-
-Deliberate differences:
-
-- A zero weight is refused, as is any weight that is negative or not finite. lme4
-  fits the data, and its REML criterion is then infinite.
-- A missing value is refused: this version fits complete data only. lme4 drops the
-  sample (its default `na.action`), here fitting 23 of 24 samples.
-- Values constant within every donor, which the fixed and random effects reproduce
-  exactly, have no REML optimum: the criterion decreases without bound as the
-  residual variance goes to zero. `fit_mixed_model` returns such a feature unfitted
-  (NaN, not converged). lme4 warns that the model failed to converge or is nearly
-  unidentifiable, and returns a residual standard deviation of 1.1e-5 times that of
-  the values.
-- A design whose fixed and random effects together span every sample (6 samples, 3
-  donors and 3 batches in a cycle, and a covariate) reproduces every feature
-  exactly, and `fit_mixed_model` refuses it. Its criterion can nonetheless have a
-  minimum, and lme4 fits it (REML criterion 14.62).
-
-With `--benchmark`, the script times both packages on 20,000 genes x 120 samples; see
-[](#validation-timings).
-
-## Precision weights for counts
+The script printed 118 checks (111 pass and 7 deliberate differences) in 15.3 s, with a
+peak memory of 310 MiB. [limma-voom and limma-trend](statistics/limma_voom.md#voom)
+explains what it checks.
 
 [`validation/voom.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/voom.py)
 compares `voom` with limma's `voom` on negative binomial counts from fixed seeds, 2 to
@@ -587,10 +641,9 @@ and `power` from 0 to 1. Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
 | Span rule: limma's settings for 0 to 1e9 points, and the other settings | `chooseLowessSpan` | 0 | 1e-10 | 2 pass |
 | Deliberate differences, listed below | `voom`, `chooseLowessSpan` | 4 where limma returns values and CytePool raises, 1 where limma fails and CytePool returns values; 2 for the span rule | n/a | 7 deliberate differences |
 
-Differences are relative, except for E, the trend's x and t, which are scaled by
-max(\|reference\|, 1); the trend's y, scaled by max(\|reference\|, median of the
-reference), because near zero both are rounding noise; and p-values, scaled by
-max(p, 1e-300) max(1, \|log p\|). E was identical to limma's to the last bit in 26 of
+Differences are relative, except for E, the trend's x, t and p-values, scaled as
+[above](#reading-the-tables), and the trend's y, scaled by max(\|reference\|, median of the
+reference), because near zero these values are rounding noise. E was identical to limma's to the last bit in 26 of
 26 cases, and so were the trend's x in 24 of 24, the chosen span in the 6 cases where
 limma returns one (without replication it returns none, and CytePool's is NaN), and
 the span rule at all 466 settings. limma's `voom` chooses the span from every gene,
@@ -621,7 +674,12 @@ tier. Deliberate differences:
   documents a `power` between 0 and 1, and `min.span` is the span for many points, a
   fraction in (0, 1].
 
-## Sample quality weights
+(validation-sample-quality-weights)=
+### Sample quality weights and prior weights
+
+The script printed 89 checks (83 pass and 6 deliberate differences) in 12.1 s, with a
+peak memory of 206 MiB. [limma-voom and
+limma-trend](statistics/limma_voom.md#sample-quality-weights) explains what it checks.
 
 [`validation/sample_quality_weights.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sample_quality_weights.py)
 compares `sample_quality_weights` with limma's `arrayWeights`, `voom` with prior
@@ -658,9 +716,9 @@ contrasts through `makeContrasts` and named contrasts. Reference: R 4.4.3, limma
 | A gene whose prior weights are all zero: the weights of the other genes against limma's without that gene | `voom` | 3.0e-14 | 1e-10 | 1 pass |
 | Deliberate differences, listed below | `arrayWeights`, `voom` | 3 where limma returns values and CytePool raises, 1 where limma fails and CytePool returns values, 2 where both return values that differ | n/a | 6 deliberate differences |
 
-Differences are relative, except for E, the trend's x and t, scaled by
-max(\|reference\|, 1); the trend's y, scaled by max(\|reference\|, its median); and
-p-values, scaled by max(p, 1e-300) max(1, \|log p\|). The sample weights are iterative
+Differences are relative, except for E, the trend's x, t and p-values, scaled as
+[above](#reading-the-tables), and the trend's y, scaled by max(\|reference\|, its median). The
+sample weights are iterative
 estimates, in the close tier, as is everything computed from them. They agree to
 rounding because CytePool repeats limma's iterations and stopping rule, found by
 running limma as a black box: the starting point, the prior's terms in the score and
@@ -686,758 +744,13 @@ unequal, that is the likelihood estimator. Deliberate differences:
 - Zero prior weights that leave a gene's coefficients inestimable: limma returns
   missing weights for the gene; CytePool's are those of the trend at its fitted values
   over the samples of positive weight, and zero where the prior weight is.
-## Negative binomial models
 
-[`validation/negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py)
-compares `fit_negative_binomial_model` with edgeR's `glmFit`,
-`negative_binomial_deviance` with `nbinomDeviance`, and
-`negative_binomial_unit_deviance` with `nbinomUnitDeviance` and with mpmath, on
-negative binomial counts simulated from fixed seeds: 2,000 genes and 6 to 16 samples in
-15 cases, with genes without counts and groups whose counts are all zero planted in
-most. Six are one-way layouts (two groups, group means with TMM factors, an intercept
-alone, one coefficient per sample, sample weights, and dispersions, offsets and weights
-per observation), which edgeR fits group by group to its last bits. Nine are other
-designs: groups and a covariate with trended dispersions, a paired design with TMM
-factors, dispersions, offsets and weights per observation, sample weights, the Poisson
-model, sparse counts of about one read per gene and sample, a covariate such as a date
-next to an intercept, means near 1e8, and a dispersion of 2e-5. edgeR's fits of these
-stop short of the maximum, so they are compared with the maximum that Newton's method
-with the observed information, written in R for the script, reaches from edgeR's fit,
-and with `mglmLevenberg(tol = 1e-14)`, a check where it converges and information where
-it does not. The unit deviance is compared at 5,373 points, counts and means from 1e-30
-to 1e30 and dispersions from 0 to 1e12, with mpmath at 150 digits. Reference: R 4.4.3,
-edgeR 4.4.0, mpmath 1.3.0.
+(validation-differential-expression)=
+### limma-voom and limma-trend on cubes
 
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| One-way layouts: coefficients and fitted values, shrunk coefficients | `glmFit` | 3.0e-11 | 1e-6 | 12 pass |
-| One-way layouts: deviance, and `nbinomDeviance` at edgeR's fitted values | `glmFit`, `nbinomDeviance` | 2.3e-7 | 1e-6 | 6 pass |
-| Residual df, and fits that did not converge | `glmFit` | 0 | 0 | 15 pass |
-| Other designs: coefficients and fitted values | Newton's method in R | 1.8e-7 | 1e-6 | 9 pass |
-| Other designs where edgeR converges: coefficients and fitted values, shrunk coefficients | `mglmLevenberg(tol = 1e-14)` | 3.1e-7 | 1e-6 | 8 pass |
-| Other designs: deviance at the maximum, and at edgeR's fitted values | `nbinomDeviance` | 3.2e-7 | 1e-6 | 8 pass |
-| Genes whose maximum lies at infinity: fitted values that tend to zero, below 1e-6 in both; the others and the deviance | `mglmLevenberg(tol = 1e-14)` | 3.9e-7, 8.5e-7 | 1e-6 | 15 pass |
-| Unit deviance | mpmath; `nbinomUnitDeviance` where edgeR is accurate | 7.8e-15; 3.0e-7 | 1e-13; 1e-6 | 2 pass |
-| Refused inputs: an aliased column, a zero weight, a negative dispersion | `glmFit` | both raise | n/a | 3 pass |
-| Where edgeR stops short: its distance from the maximum | `glmFit`, `mglmLevenberg` | up to 1.6 for `glmFit` (a date), 2.3e-3 for `mglmLevenberg` | n/a | 19 information |
-| `glmFit` deviances that are not those of its own fitted values | `glmFit`, `nbinomDeviance` | 5 of 2,000 genes, with dispersions and weights per observation | n/a | 9 information |
-| Seconds for 2,000 genes, group means and a paired design | `glmFit` | CytePool 0.007 and 0.059, edgeR 0.008 and 0.062 | n/a | 2 information |
-| Deliberate differences, listed below | `glmFit`, `nbinomDeviance`, `nbinomUnitDeviance` | 9 cases of genes without counts; 2 rows for a dispersion of 2e-5; 2 for edgeR's unit deviance | n/a | 13 deliberate differences |
-
-Coefficients are compared relative to max(\|reference\|, 1), fitted values relative to
-the reference, and deviances relative to the larger of the reference and the number of
-samples. A gene whose maximum lies at infinity has coefficients that depend on where
-each program stops, so for such genes only the fitted values that tend to zero (below
-1e-6 in both programs), the others and the deviance are compared. edgeR's Levenberg
-fits stop up to about 3e-4 from the maximum in `glmFit` (1e-2 with dispersions and
-weights per observation, and 1.6 with a date, where fitted values that should tend to
-zero stay near 1e2), and about 2e-7 in `mglmLevenberg(tol = 1e-14)`, but 2e-3 with
-dispersions and weights per observation, 2e-6 with sparse counts, 1e-5 with a date or
-large counts, and 2e-3 with a dispersion of 2e-5. Deliberate differences:
-
-- A gene without counts, in a design with an intercept: edgeR's Levenberg fit returns
-  NA coefficients; CytePool returns those of the log mean -1e8, as edgeR's one-way fit
-  does, with fitted values and deviance of zero.
-- The deviance is exact. edgeR adds 1e-8 to each count and mean, which lowers the unit
-  deviance of a zero count by up to about 5e-7. Below a dispersion of 1e-4 it
-  approximates the unit deviance, with an error that grows with the dispersion times
-  the mean, from about 1e-6 at 1e-3 to factors from about 1; with the dispersion of
-  2e-5, its deviances, and the fits of genes whose maximum lies at infinity, differ by
-  up to 0.97 and 1.2e-3. From a dispersion times the mean of 1e6 it uses the limit of
-  the gamma distribution, which gives zero counts 1.6 to 2.6 times their deviance.
-
-## Quasi-likelihood F-tests
-
-[`validation/quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py)
-compares `fit_quasi_likelihood` and `quasi_likelihood_f_test` with edgeR's `glmQLFit`
-and `glmQLFTest` (edgeR 4.4's default, `legacy = FALSE`), `common_dispersion` with
-`estimateGLMCommonDisp` and `dispCoxReid`, `average_log2_cpm` with `aveLogCPM`, and
-`negative_binomial_unit_deviance_moments` with sums at 30 digits in mpmath and the
-gamma limit. The counts are simulated from fixed seeds, with a dispersion for each
-gene, in 14 cases of 1,000 genes and 8 or 9 samples, with genes without counts and
-groups whose counts are all zero planted in most: two groups with TMM factors; three
-groups and a covariate with several contrasts and a joint test; a paired design;
-robust priors with and without genes that have no counts; small counts; a dispersion
-given below the true one, so that the average quasi-dispersion is well above 1; prior
-weights; trended dispersions; no trend; a trend in another covariate; offsets per
-observation; Poisson counts; and a test that both programs refuse. R runs with its
-address space capped at 8 GB. Reference: R 4.4.3, edgeR 4.4.0, limma 3.62.1, mpmath
-1.3.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Share of genes the dispersion comes from | `glmQLFit` | 0 | 0 | 9 pass |
-| NB dispersion | `glmQLFit`; `dispCoxReid(tol = 1e-12)` on the same genes | 8.7e-6; 8.9e-7 (6.5e-6 for designs that are not one-way layouts) | 1e-4; 1e-6 (1e-5) | 18 pass |
-| Common dispersion, with prior weights and a systematic subset | `estimateGLMCommonDisp`; `dispCoxReid(tol = 1e-12)` | 8.1e-6; 4.6e-7 | 1e-4; 1e-6 | 5 pass |
-| Average log CPM in four settings | `aveLogCPM` | 3.3e-12 | 1e-6 | 1 pass |
-| Moments of the unit deviance at 41 points, and at a mean of 1e14 | mpmath at 30 digits; the gamma limit | 1.7e-14 | 1e-11 | 2 pass |
-| Average quasi-dispersion | `glmQLFit` | 2.1e-3 | 1e-2 | 14 pass |
-| Adjusted deviances and residual df | `glmQLFit` | 3.3e-3 | 5e-3 | 14 pass |
-| Prior and posterior quasi-dispersions; prior df | `glmQLFit` | 1.4e-3 where the average quasi-dispersions agree, 5.6e-3 where they differ; 9.8e-3 | 5e-3, 1e-2; 2e-2 | 26 pass |
-| The prior and posterior that `squeeze_variances` gives edgeR's own adjusted deviances | `glmQLFit`, `squeezeVar` | 4.7e-8 | 1e-6 | 13 pass |
-| Leverages, those of fitted values that tend to zero included | `glmQLFit` | 2.8e-7 for one-way layouts at the same working dispersion; 8.7e-5 | 1e-6; 1e-3 | 14 pass |
-| logCPM | `glmQLFTest` | 2.8e-12 at a given dispersion; 2.7e-7 at an estimated one | 1e-6; 1e-5 | 16 pass |
-| logFC | `glmQLFTest` | 4.7e-7 for one-way layouts at the same working dispersion; 2.0e-4 | 1e-6; 1e-3 | 16 pass |
-| Likelihood ratio statistic (F times the posterior quasi-dispersion and its df) | `glmQLFTest` | 8.5e-10 at the same dispersion; 8.9e-6 at dispersions estimated by both; 4.5e-3 where the averages differ | 1e-6; 1e-4; 1e-2 | 16 pass |
-| F; PValue and FDR; df.total | `glmQLFTest`, `topTags` | 2.6e-3; 3.9e-3 of \|log10 p\|; 9.8e-3 | 5e-3; 5e-3; 2e-2 | 45 pass |
-| A test that leaves the null model without a coefficient | `glmQLFTest` | both raise | n/a | 1 pass |
-| Deliberate differences, listed below | `glmQLFit`, `glmQLFTest`, `squeezeVar` | 6 rows of the robust prior with genes without counts; the first gene's logCPM with offsets per observation; 6 rows of edgeR's moments | n/a | 13 deliberate differences |
-
-Three differences set the tolerances, and the script isolates each. edgeR approximates
-the mean and variance of the unit deviance: the scale s implied by its unit matrices
-is off by up to 7.6e-4, 1.2e-3 and 1.3e-2 at dispersions of 0.01, 0.2 and 1, and the
-degrees of freedom k by up to 2.0e-4, 1.3e-4 and 4.0e-3, where CytePool's sums are
-exact. The adjusted deviances, quasi-dispersions and F-statistics therefore agree to
-about 3e-3, the average quasi-dispersion to 2.1e-3, and the prior df, which maximizes
-a likelihood that is flat at large values, to 9.8e-3. The prior and posterior that
-`squeeze_variances` computes from edgeR's own adjusted deviances agree with edgeR's to
-4.7e-8, so the moments are the only cause. Where the average quasi-dispersions differ,
-so do the working dispersions of the fits, and with them the quasi-dispersions,
-leverages, log fold changes and likelihood ratios, by about 1e-4 to 6e-3. edgeR's
-search for the Cox-Reid dispersion stops within its tolerance of 1e-5, and
-`dispCoxReid(tol = 1e-12)` on the same genes agrees with CytePool to 8.9e-7. edgeR's
-Levenberg fits stop short of the maximum (see Negative binomial models above), so log
-fold changes of designs that are not one-way layouts agree to about 2e-4, and their
-fitted values that tend to zero stop near 1e-8, far above CytePool's; both report the
-leverages of the limit for these. Deliberate differences:
-
-- The robust prior with genes that have no counts: limma counts their missing
-  quasi-dispersions as zero variances in its tests for outliers, which lowers the
-  outlier probabilities of the others and, here, changes which genes are outliers;
-  CytePool tests only the genes with residual degrees of freedom, as its
-  `fit_f_distribution_likelihood` does (see Empirical Bayes moderation below). Without
-  such genes the two agree.
-- With offsets per observation, edgeR's `aveLogCPM` gives the first gene a value that
-  does not depend on its offsets, minus infinity for a gene without counts. The case
-  gives the first gene no counts, a dispersion and no trend, so that the value enters
-  nothing else, and every other gene is compared.
-- The moments of the unit deviance, as above: CytePool's are exact.
-
-## DESeq2's dispersions and tests
-
-[`validation/deseq2_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/deseq2_tests.py)
-compares `deseq2_dispersions`, `fit_deseq2`, `deseq2_wald_test` and
-`deseq2_likelihood_ratio_test` with DESeq2's `estimateDispersions`, `nbinomWaldTest`,
-`nbinomLRT` and `results`, and with PyDESeq2, on negative binomial counts simulated
-from fixed seeds: 600 genes and 4 to 12 samples in 9 cases, with 2% of the genes
-without counts. The cases are two groups; four groups, tested by the likelihood ratio
-test of the factor and by a Wald test of two levels that 15 genes have no counts in;
-two groups and a covariate; a paired design of six donors; small counts; two samples
-per group, which leave two residual degrees of freedom; an outlier sample; dispersions
-that rise with the mean; and nearly Poisson counts, 69% of whose gene-wise estimates
-are at the lower bound. Counts with an outlier in most genes, at a dispersion of 0.05,
-test the rules by which Cook's distance removes p-values under four designs: two groups
-of four, and groups of two and five as a factor, as means without an intercept and as
-a numeric covariate. DESeq2 runs with its defaults, `DESeq(dds,
-minReplicatesForReplace = Inf)`, with `fitType = "mean"` where its parametric trend
-fails (the small counts and the rising dispersions), and each stage of CytePool is
-compared given DESeq2's own inputs to it: the dispersions with their maxima, found in R
-by the script from a grid of the Cox-Reid adjusted log-likelihood and the root of its
-derivative; the trend and the prior with DESeq2's; the fits with DESeq2's at
-`betaTol = 1e-14`, polished by Newton's method in R; and the tests with `results()` at
-those fits, with its defaults, with `cooksCutoff = 0.5` and without independent
-filtering. Each printed row pools the cases it applies to and names the worst.
-Reference: R 4.4.3, DESeq2 1.46.0, PyDESeq2 0.5.4, mpmath 1.3.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Design matrices; size factors, means and variances of the normalized counts | `model.matrix`; DESeq2 | 0; 5.9e-16 | 0; 1e-10 | 2 pass |
-| Means of the likelihood | `estimateDispersionsGeneEst`; for the covariate and paired designs, DESeq2's fit at the rough dispersions, polished | 3.6e-14 | 1e-6 | 1 pass |
-| Gene-wise dispersions of at least 1e-6 | maxima in R | 3.8e-9 | 1e-6 | 1 pass |
-| Gene-wise dispersions below 1e-6 (49 genes), and genes whose rough dispersion is at the lower bound (1,935), which keep 1e-8 as in DESeq2 | maxima in R; DESeq2 | 0 genes differ | 0 | 2 pass |
-| The parametric trend from DESeq2's gene-wise estimates (7 cases); its failure where DESeq2's fails, and the mean trend there (2 cases) | DESeq2 | 1.4e-15; 0 cases differ; 0 | 1e-10; 0; 1e-10 | 3 pass |
-| Variance of the log residuals, and of the prior with more than three residual degrees of freedom | DESeq2 | 1.3e-16 | 1e-10 | 2 pass |
-| Variance of the prior with two residual degrees of freedom, maximum likelihood | integration on a grid | 2.3e-8 | 1e-6 | 1 pass |
-| Maximum a posteriori dispersions | maxima in R | 2.5e-12 | 1e-6 | 1 pass |
-| Dispersion outliers (33 genes), and the final dispersions they choose | DESeq2 | 0 genes differ | 0 | 1 pass |
-| Coefficients and standard errors | DESeq2 at `betaTol = 1e-14`, polished in R | 3.2e-15 | 1e-6 | 1 pass |
-| Deviances | DESeq2 at `betaTol = 1e-14` | 1.2e-11 | 1e-9 | 1 pass |
-| Fitted values, hat values, Cook's distances; the log2 fold changes and standard errors of every test | DESeq2 at `betaTol = 1e-14` | 2.2e-6; 1.4e-6 | 1e-5 | 2 pass |
-| Wald tests (9): statistics, p-values, adjusted p-values | `results()` at `betaTol = 1e-14` | 1.8e-6 | 1e-5 | 1 pass |
-| Likelihood ratio tests (3): statistics, p-values, adjusted p-values | `results()` at `betaTol = 1e-14` | 3.2e-11 | 1e-9 | 1 pass |
-| Genes flagged by Cook's distance (27 genes), filtered out, and the filter's quantile, in every test; genes flagged at `cooksCutoff = 0.5` (862), and the adjusted p-values there and without independent filtering | `results()` at `betaTol = 1e-14` | 0 differences; 1.9e-6 | 0; 1e-5 | 3 pass |
-| Independent filtering on 20 statistics, some of whose curves of rejections reach the fallbacks to 90% and 80% of their fitted maximum | `results(filter = ...)` | 0 | 0; 1e-10 | 2 pass |
-| Cook's distances at given dispersions under four designs: genes flagged (79 genes, 9 more above the cutoff but spared in a comparison of two groups), and the largest distances | DESeq2 at `betaTol = 1e-14` | 0 genes differ; 4.0e-14 | 0; 1e-5 | 2 pass |
-| Derivative in log(alpha) of a count's log-likelihood, 192 points | mpmath, 50 digits | 2.7e-15 | 1e-12 | 1 pass |
-| DESeq2's line searches, its fits at its defaults, its means of the likelihood for the covariate and paired designs, its trend where the parametric fit fails, and its prior with two residual degrees of freedom | DESeq2 defaults | listed below | bounds listed below | 6 deliberate differences |
-| Genes spared in a comparison of two groups; DESeq2's coefficients at `betaTol = 1e-14`, from the polished fits; the largest differences of DESeq2's gene-wise line searches | DESeq2 | 9 genes; up to 1.5e-6; up to 13 on the log scale | n/a | 3 information |
-| The analysis from the counts: final dispersions, p-values, statistics, genes called | DESeq2 defaults | medians 1.2e-3 to 3.8e-2 (dispersions, log scale) and 3.0e-4 to 7.6e-3 (p-values); 7 of 1,297 genes called differently at 0.1 | n/a | 4 information |
-| The analysis from the counts | PyDESeq2 | medians up to 5.8e-7 (gene-wise dispersions, log scale), 4.7e-5 to 0.21 (final dispersions) and 1.7e-5 to 4.2e-2 (p-values); 5 of 281 genes called differently | n/a | 4 information |
-
-Dispersions are compared relative to the reference, coefficients relative to
-max(\|reference\|, 1), and Cook's and hat values relative to the larger of the
-reference and 1, as only values near the cutoff matter; statistics are compared
-relative to max(\|reference\|, 1), and p-values on the log scale, relative to
-max(\|log p\|, 1), as an error e in a statistic z moves log p by about z^2 e. Below a
-gene-wise dispersion of 1e-6 the adjusted likelihood is flat in the log dispersion,
-whose derivative is proportional to the dispersion, so there the check is that both
-sides place the gene below 1e-6. DESeq2 stops its fits when the deviance changes by
-less than `betaTol` of it; for genes of large dispersion, where its Fisher scoring
-converges slowly, its coefficients are then up to 1.5e-6 from the fixed point even at
-`betaTol = 1e-14` (an information row), which bounds the tolerance of what is computed
-from them, but for the deviances and the likelihood ratio statistics, which are
-stationary there. Rows that count genes fail when they cover none. Deliberate
-differences, each within a bound that the script checks:
-
-- DESeq2 maximizes the dispersions by a line search that stops when an iteration gains
-  less than 1e-6, and that can stall where it starts, returning its starting value:
-  its gene-wise estimates are a median of up to 5.5e-5 from the maximum on the log
-  scale (bound 1e-3), and up to 13 in a few genes, and its maximum a posteriori
-  estimates up to 7.7e-3 from theirs, relative (bound 0.1). CytePool computes the
-  maxima. A gene whose rough dispersion is at the lower bound keeps it, as in DESeq2,
-  even where the maximum lies far above.
-- DESeq2's fits at its defaults stop up to 1.9e-3 from the fixed point (log2
-  coefficients, relative to max(\|reference\|, 1); bound 1e-2), and its means of the
-  likelihood for designs that are not one-way layouts, from such a fit at the rough
-  dispersions, up to 7.5e-4 (bound 1e-2). CytePool's fits converge.
-- Where DESeq2's parametric trend fails, for the small counts and the rising
-  dispersions, DESeq2 substitutes a local regression, which CytePool does not have;
-  CytePool uses the mean trend, with a warning. From DESeq2's gene-wise estimates,
-  CytePool's parametric trend fails where DESeq2's does and agrees with it to rounding
-  where it does not: each gamma fit is R's `glm()` iteration, and the genes fitted are
-  those whose gene-wise estimate is above 1e-6, as in DESeq2, which the nearly Poisson
-  counts test.
-- With two residual degrees of freedom DESeq2 matches densities of simulated
-  residuals over a grid, and CytePool maximizes the likelihood of the same model:
-  9.5% apart here (bound 0.2).
-
-From the counts, the final dispersions differ from DESeq2's by a median of 1.2e-3 to
-3.8e-2 on the log scale (the largest with two residual degrees of freedom, from the
-prior), p-values by a median of 3.0e-4 to 7.6e-3, relative, and statistics by up to
-3.4e-2 relative, 7 of 1,297 genes being called differently at a false discovery rate
-of 0.1. PyDESeq2's gene-wise dispersions agree with CytePool's to medians of up to
-5.8e-7 on the log scale; its final dispersions differ by medians of 4.7e-5 to 0.21, the
-largest for the small counts, where DESeq2's and CytePool's trend is the mean of the
-gene-wise estimates.
-
-## Empirical Bayes moderation
-
-[`validation/empirical_bayes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/empirical_bayes.py)
-compares `moderated_statistics`, `treat`, `squeeze_variances`, `fit_f_distribution`,
-`fit_f_distribution_robust` and `fit_f_distribution_likelihood` with limma's `eBayes`,
-`treat`, `squeezeVar`, `fitFDist`, `fitFDistRobustly` and `fitFDistUnequalDF1`, with
-limma's `legacy` argument TRUE (the method of moments, `prior_estimator="moments"`),
-FALSE (the likelihood estimator, `"likelihood"`) or NULL (limma's default,
-`prior_estimator=None`, which takes the likelihood estimator when the residual df differ
-between genes). Linear model cases (2,000 genes, 6 to 40 samples) are fitted by `lmFit`
-in R and `fit_linear_model` here, then moderated with a constant prior, a trend,
-robustly, and with both; they include several contrasts, some linearly dependent,
-hypervariable genes, an infinite prior df, missing values, observation weights (some of
-them zero), genes without residual df, an all-zero contrast, and 1 to 25 genes, which
-with one or two genes are not moderated (some of them all zero). Variance cases call
-the estimators directly on 2 to 6,000 variances, with and without a covariate, few
-distinct or infinite covariate values, zero, missing and unusable variances, fractional
-df from 0.05, prior weights, planted outliers with equal and unequal df, variances that
-vary less or more than any prior df explains, infinite robust prior df, three to five
-trended variances, two variances above zero among zeros, and covariates on scales of
-1e-5 and 1e-9. The weighted LOWESS of the likelihood estimator's trend is also compared
-with limma's `weightedLowess`. TREAT tests a fold change of 1.2. Reference: R 4.4.3,
-limma 3.62.1.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| t, p, B, F and its p-value, priors, posterior variances, total df and `var.prior`, with constant and trend priors, `legacy = TRUE` | `eBayes`, `treat` | 6.8e-13 | 1e-10 | 16 pass |
-| The same with robust priors | `eBayes`, `treat` | 5.1e-8 | 1e-6 | 7 pass |
-| One or two genes, not moderated, some of them all zero: NaN t-statistics and an infinite `var.prior` where limma gives them, with every option set | `eBayes`, `treat` | 1.3e-14 | 1e-10, robust 1e-6 | 12 pass |
-| Missing values and observation weights, constant and trend priors, `legacy = TRUE` | `eBayes`, `treat`; the exact F against limma's F of group means | 1.8e-13 | 1e-10 | 3 pass |
-| Missing values and observation weights, robust priors, `legacy = TRUE` | as above | 3.0e-11 | 1e-6 | 3 pass |
-| Missing values, zero observation weights and genes without residual df, by default (the likelihood estimator), constant and trend priors | `eBayes`, `treat`, `legacy = NULL` | 1.4e-12 | 1e-6 | 6 pass |
-| The same with robust priors, every gene with residual df | as above | 2.1e-12 | 1e-6 | 5 pass |
-| The likelihood estimator on equal residual df | `eBayes`, `treat`, `legacy = FALSE` | 2.8e-9 | 1e-6 | 3 pass |
-| Every component of `squeezeVar` and `fitFDist` | `squeezeVar`, `fitFDist` | 3.1e-13 | 1e-10 | 24 pass |
-| Every component of `fitFDistRobustly`, with two choices of Winsorized tails | `squeezeVar`, `fitFDistRobustly` | 8.4e-8 | 1e-6 | 20 pass |
-| Every component of `fitFDistUnequalDF1` and `squeezeVar`, with a constant prior and a trend, prior weights, fractional df, zero, missing and unusable variances | `squeezeVar`, `fitFDistUnequalDF1`, `legacy = FALSE` | 2.7e-12 | 1e-6 | 18 pass |
-| The same with `robust = TRUE`, every variance usable and no prior weights | as above | 4.6e-12 | 1e-6 | 8 pass |
-| Trends through three to five variances (a weighted straight line through at most four), two variances above zero among zeros (a constant prior, not robust), and covariates on scales of 1e-5 and 1e-9; constant and robust | as above | 2.6e-13 | 1e-6 | 13 pass |
-| The weighted LOWESS of the trend: ties, windows narrower than 1e-7, windows whose x barely vary, two distant clusters, the trend's weights | `weightedLowess` | 1.1e-15 | 1e-10 | 5 pass |
-| Robust likelihood fits with unusable variances or genes without residual df, against limma's fits of the usable features alone (the controls of the deliberate difference below) | `fitFDistUnequalDF1`, `eBayes` | 1.4e-12 | 1e-6 | 3 pass |
-| Robust likelihood fits with genes without residual df, unusable variances or prior weights | `eBayes`, `squeezeVar`, `fitFDistUnequalDF1` | 0.39 (B-statistics), 0.086 (prior variance) | n/a | 4 deliberate differences |
-
-Each row gives the largest difference over all outputs of a case. Differences are
-relative, except for t, B, F and outlier probabilities, scaled by
-max(\|reference\|, 1), and p-values, scaled by max(p, 1e-300) max(1, \|log p\|):
-about the error in log p relative to \|log p\|. NaN and infinite values must be in the
-same places, and a prior given as one value must be one value in both. The robust
-moment estimator is in the close tier because limma solves its Winsorized moment
-equation only to a tolerance. The likelihood estimator is in the close tier too: both
-programs search the prior df by the same steps of Brent's method, which stop at a
-tolerance, and agree to about 1e-12; the largest difference, 2.8e-9, is where the
-likelihood barely changes near the largest prior df searched, so that rounding can
-move the steps. Beyond these checks, with residual df of 1e7 and more limma's
-likelihood loses precision: its prior df differed from CytePool's by up to 1e-5 at 1e7
-and 5e-2 at 1e12, where CytePool's agreed with the likelihood computed to 60 digits.
-Deliberate differences:
-
-- The robust likelihood estimator leaves the genes without a usable variance out of its
-  test for outliers. limma 3.62.1 counts them there, a missing variance as a zero one,
-  which becomes an outlier and lowers the adjusted tail probabilities of the other
-  genes. With 40 of 2,000 genes without residual df, limma's robust prior df were 11.5%
-  larger with a constant prior, where limma also gave 45 genes smaller prior df as
-  outliers and CytePool gives every gene the same, and 6% to 10% larger with a trend.
-  The control rows show that without a trend CytePool's fit equals limma's of the usable
-  features alone. `fit_f_distribution_likelihood` also keeps prior weights in its second
-  robust fit, which limma's drops.
-- `fit_f_distribution_likelihood` raises an error where fewer than two usable variances
-  are above zero, where limma returns NA. With exactly two above zero both fit a
-  constant prior, but limma returns NaN when some other variances are not usable,
-  which CytePool leaves out. It moves infinite covariates one unit beyond the finite
-  range, as `fit_f_distribution` and limma's `fitFDist` do, where `fitFDistUnequalDF1`
-  returns NaN.
-- The moderated F-statistic of a fit with missing values or observation weights is
-  exact by default; `f_statistic="limma"` gives limma's approximation, which the
-  `eBayes` rows compare. The exact F has no limma counterpart, so it is checked
-  against limma's F of the same data coded as group means, whose coefficients are
-  uncorrelated for every gene.
-- `treat` reports a t-statistic of NaN for a coefficient that is NaN, and for an
-  all-zero contrast tested with a zero threshold, where limma reports 0.
-
-## Gene-set tests
-
-[`validation/gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py)
-compares `camera` and `fry` with limma's `camera` and `fry` on log-expression of 1,500
-genes simulated from fixed seeds, with gene-specific variances from a scaled inverse
-chi-squared prior around a mean-variance trend. The gene sets change up, down or in
-both directions, or not at all, share random sample effects (inter-gene correlation)
-with or without a change, overlap others, hold one, two or five genes, or 40% of the
-genes. The cases are three groups with the contrast given as a design column, also
-with only sets of one or more than d genes (so that fry's adjusted mixed p-values can
-be compared); three groups in interleaved order with observation weights and the
-contrast given as weights (a named contrast); counts with voom weights from `voom`
-(limma gets the same weights matrix), with the contrast both ways; a paired design with
-sample weights; residual variances that are all equal, so that the prior df is
-infinite; 16 samples with sets of 2 to 30 unchanged genes and three sets with changed
-genes; a gene the design fits exactly and ten identical genes; and 8 genes, fewer than
-the residual df. Designs are `Design` objects with named contrasts and genes are named
-by id in CytePool; R gets the design matrices and the genes' positions. camera runs with
-the default inter-gene correlation of 0.01, with it estimated for each set, with
-negative correlations allowed, with ranks, with a trend and robustly; fry with each
-standardization, and with a trend and robustly. limma's camera has no robust option: its
-reference is `cameraPR` or `rankSumTestWithCorrelation` on the z-scores of the
-moderated t-statistics of `eBayes(robust = TRUE)`, limma's `zscoreT(approx = TRUE,
-method = "hill")`, with the design reparametrised by `contrastAsCoef`; with an estimated
-correlation, the parametric p-value of `cameraPR` is converted to the df of the
-estimate. Reference: R 4.4.3, limma 3.62.1.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| camera: numbers of genes, correlations, directions, p-values and FDR, with a given or estimated correlation, ranks and a trend | `camera` | 1.3e-14 | 1e-10 | 35 pass |
-| camera with robust moderation | `cameraPR`, `rankSumTestWithCorrelation` | 1.7e-12 | 1e-6 | 12 pass |
-| fry with `standardize` `"none"` and `"residual_sd"`: numbers of genes, directions, p-values and FDR, mixed p-values of sets of one or more than d genes, and their FDR | `fry` | 5.2e-13 | 1e-10 | 15 pass |
-| fry with `"posterior_sd"`, with and without trend or robust moderation | `fry` | 4.4e-5 | 1e-3 | 15 pass |
-| fry with `"posterior_sd"` and an infinite prior df, where both standardize as `"none"` | `fry` | 3.3e-14 | 1e-10 | 1 pass |
-| CytePool's mixed p-values of the sets of 2 to 14 genes against 200,000 random rotations of their effects | simulation | 0.025 (absolute) | 0.1 | 1 pass |
-| fry's mixed p-values of sets of 2 to d genes | `fry` | 0.88 (absolute) | n/a | 8 deliberate differences |
-| The rotation simulation: limma's mixed p-values of the sets of 2 to 14 genes; both programs' of the sets of 15 to 30 genes; both programs' of the three sets with changed genes (relative) | simulation | 0.59, 0.030, 0.99 | n/a | 3 information |
-| Samples sorted by group, observation weights and the contrast as weights: camera, fry with `"residual_sd"`, and the genes whose last pivot R's `qr()` signs by rounding noise | `camera`, `fry`, `qr` | 0.012, 0.48; 115 of 1,500 genes | n/a | 3 information |
-
-Correlations are compared as differences, p-values relative to max(p, 1e-300) max(1,
-\|log p\|) as in `empirical_bayes.py` (limma's p-values above 1 count as 1), and a
-direction or a number of genes that differs counts as an infinite difference. Robust
-moderation is in the close tier because limma solves the robust prior df only to a
-tolerance. With `"posterior_sd"`, fry moderates each gene's mean square of its d + 1
-effects without the largest, divided by its expected value under the null hypothesis,
-as a variance on 0.92 d degrees of freedom, as limma does (found by probing); limma's
-expected value is about 7.3e-5 (d + 1) / d above the exact one that CytePool computes,
-so directional p-values differ by up to 4.9e-5 and mixed p-values by up to 5.7e-4 of
-their value, which the tolerance of 1e-3 allows. The rotation check uses sets without
-a change, whose p-values a simulation resolves: the beta approximation that both
-programs use for the mixed p-value is off by up to 0.03 at such p-values for sets of
-more than d genes, where the programs agree, and in the tail it can be much too small
-for both: sets with changed genes and rotation p-values of 3.2e-3 and about 6e-5 get
-6.3e-4 and 2.9e-7.
-
-In each gene's QR decomposition, CytePool treats a pivot that is zero up to rounding
-as zero, which R's `qr()` signs as positive. With the samples sorted by group and a
-contrast between groups given as weights, every gene's last pivot is such a zero.
-limma computes most of them exactly, but its arithmetic leaves rounding noise in a few
-percent of genes, which changes their residual bases, and camera and fry do so for
-different genes: fry's are the 115 of the 1,500 whose last pivot R's `qr()` signs by
-noise. camera's correlations of sets then differ by up to 0.012, and fry's p-values
-with `"residual_sd"` by up to a factor of 2. limma's results there change with the
-last bits of the weights, CytePool's do not; in every other case the two agree.
-
-Deliberate differences:
-
-- fry's mixed p-value of a set of 2 to d genes. Its statistic, the sum of the set's
-  squared standardized contrast effects, is r'(E'E)r under a random rotation r of the
-  d + 1 effects, which both programs approximate by a beta distribution with its first
-  two moments. CytePool uses all d + 1 dimensions, as for larger sets; limma uses only
-  the set's m nonzero eigenvalues of E'E as if r had m dimensions (found by probing).
-  Against 200,000 random rotations, CytePool's mixed p-values of the sets of 2 to 14
-  genes are within 0.025 and limma's off by up to 0.59.
-- A p-value above 1 from camera's rank test (its continuity correction can put both
-  tails above 1/2): limma reports twice the smaller tail, CytePool 1. A gene listed
-  twice in a set: limma counts it twice, CytePool once. A set without genes, or holding
-  every gene in camera: NaN p-values in CytePool, left out of the other sets'
-  adjustment; limma reports the direction "Up", in camera's rank test the p-value 2,
-  which it adjusts with the others, and in fry a mixed p-value of 0 for an empty set.
-  The tests check these.
-
-## Rotation gene-set tests
-
-[`validation/rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py)
-compares `roast`, `mroast` and `romer` with limma's functions of the same names on
-log-expression of 1,500 genes simulated from fixed seeds, with the gene variances and
-gene sets of `gene_set_tests.py` and three sets with contribution weights: a signature
-whose genes go up or down, with weights +1 and -1; a set with weights of different
-sizes; and a set with half of its weights zero. The cases are three groups with the
-contrast given as a design column; interleaved groups with observation weights and a
-named contrast given as weights; the same with a trended prior estimated robustly;
-counts with voom weights; a paired design with sample weights; equal residual
-variances (an infinite prior df), also with effects so large that limma's log-odds of
-23 genes exceed 709.8; and contribution weights for every gene, drawn from -2, -1, 0.5,
-1 and 3. The exact checks give CytePool the rotations limma drew: a generator that
-replays the standard normal draws R gives limma after `set.seed`, in the order limma
-uses them (found by probing). limma tests each set with the same seed, which is how
-CytePool's `mroast` shares its rotations between sets. The calibrated checks let each
-program draw its own rotations, and allow a difference of 4 sd(p_1 - p_2) + 2 / (B + 1)
-for B rotations each, with the sd from the binomial variance of each estimate at their
-mean. Differences of p-values are absolute: each p-value counts rotations, so a
-difference of one count is at least 1 / (2B + 1). Reference: R 4.4.3, limma 3.62.1.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| roast given limma's rotations: the down, up, two-sided and mixed p-values, active proportions and numbers of genes of every set, for every set statistic and case | `roast` | 5.0e-16 | 1e-12 | 19 pass |
-| mroast given the same rotations for every set: two-sided p-values, and directions (mismatched sets) | `mroast` | 0; 0 sets | 1e-12; 0 | 38 pass |
-| romer given limma's rotations: up, down and mixed p-values and numbers of genes, for every set statistic, with and without shrinkage, with sample weights and with an infinite prior df | `romer` | 0 | 1e-12 | 7 pass |
-| limma's FDR and FDR.Mixed from its p-values by mroast's rule; numbers of genes and active proportions with each program's own rotations | `mroast` | 4.4e-16 | 1e-12 | 9 pass |
-| Each program's own rotations: mroast (mean, msq, mean50; B = 1,999) and romer (mean, mean50; B = 999) | `mroast`, `romer` | 0.54 of the bound | 1 | 5 pass |
-| mroast's mean statistic with 20,000 rotations against fry, its limit, with equal variances | `fry` | 0.34 of the bound | 1 | 1 pass |
-| CytePool's fry, mixed p-values of the sets of 2 to 6 genes, against the msq rotation test with 20,000 rotations | `mroast` | 0.015 (absolute) | 0.1 | 1 pass |
-| CytePool's msq p-values with every contribution weight multiplied by 10 (B = 1,999) | `roast` | 0 | 1e-12 | 1 pass |
-| limma's fry, mixed p-values of the sets of 2 to 6 genes, against the same | `mroast` | 0.45 (absolute) | n/a | 1 information |
-| Genes whose log-odds in limma exceed 709.8 (very large effects) | `romer` | 23 genes | n/a | 1 information |
-| p-values where the observed floor-mean or mean-square statistic is the smallest it can be | `roast` | 0.50 (absolute) | n/a | 6 deliberate differences |
-| floormean's mixed p-values of sets with negative weights; msq's up, down and two-sided p-values of sets with weights of both signs | `roast` | 0.65; 0.33 (absolute) | n/a | 6 deliberate differences |
-| limma's msq p-values with every weight multiplied by 10 (B = 1,999) | `roast` | 0.45 (absolute change) | n/a | 1 deliberate difference |
-| The set with weights of zero: its number of genes, and its mean50 p-values | `roast` | 8 against 16 genes; 0.039 | n/a | 6 deliberate differences |
-| romer with shrinkage where limma's posterior probabilities are NaN | `romer` | 0.15 (absolute) | n/a | 1 deliberate difference |
-
-The z-scores of the moderated t-statistics are Bailey's (1980) transformation on
-min(d_0 + d, 10^4) degrees of freedom; romer's shrinkage of each gene's contrast effect
-computes its log-odds on d_0 + d degrees of freedom, without the limit, and with the
-proportion of true null hypotheses of limma's `propTrueNull(method = "lfdr")`. These
-conventions, the set statistics' definitions where limma differs from the paper (the
-mean-50 statistic averages the ceiling(m / 2) largest values, and romer's floor-mean
-mixed statistic floors \|t\| at 1), and the order of limma's random draws were found
-by probing, and the exact checks confirm them, with an infinite prior df too. Without
-shrinkage, romer agrees with limma exactly on the data with very large effects, which
-shows that the difference with shrinkage comes from limma's NaN posterior
-probabilities. The fry checks give the reference that `gene_set_tests.py` approximated
-by simulation: the mixed p-values of fry for sets of 2 to d genes, where CytePool uses
-all d + 1 dimensions of the rotation and limma only the set's, against the rotation
-test of the same statistic, which `mroast`'s msq statistic is when all genes have the
-same residual variance (up to the limit on the df of the z-scores).
-
-Deliberate differences:
-
-- roast and mroast count a rotated statistic equal to the observed one as at least as
-  extreme, as Wu et al. (2010) and Phipson and Smyth (2010) define the p-value and as
-  limma's `romer` does; limma's `roast` counts only larger ones. Where the observed
-  floor-mean or mean-square statistic is the smallest it can be (a set without a gene
-  on one side of zero, or, for the floor-mean mixed statistic, without a gene whose
-  \|z\| exceeds 0.674), CytePool's p-value is 1 and limma's about 1/2. The script
-  checks that CytePool's p-value is 1 in each such case.
-- With contribution weights a_g, the mean-square statistic weighs each gene's z^2 by
-  \|a_g\|, as Wu et al. (2010) define it; limma's up, down and two-sided p-values differ
-  from it for sets with weights of both signs, and with more than 1,000 rotations its
-  p-values change when every weight is multiplied by the same number (here by up to
-  0.45 for a factor of 10). The floor-mean mixed statistic weighs each gene by
-  \|a_g\|, where limma takes a negative weight as evidence against the set; the script
-  checks that CytePool's mixed p-value is limma's with the absolute weights.
-- A gene of contribution weight zero leaves the set: it counts neither in the number
-  of genes nor among the values that the mean-50 statistic averages. limma keeps it in
-  both, and leaves it out of the active proportions, as CytePool does.
-- romer's posterior probability that a gene is differentially expressed is
-  1 / (1 + exp(-lods)). limma's is NaN beyond log-odds of 709.8 (\|t\| above about 38
-  with an infinite prior df), which makes the gene's shrunk contrast effect NaN and
-  changes the p-values of every set (found by probing).
-- A set without genes, or whose genes all have weight zero, has NaN p-values and no
-  direction in CytePool and is left out of the other sets' adjustment; limma reports
-  "down" and NA, or the smallest possible p-value when all weights are zero. A gene
-  listed twice counts once in CytePool, twice in limma. mroast tests every set with the
-  same rotations, where limma draws new ones for each set. The tests check these.
-
-## Gene-set files and over-representation
-
-[`validation/gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py)
-checks the reading and writing of GMT files, the matching of gene sets to an analysis,
-and over-representation analysis. Four GMT files of 60 sets are simulated from fixed
-seeds in the styles of MSigDB (names in capitals, links as descriptions, symbols),
-Reactome (names with spaces and punctuation, lines ending in a carriage return and a
-line feed, tabs at the ends of lines), WikiPathways (names joined by %, Entrez ids, a
-byte-order mark, blank lines) and the GMT exports of the Gene Ontology (descriptions
-"na" or empty, genes listed twice, a set without genes, a name outside ASCII,
-compressed by gzip). `read_gmt` reads each file and `write_gmt` writes it back; R reads
-both files by hand (`readLines`, fields split at tabs), and decoupler's `read_gmt`
-reads the MSigDB-style file. A file of 60 sets of symbols is matched to the 2,000 genes
-of an analysis by `GeneSets.restrict_to` and by limma's `ids2indices`, the sets of 15
-to 200 genes are kept, and `camera` tests them on simulated log-expression, given the
-sets that CytePool read, against limma's `camera` given those that R read.
-
-`over_representation` runs on simulated results of 4,000 genes, 8% up and 6% down at
-an FDR of 5%, with a block of tied p-values, and 305 sets of up to 600 genes, a fifth
-of each set outside the results: sets enriched for genes up, down or both, or for none,
-two identical sets, a set that lists genes twice, a set of every gene, a set outside
-the universe, and a set with two features of one symbol, one up and one down. Its table
-is compared with limma's `kegga` of a fit with the same p-values and log fold changes,
-which selects the genes up and down itself, and with kegga's default method given the
-genes of each direction and the universe: by feature id; by symbol, which 160 features
-share in pairs; by symbol where 131 features lack one; with a universe of 60% of the
-genes, 100 genes of the sets outside the results and 50 genes of no set; with 416 genes
-without a p-value; and for a list of 230 genes, 30 of them outside the universe and
-some listed twice. The adjusted p-values are compared with `p.adjust` of kegga's
-p-values, the order of the sets with `topKEGG`'s, the p-values also with R's `phyper`
-on a grid of 247 points that reaches 1e-300 and underflow, and the dot plot's sets,
-dots and colours with kegga's counts and adjusted p-values. Reference: R 4.4.3, limma
-3.62.1, decoupler 2.2.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| GMT files in four styles: the names, descriptions and genes of every set, read, written and read again | R, by hand | 0 sets differ | 0 | 4 pass |
-| The MSigDB-style file: names and genes | decoupler `read_gmt` | 0 sets differ | 0 | 1 pass |
-| `restrict_to`: the sets kept and the positions of their genes | `ids2indices` | identical | 0 | 1 pass |
-| `filter_by_size(15, 200)`, then `camera` of the 34 sets kept | `camera` | 3.1e-15 | 1e-10 | 1 pass |
-| P(X >= k) at 247 points | `phyper` | 2.1e-12 | 1e-10 | 1 pass |
-| Genes up and down that kegga selects from a fit, by feature id and by shared symbols: numbers of genes, overlaps, p-values, adjusted p-values and the order of the sets | `kegga` of a fit, `p.adjust`, `topKEGG` | 6.2e-14 | 1e-10 | 4 pass |
-| Genes up, down and either way, by feature id, by shared or missing symbols, with a universe given and without p-values for some genes, and a list of genes: the same, and the numbers selected, the size of the universe and the expected overlaps | `kegga`, `p.adjust`, `topKEGG` | 9.7e-14 | 1e-10 | 16 pass |
-| The dot plot: the 20 sets shown and their order, the area and colour of its 60 dots | `kegga` | identical | 0 | 1 pass |
-| Features without a symbol, which kegga of a fit leaves out of its adjustment | `kegga` of a fit | 1.9 (relative) | n/a | 2 deliberate differences |
-| Genes without a p-value, which kegga of a fit keeps in the universe | `kegga` of a fit | 5.3 (relative) | n/a | 2 deliberate differences |
-| Sets without genes in the universe: rows with NaN p-values here, none in kegga's table | `kegga` | 1 to 23 sets per case | n/a | 1 deliberate difference |
-
-p-values, adjusted p-values and expected overlaps are compared relative to max(p,
-1e-300); numbers of genes, overlaps, names and orders must be identical. kegga selects
-the genes of a fit whose adjusted p-value is below its `FDR`, strictly, up or down by
-the sign of the coefficient; it counts a gene id on several features once, in both
-lists when one feature goes up and another down; it leaves out features without an id;
-and `topKEGG` orders sets by p-value, ties by the number of genes. These conventions
-were found by probing, and the checks by symbol confirm them. Half of the features
-without a symbol are changed genes, so that kegga's adjustment without them moves
-other genes across the cutoff and the difference shows.
-
-Deliberate differences:
-
-- A set without genes in the universe has a row with NaN p-values in CytePool, left
-  out of the adjustment of the others; kegga leaves the set out of its table.
-- Genes without a p-value, such as those DESeq2's independent filtering leaves out:
-  kegga's method for a fit keeps them in the universe, where CytePool, which takes them
-  as not tested, leaves them out. Given the universe of every gene, CytePool gives
-  kegga's values; the tests check this.
-- Features without an id, such as a symbol: kegga's method for a fit leaves them out
-  of its Benjamini-Hochberg adjustment, so that the genes it selects depend on which
-  features have a symbol. CytePool takes the adjusted p-values of the results, the
-  genes the analysis called significant. With the p-values adjusted over the features
-  with a symbol, CytePool gives kegga's values; the tests check this.
-
-## Gene set enrichment analysis
-
-[`validation/gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py)
-checks gene set enrichment analysis and its figures against fgsea. Statistics of 4,000
-genes are simulated from fixed seeds like moderated t-statistics, 6% of the genes up and
-5% down, with 60 genes tied at 1.25 and 30 at zero, with 90 gene sets of 1 to 1,000
-genes, a fifth of each outside the ranking: sets enriched for genes up, down or both, or
-for none, a set of every gene, which neither program tests, a set of one gene, half of
-the tied genes, a set that lists genes twice and two identical sets. `gsea` and fgsea's
-`fgsea` run with the same options: fgsea's defaults (its multilevel method, 1,000
-permutations, 101 sets per level, eps 1e-50); gseaParam 0 and 0.5; scoreType "neg";
-scoreType "pos" on -log10 p-values, which are all positive; sets of 15 to 500 genes,
-with eps 0, 51 sets per level and 2,000 permutations; permutations alone (fgsea's
-`nperm`, 2,500 in three chunks); statistics mostly positive, with 6 sets spread evenly
-along the ranking, a set of a few genes near its top and others spread along it, whose
-p-value is about 0.05, and 3 sets of 25 genes from its bottom, whose negative scores
-fewer than 10 random sets of their size reach, so that no set goes to the multilevel
-method; and one set alone.
-
-The R script records the seeds that fgsea draws where it hands them to its compiled code
-(`trace` of `fgseaSimpleImpl` and `multilevelImpl`), and `gsea` draws the same through
-`rng`; the two programs then draw the same random sets, and must agree exactly. fgsea
-draws the random sets of a set tested alone with R's `sample.int`, which cannot be
-replayed: that case is exact for the enrichment score and leading edge, and calibrated
-for the rest, with seeds of their own (R's 1 to 20 and numpy's 1 to 20): the mean
-log10 p-value and the mean normalized score of each set over 20 runs must agree within
-4 standard errors of their difference, for 36 sets and for the set alone. The figures:
-what `plot_enrichment` draws against `plotEnrichmentData`, for three sets with gseaParam
-1 and 0.5, and the bars and numbers of `plot_gsea_table` against the ticks of
-`plotEnrichmentData`, scaled as `plotGseaTable` scales them, and its numbers as it
-writes them. Reference: R 4.4.3, fgsea 1.32.2.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| The sets tested, their sizes, leading edges and enrichment scores, in all 9 cases | `fgsea` | 0 | 1e-10 | 9 pass |
-| Normalized scores, p-values, log2 errors and adjusted p-values, given fgsea's seeds, in 7 cases | `fgsea` | 2.2e-13 | 1e-10 | 7 pass |
-| The same of the mostly positive statistics, without the adjusted p-values | `fgsea` | 4.2e-16 | 1e-10 | 1 pass |
-| Mean log10 p-values and mean normalized scores over 20 runs, seeds of their own, for 36 sets and one set alone | `fgsea` | 2.4 standard errors | 4 | 4 pass |
-| `plot_enrichment`: the walk, the ticks and the extremes of 6 plots | `plotEnrichmentData` | 1.7e-14 | 1e-10 | 1 pass |
-| `plot_gsea_table`: the bars and numbers of 10 sets | `plotEnrichmentData`, `plotGseaTable` | 1.1e-13 | 1e-10 | 1 pass |
-| Adjusted p-values of the mostly positive statistics | `fgsea` | 0.16 (relative) | n/a | 1 deliberate difference |
-
-Numbers are compared relative to their absolute value, or 1e-300, and NaN must stand
-where fgsea gives NA; sets, sizes and leading edges must be identical. Given fgsea's
-seeds, the random scores and the counts of the permutations are the same to the last
-bit; the multilevel p-values differ in the last bits, through the digamma function of
-each program.
-
-Deliberate difference:
-
-- The adjusted p-values of the mostly positive statistics, where some sets have too few
-  random scores of their sign and no set goes to the multilevel method: fgsea adjusts
-  the p-values over the sets before it removes those that have some, but fewer than 10,
-  random scores of their sign, as though they had been tested, so that its adjusted
-  p-values of the sets it reports come out smaller or larger; CytePool adjusts over the
-  sets with a p-value. The tests check that CytePool's are Benjamini and Hochberg's of
-  the p-values it reports.
-
-## Pathway scores
-
-[`validation/pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py)
-checks the scores of gene sets in every sample, and their heatmap, against GSVA 2.0.0,
-whose `gsva()` runs with a `gsvaParam`, `ssgseaParam`, `zscoreParam` or `plageParam`,
-and the CytePool function with the same options. The inputs are simulated from fixed
-seeds: log-expression values of 2,000 genes in 24 samples, 200 genes higher in the
-second 12, with two constant genes, a gene equal to another, a gene of whole numbers
-and a gene with an outlier sample; negative binomial counts of the same genes in 16
-samples, stored as integers and as decimals; Poisson counts with means from 0.3 to 6
-(low counts); 400 genes in 210 samples; the log-expression values rounded to one
-decimal; the same values with 2% of those of the first 12 samples missing; and a cube of
-one cell type with the counts, whose samples have 3 to 60 cells. The 66 gene sets have
-1 to 300 genes, a fifth of each outside the data: random sets, a set of one gene, one
-with the constant genes, one that lists genes twice, two identical sets and a set of
-every gene, which is left out for ssGSEA but in one case. Reference: R 4.4.3, GSVA
-2.0.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| GSVA's method: the Gaussian kernel, tau 0.5 with maxDiff FALSE, tau 2 with absRanking, no kernel, sizes 10 to 100, counts stored as integers (the Poisson kernel), as decimals (the Gaussian kernel) and 210 samples (no kernel), in 8 cases | `gsva` with `gsvaParam` | 0 | 1e-10 | 8 pass |
-| ssGSEA: the defaults, alpha 1 without normalization, alpha 0 on tied values, in 3 cases | `ssgseaParam` | 1.8e-15 | 1e-10 | 3 pass |
-| Combined z-scores | `zscoreParam` | 2.7e-15 | 1e-10 | 1 pass |
-| PLAGE, the sets of two genes or more, up to sign | `plageParam` | 8.7e-14 | 1e-10 | 1 pass |
-| Missing values: GSVA's method in the samples without any, ssGSEA and combined z-scores | `gsvaParam` and `ssgseaParam` with `use = "na.rm"`, `zscoreParam` | 2.0e-15 | 1e-10 | 3 pass |
-| A cube's cell type: its log-CPM and its counts | `gsva` with `gsvaParam` | 0 | 1e-10 | 2 pass |
-| `plot_pathway_scores`: the 1,584 cells of the standardized heatmap, the samples grouped | GSVA, R's `heatmap(scale = "row")` | 3.2e-16 | 1e-10 | 1 pass |
-| PLAGE: the share of sets whose sign is GSVA's | `plageParam` | 0.42 | n/a | 1 information |
-| GSVA's method with the Poisson kernel on low counts | `gsvaParam` | 2.2e-3 | n/a | 1 information |
-| GSVA's method in the samples with missing values; PLAGE's sets of one gene; ssGSEA with a set of every gene | `gsvaParam`, `plageParam`, `ssgseaParam` | 1.6 | n/a | 3 deliberate differences |
-
-Differences are relative to the largest absolute score of a case, NaN must stand where
-GSVA gives NA, and the sets scored must be GSVA's, in its order. The scores depend on
-the ranks of the genes in each sample, which come from comparisons of their kernel
-estimates; CytePool evaluates the normal distribution function from a table at steps
-of 0.001, as GSVA does, and sums the estimates over the samples in their order, so that
-the ranks, and with them the scores, are GSVA's on continuous values and on counts of
-the sizes of the cases above. With low counts, many genes have kernel estimates that
-are equal in exact arithmetic, such as genes with the same counts in different
-samples, and GSVA orders them by the last bit of R's Poisson probabilities, which
-CytePool computes as accurately but not always to the same bit: the scores of the sets
-that hold them then differ by up to 2.2e-3 of the largest score. PLAGE's sign is that
-of R's singular value decomposition, which agrees with CytePool's convention for 42% of
-the sets.
-
-Deliberate differences:
-
-- GSVA's method in samples with missing values: with `use = "na.rm"`, GSVA's walk
-  falls by 1/(p - k) at a sample's observed genes outside a set, p counting the genes
-  missing in the sample too, so that it ends above zero, and it scores the set of every
-  gene there; CytePool's walk falls by 1/(p_j - k_j), with p_j and k_j counting the
-  genes observed in the sample, and ends at zero (largest difference 4.8e-2, where both
-  give a score). The samples without missing values agree exactly.
-- PLAGE's sets of one gene: GSVA gives 1 in every sample; CytePool gives the gene's
-  standardized values, scaled to length one, its first right singular vector (largest
-  difference 1.6).
-- ssGSEA with a set of every gene: GSVA stops ("Cannot calculate normalizing factor for
-  the enrichment scores in ssGSEA, likely due to NA values in the input expression
-  data"); CytePool gives that set NaN and normalizes the other scores by their range.
-
-## Pathway and regulator activity
-
-[`validation/activity.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/activity.py)
-checks the activities of regulators and pathways, their bar plot and the networks
-against decoupler 2.2.0 and progeny 1.28.0. CytePool's loaders download the networks
-into its cache. CollecTRI's file and progeny's package are compared with the MD5
-digests and sizes their sources publish (Zenodo's record, Bioconductor's `PACKAGES`
-and the server's `Content-Length`); `collectri(licence="academic")` with decoupler's
-`op.collectri`; the commercial level with the licence purposes that OmniPath's
-resources service lists, applied to the file by the script; and the weights and
-p-values of `progeny` with progeny's `model_human_full` and `model_mouse_full`, and its
-`top` with `getModel` (100 human genes; 500 mouse genes, with ties). The inputs of the
-activities are simulated from fixed seeds: log-expression values of 6 samples over
-CollecTRI's 6,693 targets and 2,000 other genes, the targets of 6 regulators shifted in
-the last 3 samples, with 3 genes zero in every sample; a profile of t-statistics; the
-values with 3% missing in two samples, which decoupler, refusing missing values,
-scores one profile at a time over its observed genes; 6 samples over the targets of
-PROGENy's top 500 genes and 1,000 others; a cube of one cell type, scored as its
-log-CPM; and limma_voom's moderated t-statistics in two cell types that test different
-genes. `ulm`, `mlm` and `weighted_aggregate` run as decoupler's `mt.ulm`, `mt.mlm` and
-`mt.waggr` with `tmin` 5, or 3 for a network of weights of one sign. Reference:
-decoupler 2.2.0 with scipy 1.18.1, and progeny 1.28.0 on R 4.4.3.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| ULM's t-statistics and slopes, in 10 cases | `mt.ulm` | 2.3e-13 | 1e-10 | 20 pass |
-| ULM's p-values, and their Benjamini-Hochberg adjustment, in 10 cases | `mt.ulm`; scipy's `false_discovery_control` of its p-values | 4.4e-11 | 1e-10 | 20 pass |
-| ULM's adjusted p-values, in single precision | `mt.ulm` | 0 | 1.2e-7 | 10 pass |
-| MLM's t-statistics and coefficients, in 6 cases | `mt.mlm` | 3.2e-14 | 1e-10 | 12 pass |
-| MLM's p-values | scipy's `t.sf` of `mt.mlm`'s t-statistics | 3.3e-12 | 1e-10 | 6 pass |
-| Weighted means and sums, and the normalized scores given decoupler's permutations (100 and 1,000) | `mt.waggr` | 1.1e-14 | 1e-10 | 4 pass |
-| Weighted sums of PROGENy's top 100 genes | progeny's `progeny(scale = FALSE)` | 6.5e-16 | 1e-10 | 1 pass |
-| `plot_top_activities`: the 15 bars of a sample, their sources and lengths | `pl.barplot` | 4.8e-14 | 1e-10 | 1 pass |
-| CollecTRI at the academic level; at the commercial level; PROGENy's weights and p-values, human and mouse; its top 100 human and 500 mouse genes | `op.collectri`, OmniPath's resources, progeny's models and `getModel` | 0 | 0 | 6 pass |
-| The files downloaded: sizes and MD5 digests | Zenodo, Bioconductor | 0 | 0 | 2 pass |
-| decoupler's `op.collectri` at its levels; PROGENy through OmniPath | `op.collectri`, `op.progeny` | n/a | n/a | 2 information |
-| The weighted aggregate's p-values; a sample of zeros; MLM with two sources alike; CollecTRI's interactions without a reference | `mt.waggr`, `mt.ulm`, `mt.mlm`, `op.collectri` | 0.97 | n/a | 5 deliberate differences |
-
-Scores and estimates are compared relative to the largest absolute value of a case,
-p-values relative to each value, and NaN must stand where the reference has none; the
-networks and the bars must be identical. decoupler keeps its adjusted p-values in
-single precision, so CytePool's are rounded to it first. decoupler computes MLM's
-p-values as one minus the distribution function, which loses their digits below about
-1e-12, so CytePool's are compared with scipy's upper tail at decoupler's t-statistics.
-The normalized scores are compared given decoupler's permutations: the genes in the
-order in which decoupler shuffles them, and its seed, so that both draw the same
-permutations. decoupler 2.2.0 accepts a licence for CollecTRI but returns the whole
-file at every level. Its `op.progeny` reads PROGENy from OmniPath's annotations, which
-name genes by their current symbols, leave out genes OmniPath does not map to a
-protein, and merge some genes: of its 62,421 edges with a p-value below 0.05, where the
-progeny package has 69,827, 59,617 are named alike, and 59,599 of them have the same
-weight and p-value.
-
-Deliberate differences:
-
-- The weighted aggregate's p-values (largest difference 0.97 with 100 permutations,
-  2.0e-3 with 1,000): decoupler counts the permutations whose absolute score exceeds
-  the absolute observed score and then folds that share as it would fold a one-sided
-  one, so that a score near zero gets a p-value near 2 / n for n permutations; CytePool
-  doubles the smaller of the two one-sided p-values (1 + b) / (1 + n).
-- A sample whose values are all zero: decoupler leaves it out of its result; CytePool
-  gives it NaN scores. The other samples agree exactly.
-- MLM with two sources of the same targets and weights: decoupler inverts a singular
-  matrix and gives NaN t-statistics for both (12 in 6 samples); CytePool refuses,
-  naming the source it cannot tell apart from the other.
-- CollecTRI's 185 interactions whose field of references is empty: decoupler's loader
-  drops them, through pandas' `dropna`; CytePool keeps them, as the file holds them and
-  the paper counts them (43,175 interactions).
-
-## Multiple testing
-
-[`validation/multiple_testing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_testing.py)
-runs every method of `adjust_p_values` (Holm, Hochberg, Hommel, Bonferroni,
-Benjamini-Hochberg, Benjamini-Yekutieli and none) on each case and compares it with
-R's `p.adjust`. Each check covers all seven methods. Reference: R 4.4.3,
-`stats::p.adjust`.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| 2,000 uniform values; rounded values with ties, 0 and 1; 10% NaN; 10% exactly 0 or 1; n = 2,000 for 500 values with ties and NaN | `p.adjust` | 0 | 1e-10 | 5 pass |
-| All 9,330 vectors of length 1 to 5 over {0, 0.01, 0.03, 0.5, 1, NaN}, with the default n and with n = 6 | `p.adjust` | 0 | 1e-10 | 2 pass |
-| A 2,000 x 4 matrix adjusted by column, 0 to 50% NaN | `p.adjust` | 0 | 1e-10 | 1 pass |
-| 50 random families of 2 to 2,000 values, with the default n and with n = 2,500 | `p.adjust` | 1.4e-16 | 1e-10 | 2 pass |
-| 100,000 values, 10% duplicated | `p.adjust` | 0 | 1e-10 | 1 pass |
-| The small cases written as test fixtures | `p.adjust` | 0 | 1e-10 | 4 pass |
-
-Of the 290,224 p-values each method adjusted, all but 5 Hommel values were identical
-to R's to the last bit.
-
-## Differential expression
+The script printed 32 checks (28 pass and 4 deliberate differences) in 1.8 s, with a
+peak memory of 189 MiB. [limma-voom and
+limma-trend](statistics/limma_voom.md#limma-voom-steps) explains what it checks.
 
 [`validation/differential_expression.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression.py)
 simulates cells with a donor structure (seed 20261025), pools them into cubes with
@@ -1472,8 +785,8 @@ Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
 | DC cells, without residual degrees of freedom: both programs refuse every contrast | `eBayes` | both refuse | n/a | 2 pass |
 | Deliberate differences, listed below | `contrasts.fit` | 2 contrasts limma refuses and CytePool computes, 2 limma computes and CytePool reports as not estimable | n/a | 4 deliberate differences |
 
-Differences are scaled by max(\|reference\|, 1), and p-values by
-max(p, 1e-300) max(1, \|log p\|). limma-voom ran with
+Differences are scaled as [above](#reading-the-tables), values as statistics and p-values as
+p-values. limma-voom ran with
 `contrast_standard_errors="limma"`, except in the robust case, whose contrasts are
 single coefficients, for which the default exact standard errors are limma's. In
 the NK cells, `D3_vs_D2` combines two of the columns the group keeps, and agrees with
@@ -1489,7 +802,12 @@ Deliberate differences, in the NK cells of both paired cases:
   against donor D6, the values of the third row of the table; CytePool reports it as
   not estimable.
 
-## Options for pseudobulk differential expression
+(validation-differential-expression-options)=
+### Options for pseudobulk differential expression
+
+The script printed 66 checks (66 pass) in 5.0 s, with a peak memory of 182 MiB.
+[limma-voom and limma-trend](statistics/limma_voom.md#limma-voom-defaults) explains what
+it checks.
 
 [`validation/differential_expression_options.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/differential_expression_options.py)
 checks the options of `limma_voom` and `limma_trend` for pseudobulk data against
@@ -1499,8 +817,8 @@ stimulation (seed 20261027), in 3 cell types with 1,000 genes, pools them with
 `D3_vs_D2`. One sample is an outlier in every cell type, two are sequenced shallowly
 in one cell type each, and in the NK cells both samples of donor D1, the reference
 level, have fewer than 10 cells, which makes the column `donorD6` a combination of the
-others. Six analyses each set some of the options, and R runs the workflow of the
-section above with the same options:
+others. Six analyses each set some of the options, and R runs the workflow of [limma-voom and limma-trend on
+cubes](#validation-differential-expression) with the same options:
 
 - sample quality weights (`quality_weights`): limma's `voomWithQualityWeights`, gene by
   gene and by REML, for limma-voom; `arrayWeights` on the log2 CPM, by REML and gene
@@ -1532,8 +850,8 @@ Reference: R 4.4.3, limma 3.62.1, edgeR 4.4.0.
 | The same with prior weights | `p.adjust` | 7.6e-13 | 1e-10 | 4 pass |
 | Prior weights together with estimated sample weights: both programs refuse | `voomLmFit` | both refuse | n/a | 1 pass |
 
-Differences are relative for the weights; the statistics are scaled as in the section
-above. Everything computed from sample quality weights is in the close tier, as they
+Differences are relative for the weights; the statistics and p-values are scaled as
+[above](#reading-the-tables). Everything computed from sample quality weights is in the close tier, as they
 are iterative estimates; the rest is exact. limma-voom ran with
 `contrast_standard_errors="limma"`, since `D3_vs_D2` combines two coefficients. limma's
 quality weights on the rank-deficient design of the NK cells are those on its kept
@@ -1546,267 +864,12 @@ set `min_counts`. limma's `voomWithQualityWeights` takes no prior weights, and e
 `voomLmFit` stops with "Can't specify prior.weights and estimate sample weights";
 CytePool refuses the two together as well.
 
-## dream
+(validation-interferon-stimulated-pbmcs)=
+### Differential expression on published data
 
-[`validation/dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py)
-compares `voom_with_dream_weights`, `moderated_fixed_effect_tests` and `dream_voom`,
-and the maximum likelihood fits, fitted values and approximate residual degrees of
-freedom of `fit_mixed_model` behind them, with variancePartition's
-`voomWithDreamWeights`, `dream(ddf = "Satterthwaite")`, `eBayes` and `topTable`
-(`dream_voom` with `df_method="satterthwaite"`; [the next section](#validation-kenward-roger)
-checks its default, the other choices of degrees of freedom and the F-tests), on
-negative binomial counts of 60 genes from fixed seeds (20261025 to 20261029): a random
-donor intercept with a condition, an age and the contrast `conditionstim - age` (10
-donors x 3 samples, with two hypervariable genes), moderated also with `robust = TRUE`
-and `trend = TRUE`; crossed donor and batch intercepts (8 donors x 4 samples over 3
-batches) with sample prior weights; unbalanced donors with 1 to 4 samples, with prior
-weights for every observation; and `dream_voom` on three cell types of a cube of 8
-donors x 2 conditions, with prior weights from the numbers of cells, the samples with
-fewer than 10 cells left out (both samples of a donor and one of another in one cell
-type, and all but one sample of each of three donors in the third), and the moderation
-also with `trend = TRUE`. Reference: R 4.4.3, variancePartition 1.36.2,
-limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3, Matrix 1.7-4, RcppEigen
-0.3.4.0.2 and minqa 1.2.8. dream is compared on lme4 1.1-38, while the
-[mixed models](#validation-mixed-models) are compared on lme4 2.0.6: variancePartition 1.36.2's
-`dream` fails for every gene with lme4 2.0, which reworked lme4's random-effect terms.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Precision weights and the square roots of the residual SDs in the trend; with prior weights for samples or observations, also the trend's weights alone | `voomWithDreamWeights` | 2.1e-8 | 1e-6 | 3 pass |
-| Coefficients and a contrast, relative to the larger of their absolute value and standard error, and standard errors | `dream` | 6.2e-8 | 1e-6 | 3 pass |
-| Satterthwaite df | `dream` | 2.2e-7 | 1e-5 | 3 pass |
-| Residual SD of an observation of average weight, and approximate residual df | `dream` `sigma`, `rdf` | 2.8e-8 | 1e-6 | 3 pass |
-| Prior df and variance, posterior variances (constant, robust and trend priors) | `eBayes` | 1.6e-8 | 1e-6 | 5 pass |
-| Moderated t-statistics and B-statistics, relative to max(\|x\|, 1) | `eBayes` | 1.2e-7 | 1e-6 | 5 pass |
-| Total df, p-values, adjusted p-values and z-statistics | `eBayes`, `topTable` | 7.9e-8 | 1e-5 | 5 pass |
-| Maximum likelihood and REML at CytePool's estimates: log-likelihood, residual variance, approximate residual df, and fitted values relative to their largest value | lme4 `logLik`, `sigma`, `fitted`; `rdf.merMod` | 5.9e-15 | 1e-10 | 4 pass |
-| Satterthwaite df there, of maximum likelihood and REML fits | lmerTest `summary` | 5.8e-7 | 1e-5 | 4 pass |
-| Maximum likelihood optimum: log-likelihood and residual variance | lme4 `logLik`, `sigma` | 2.5e-8 | 1e-6 | 2 pass |
-| Genes whose log-likelihood is below lme4's maximum by more than 1e-10, relative | lme4 `logLik` | 0 genes | 0 | 2 pass |
-| `dream_voom`, in two cell types: samples used and features tested | the rules of `limma_voom` | 0 differences | 0 | 2 pass |
-| `dream_voom`, with constant and trend priors: logFC and AveExpr | `topTable` | 1.5e-8 | 1e-6 | 4 pass |
-| `dream_voom`: t and B | `eBayes` | 2.7e-8 | 1e-6 | 4 pass |
-| `dream_voom`: df, P.Value, adj.P.Val and z.std | `eBayes`, `topTable` | 1.1e-7 | 1e-5 | 4 pass |
-| Prior df (median and smallest) and the estimator of the prior | CytePool | 8.4 to 15.2; robust 5.7 to 12.0; likelihood | n/a | 5 information |
-| Deliberate differences, listed below | variancePartition | 5 inputs | n/a | 5 deliberate differences |
-
-variancePartition fits every gene with lme4, whose optimiser stops at about 1e-6 of
-the optimum with its default tolerances. The script runs it with Powell's BOBYQA from
-minqa (lme4's `"bobyqa"`) with the trust region shrunk to 1e-10, which lme4's
-`optimizer` argument accepts by name as a function that reports convergence: at such
-tolerances lme4 warns for some genes, and variancePartition turns the warning into an
-error and drops the gene. BOBYQA from nloptr at tolerances near machine precision
-ended at worse points inside `voomWithDreamWeights` for crossed random effects, so it
-is not used. Estimates are then compared to the close tier, and Satterthwaite's
-degrees of freedom, with the p-values and z-statistics that use them, to 1e-5, as in
-the section on mixed models: lmerTest differentiates the deviance numerically. At
-CytePool's estimates, lme4 evaluated once (`maxeval = 1`) gives closed forms, compared
-to the exact tier. P-values are scaled by max(p, 1e-300) max(1, \|log p\|), as for
-voom. In the cube the features tested and the TMM factors are CytePool's
-(`filter_by_expression` and `tmm_factors`, which the sections above check against
-edgeR), passed to R with the samples kept by the rule of `limma_voom`; R gets the
-effective library sizes and the numbers of cells as prior weights, with
-`rescaleWeightsAfter = TRUE`.
-
-The conventions of variancePartition that its documentation leaves open, found by
-probing it and listed in the documentation of `cytepool.stats.dream`, are all exercised
-here: `voomWithDreamWeights` fits the mixed models by maximum likelihood and reads the
-trend at the fitted values with the predicted random effects; it divides each gene's
-prior weights by their mean, and by default returns the trend's weights alone; `dream`
-fits each gene with its weights divided by their mean, so that `sigma` is the residual
-standard deviation of an observation of average weight; `eBayes` moderates these
-variances on `rdf` with limma's default estimator (here the likelihood estimator, as
-the `rdf` differ), and the p-values use Satterthwaite's df plus the prior's, without
-limma's cap. With `robust = TRUE` the two hypervariable genes got prior df of 5.7,
-against 12.0 for the others.
-
-Deliberate differences:
-
-- The default span: `voom_with_dream_weights` chooses it from the number of genes, as
-  `voom` does (0.959 for 60 genes), and `voomWithDreamWeights` uses 0.5; with the
-  defaults, the weights differ by up to 26%. `span=0.5` reproduces variancePartition.
-- A z-statistic beyond p = 1e-300: `topTable` computes `z.std` from the p-value
-  floored at 1e-300, so it gives -37.07 for a contrast scaled up 1e13 times, where
-  CytePool's z-statistic, from the logarithm of the tail probability, is -44.59.
-- A gene that the fixed and random effects reproduce, constant within every donor:
-  `voomWithDreamWeights` keeps it in the trend with the square root of a residual SD
-  of 3.7e-4, and `dream` keeps it; CytePool leaves it out of the trend and returns its
-  tests as NaN.
-- A design without random effects: `dream` fits it with `lmFit` (class `MArrayLM`);
-  `dream_voom` refuses it and points to `limma_voom`.
-- A cell type left with one sample per donor: `voomWithDreamWeights` stops ("Initial
-  model failed"); `dream_voom` reports the status `random_effects_not_estimable` and
-  goes on with the other cell types.
-
-(validation-kenward-roger)=
-## Kenward-Roger's tests and F-tests
-
-[`validation/kenward_roger_and_f_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/kenward_roger_and_f_tests.py)
-compares `fixed_effect_tests(df_method="kenward_roger")` with lmerTest's `summary` and
-`contest1D` (`ddf = "Kenward-Roger"`) and pbkrtest's `vcovAdj`, and
-`fixed_effect_f_test` with pbkrtest's `KRmodcomp` and lmerTest's `contestMD` (by
-Kenward-Roger and by Satterthwaite), gene by gene, in 9 cases of 24 genes from fixed
-seeds: a time course of three time points within 6 donors with an age per donor, with
-the F-tests of two contrasts and of three that span two dimensions; unbalanced donors
-with 1 to 5 samples; crossed donor and batch intercepts; nested intercepts
-(`(1 | donor/sample)`); a design simulated without donor variance, so that 15 of the 24
-fits lie on the boundary; and observation weights like voom's, with one and with two
-random intercepts, each taken both ways: every observation at the average weight,
-against lme4 fits whose weights are divided by their mean, as dream fits them, and the
-precision weights, against pbkrtest on the same model without weights, its values,
-fixed effects and random effects multiplied by the square roots of the weights, which is
-the weighted model. It then compares dream with variancePartition's `dream` with
-`ddf = "Kenward-Roger"`, `"adaptive"` and `"Satterthwaite"`, `eBayes` and `topTable`,
-on negative binomial counts of 40 genes in studies of 12, 18, 19, 20 and 24 samples (a
-time course of three time points and an age), including `topTable`'s F-test of time,
-and `dream_voom` with its defaults on two cubes: cell types left with 12 and with 24
-samples, and one of 15 samples whose age, 32 years on average and about 1 apart, makes
-the adjusted covariance matrices ill conditioned. Reference: R 4.4.3, variancePartition
-1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3 and minqa 1.2.8.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Adjusted covariance matrix of the coefficients, relative to each gene's largest entry | pbkrtest `vcovAdj` | 1.4e-13 | 1e-10 | 9 pass |
-| Kenward-Roger t-tests of every coefficient and a contrast: estimates (relative to the larger of their absolute value and standard error), standard errors and t-statistics (relative to max(\|t\|, 1)) | lmerTest `summary`, `contest1D` | 1.7e-12 | 1e-10 | 9 pass |
-| Their df and p-values | lmerTest `summary`, `contest1D` | 1.8e-12 | 1e-10 | 9 pass |
-| Kenward-Roger F-tests: F, numerator and denominator df, scaling and p-value, and lmerTest's F and df | pbkrtest `KRmodcomp`, lmerTest `contestMD` | 8.2e-13 | 1e-10 | 13 pass |
-| Satterthwaite F-statistics | lmerTest `contestMD` | 8.2e-13 | 1e-10 | 13 pass |
-| Satterthwaite F-tests: denominator df and p-values | lmerTest `contestMD` | 1.9e-7 | 1e-5 | 13 pass |
-| Kenward-Roger standard errors and df at lme4's own optimum | lmerTest `summary` | 1.2e-7 | 1e-6 | 9 pass |
-| dream: precision weights | `voomWithDreamWeights` | 2.1e-8 | 1e-6 | 5 pass |
-| dream with each `ddf`: standard errors and df of the tests | `dream` | 8.0e-8 | 1e-6 | 9 pass |
-| Moderated t-statistics, B-statistics and z-statistics (relative to max(\|x\|, 1)), total df and p-values | `eBayes`, `topTable` | 5.0e-8 | 1e-6 | 9 pass |
-| Moderated F-statistics of time | `topTable` | 4.1e-8 | 1e-6 | 11 pass |
-| `dream_voom`: samples used and features tested | the rules of `dream_voom` | 0 differences | 0 | 3 pass |
-| `dream_voom` with its defaults: t, B and z-statistics, df and p-values of every contrast | `dream`, `eBayes`, `topTable` | 3.3e-7 | 1e-6 | 3 pass |
-| Fits with a variance at zero; the two treatments of the weights; the default against Satterthwaite's method | CytePool | below | n/a | 16 information |
-| Deliberate differences, listed below | variancePartition | 12 inputs | n/a | 12 deliberate differences |
-
-At CytePool's estimates, which the script passes to lme4 as starting values with one
-evaluation allowed, as for [mixed models](#validation-mixed-models), pbkrtest computes
-Kenward and Roger's quantities from dense matrices without numerical derivatives, so
-they are compared to the exact tier; lmerTest's Satterthwaite F-tests differentiate the
-deviance numerically, compared to 1e-5. At lme4's own optimum, with Powell's BOBYQA and
-its trust region shrunk to 1e-10 as in the section on dream, and in dream's fits, which
-the script runs with that optimiser, the estimates agree to the close tier. P-values are
-scaled by max(p, 1e-300) max(1, \|log p\|), as for voom.
-
-The checks confirm what probing pbkrtest, lmerTest and variancePartition as black boxes
-found, and the documentation of `cytepool.stats.mixed_models` and
-`cytepool.stats.dream` lists: pbkrtest takes the inverse of the expected information
-of REML, includes a variance component estimated at zero, which 15 fits of the
-boundary case have, and builds the covariance matrix of the observations without lme4's
-prior weights while it takes the covariance matrix of the coefficients from the
-weighted fit; lmerTest's `contest1D` and `summary` use the adjusted standard errors with
-pbkrtest's degrees of freedom; `dream` uses Kenward and Roger's method with the adjusted
-standard errors for 19 samples and Satterthwaite's for 20 under `ddf = "adaptive"`, and
-`topTable`'s F-statistic is limma's, from the moderated t-statistics and each gene's
-covariance matrix of the coefficients, the adjusted one under Kenward and Roger's
-method. In the ill-conditioned cell type `dream` tested 24 genes by Satterthwaite's
-method because R's estimate of the condition number of their adjusted covariance
-exceeded 1e6, and `dream_voom` the same 24, from the exact condition number.
-
-The information rows give the size of the two treatments of the weights. Against the
-precision weights, every observation at the average weight gave standard errors 0.976
-times as large at the median (0.51 to 1.05) and df 0.91 times (0.26 to 3.7) with one
-random intercept, and 0.977 (0.81 to 1.02) and 0.89 (0.27 to 3.4) with two; its standard
-errors were below the unadjusted ones for 61% and 33% of the genes, the precision
-weights' for none. And they give how dream's default changes the results of small
-studies against Satterthwaite's method, with which `dream_voom` tested them before:
-with 12 samples, p-values 1.12 times as large at the median (0.97 to 1.66 for 90% of the
-genes), with standard errors 1.06 times as large at the median and smaller for 20% of
-the genes; with 18 samples, 1.00 (0.91 to 1.07), and standard errors 1.00, smaller for
-48%; in the cube's cell type with 12 samples, 0.99 (0.73 to 1.12), with as many genes
-below an adjusted p-value of 0.05 (12) as before.
-
-Deliberate differences:
-
-- The p-values of `topTable`'s F-tests: dream computes those of every gene on the total
-  degrees of freedom of the first gene for the first coefficient listed, which the
-  script reproduces to 3e-14 in the 11 F-tests; CytePool gives each gene its own (see
-  `cytepool.stats.dream`). Its p-values were 0.14 to 11.5 times dream's.
-- Which genes fall back to Satterthwaite's method: dream decides from R's estimate of
-  the condition number (`kappa`), CytePool from the exact one; they can differ within
-  about 2% of 1e6. Here they decided alike for every gene tested, and the tests agree
-  to 3.3e-7.
-
-dream also computes `F.std` with the number of coefficients where they are linearly
-dependent, and CytePool with their rank, the numerator degrees of freedom of the F-test;
-the F-tests here have independent coefficients.
-
-(validation-variance-partitioning)=
-## Variance partitioning
-
-[`validation/variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py)
-compares `variance_fractions` and `variance_partitioning`, and the figures
-`plot_variance_fractions` and `plot_feature_variance_fractions`, with variancePartition's
-`fitExtractVarPartModel`, `calcVarPart`, `plotVarPart` and `plotPercentBars`, on data
-from fixed seeds (20261101 to 20261108), 60 genes each: one random donor intercept (10
-donors x 3 samples, a fifth of the genes without a donor effect); random donor, batch
-and condition intercepts with a donor's age and a sample's RNA integrity as fixed
-effects and precision weights for every observation (8 donors x 4 samples), also
-fitted by REML; unbalanced donors with 1 to 4 samples and sample weights; nested
-donor and tissue intercepts (6 donors x 2 tissues x 2 replicates); a linear model of
-the age, the RNA integrity, the batch and the condition with the same weights (which
-variancePartition fits with `lm`); negative binomial counts of 80 genes with the
-weights of `voomWithDreamWeights(span = 0.5)`; and `variance_partitioning` on three
-cell types of a cube of 8 donors x 2 conditions, with prior weights from the numbers
-of cells, three samples left out of one cell type for having fewer than 10 cells, and
-one sample per donor in the third. Reference: R 4.4.3, variancePartition 1.36.2,
-lme4 1.1-38, minqa 1.2.8 and ggplot2 4.0.3, in the R environment of `dream.py`.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Fractions and variances at the optimum, relative to the gene's total variance: one, several, unbalanced and nested random effects, and voom's weights | `fitExtractVarPartModel`, `calcVarPart` | 4.4e-8 | 1e-6 | 5 pass |
-| The same, fitted by REML | `fitExtractVarPartModel(REML = TRUE)` | 2.0e-7 | 1e-6 | 1 pass |
-| A linear model with factors and observation weights | `fitExtractVarPartModel` (`lm`) | 3.8e-15 | 1e-10 | 1 pass |
-| Variances at CytePool's estimates | lme4 (`maxeval = 1`), `calcVarPart` | 1.9e-13 | 1e-10 | 5 pass |
-| Random effects estimated at zero: CytePool's exact zeros and lme4's below 1e-10 | `fitExtractVarPartModel` | equal in every case (19 to 91) | n/a | 6 information |
-| `variance_partitioning`, in two cell types: samples used and features | the rules of `dream_voom` | 0 differences | 0 | 2 pass |
-| `variance_partitioning`: fractions | `voomWithDreamWeights`, `fitExtractVarPartModel` | 3.4e-8 | 1e-6 | 2 pass |
-| Figures: the variables and their order, the quartiles, whiskers and outliers of the violins, and the segments of the bars, in percent over 100 | `plotVarPart(sortCols())`, `plotPercentBars` | 5.3e-16 | 1e-10 | 3 pass |
-| The violins' half-widths at R's points, relative to the widest | `plotVarPart` | 5.9e-4 | 1e-3 | 1 pass |
-| Designs both refuse: a factor among the fixed effects of a mixed model, and a formula without an intercept | `fitExtractVarPartModel` | 0 differences | 0 | 2 pass |
-| Deliberate differences, listed below | variancePartition | 3 inputs | n/a | 3 deliberate differences |
-
-lme4 runs with Powell's BOBYQA with its trust region shrunk to 1e-10, as in `dream.py`,
-so the fractions at the optimum are compared to the close tier. Differences are taken
-relative to each gene's total variance, the scale of a fraction: lme4 leaves a variance
-component at the boundary at about 1e-16 of the total where CytePool holds it at zero,
-and the two found the same components at zero in every case. At CytePool's estimates,
-lme4 evaluated once and `calcVarPart` give closed forms, compared to the exact tier,
-as are linear models, which have closed forms. The figures are drawn by R from
-CytePool's fractions, so they compare the drawing alone. The violins agree to 1e-3 of
-their widest point: ggplot2 takes R's `density()`, which bins the values on a grid of
-512 points and convolves them by the fast Fourier transform, as its help page
-describes, and differs from the kernel density estimate that CytePool draws by up to
-5.9e-4 here. ggplot2 stacks a segment of no width anywhere in its bar, so only the
-segments with a width are compared by position.
-
-The conventions of variancePartition that its documentation leaves open, found by
-probing it and listed in the documentation of `cytepool.stats.variance_fractions`, are
-exercised here: the variance of a fixed effect is the weighted variance of its fitted
-contribution, with the denominator of a maximum likelihood variance; in a mixed model
-the terms share the variance of all the fitted fixed effects in proportion to their
-own, and in a linear model each term has its own; each gene's precision weights are
-divided by their mean. The two covariates of the second case have a correlation of
--0.13 over its samples, and without the sharing its fractions would differ by up to
-0.034.
-
-Deliberate differences:
-
-- A gene constant within every donor: variancePartition reports the fractions of
-  lme4's fit with a residual variance near zero, a donor fraction of 1.0000; CytePool
-  leaves the gene unfitted, with NaN fractions, as its mixed models have no maximum
-  likelihood estimate for such a gene.
-- REML without random effects: variancePartition fits `lm` and takes the residual sum
-  of squares over n whatever `REML` says, so its fractions do not change; CytePool
-  takes REML's residual variance, over n - p, which changed a fraction by up to 0.052.
-- A cell type with one sample per donor: `voomWithDreamWeights` stops ("Initial model
-  failed"); `variance_partitioning` reports the status `random_effects_not_estimable`
-  and goes on with the other cell types.
-
-## Differential expression on published data
+The script printed 41 checks (17 pass and 24 information) in 15.2 s, with a peak memory
+of 617 MiB. [limma-voom and limma-trend](statistics/limma_voom.md#limma-voom-steps) explains
+what it checks.
 
 [`validation/interferon_stimulated_pbmcs.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/interferon_stimulated_pbmcs.py)
 runs the whole path from cells to differential-expression tables on published
@@ -1849,7 +912,8 @@ numpy 2.5.4 and numba 0.68.0, and scipy 1.18.1 read the count matrices.
 | logFC, AveExpr, t, P.Value, adj.P.Val and B of every gene tested in the 8 cell types | `topTable` | 6.6e-13 | 1e-10 | 8 pass |
 | Per cell type: genes tested and called, the interferon response, the negative control (tables below) | MSigDB, none | n/a | n/a | 24 information |
 
-Differences are scaled as in the section above. The dendritic cells are fitted without
+Differences are scaled as [above](#reading-the-tables), values as statistics and p-values as
+p-values. The dendritic cells are fitted without
 2 of the 16 samples, and the megakaryocytes without 4, among them both samples of donor
 107: that donor's column of the design is then zero, and both programs leave it out of
 the fit.
@@ -1935,7 +999,631 @@ cells. Once the cell-level matrices were released it held 232 MiB, and while
 20 MiB to a process that held the cube; from then to the end, with the negative
 control and the export to R, it held at most 321 MiB. R peaked at 227 MiB.
 
-## Cell-type composition
+(validation-negative-binomial-fits)=
+### Negative binomial models
+
+The script printed 121 checks (78 pass, 30 information and 13 deliberate differences) in
+14.2 s, with a peak memory of 187 MiB. [edgeR and
+DESeq2](statistics/count_models.md#negative-binomial-model) explains what it checks.
+
+[`validation/negative_binomial_fits.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/negative_binomial_fits.py)
+compares `fit_negative_binomial_model` with edgeR's `glmFit`,
+`negative_binomial_deviance` with `nbinomDeviance`, and
+`negative_binomial_unit_deviance` with `nbinomUnitDeviance` and with mpmath, on
+negative binomial counts simulated from fixed seeds: 2,000 genes and 6 to 16 samples in
+15 cases, with genes without counts and groups whose counts are all zero planted in
+most. Six are one-way layouts (two groups, group means with TMM factors, an intercept
+alone, one coefficient per sample, sample weights, and dispersions, offsets and weights
+per observation), which edgeR fits group by group to its last bits. Nine are other
+designs: groups and a covariate with trended dispersions, a paired design with TMM
+factors, dispersions, offsets and weights per observation, sample weights, the Poisson
+model, sparse counts of about one read per gene and sample, a covariate such as a date
+next to an intercept, means near 1e8, and a dispersion of 2e-5. edgeR's fits of these
+stop short of the maximum, so they are compared with the maximum that Newton's method
+with the observed information, written in R for the script, reaches from edgeR's fit,
+and with `mglmLevenberg(tol = 1e-14)`, a check where it converges and information where
+it does not. The unit deviance is compared at 5,373 points, counts and means from 1e-30
+to 1e30 and dispersions from 0 to 1e12, with mpmath at 150 digits. Reference: R 4.4.3,
+edgeR 4.4.0, mpmath 1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| One-way layouts: coefficients and fitted values, shrunk coefficients | `glmFit` | 3.0e-11 | 1e-6 | 12 pass |
+| One-way layouts: deviance, and `nbinomDeviance` at edgeR's fitted values | `glmFit`, `nbinomDeviance` | 2.3e-7 | 1e-6 | 6 pass |
+| Residual df, and fits that did not converge | `glmFit` | 0 | 0 | 15 pass |
+| Other designs: coefficients and fitted values | Newton's method in R | 1.8e-7 | 1e-6 | 9 pass |
+| Other designs where edgeR converges: coefficients and fitted values, shrunk coefficients | `mglmLevenberg(tol = 1e-14)` | 3.1e-7 | 1e-6 | 8 pass |
+| Other designs: deviance at the maximum, and at edgeR's fitted values | `nbinomDeviance` | 3.2e-7 | 1e-6 | 8 pass |
+| Genes whose maximum lies at infinity: fitted values that tend to zero, below 1e-6 in both; the others and the deviance | `mglmLevenberg(tol = 1e-14)` | 3.9e-7, 8.5e-7 | 1e-6 | 15 pass |
+| Unit deviance | mpmath; `nbinomUnitDeviance` where edgeR is accurate | 7.8e-15; 3.0e-7 | 1e-13; 1e-6 | 2 pass |
+| Refused inputs: an aliased column, a zero weight, a negative dispersion | `glmFit` | both raise | n/a | 3 pass |
+| Where edgeR stops short: its distance from the maximum | `glmFit`, `mglmLevenberg` | up to 1.6 for `glmFit` (a date), 2.3e-3 for `mglmLevenberg` | n/a | 19 information |
+| `glmFit` deviances that are not those of its own fitted values | `glmFit`, `nbinomDeviance` | 5 of 2,000 genes, with dispersions and weights per observation | n/a | 9 information |
+| Seconds for 2,000 genes, group means and a paired design | `glmFit` | CytePool 0.007 and 0.059, edgeR 0.008 and 0.062 | n/a | 2 information |
+| Deliberate differences, listed below | `glmFit`, `nbinomDeviance`, `nbinomUnitDeviance` | 9 cases of genes without counts; 2 rows for a dispersion of 2e-5; 2 for edgeR's unit deviance | n/a | 13 deliberate differences |
+
+Coefficients are scaled as statistics are [above](#reading-the-tables), fitted values relative to
+the reference, and deviances relative to the larger of the reference and the number of
+samples. A gene whose maximum lies at infinity has coefficients that depend on where
+each program stops, so for such genes only the fitted values that tend to zero (below
+1e-6 in both programs), the others and the deviance are compared. edgeR's Levenberg
+fits stop up to about 3e-4 from the maximum in `glmFit` (1e-2 with dispersions and
+weights per observation, and 1.6 with a date, where fitted values that should tend to
+zero stay near 1e2), and about 2e-7 in `mglmLevenberg(tol = 1e-14)`, but 2e-3 with
+dispersions and weights per observation, 2e-6 with sparse counts, 1e-5 with a date or
+large counts, and 2e-3 with a dispersion of 2e-5. Deliberate differences:
+
+- A gene without counts, in a design with an intercept: edgeR's Levenberg fit returns
+  NA coefficients; CytePool returns those of the log mean -1e8, as edgeR's one-way fit
+  does, with fitted values and deviance of zero.
+- The deviance is exact. edgeR adds 1e-8 to each count and mean, which lowers the unit
+  deviance of a zero count by up to about 5e-7. Below a dispersion of 1e-4 it
+  approximates the unit deviance, with an error that grows with the dispersion times
+  the mean, from about 1e-6 at 1e-3 to factors from about 1; with the dispersion of
+  2e-5, its deviances, and the fits of genes whose maximum lies at infinity, differ by
+  up to 0.97 and 1.2e-3. From a dispersion times the mean of 1e6 it uses the limit of
+  the gamma distribution, which gives zero counts 1.6 to 2.6 times their deviance.
+
+(validation-quasi-likelihood)=
+### Quasi-likelihood F-tests
+
+The script printed 223 checks (210 pass and 13 deliberate differences) in 5.1 s, with a
+peak memory of 186 MiB. [edgeR and DESeq2](statistics/count_models.md#quasi-likelihood)
+explains what it checks.
+
+[`validation/quasi_likelihood.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/quasi_likelihood.py)
+compares `fit_quasi_likelihood` and `quasi_likelihood_f_test` with edgeR's `glmQLFit`
+and `glmQLFTest` (edgeR 4.4's default, `legacy = FALSE`), `common_dispersion` with
+`estimateGLMCommonDisp` and `dispCoxReid`, `average_log2_cpm` with `aveLogCPM`, and
+`negative_binomial_unit_deviance_moments` with sums at 30 digits in mpmath and the
+gamma limit. The counts are simulated from fixed seeds, with a dispersion for each
+gene, in 14 cases of 1,000 genes and 8 or 9 samples, with genes without counts and
+groups whose counts are all zero planted in most: two groups with TMM factors; three
+groups and a covariate with several contrasts and a joint test; a paired design;
+robust priors with and without genes that have no counts; small counts; a dispersion
+given below the true one, so that the average quasi-dispersion is well above 1; prior
+weights; trended dispersions; no trend; a trend in another covariate; offsets per
+observation; Poisson counts; and a test that both programs refuse. R runs with its
+address space capped at 8 GB. Reference: R 4.4.3, edgeR 4.4.0, limma 3.62.1, mpmath
+1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Share of genes the dispersion comes from | `glmQLFit` | 0 | 0 | 9 pass |
+| NB dispersion | `glmQLFit`; `dispCoxReid(tol = 1e-12)` on the same genes | 8.7e-6; 8.9e-7 (6.5e-6 for designs that are not one-way layouts) | 1e-4; 1e-6 (1e-5) | 18 pass |
+| Common dispersion, with prior weights and a systematic subset | `estimateGLMCommonDisp`; `dispCoxReid(tol = 1e-12)` | 8.1e-6; 4.6e-7 | 1e-4; 1e-6 | 5 pass |
+| Average log CPM in four settings | `aveLogCPM` | 3.3e-12 | 1e-6 | 1 pass |
+| Moments of the unit deviance at 41 points, and at a mean of 1e14 | mpmath at 30 digits; the gamma limit | 1.7e-14 | 1e-11 | 2 pass |
+| Average quasi-dispersion | `glmQLFit` | 2.1e-3 | 1e-2 | 14 pass |
+| Adjusted deviances and residual df | `glmQLFit` | 3.3e-3 | 5e-3 | 14 pass |
+| Prior and posterior quasi-dispersions; prior df | `glmQLFit` | 1.4e-3 where the average quasi-dispersions agree, 5.6e-3 where they differ; 9.8e-3 | 5e-3, 1e-2; 2e-2 | 26 pass |
+| The prior and posterior that `squeeze_variances` gives edgeR's own adjusted deviances | `glmQLFit`, `squeezeVar` | 4.7e-8 | 1e-6 | 13 pass |
+| Leverages, those of fitted values that tend to zero included | `glmQLFit` | 2.8e-7 for one-way layouts at the same working dispersion; 8.7e-5 | 1e-6; 1e-3 | 14 pass |
+| logCPM | `glmQLFTest` | 2.8e-12 at a given dispersion; 2.7e-7 at an estimated one | 1e-6; 1e-5 | 16 pass |
+| logFC | `glmQLFTest` | 4.7e-7 for one-way layouts at the same working dispersion; 2.0e-4 | 1e-6; 1e-3 | 16 pass |
+| Likelihood ratio statistic (F times the posterior quasi-dispersion and its df) | `glmQLFTest` | 8.5e-10 at the same dispersion; 8.9e-6 at dispersions estimated by both; 4.5e-3 where the averages differ | 1e-6; 1e-4; 1e-2 | 16 pass |
+| F; PValue and FDR; df.total | `glmQLFTest`, `topTags` | 2.6e-3; 3.9e-3 of \|log10 p\|; 9.8e-3 | 5e-3; 5e-3; 2e-2 | 45 pass |
+| A test that leaves the null model without a coefficient | `glmQLFTest` | both raise | n/a | 1 pass |
+| Deliberate differences, listed below | `glmQLFit`, `glmQLFTest`, `squeezeVar` | 6 rows of the robust prior with genes without counts; the first gene's logCPM with offsets per observation; 6 rows of edgeR's moments | n/a | 13 deliberate differences |
+
+Three differences set the tolerances, and the script isolates each. edgeR approximates
+the mean and variance of the unit deviance: the scale s implied by its unit matrices
+is off by up to 7.6e-4, 1.2e-3 and 1.3e-2 at dispersions of 0.01, 0.2 and 1, and the
+degrees of freedom k by up to 2.0e-4, 1.3e-4 and 4.0e-3, where CytePool's sums are
+exact. The adjusted deviances, quasi-dispersions and F-statistics therefore agree to
+about 3e-3, the average quasi-dispersion to 2.1e-3, and the prior df, which maximizes
+a likelihood that is flat at large values, to 9.8e-3. The prior and posterior that
+`squeeze_variances` computes from edgeR's own adjusted deviances agree with edgeR's to
+4.7e-8, so the moments are the only cause. Where the average quasi-dispersions differ,
+so do the working dispersions of the fits, and with them the quasi-dispersions,
+leverages, log fold changes and likelihood ratios, by about 1e-4 to 6e-3. edgeR's
+search for the Cox-Reid dispersion stops within its tolerance of 1e-5, and
+`dispCoxReid(tol = 1e-12)` on the same genes agrees with CytePool to 8.9e-7. edgeR's
+Levenberg fits stop short of the maximum (see [Negative binomial models](#validation-negative-binomial-fits)), so log
+fold changes of designs that are not one-way layouts agree to about 2e-4, and their
+fitted values that tend to zero stop between about 1e-8 and 1e-7, far above
+CytePool's; both report the
+leverages of the limit for these. Deliberate differences:
+
+- The robust prior with genes that have no counts: limma counts their missing
+  quasi-dispersions as zero variances in its tests for outliers, which lowers the
+  outlier probabilities of the others and, here, changes which genes are outliers;
+  CytePool tests only the genes with residual degrees of freedom, as its
+  `fit_f_distribution_likelihood` does (see [Empirical Bayes moderation](#validation-empirical-bayes)). Without
+  such genes the two agree.
+- With offsets per observation, edgeR's `aveLogCPM` gives the first gene a value that
+  does not depend on its offsets, minus infinity for a gene without counts. The case
+  gives the first gene no counts, a dispersion and no trend, so that the value enters
+  nothing else, and every other gene is compared.
+- The moments of the unit deviance, as above: CytePool's are exact.
+
+(validation-deseq2-tests)=
+### DESeq2's dispersions and tests
+
+The script printed 45 checks (28 pass, 11 information and 6 deliberate differences) in 2
+min 16 s, with a peak memory of 814 MiB. [edgeR and
+DESeq2](statistics/count_models.md#deseq2) explains what it checks.
+
+[`validation/deseq2_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/deseq2_tests.py)
+compares `deseq2_dispersions`, `fit_deseq2`, `deseq2_wald_test` and
+`deseq2_likelihood_ratio_test` with DESeq2's `estimateDispersions`, `nbinomWaldTest`,
+`nbinomLRT` and `results`, and with PyDESeq2, on negative binomial counts simulated
+from fixed seeds: 600 genes and 4 to 12 samples in 9 cases, with 2% of the genes
+without counts. The cases are two groups; four groups, tested by the likelihood ratio
+test of the factor and by a Wald test of two levels that 15 genes have no counts in;
+two groups and a covariate; a paired design of six donors; small counts; two samples
+per group, which leave two residual degrees of freedom; an outlier sample; dispersions
+that rise with the mean; and nearly Poisson counts, 69% of whose gene-wise estimates
+are at the lower bound. Counts with an outlier in most genes, at a dispersion of 0.05,
+test the rules by which Cook's distance removes p-values under four designs: two groups
+of four, and groups of two and five as a factor, as means without an intercept and as
+a numeric covariate. DESeq2 runs with its defaults, except that it does not replace outlier counts:
+`DESeq(dds, minReplicatesForReplace = Inf)` (the default is 7), with `fitType = "mean"` where its parametric trend
+fails (the small counts and the rising dispersions), and each stage of CytePool is
+compared given DESeq2's own inputs to it: the dispersions with their maxima, found in R
+by the script from a grid of the Cox-Reid adjusted log-likelihood and the root of its
+derivative; the trend and the prior with DESeq2's; the fits with DESeq2's at
+`betaTol = 1e-14`, polished by Newton's method in R; and the tests with `results()` at
+those fits, with its defaults, with `cooksCutoff = 0.5` and without independent
+filtering. Each printed row pools the cases it applies to and names the worst.
+Reference: R 4.4.3, DESeq2 1.46.0, PyDESeq2 0.5.4, mpmath 1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Design matrices; size factors, means and variances of the normalized counts | `model.matrix`; DESeq2 | 0; 5.9e-16 | 0; 1e-10 | 2 pass |
+| Means of the likelihood | `estimateDispersionsGeneEst`; for the covariate and paired designs, DESeq2's fit at the rough dispersions, polished | 3.6e-14 | 1e-6 | 1 pass |
+| Gene-wise dispersions of at least 1e-6 | maxima in R | 3.8e-9 | 1e-6 | 1 pass |
+| Gene-wise dispersions below 1e-6 (49 genes), and genes whose rough dispersion is at the lower bound (1,935), which keep 1e-8 as in DESeq2 | maxima in R; DESeq2 | 0 genes differ | 0 | 2 pass |
+| The parametric trend from DESeq2's gene-wise estimates (7 cases); its failure where DESeq2's fails, and the mean trend there (2 cases) | DESeq2 | 1.4e-15; 0 cases differ; 0 | 1e-10; 0; 1e-10 | 3 pass |
+| Variance of the log residuals, and of the prior with more than three residual degrees of freedom | DESeq2 | 1.3e-16 | 1e-10 | 2 pass |
+| Variance of the prior with two residual degrees of freedom, maximum likelihood | integration on a grid | 2.3e-8 | 1e-6 | 1 pass |
+| Maximum a posteriori dispersions | maxima in R | 2.5e-12 | 1e-6 | 1 pass |
+| Dispersion outliers (33 genes), and the final dispersions they choose | DESeq2 | 0 genes differ | 0 | 1 pass |
+| Coefficients and standard errors | DESeq2 at `betaTol = 1e-14`, polished in R | 3.2e-15 | 1e-6 | 1 pass |
+| Deviances | DESeq2 at `betaTol = 1e-14` | 1.2e-11 | 1e-9 | 1 pass |
+| Fitted values, hat values, Cook's distances; the log2 fold changes and standard errors of every test | DESeq2 at `betaTol = 1e-14` | 2.2e-6; 1.4e-6 | 1e-5 | 2 pass |
+| Wald tests (9): statistics, p-values, adjusted p-values | `results()` at `betaTol = 1e-14` | 1.8e-6 | 1e-5 | 1 pass |
+| Likelihood ratio tests (3): statistics, p-values, adjusted p-values | `results()` at `betaTol = 1e-14` | 3.2e-11 | 1e-9 | 1 pass |
+| Genes flagged by Cook's distance (27 genes), filtered out, and the filter's quantile, in every test; genes flagged at `cooksCutoff = 0.5` (862), and the adjusted p-values there and without independent filtering | `results()` at `betaTol = 1e-14` | 0 differences; 1.9e-6 | 0; 1e-5 | 3 pass |
+| Independent filtering on 20 statistics, some of whose curves of rejections reach the fallbacks to 90% and 80% of their fitted maximum | `results(filter = ...)` | 0 | 0; 1e-10 | 2 pass |
+| Cook's distances at given dispersions under four designs: genes flagged (79 genes, 9 more above the cutoff but spared in a comparison of two groups), and the largest distances | DESeq2 at `betaTol = 1e-14` | 0 genes differ; 4.0e-14 | 0; 1e-5 | 2 pass |
+| Derivative in log(alpha) of a count's log-likelihood, 192 points | mpmath, 50 digits | 2.7e-15 | 1e-12 | 1 pass |
+| DESeq2's line searches, its fits at its defaults, its means of the likelihood for the covariate and paired designs, its trend where the parametric fit fails, and its prior with two residual degrees of freedom | DESeq2 defaults | listed below | bounds listed below | 6 deliberate differences |
+| Genes spared in a comparison of two groups; DESeq2's coefficients at `betaTol = 1e-14`, from the polished fits; the largest differences of DESeq2's gene-wise line searches | DESeq2 | 9 genes; up to 1.5e-6; up to 13 on the log scale | n/a | 3 information |
+| The analysis from the counts: final dispersions, p-values, statistics, genes called | DESeq2 defaults | medians 1.2e-3 to 3.8e-2 (dispersions, log scale) and 3.0e-4 to 7.6e-3 (p-values); 7 of 1,297 genes called differently at 0.1 | n/a | 4 information |
+| The analysis from the counts | PyDESeq2 | medians up to 5.8e-7 (gene-wise dispersions, log scale), 4.7e-5 to 0.21 (final dispersions) and 1.7e-5 to 4.2e-2 (p-values); 5 of 281 genes called differently | n/a | 4 information |
+
+Dispersions are compared relative to the reference, coefficients and statistics are
+scaled as statistics are [above](#reading-the-tables), Cook's and hat values relative
+to the larger of the reference and 1, as only values near the cutoff matter, and
+p-values are compared on the log scale, relative to max(\|log p\|, 1), as an error e
+in a statistic z moves log p by about z^2 e. Below a
+gene-wise dispersion of 1e-6 the adjusted likelihood is flat in the log dispersion,
+whose derivative is proportional to the dispersion, so there the check is that both
+sides place the gene below 1e-6. DESeq2 stops its fits when the deviance changes by
+less than `betaTol` of it; for genes of large dispersion, where its Fisher scoring
+converges slowly, its coefficients are then up to 1.5e-6 from the fixed point even at
+`betaTol = 1e-14` (an information row), which bounds the tolerance of what is computed
+from them, but for the deviances and the likelihood ratio statistics, which are
+stationary there. Rows that count genes fail when they cover none. Deliberate
+differences, each within a bound that the script checks:
+
+- DESeq2 maximizes the dispersions by a line search that stops when an iteration gains
+  less than 1e-6, and that can stall where it starts, returning its starting value:
+  its gene-wise estimates are a median of up to 5.5e-5 from the maximum on the log
+  scale (bound 1e-3), and up to 13 in a few genes, and its maximum a posteriori
+  estimates up to 7.7e-3 from theirs, relative (bound 0.1). CytePool computes the
+  maxima. A gene whose rough dispersion is at the lower bound keeps it, as in DESeq2,
+  even where the maximum lies far above.
+- DESeq2's fits at its defaults stop up to 1.9e-3 from the fixed point (log2
+  coefficients, scaled as statistics; bound 1e-2), and its means of the
+  likelihood for designs that are not one-way layouts, from such a fit at the rough
+  dispersions, up to 7.5e-4 (bound 1e-2). CytePool's fits converge.
+- Where DESeq2's parametric trend fails, for the small counts and the rising
+  dispersions, DESeq2 substitutes a local regression, which CytePool does not have;
+  CytePool uses the mean trend, with a warning. From DESeq2's gene-wise estimates,
+  CytePool's parametric trend fails where DESeq2's does and agrees with it to rounding
+  where it does not: each gamma fit is R's `glm()` iteration, and the genes fitted are
+  those whose gene-wise estimate is above 1e-6, as in DESeq2, which the nearly Poisson
+  counts test.
+- With two residual degrees of freedom DESeq2 matches densities of simulated
+  residuals over a grid, and CytePool maximizes the likelihood of the same model:
+  9.5% apart here (bound 0.2).
+
+From the counts, the final dispersions differ from DESeq2's by a median of 1.2e-3 to
+3.8e-2 on the log scale (the largest with two residual degrees of freedom, from the
+prior), p-values by a median of 3.0e-4 to 7.6e-3, relative, and statistics by up to
+3.4e-2 relative, 7 of 1,297 genes being called differently at a false discovery rate
+of 0.1. PyDESeq2's gene-wise dispersions agree with CytePool's to medians of up to
+5.8e-7 on the log scale; its final dispersions differ by medians of 4.7e-5 to 0.21, the
+largest for the small counts, where DESeq2's and CytePool's trend is the mean of the
+gene-wise estimates.
+
+(validation-mixed-models)=
+### Mixed models
+
+The script printed 135 checks (102 pass, 29 information and 4 deliberate differences) in
+5 min 28 s, with a peak memory of 330 MiB. [Mixed models and
+dream](statistics/mixed_models.md#mixed-model-reml) explains what it checks.
+
+[`validation/mixed_models.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/mixed_models.py)
+compares `fit_mixed_model` with lme4's `lmer` (REML) and `fixed_effect_tests` with
+lmerTest's Satterthwaite t-tests (`summary` for every coefficient, `contest1D` for a
+contrast), gene by gene, in 9 cases from fixed seeds: one random intercept (8 donors x
+3 samples, a condition within donors and an age per donor); unbalanced groups (12
+donors with 1 to 6 samples); two crossed random intercepts (10 donors x 4 samples over
+5 batches); two nested random intercepts (`(1 | donor/sample)`, 6 donors x 3 samples x
+2 replicates, with sample labels that repeat across donors); a design simulated
+without donor variance, so that most fits lie on the boundary; observation weights
+like voom's, with one and with two random intercepts; the crossed design with random
+intercepts up to 30 times the residual standard deviation; and 2,000 genes of 16
+donors x 4 samples with observation weights. The other cases have 100 genes each. The
+standard deviation of each random intercept is drawn per gene, and is zero for a fifth
+of the genes. Reference: R 4.4.3, lme4 2.0.6, lmerTest 3.2.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| REML criterion at the optimum | lme4 `REMLcrit` | 3.1e-13 | 1e-10 | 9 pass |
+| Genes whose criterion is above lme4's by more than 1e-10, relative | lme4 `REMLcrit` | 0 genes | 0 | 9 pass |
+| Coefficients, relative to the larger of their absolute value and standard error, and standard errors | lme4 `fixef`, `vcov` | 2.3e-7 | 1e-6 | 8 pass |
+| Variance components, relative to the larger of themselves and the residual variance, and the residual variance | lme4 `VarCorr`, `sigma` | 1.7e-7 | 1e-6 | 8 pass |
+| The same two families where the variance ratios are large | lme4 `fixef`, `vcov`, `VarCorr`, `sigma` | 1.1e-6 and 2.3e-6 | 1e-5 | 2 pass |
+| The theta of the gene with large ratios that differs most from lme4 | the optimum with 30 digits (mpmath) | 3.4e-13 | 1e-10 | 1 pass |
+| Genes where lme4 puts a variance at zero and CytePool does not | lme4 `getME(fit, "theta")` | 0 genes | 0 | 9 pass |
+| REML criterion at CytePool's estimates | lme4 `REMLcrit` | 3.6e-13 | 1e-10 | 9 pass |
+| Coefficients, standard errors and t-statistics (relative to max(\|t\|, 1)) at CytePool's estimates | lme4 `fixef`, `vcov`; lmerTest `summary` | 1.6e-11 | 1e-10 | 9 pass |
+| Satterthwaite df at CytePool's estimates | lmerTest `summary` | 1.3e-6 | 1e-5 | 9 pass |
+| p-values at CytePool's estimates | lmerTest `summary` | 7.3e-7 | 1e-5 | 9 pass |
+| A contrast: estimate, standard error and t-statistic | lmerTest `contest1D` | 1.6e-11 | 1e-10 | 9 pass |
+| A contrast: df and p-value | lmerTest `contest1D` | 6.6e-7 | 1e-5 | 9 pass |
+| df of the genes that differ most from lmerTest, with one and with two random intercepts | the definition with 30 digits (mpmath) | 9.7e-16 and 2.2e-11 | 1e-10 | 2 pass |
+| Fits with a variance at zero; Newton iterations; lme4's largest theta where CytePool's variance is zero | CytePool; lme4 `getME` | 12% to 54% of the genes of a case; 3.4 to 6.6 on average, at most 9; 4.4e-7 | n/a | 9 information |
+| Satterthwaite df at lme4's own optimum | lmerTest `summary` | 3.5e-6 | n/a | 9 information |
+| lme4 with its default tolerances: variance components; df | lme4 `VarCorr`; lmerTest `summary` | 1.0e-3; 8.5e-4 | n/a | 8 information |
+| lmerTest's df and lme4's theta at the genes checked with 30 digits | the definition with 30 digits (mpmath) | 1.3e-6 and 4.9e-7; 1.3e-6 | n/a | 3 information |
+| Deliberate differences, listed below | lme4 `lmer` | 3 inputs lme4 fits and CytePool refuses, 1 that lme4 fits with a warning and CytePool leaves unfitted | n/a | 4 deliberate differences |
+
+The script keeps two questions apart. The optimum is compared with lme4 fitted from its
+own start, with the tolerances of its default optimizer (BOBYQA from nloptr) tightened
+to `xtol_abs = xtol_rel = 1e-14` and `ftol_abs = ftol_rel = 1e-16`; with
+`xtol_abs = 1e-12` and `ftol_abs = 1e-14` alone, some of lme4's fits stopped with a
+criterion 3e-7 above the minimum. The computations at given estimates are compared
+with lme4 and lmerTest evaluated once at CytePool's estimates, which the script passes
+as lme4's starting values with a single evaluation allowed (`maxeval = 1`, and
+`restart_edge = FALSE` so that a variance of zero stays zero). There the criterion,
+the coefficients, their standard errors and the t-statistics are closed forms, while
+lmerTest computes Satterthwaite's degrees of freedom from numerical derivatives.
+p-values are scaled as [above](#reading-the-tables).
+
+Two bounds are looser than the tiers. The REML deviance computed with 30 significant
+digits (mpmath, from dense matrices) shows which program is exact in each:
+
+- Satterthwaite's degrees of freedom and the p-values that use them, 1e-5. lmerTest
+  differentiates the deviance numerically in theta, on which it depends only through
+  theta^2, so at an interior optimum its curvature in theta is about 4 theta^2 times
+  that in theta^2, and the numerical Hessian loses relative precision like 1 / theta^2
+  where a variance is small. At the genes whose df differ most from lmerTest's, with
+  one and with two random intercepts, CytePool's df agree with the definition to
+  9.7e-16 and 2.2e-11, and lmerTest's to 1.3e-6 and 4.9e-7. The second gene has large
+  variance ratios, where CytePool's factorization of the second grouping factor loses
+  digits (see the module's documentation).
+- The estimates against lme4's own optimum where the variance ratios are large, 1e-5.
+  There the criterion is nearly flat in theta, and lme4's optimizer, which stops on
+  changes in the criterion, places theta to about 1e-6 only: at the gene that differs
+  most, CytePool's theta agree with the optimum computed with 30 digits to 3.4e-13,
+  and lme4's to 1.3e-6.
+
+The information rows count the fits with a variance at zero, which `fit_mixed_model`
+reports in `boundary` and lme4 approaches without always reaching (its theta there was
+at most 4.4e-7), and the Newton iterations per fit. They also give the df at lme4's
+own optimum, which inherit its precision where a variance is small, and the fits of
+lme4 with its default tolerances, whose variance components were up to 1.0e-3 of the
+residual variance from the optimum and whose df up to 8.5e-4 from those at the
+optimum.
+
+Deliberate differences:
+
+- A zero weight is refused, as is any weight that is negative or not finite. lme4
+  fits the data, and its REML criterion is then infinite.
+- A missing value is refused: this version fits complete data only. lme4 drops the
+  sample (its default `na.action`), here fitting 23 of 24 samples.
+- Values constant within every donor, which the fixed and random effects reproduce
+  exactly, have no REML optimum: the criterion decreases without bound as the
+  residual variance goes to zero. `fit_mixed_model` returns such a feature unfitted
+  (NaN, not converged). lme4 warns that the model failed to converge or is nearly
+  unidentifiable, and returns a residual standard deviation of 1.1e-5 times that of
+  the values.
+- A design whose fixed and random effects together span every sample (6 samples, 3
+  donors and 3 batches in a cycle, and a covariate) reproduces every feature
+  exactly, and `fit_mixed_model` refuses it. Its criterion can nonetheless have a
+  minimum, and lme4 fits it (REML criterion 14.62).
+
+With `--benchmark`, the script times both packages on 20,000 genes x 120 samples; see
+[](#validation-timings).
+
+(validation-kenward-roger-and-f-tests)=
+### Kenward-Roger's tests and F-tests
+
+The script printed 143 checks (115 pass, 16 information and 12 deliberate differences)
+in 3 min 59 s, with a peak memory of 390 MiB. [Mixed models and
+dream](statistics/mixed_models.md#kenward-roger) explains what it checks.
+
+[`validation/kenward_roger_and_f_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/kenward_roger_and_f_tests.py)
+compares `fixed_effect_tests(df_method="kenward_roger")` with lmerTest's `summary` and
+`contest1D` (`ddf = "Kenward-Roger"`) and pbkrtest's `vcovAdj`, and
+`fixed_effect_f_test` with pbkrtest's `KRmodcomp` and lmerTest's `contestMD` (by
+Kenward-Roger and by Satterthwaite), gene by gene, in 9 cases of 24 genes from fixed
+seeds: a time course of three time points within 6 donors with an age per donor, with
+the F-tests of two contrasts and of three that span two dimensions; unbalanced donors
+with 1 to 5 samples; crossed donor and batch intercepts; nested intercepts
+(`(1 | donor/sample)`); a design simulated without donor variance, so that 15 of the 24
+fits lie on the boundary; and observation weights like voom's, with one and with two
+random intercepts, each taken both ways: every observation at the average weight,
+against lme4 fits whose weights are divided by their mean, as dream fits them, and the
+precision weights, against pbkrtest on the same model without weights, its values,
+fixed effects and random effects multiplied by the square roots of the weights, which is
+the weighted model. It then compares dream with variancePartition's `dream` with
+`ddf = "Kenward-Roger"`, `"adaptive"` and `"Satterthwaite"`, `eBayes` and `topTable`,
+on negative binomial counts of 40 genes in studies of 12, 18, 19, 20 and 24 samples (a
+time course of three time points and an age), including `topTable`'s F-test of time,
+and `dream_voom` with its defaults on two cubes: cell types left with 12 and with 24
+samples, and one of 15 samples whose age, 32 years on average and about 1 apart, makes
+the adjusted covariance matrices ill conditioned. Reference: R 4.4.3, variancePartition
+1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3 and minqa 1.2.8.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Adjusted covariance matrix of the coefficients, relative to each gene's largest entry | pbkrtest `vcovAdj` | 1.4e-13 | 1e-10 | 9 pass |
+| Kenward-Roger t-tests of every coefficient and a contrast: estimates (relative to the larger of their absolute value and standard error), standard errors and t-statistics (relative to max(\|t\|, 1)) | lmerTest `summary`, `contest1D` | 1.7e-12 | 1e-10 | 9 pass |
+| Their df and p-values | lmerTest `summary`, `contest1D` | 1.8e-12 | 1e-10 | 9 pass |
+| Kenward-Roger F-tests: F, numerator and denominator df, scaling and p-value, and lmerTest's F and df | pbkrtest `KRmodcomp`, lmerTest `contestMD` | 8.2e-13 | 1e-10 | 13 pass |
+| Satterthwaite F-statistics | lmerTest `contestMD` | 8.2e-13 | 1e-10 | 13 pass |
+| Satterthwaite F-tests: denominator df and p-values | lmerTest `contestMD` | 1.9e-7 | 1e-5 | 13 pass |
+| Kenward-Roger standard errors and df at lme4's own optimum | lmerTest `summary` | 1.2e-7 | 1e-6 | 9 pass |
+| dream: precision weights | `voomWithDreamWeights` | 2.1e-8 | 1e-6 | 5 pass |
+| dream with each `ddf`: standard errors and df of the tests | `dream` | 8.0e-8 | 1e-6 | 9 pass |
+| Moderated t-statistics, B-statistics and z-statistics (relative to max(\|x\|, 1)), total df and p-values | `eBayes`, `topTable` | 5.0e-8 | 1e-6 | 9 pass |
+| Moderated F-statistics of time | `topTable` | 4.1e-8 | 1e-6 | 11 pass |
+| `dream_voom`: samples used and features tested | the rules of `dream_voom` | 0 differences | 0 | 3 pass |
+| `dream_voom` with its defaults: t, B and z-statistics, df and p-values of every contrast | `dream`, `eBayes`, `topTable` | 3.3e-7 | 1e-6 | 3 pass |
+| Fits with a variance at zero; the two treatments of the weights; the default against Satterthwaite's method | CytePool | below | n/a | 16 information |
+| Deliberate differences, listed below | variancePartition | 12 inputs | n/a | 12 deliberate differences |
+
+At CytePool's estimates, which the script passes to lme4 as starting values with one
+evaluation allowed, as for [mixed models](#validation-mixed-models), pbkrtest computes
+Kenward-Roger's quantities from dense matrices without numerical derivatives, so
+they are compared to the exact tier; lmerTest's Satterthwaite F-tests differentiate the
+deviance numerically, compared to 1e-5. At lme4's own optimum, with Powell's BOBYQA and
+its trust region shrunk to 1e-10 as in the section on dream, and in dream's fits, which
+the script runs with that optimizer, the estimates agree to the close tier. P-values are
+scaled as [above](#reading-the-tables).
+
+The checks confirm what probing pbkrtest, lmerTest and variancePartition as black boxes
+found, and the documentation of `cytepool.stats.mixed_models` and
+`cytepool.stats.dream` lists: pbkrtest takes the inverse of the expected information
+of REML, includes a variance component estimated at zero, which 15 fits of the
+boundary case have, and builds the covariance matrix of the observations without lme4's
+prior weights while it takes the covariance matrix of the coefficients from the
+weighted fit; lmerTest's `contest1D` and `summary` use the adjusted standard errors with
+pbkrtest's degrees of freedom; `dream` uses Kenward-Roger's method with the adjusted
+standard errors for 19 samples and Satterthwaite's for 20 under `ddf = "adaptive"`, and
+`topTable`'s F-statistic is limma's, from the moderated t-statistics and each gene's
+covariance matrix of the coefficients, the adjusted one under Kenward-Roger's
+method. In the ill-conditioned cell type `dream` tested 24 genes by Satterthwaite's
+method because R's estimate of the condition number of their adjusted covariance
+exceeded 1e6, and `dream_voom` the same 24, from the exact condition number.
+
+The information rows give the size of the two treatments of the weights. Against the
+precision weights, every observation at the average weight gave standard errors 0.976
+times as large at the median (0.51 to 1.05) and df 0.91 times (0.26 to 3.7) with one
+random intercept, and 0.977 (0.81 to 1.02) and 0.89 (0.27 to 3.4) with two; its standard
+errors were below the unadjusted ones for 61% and 33% of the genes, the precision
+weights' for none. And they give how dream's default changes the results of small
+studies against Satterthwaite's method, with which `dream_voom` tested them before:
+with 12 samples, p-values 1.12 times as large at the median (0.97 to 1.66 for 90% of the
+genes), with standard errors 1.06 times as large at the median and smaller for 20% of
+the genes; with 18 samples, 1.00 (0.91 to 1.07), and standard errors 1.00, smaller for
+48%; in the cube's cell type with 12 samples, 0.99 (0.73 to 1.12), with as many genes
+below an adjusted p-value of 0.05 (12) as before.
+
+Deliberate differences:
+
+- The p-values of `topTable`'s F-tests: dream computes those of every gene on the total
+  degrees of freedom of the first gene for the first coefficient listed, which the
+  script reproduces to 3e-14 in the 11 F-tests; CytePool gives each gene its own (see
+  `cytepool.stats.dream`). Its p-values were 0.14 to 11.5 times dream's.
+- Which genes fall back to Satterthwaite's method: dream decides from R's estimate of
+  the condition number (`kappa`), CytePool from the exact one; they can differ within
+  about 2% of 1e6. Here they decided alike for every gene tested, and the tests agree
+  to 3.3e-7.
+
+dream also computes `F.std` with the number of coefficients where they are linearly
+dependent, and CytePool with their rank, the numerator degrees of freedom of the F-test;
+the F-tests here have independent coefficients.
+
+(validation-dream)=
+### dream's weights, fits and tests
+
+The script printed 63 checks (53 pass, 5 information and 5 deliberate differences) in
+30.5 s, with a peak memory of 390 MiB. [Mixed models and
+dream](statistics/mixed_models.md#dream) explains what it checks.
+
+[`validation/dream.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dream.py)
+compares `voom_with_dream_weights`, `moderated_fixed_effect_tests` and `dream_voom`,
+and the maximum likelihood fits, fitted values and approximate residual degrees of
+freedom of `fit_mixed_model` they come from, with variancePartition's
+`voomWithDreamWeights`, `dream(ddf = "Satterthwaite")`, `eBayes` and `topTable`
+(`dream_voom` with `df_method="satterthwaite"`; [Kenward-Roger's tests and
+F-tests](#validation-kenward-roger-and-f-tests) checks its default, the other choices of degrees of freedom and the F-tests), on
+negative binomial counts of 60 genes from fixed seeds (20261025 to 20261029): a random
+donor intercept with a condition, an age and the contrast `conditionstim - age` (10
+donors x 3 samples, with two hypervariable genes), moderated also with `robust = TRUE`
+and `trend = TRUE`; crossed donor and batch intercepts (8 donors x 4 samples over 3
+batches) with sample prior weights; unbalanced donors with 1 to 4 samples, with prior
+weights for every observation; and `dream_voom` on three cell types of a cube of 8
+donors x 2 conditions, with prior weights from the numbers of cells, the samples with
+fewer than 10 cells left out (both samples of a donor and one of another in one cell
+type, and all but one sample of each of three donors in the third), and the moderation
+also with `trend = TRUE`. Reference: R 4.4.3, variancePartition 1.36.2,
+limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3, Matrix 1.7-4, RcppEigen
+0.3.4.0.2 and minqa 1.2.8. dream is compared on lme4 1.1-38, while the
+[mixed models](#validation-mixed-models) are compared on lme4 2.0.6: variancePartition 1.36.2's
+`dream` fails for every gene with lme4 2.0, which reworked lme4's random-effect terms.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Precision weights and the square roots of the residual SDs in the trend; with prior weights for samples or observations, also the trend's weights alone | `voomWithDreamWeights` | 2.1e-8 | 1e-6 | 3 pass |
+| Coefficients and a contrast, relative to the larger of their absolute value and standard error, and standard errors | `dream` | 6.2e-8 | 1e-6 | 3 pass |
+| Satterthwaite df | `dream` | 2.2e-7 | 1e-5 | 3 pass |
+| Residual SD of an observation of average weight, and approximate residual df | `dream` `sigma`, `rdf` | 2.8e-8 | 1e-6 | 3 pass |
+| Prior df and variance, posterior variances (constant, robust and trend priors) | `eBayes` | 1.6e-8 | 1e-6 | 5 pass |
+| Moderated t-statistics and B-statistics, relative to max(\|x\|, 1) | `eBayes` | 1.2e-7 | 1e-6 | 5 pass |
+| Total df, p-values, adjusted p-values and z-statistics | `eBayes`, `topTable` | 7.9e-8 | 1e-5 | 5 pass |
+| Maximum likelihood and REML at CytePool's estimates: log-likelihood, residual variance, approximate residual df, and fitted values relative to their largest value | lme4 `logLik`, `sigma`, `fitted`; `rdf.merMod` | 5.9e-15 | 1e-10 | 4 pass |
+| Satterthwaite df there, of maximum likelihood and REML fits | lmerTest `summary` | 5.8e-7 | 1e-5 | 4 pass |
+| Maximum likelihood optimum: log-likelihood and residual variance | lme4 `logLik`, `sigma` | 2.5e-8 | 1e-6 | 2 pass |
+| Genes whose log-likelihood is below lme4's maximum by more than 1e-10, relative | lme4 `logLik` | 0 genes | 0 | 2 pass |
+| `dream_voom`, in two cell types: samples used and features tested | the rules of `limma_voom` | 0 differences | 0 | 2 pass |
+| `dream_voom`, with constant and trend priors: logFC and AveExpr | `topTable` | 1.5e-8 | 1e-6 | 4 pass |
+| `dream_voom`: t and B | `eBayes` | 2.7e-8 | 1e-6 | 4 pass |
+| `dream_voom`: df, P.Value, adj.P.Val and z.std | `eBayes`, `topTable` | 1.1e-7 | 1e-5 | 4 pass |
+| Prior df (median and smallest) and the estimator of the prior | CytePool | 8.4 to 15.2; robust 5.7 to 12.0; likelihood | n/a | 5 information |
+| Deliberate differences, listed below | variancePartition | 5 inputs | n/a | 5 deliberate differences |
+
+variancePartition fits every gene with lme4, whose optimizer stops at about 1e-6 of
+the optimum with its default tolerances. The script runs it with Powell's BOBYQA from
+minqa (lme4's `"bobyqa"`) with the trust region shrunk to 1e-10, which lme4's
+`optimizer` argument accepts by name as a function that reports convergence: at such
+tolerances lme4 warns for some genes, and variancePartition turns the warning into an
+error and drops the gene. BOBYQA from nloptr at tolerances near machine precision
+ended at worse points inside `voomWithDreamWeights` for crossed random effects, so it
+is not used. Estimates are then compared to the close tier, and Satterthwaite's
+degrees of freedom, with the p-values and z-statistics that use them, to 1e-5, as in
+the section on mixed models: lmerTest differentiates the deviance numerically. At
+CytePool's estimates, lme4 evaluated once (`maxeval = 1`) gives closed forms, compared
+to the exact tier. P-values are scaled as [above](#reading-the-tables). In the cube the features tested and the TMM factors are CytePool's
+(`filter_by_expression` and `tmm_factors`, which [Normalization and
+filtering](#validation-normalization) checks against edgeR), passed to R with the samples kept by the rule of `limma_voom`; R gets the
+effective library sizes and the numbers of cells as prior weights, with
+`rescaleWeightsAfter = TRUE`.
+
+The conventions of variancePartition that its documentation leaves open, found by
+probing it and listed in the documentation of `cytepool.stats.dream`, are all exercised
+here: `voomWithDreamWeights` fits the mixed models by maximum likelihood and reads the
+trend at the fitted values with the predicted random effects; it divides each gene's
+prior weights by their mean, and by default returns the trend's weights alone; `dream`
+fits each gene with its weights divided by their mean, so that `sigma` is the residual
+standard deviation of an observation of average weight; `eBayes` moderates these
+variances on `rdf` with limma's default estimator (here the likelihood estimator, as
+the `rdf` differ), and the p-values use Satterthwaite's df plus the prior's, without
+limma's cap. With `robust = TRUE` the two hypervariable genes got prior df of 5.7,
+against 12.0 for the others.
+
+Deliberate differences:
+
+- The default span: `voom_with_dream_weights` chooses it from the number of genes, as
+  `voom` does (0.959 for 60 genes), and `voomWithDreamWeights` uses 0.5; with the
+  defaults, the weights differ by up to 26%. `span=0.5` reproduces variancePartition.
+- A z-statistic beyond p = 1e-300: `topTable` computes `z.std` from the p-value
+  floored at 1e-300, so it gives -37.07 for a contrast scaled up 1e13 times, where
+  CytePool's z-statistic, from the logarithm of the tail probability, is -44.59.
+- A gene that the fixed and random effects reproduce, constant within every donor:
+  `voomWithDreamWeights` keeps it in the trend with the square root of a residual SD
+  of 3.7e-4, and `dream` keeps it; CytePool leaves it out of the trend and returns its
+  tests as NaN.
+- A design without random effects: `dream` fits it with `lmFit` (class `MArrayLM`);
+  `dream_voom` refuses it and points to `limma_voom`.
+- A cell type left with one sample per donor: `voomWithDreamWeights` stops ("Initial
+  model failed"); `dream_voom` reports the status `random_effects_not_estimable` and
+  goes on with the other cell types.
+- The degrees of freedom of `topTable`'s F-tests, and the condition number that decides
+  which genes fall back to Satterthwaite's method: [Kenward-Roger's tests and
+  F-tests](#validation-kenward-roger-and-f-tests) checks both.
+
+(validation-variance-partitioning)=
+### Variance partitioning
+
+The script printed 31 checks (22 pass, 6 information and 3 deliberate differences) in
+63.1 s, with a peak memory of 394 MiB. [Mixed models and
+dream](statistics/mixed_models.md#variance-fractions) explains what it checks.
+
+[`validation/variance_partitioning.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/variance_partitioning.py)
+compares `variance_fractions` and `variance_partitioning`, and the figures
+`plot_variance_fractions` and `plot_feature_variance_fractions`, with variancePartition's
+`fitExtractVarPartModel`, `calcVarPart`, `plotVarPart` and `plotPercentBars`, on data
+from fixed seeds (20261101 to 20261108), 60 genes each: one random donor intercept (10
+donors x 3 samples, a fifth of the genes without a donor effect); random donor, batch
+and condition intercepts with a donor's age and a sample's RNA integrity as fixed
+effects and precision weights for every observation (8 donors x 4 samples), also
+fitted by REML; unbalanced donors with 1 to 4 samples and sample weights; nested
+donor and tissue intercepts (6 donors x 2 tissues x 2 replicates); a linear model of
+the age, the RNA integrity, the batch and the condition with the same weights (which
+variancePartition fits with `lm`); negative binomial counts of 80 genes with the
+weights of `voomWithDreamWeights(span = 0.5)`; and `variance_partitioning` on three
+cell types of a cube of 8 donors x 2 conditions, with prior weights from the numbers
+of cells, three samples left out of one cell type for having fewer than 10 cells, and
+one sample per donor in the third. Reference: R 4.4.3, variancePartition 1.36.2,
+lme4 1.1-38, minqa 1.2.8 and ggplot2 4.0.3, in the R environment of `dream.py`.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Fractions and variances at the optimum, relative to the gene's total variance: one, several, unbalanced and nested random effects, and voom's weights | `fitExtractVarPartModel`, `calcVarPart` | 4.4e-8 | 1e-6 | 5 pass |
+| The same, fitted by REML | `fitExtractVarPartModel(REML = TRUE)` | 2.0e-7 | 1e-6 | 1 pass |
+| A linear model with factors and observation weights | `fitExtractVarPartModel` (`lm`) | 3.8e-15 | 1e-10 | 1 pass |
+| Variances at CytePool's estimates | lme4 (`maxeval = 1`), `calcVarPart` | 1.9e-13 | 1e-10 | 5 pass |
+| Random effects estimated at zero: CytePool's exact zeros and lme4's below 1e-10 | `fitExtractVarPartModel` | equal in every case (19 to 91) | n/a | 6 information |
+| `variance_partitioning`, in two cell types: samples used and features | the rules of `dream_voom` | 0 differences | 0 | 2 pass |
+| `variance_partitioning`: fractions | `voomWithDreamWeights`, `fitExtractVarPartModel` | 3.4e-8 | 1e-6 | 2 pass |
+| Figures: the variables and their order, the quartiles, whiskers and outliers of the violins, and the segments of the bars, in percent over 100 | `plotVarPart(sortCols())`, `plotPercentBars` | 5.3e-16 | 1e-10 | 3 pass |
+| The violins' half-widths at R's points, relative to the widest | `plotVarPart` | 5.9e-4 | 1e-3 | 1 pass |
+| Designs both refuse: a factor among the fixed effects of a mixed model, and a formula without an intercept | `fitExtractVarPartModel` | 0 differences | 0 | 2 pass |
+| Deliberate differences, listed below | variancePartition | 3 inputs | n/a | 3 deliberate differences |
+
+lme4 runs with Powell's BOBYQA with its trust region shrunk to 1e-10, as in `dream.py`,
+so the fractions at the optimum are compared to the close tier. Differences are taken
+relative to each gene's total variance, the scale of a fraction: lme4 leaves a variance
+component at the boundary at about 1e-16 of the total where CytePool holds it at zero,
+and the two found the same components at zero in every case. At CytePool's estimates,
+lme4 evaluated once and `calcVarPart` give closed forms, compared to the exact tier,
+as are linear models, which have closed forms. The figures are drawn by R from
+CytePool's fractions, so they compare the drawing alone. The violins agree to 1e-3 of
+their widest point: ggplot2 takes R's `density()`, which bins the values on a grid of
+512 points and convolves them by the fast Fourier transform, as its help page
+describes, and differs from the kernel density estimate that CytePool draws by up to
+5.9e-4 here. ggplot2 stacks a segment of no width anywhere in its bar, so only the
+segments with a width are compared by position.
+
+The conventions of variancePartition that its documentation leaves open, found by
+probing it and listed in the documentation of `cytepool.stats.variance_fractions`, are
+exercised here: the variance of a fixed effect is the weighted variance of its fitted
+contribution, with the denominator of a maximum likelihood variance; in a mixed model
+the terms share the variance of all the fitted fixed effects in proportion to their
+own, and in a linear model each term has its own; each gene's precision weights are
+divided by their mean. The two covariates of the second case have a correlation of
+-0.13 over its samples, and without the sharing its fractions would differ by up to
+0.034.
+
+Deliberate differences:
+
+- A gene constant within every donor: variancePartition reports the fractions of
+  lme4's fit with a residual variance near zero, a donor fraction of 1.0000; CytePool
+  leaves the gene unfitted, with NaN fractions, as its mixed models have no maximum
+  likelihood estimate for such a gene.
+- REML without random effects: variancePartition fits `lm` and takes the residual sum
+  of squares over n whatever `REML` says, so its fractions do not change; CytePool
+  takes REML's residual variance, over n - p, which changed a fraction by up to 0.052.
+- A cell type with one sample per donor: `voomWithDreamWeights` stops ("Initial model
+  failed"); `variance_partitioning` reports the status `random_effects_not_estimable`
+  and goes on with the other cell types.
+
+## Composition tests
+
+(validation-composition-tests)=
+### Cell-type composition
+
+The script printed 32 checks (25 pass and 7 deliberate differences) in 13.1 s, with a
+peak memory of 860 MiB. [Composition tests](statistics/composition.md#propeller-steps) explains what it
+checks.
 
 [`validation/composition_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/composition_tests.py)
 compares `propeller` with speckle's `propeller`, `propeller.ttest` and
@@ -1972,8 +1660,8 @@ speckle 1.6.0, limma 3.62.1.
 Each row compares every column that speckle reports, matched by cell type, and the
 columns themselves must match: the mean proportions of the levels a contrast
 compares, and no others. Proportions and ratios are compared relative to speckle's
-values, in the exact tier; statistics are scaled by max(\|reference\|, 1), and
-p-values and FDRs by max(p, 1e-300) max(1, \|log p\|), in the exact tier, or in the
+values, in the exact tier; statistics, p-values and FDRs are scaled as [above](#reading-the-tables),
+in the exact tier, or in the
 close tier with robust moderation of 10 cell types or more, whose prior limma solves
 only to a tolerance. The largest difference, 3.9e-9, is in such a case; every other is
 below 1e-14. Deliberate differences:
@@ -2012,7 +1700,525 @@ arctan2(sqrt(x), sqrt(N - x)), equal to speckle's formulas but without the
 cancellation in 1 - q and the loss of digits of arcsin near 1; on these data the two
 agree to rounding.
 
-## Meta-analysis
+## Gene sets and pathways
+
+(validation-gene-set-tests)=
+### Gene-set tests
+
+The script printed 93 checks (79 pass, 8 deliberate differences and 6 information) in
+6.9 s, with a peak memory of 278 MiB. [Gene-set tests](statistics/gene_set_tests.md#camera)
+explains what it checks.
+
+[`validation/gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_tests.py)
+compares `camera` and `fry` with limma's `camera` and `fry` on log-expression of 1,500
+genes simulated from fixed seeds, with gene-specific variances from a scaled inverse
+chi-squared prior around a mean-variance trend. The gene sets change up, down or in
+both directions, or not at all, share random sample effects (inter-gene correlation)
+with or without a change, overlap others, hold one, two or five genes, or 40% of the
+genes. The cases are three groups with the contrast given as a design column, also
+with only sets of one or more than d genes (so that fry's adjusted mixed p-values can
+be compared); three groups in interleaved order with observation weights and the
+contrast given as weights (a named contrast); counts with voom weights from `voom`
+(limma gets the same weights matrix), with the contrast both ways; a paired design with
+sample weights; residual variances that are all equal, so that the prior df is
+infinite; 16 samples with sets of 2 to 30 unchanged genes and three sets with changed
+genes; a gene the design fits exactly and ten identical genes; and 8 genes, fewer than
+the residual df. Designs are `Design` objects with named contrasts and genes are named
+by id in CytePool; R gets the design matrices and the genes' positions. camera runs with
+the default inter-gene correlation of 0.01, with it estimated for each set, with
+negative correlations allowed, with ranks, with a trend and robustly; fry with each
+standardization, and with a trend and robustly. limma's camera has no robust option: its
+reference is `cameraPR` or `rankSumTestWithCorrelation` on the z-scores of the
+moderated t-statistics of `eBayes(robust = TRUE)`, limma's `zscoreT(approx = TRUE,
+method = "hill")`, with the design reparametrized by `contrastAsCoef`; with an estimated
+correlation, the parametric p-value of `cameraPR` is converted to the df of the
+estimate. Reference: R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| camera: numbers of genes, correlations, directions, p-values and FDR, with a given or estimated correlation, ranks and a trend | `camera` | 1.3e-14 | 1e-10 | 35 pass |
+| camera with robust moderation | `cameraPR`, `rankSumTestWithCorrelation` | 1.7e-12 | 1e-6 | 12 pass |
+| fry with `standardize` `"none"` and `"residual_sd"`: numbers of genes, directions, p-values and FDR, mixed p-values of sets of one or more than d genes, and their FDR | `fry` | 5.2e-13 | 1e-10 | 15 pass |
+| fry with `"posterior_sd"`, with and without trend or robust moderation | `fry` | 4.4e-5 | 1e-3 | 15 pass |
+| fry with `"posterior_sd"` and an infinite prior df, where both standardize as `"none"` | `fry` | 3.3e-14 | 1e-10 | 1 pass |
+| CytePool's mixed p-values of the sets of 2 to 14 genes against 200,000 random rotations of their effects | simulation | 0.025 (absolute) | 0.1 | 1 pass |
+| fry's mixed p-values of sets of 2 to d genes | `fry` | 0.88 (absolute) | n/a | 8 deliberate differences |
+| The rotation simulation: limma's mixed p-values of the sets of 2 to 14 genes; both programs' of the sets of 15 to 30 genes; both programs' of the three sets with changed genes (relative) | simulation | 0.59, 0.030, 0.99 | n/a | 3 information |
+| Samples sorted by group, observation weights and the contrast as weights: camera, fry with `"residual_sd"`, and the genes whose last pivot R's `qr()` signs by rounding noise | `camera`, `fry`, `qr` | 0.012, 0.48; 115 of 1,500 genes | n/a | 3 information |
+
+Correlations are compared as differences, p-values scaled as [above](#reading-the-tables)
+(limma's p-values above 1 count as 1), and a
+direction or a number of genes that differs counts as an infinite difference. Robust
+moderation is in the close tier because limma solves the robust prior df only to a
+tolerance. With `"posterior_sd"`, fry moderates each gene's mean square of its d + 1
+effects without the largest, divided by its expected value under the null hypothesis,
+as a variance on 0.92 d degrees of freedom, as limma does (found by probing); limma's
+expected value is about 7.3e-5 (d + 1) / d above the exact one that CytePool computes,
+so directional p-values differ by up to 4.9e-5 and mixed p-values by up to 5.7e-4 of
+their value, which the tolerance of 1e-3 allows. The rotation check uses sets without
+a change, whose p-values a simulation resolves: the beta approximation that both
+programs use for the mixed p-value is off by up to 0.03 at such p-values for sets of
+more than d genes, where the programs agree, and in the tail it can be much too small
+for both: sets with changed genes and rotation p-values of 3.2e-3 and about 6e-5 get
+6.3e-4 and 2.9e-7.
+
+In each gene's QR decomposition, CytePool treats a pivot that is zero up to rounding
+as zero, which R's `qr()` signs as positive. With the samples sorted by group and a
+contrast between groups given as weights, every gene's last pivot is such a zero.
+limma computes most of them exactly, but its arithmetic leaves rounding noise in a few
+percent of genes, which changes their residual bases, and camera and fry do so for
+different genes: fry's are the 115 of the 1,500 whose last pivot R's `qr()` signs by
+noise. camera's correlations of sets then differ by up to 0.012, and fry's p-values
+with `"residual_sd"` by up to a factor of 2. limma's results there change with the
+last bits of the weights, CytePool's do not; in every other case the two agree.
+
+Deliberate differences:
+
+- fry's mixed p-value of a set of 2 to d genes. Its statistic, the sum of the set's
+  squared standardized contrast effects, is r'(E'E)r under a random rotation r of the
+  d + 1 effects, which both programs approximate by a beta distribution with its first
+  two moments. CytePool uses all d + 1 dimensions, as for larger sets; limma uses only
+  the set's m nonzero eigenvalues of E'E as if r had m dimensions (found by probing).
+  Against 200,000 random rotations, CytePool's mixed p-values of the sets of 2 to 14
+  genes are within 0.025 and limma's off by up to 0.59.
+- A p-value above 1 from camera's rank test (its continuity correction can put both
+  tails above 1/2): limma reports twice the smaller tail, CytePool 1. A gene listed
+  twice in a set: limma counts it twice, CytePool once. A set without genes, or holding
+  every gene in camera: NaN p-values in CytePool, left out of the other sets'
+  adjustment; limma reports the direction "Up", in camera's rank test the p-value 2,
+  which it adjusts with the others, and in fry a mixed p-value of 0 for an empty set.
+  The tests check these.
+
+(validation-rotation-gene-set-tests)=
+### Rotation gene-set tests
+
+The script printed 103 checks (81 pass, 20 deliberate differences and 2 information) in
+20.9 s, with a peak memory of 190 MiB. [Gene-set tests](statistics/gene_set_tests.md#roast)
+explains what it checks.
+
+[`validation/rotation_gene_set_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/rotation_gene_set_tests.py)
+compares `roast`, `mroast` and `romer` with limma's functions of the same names on
+log-expression of 1,500 genes simulated from fixed seeds, with the gene variances and
+gene sets of `gene_set_tests.py` and three sets with contribution weights: a signature
+whose genes go up or down, with weights +1 and -1; a set with weights of different
+sizes; and a set with half of its weights zero. The cases are three groups with the
+contrast given as a design column; interleaved groups with observation weights and a
+named contrast given as weights; the same with a trended prior estimated robustly;
+counts with voom weights; a paired design with sample weights; equal residual
+variances (an infinite prior df), also with effects so large that limma's log-odds of
+23 genes exceed 709.8; and contribution weights for every gene, drawn from -2, -1, 0.5,
+1 and 3. The exact checks give CytePool the rotations limma drew: a generator that
+replays the standard normal draws R gives limma after `set.seed`, in the order limma
+uses them (found by probing). limma tests each set with the same seed, which is how
+CytePool's `mroast` shares its rotations between sets. The calibrated checks let each
+program draw its own rotations, and allow a difference of 4 sd(p_1 - p_2) + 2 / (B + 1)
+for B rotations each, with the sd from the binomial variance of each estimate at their
+mean. Differences of p-values are absolute: each p-value counts rotations, so a
+difference of one count is at least 1 / (2B + 1). Reference: R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| roast given limma's rotations: the down, up, two-sided and mixed p-values, active proportions and numbers of genes of every set, for every set statistic and case | `roast` | 5.0e-16 | 1e-12 | 19 pass |
+| mroast given the same rotations for every set: two-sided p-values, and directions (mismatched sets) | `mroast` | 0; 0 sets | 1e-12; 0 | 38 pass |
+| romer given limma's rotations: up, down and mixed p-values and numbers of genes, for every set statistic, with and without shrinkage, with sample weights and with an infinite prior df | `romer` | 0 | 1e-12 | 7 pass |
+| limma's FDR and FDR.Mixed from its p-values by mroast's rule; numbers of genes and active proportions with each program's own rotations | `mroast` | 4.4e-16 | 1e-12 | 9 pass |
+| Each program's own rotations: mroast (mean, msq, mean50; B = 1,999) and romer (mean, mean50; B = 999) | `mroast`, `romer` | 0.54 of the bound | 1 | 5 pass |
+| mroast's mean statistic with 20,000 rotations against fry, its limit, with equal variances | `fry` | 0.34 of the bound | 1 | 1 pass |
+| CytePool's fry, mixed p-values of the sets of 2 to 6 genes, against the msq rotation test with 20,000 rotations | `mroast` | 0.015 (absolute) | 0.1 | 1 pass |
+| CytePool's msq p-values with every contribution weight multiplied by 10 (B = 1,999) | `roast` | 0 | 1e-12 | 1 pass |
+| limma's fry, mixed p-values of the sets of 2 to 6 genes, against the same | `mroast` | 0.45 (absolute) | n/a | 1 information |
+| Genes whose log-odds in limma exceed 709.8 (very large effects) | `romer` | 23 genes | n/a | 1 information |
+| p-values where the observed floor-mean or mean-square statistic is the smallest it can be | `roast` | 0.50 (absolute) | n/a | 6 deliberate differences |
+| floormean's mixed p-values of sets with negative weights; msq's up, down and two-sided p-values of sets with weights of both signs | `roast` | 0.65; 0.33 (absolute) | n/a | 6 deliberate differences |
+| limma's msq p-values with every weight multiplied by 10 (B = 1,999) | `roast` | 0.45 (absolute change) | n/a | 1 deliberate difference |
+| The set with weights of zero: its number of genes, and its mean50 p-values | `roast` | 8 against 16 genes; 0.039 | n/a | 6 deliberate differences |
+| romer with shrinkage where limma's posterior probabilities are NaN | `romer` | 0.15 (absolute) | n/a | 1 deliberate difference |
+
+The z-scores of the moderated t-statistics are Bailey's (1980) transformation on
+min(d_0 + d, 10^4) degrees of freedom; romer's shrinkage of each gene's contrast effect
+computes its log-odds on d_0 + d degrees of freedom, without the limit, and with the
+proportion of true null hypotheses of limma's `propTrueNull(method = "lfdr")`. These
+conventions, the set statistics' definitions where limma differs from the paper (the
+mean-50 statistic averages the ceiling(m / 2) largest values, and romer's floor-mean
+mixed statistic floors \|t\| at 1), and the order of limma's random draws were found
+by probing, and the exact checks confirm them, with an infinite prior df too. Without
+shrinkage, romer agrees with limma exactly on the data with very large effects, which
+shows that the difference with shrinkage comes from limma's NaN posterior
+probabilities. The fry checks give the reference that `gene_set_tests.py` approximated
+by simulation: the mixed p-values of fry for sets of 2 to d genes, where CytePool uses
+all d + 1 dimensions of the rotation and limma only the set's, against the rotation
+test of the same statistic, which `mroast`'s msq statistic is when all genes have the
+same residual variance (up to the limit on the df of the z-scores).
+
+Deliberate differences:
+
+- roast and mroast count a rotated statistic equal to the observed one as at least as
+  extreme, as Wu et al. (2010) and Phipson and Smyth (2010) define the p-value and as
+  limma's `romer` does; limma's `roast` counts only larger ones. Where the observed
+  floor-mean or mean-square statistic is the smallest it can be (a set without a gene
+  on one side of zero, or, for the floor-mean mixed statistic, without a gene whose
+  \|z\| exceeds 0.674), CytePool's p-value is 1 and limma's about 1/2. The script
+  checks that CytePool's p-value is 1 in each such case.
+- With contribution weights a_g, the mean-square statistic weighs each gene's z^2 by
+  \|a_g\|, as Wu et al. (2010) define it; limma's up, down and two-sided p-values differ
+  from it for sets with weights of both signs, and with more than 1,000 rotations its
+  p-values change when every weight is multiplied by the same number (here by up to
+  0.45 for a factor of 10). The floor-mean mixed statistic weighs each gene by
+  \|a_g\|, where limma takes a negative weight as evidence against the set; the script
+  checks that CytePool's mixed p-value is limma's with the absolute weights.
+- A gene of contribution weight zero leaves the set: it counts neither in the number
+  of genes nor among the values that the mean-50 statistic averages. limma keeps it in
+  both, and leaves it out of the active proportions, as CytePool does.
+- romer's posterior probability that a gene is differentially expressed is
+  1 / (1 + exp(-lods)). limma's is NaN beyond log-odds of 709.8 (\|t\| above about 38
+  with an infinite prior df), which makes the gene's shrunk contrast effect NaN and
+  changes the p-values of every set (found by probing).
+- A set without genes, or whose genes all have weight zero, has NaN p-values and no
+  direction in CytePool and is left out of the other sets' adjustment; limma reports
+  "down" and NA, or the smallest possible p-value when all weights are zero. A gene
+  listed twice counts once in CytePool, twice in limma. mroast tests every set with the
+  same rotations, where limma draws new ones for each set. The tests check these.
+
+(validation-gene-set-files-and-ora)=
+### Gene-set files and over-representation
+
+The script printed 34 checks (29 pass and 5 deliberate differences) in 4.7 s, with a
+peak memory of 297 MiB. [Over-representation and
+GSEA](statistics/over_representation_and_gsea.md#over-representation) explains what it
+checks.
+
+[`validation/gene_set_files_and_ora.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gene_set_files_and_ora.py)
+checks the reading and writing of GMT files, the matching of gene sets to an analysis,
+and over-representation analysis. Four GMT files of 60 sets are simulated from fixed
+seeds in the styles of MSigDB (names in capitals, links as descriptions, symbols),
+Reactome (names with spaces and punctuation, lines ending in a carriage return and a
+line feed, tabs at the ends of lines), WikiPathways (names joined by %, Entrez ids, a
+byte-order mark, blank lines) and the GMT exports of the Gene Ontology (descriptions
+"na" or empty, genes listed twice, a set without genes, a name outside ASCII,
+compressed by gzip). `read_gmt` reads each file and `write_gmt` writes it back; R reads
+both files by hand (`readLines`, fields split at tabs), and decoupler's `read_gmt`
+reads the MSigDB-style file. A file of 60 sets of symbols is matched to the 2,000 genes
+of an analysis by `GeneSets.restrict_to` and by limma's `ids2indices`, the sets of 15
+to 200 genes are kept, and `camera` tests them on simulated log-expression, given the
+sets that CytePool read, against limma's `camera` given those that R read.
+
+`over_representation` runs on simulated results of 4,000 genes, 8% up and 6% down at
+an FDR of 5%, with a block of tied p-values, and 305 sets of up to 600 genes, a fifth
+of each set outside the results: sets enriched for genes up, down or both, or for none,
+two identical sets, a set that lists genes twice, a set of every gene, a set outside
+the universe, and a set with two features of one symbol, one up and one down. Its table
+is compared with limma's `kegga` of a fit with the same p-values and log fold changes,
+which selects the genes up and down itself, and with kegga's default method given the
+genes of each direction and the universe: by feature id; by symbol, which 160 features
+share in pairs; by symbol where 131 features lack one; with a universe of 60% of the
+genes, 100 genes of the sets outside the results and 50 genes of no set; with 416 genes
+without a p-value; and for a list of 230 genes, 30 of them outside the universe and
+some listed twice. The adjusted p-values are compared with `p.adjust` of kegga's
+p-values, the order of the sets with `topKEGG`'s, the p-values also with R's `phyper`
+on a grid of 247 points that reaches 1e-300 and underflow, and the dot plot's sets,
+dots and colours with kegga's counts and adjusted p-values. Reference: R 4.4.3, limma
+3.62.1, decoupler 2.2.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| GMT files in four styles: the names, descriptions and genes of every set, read, written and read again | R, by hand | 0 sets differ | 0 | 4 pass |
+| The MSigDB-style file: names and genes | decoupler `read_gmt` | 0 sets differ | 0 | 1 pass |
+| `restrict_to`: the sets kept and the positions of their genes | `ids2indices` | identical | 0 | 1 pass |
+| `filter_by_size(15, 200)`, then `camera` of the 34 sets kept | `camera` | 3.1e-15 | 1e-10 | 1 pass |
+| P(X >= k) at 247 points | `phyper` | 2.1e-12 | 1e-10 | 1 pass |
+| Genes up and down that kegga selects from a fit, by feature id and by shared symbols: numbers of genes, overlaps, p-values, adjusted p-values and the order of the sets | `kegga` of a fit, `p.adjust`, `topKEGG` | 6.2e-14 | 1e-10 | 4 pass |
+| Genes up, down and either way, by feature id, by shared or missing symbols, with a universe given and without p-values for some genes, and a list of genes: the same, and the numbers selected, the size of the universe and the expected overlaps | `kegga`, `p.adjust`, `topKEGG` | 9.7e-14 | 1e-10 | 16 pass |
+| The dot plot: the 20 sets shown and their order, the area and colour of its 60 dots | `kegga` | identical | 0 | 1 pass |
+| Features without a symbol, which kegga of a fit leaves out of its adjustment | `kegga` of a fit | 1.9 (relative) | n/a | 2 deliberate differences |
+| Genes without a p-value, which kegga of a fit keeps in the universe | `kegga` of a fit | 5.3 (relative) | n/a | 2 deliberate differences |
+| Sets without genes in the universe: rows with NaN p-values here, none in kegga's table | `kegga` | 1 to 23 sets per case | n/a | 1 deliberate difference |
+
+p-values, adjusted p-values and expected overlaps are compared relative to max(p,
+1e-300); numbers of genes, overlaps, names and orders must be identical. kegga selects
+the genes of a fit whose adjusted p-value is below its `FDR`, strictly, up or down by
+the sign of the coefficient; it counts a gene id on several features once, in both
+lists when one feature goes up and another down; it leaves out features without an id;
+and `topKEGG` orders sets by p-value, ties by the number of genes. These conventions
+were found by probing, and the checks by symbol confirm them. Half of the features
+without a symbol are changed genes, so that kegga's adjustment without them moves
+other genes across the cutoff and the difference shows.
+
+Deliberate differences:
+
+- A set without genes in the universe has a row with NaN p-values in CytePool, left
+  out of the adjustment of the others; kegga leaves the set out of its table.
+- Genes without a p-value, such as those DESeq2's independent filtering leaves out:
+  kegga's method for a fit keeps them in the universe, where CytePool, which takes them
+  as not tested, leaves them out. Given the universe of every gene, CytePool gives
+  kegga's values; the tests check this.
+- Features without an id, such as a symbol: kegga's method for a fit leaves them out
+  of its Benjamini-Hochberg adjustment, so that the genes it selects depend on which
+  features have a symbol. CytePool takes the adjusted p-values of the results, the
+  genes the analysis called significant. With the p-values adjusted over the features
+  with a symbol, CytePool gives kegga's values; the tests check this.
+
+(validation-gsea)=
+### Gene set enrichment analysis
+
+The script printed 24 checks (23 pass and 1 deliberate difference) in 7 min 3 s, with a
+peak memory of 323 MiB. [Over-representation and
+GSEA](statistics/over_representation_and_gsea.md#gsea) explains what it checks.
+
+[`validation/gsea.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/gsea.py)
+checks gene set enrichment analysis and its figures against fgsea. Statistics of 4,000
+genes are simulated from fixed seeds like moderated t-statistics, 6% of the genes up and
+5% down, with 60 genes tied at 1.25 and 30 at zero, with 90 gene sets of 1 to 1,000
+genes, a fifth of each outside the ranking: sets enriched for genes up, down or both, or
+for none, a set of every gene, which neither program tests, a set of one gene, half of
+the tied genes, a set that lists genes twice and two identical sets. `gsea` and fgsea's
+`fgsea` run with the same options: fgsea's defaults (its multilevel method, 1,000
+permutations, 101 sets per level, eps 1e-50); gseaParam 0 and 0.5; scoreType "neg";
+scoreType "pos" on -log10 p-values, which are all positive; sets of 15 to 500 genes,
+with eps 0, 51 sets per level and 2,000 permutations; permutations alone (fgsea's
+`nperm`, 2,500 in three chunks); statistics mostly positive, with 6 sets spread evenly
+along the ranking, a set of a few genes near its top and others spread along it, whose
+p-value is about 0.05, and 3 sets of 25 genes from its bottom, whose negative scores
+fewer than 10 random sets of their size reach, so that no set goes to the multilevel
+method; and one set alone.
+
+The R script records the seeds that fgsea draws where it hands them to its compiled code
+(`trace` of `fgseaSimpleImpl` and `multilevelImpl`), and `gsea` draws the same through
+`rng`; the two programs then draw the same random sets, and must agree exactly. fgsea
+draws the random sets of a set tested alone with R's `sample.int`, which cannot be
+replayed: that case is exact for the enrichment score and leading edge, and calibrated
+for the rest, with seeds of their own (R's 1 to 20 and numpy's 1 to 20): the mean
+log10 p-value and the mean normalized score of each set over 20 runs must agree within
+4 standard errors of their difference, for 36 sets and for the set alone. The figures:
+what `plot_enrichment` draws against `plotEnrichmentData`, for three sets with gseaParam
+1 and 0.5, and the bars and numbers of `plot_gsea_table` against the ticks of
+`plotEnrichmentData`, scaled as `plotGseaTable` scales them, and its numbers as it
+writes them. Reference: R 4.4.3, fgsea 1.32.2.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| The sets tested, their sizes, leading edges and enrichment scores, in all 9 cases | `fgsea` | 0 | 1e-10 | 9 pass |
+| Normalized scores, p-values, log2 errors and adjusted p-values, given fgsea's seeds, in 7 cases | `fgsea` | 2.2e-13 | 1e-10 | 7 pass |
+| The same of the mostly positive statistics, without the adjusted p-values | `fgsea` | 4.2e-16 | 1e-10 | 1 pass |
+| Mean log10 p-values and mean normalized scores over 20 runs, seeds of their own, for 36 sets and one set alone | `fgsea` | 2.4 standard errors | 4 | 4 pass |
+| `plot_enrichment`: the walk, the ticks and the extremes of 6 plots | `plotEnrichmentData` | 1.7e-14 | 1e-10 | 1 pass |
+| `plot_gsea_table`: the bars and numbers of 10 sets | `plotEnrichmentData`, `plotGseaTable` | 1.1e-13 | 1e-10 | 1 pass |
+| Adjusted p-values of the mostly positive statistics | `fgsea` | 0.16 (relative) | n/a | 1 deliberate difference |
+
+Numbers are compared relative to their absolute value, or 1e-300, and NaN must stand
+where fgsea gives NA; sets, sizes and leading edges must be identical. Given fgsea's
+seeds, the random scores and the counts of the permutations are the same to the last
+bit; the multilevel p-values differ in the last bits, through the digamma function of
+each program.
+
+Deliberate difference:
+
+- The adjusted p-values of the mostly positive statistics, where some sets have too few
+  random scores of their sign and no set goes to the multilevel method: fgsea adjusts
+  the p-values over the sets before it removes those that have some, but fewer than 10,
+  random scores of their sign, as though they had been tested, so that its adjusted
+  p-values of the sets it reports come out smaller or larger; CytePool adjusts over the
+  sets with a p-value. The tests check that CytePool's are Benjamini and Hochberg's of
+  the p-values it reports.
+
+(validation-pathway-scores)=
+### Pathway scores
+
+The script printed 24 checks (19 pass, 3 deliberate differences and 2 information) in
+10.7 s, with a peak memory of 949 MiB. [Pathway scores per
+sample](statistics/pathway_scores.md#gsva) explains what it checks.
+
+[`validation/pathway_scores.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pathway_scores.py)
+checks the scores of gene sets in every sample, and their heatmap, against GSVA 2.0.0,
+whose `gsva()` runs with a `gsvaParam`, `ssgseaParam`, `zscoreParam` or `plageParam`,
+and the CytePool function with the same options. The inputs are simulated from fixed
+seeds: log-expression values of 2,000 genes in 24 samples, 200 genes higher in the
+second 12, with two constant genes, a gene equal to another, a gene of whole numbers
+and a gene with an outlier sample; negative binomial counts of the same genes in 16
+samples, stored as integers and as decimals; Poisson counts with means from 0.3 to 6
+(low counts); 400 genes in 210 samples; the log-expression values rounded to one
+decimal; the same values with 2% of those of the first 12 samples missing; and a cube of
+one cell type with the counts, whose samples have 3 to 60 cells. The 66 gene sets have
+1 to 300 genes, a fifth of each outside the data: random sets, a set of one gene, one
+with the constant genes, one that lists genes twice, two identical sets and a set of
+every gene, which is left out for ssGSEA but in one case. Reference: R 4.4.3, GSVA
+2.0.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| GSVA's method: the Gaussian kernel, tau 0.5 with maxDiff FALSE, tau 2 with absRanking, no kernel, sizes 10 to 100, counts stored as integers (the Poisson kernel), as decimals (the Gaussian kernel) and 210 samples (no kernel), in 8 cases | `gsva` with `gsvaParam` | 0 | 1e-10 | 8 pass |
+| ssGSEA: the defaults, alpha 1 without normalization, alpha 0 on tied values, in 3 cases | `ssgseaParam` | 1.8e-15 | 1e-10 | 3 pass |
+| Combined z-scores | `zscoreParam` | 2.7e-15 | 1e-10 | 1 pass |
+| PLAGE, the sets of two genes or more, up to sign | `plageParam` | 8.7e-14 | 1e-10 | 1 pass |
+| Missing values: GSVA's method in the samples without any, ssGSEA and combined z-scores | `gsvaParam` and `ssgseaParam` with `use = "na.rm"`, `zscoreParam` | 2.0e-15 | 1e-10 | 3 pass |
+| A cube's cell type: its log-CPM and its counts | `gsva` with `gsvaParam` | 0 | 1e-10 | 2 pass |
+| `plot_pathway_scores`: the 1,584 cells of the standardized heatmap, the samples grouped | GSVA, R's `heatmap(scale = "row")` | 3.2e-16 | 1e-10 | 1 pass |
+| PLAGE: the share of sets whose sign is GSVA's | `plageParam` | 0.42 | n/a | 1 information |
+| GSVA's method with the Poisson kernel on low counts | `gsvaParam` | 2.2e-3 | n/a | 1 information |
+| GSVA's method in the samples with missing values; PLAGE's sets of one gene; ssGSEA with a set of every gene | `gsvaParam`, `plageParam`, `ssgseaParam` | 1.6 | n/a | 3 deliberate differences |
+
+Differences are relative to the largest absolute score of a case, NaN must stand where
+GSVA gives NA, and the sets scored must be GSVA's, in its order. The scores depend on
+the ranks of the genes in each sample, which come from comparisons of their kernel
+estimates; CytePool evaluates the normal distribution function from a table at steps
+of 0.001, as GSVA does, and sums the estimates over the samples in their order, so that
+the ranks, and with them the scores, are GSVA's on continuous values and on counts of
+the sizes of the cases above. With low counts, many genes have kernel estimates that
+are equal in exact arithmetic, such as genes with the same counts in different
+samples, and GSVA orders them by the last bit of R's Poisson probabilities, which
+CytePool computes as accurately but not always to the same bit: the scores of the sets
+that hold them then differ by up to 2.2e-3 of the largest score. PLAGE's sign is that
+of R's singular value decomposition, which agrees with CytePool's convention for 42% of
+the sets.
+
+Deliberate differences:
+
+- GSVA's method in samples with missing values: with `use = "na.rm"`, GSVA's walk
+  falls by 1/(p - k) at a sample's observed genes outside a set, p counting the genes
+  missing in the sample too, so that it ends above zero, and it scores the set of every
+  gene there; CytePool's walk falls by 1/(p_j - k_j), with p_j and k_j counting the
+  genes observed in the sample, and ends at zero (largest difference 4.8e-2, where both
+  give a score). The samples without missing values agree exactly.
+- PLAGE's sign: GSVA returns the sign that R's singular value decomposition gives,
+  which depends on the linear algebra library; CytePool makes a set's scores rise with
+  the mean standardized expression of its genes. The scores are compared up to sign,
+  and the information row gives the share of sets whose signs agree.
+- PLAGE's sets of one gene: GSVA gives 1 in every sample; CytePool gives the gene's
+  standardized values, scaled to length one, its first right singular vector (largest
+  difference 1.6).
+- ssGSEA with a set of every gene: GSVA stops ("Cannot calculate normalizing factor for
+  the enrichment scores in ssGSEA, likely due to NA values in the input expression
+  data"); CytePool gives that set NaN and normalizes the other scores by their range.
+
+(validation-activity)=
+### Pathway and regulator activity
+
+The script printed 89 checks (82 pass, 5 deliberate differences and 2 information) in 2
+min 39 s, with a peak memory of 987 MiB. [Activities from
+networks](statistics/activities.md#ulm) explains what it checks.
+
+[`validation/activity.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/activity.py)
+checks the activities of regulators and pathways, their bar plot and the networks
+against decoupler 2.2.0 and progeny 1.28.0. CytePool's loaders download the networks
+into its cache. CollecTRI's file and progeny's package are compared with the MD5
+digests and sizes their sources publish (Zenodo's record, Bioconductor's `PACKAGES`
+and the server's `Content-Length`); `collectri(licence="academic")` with decoupler's
+`op.collectri`; the commercial level with the licence purposes that OmniPath's
+resources service lists, applied to the file by the script; and the weights and
+p-values of `progeny` with progeny's `model_human_full` and `model_mouse_full`, and its
+`top` with `getModel` (100 human genes; 500 mouse genes, with ties). The inputs of the
+activities are simulated from fixed seeds: log-expression values of 6 samples over
+CollecTRI's 6,693 targets and 2,000 other genes, the targets of 6 regulators shifted in
+the last 3 samples, with 3 genes zero in every sample; a profile of t-statistics; the
+values with 3% missing in two samples, which decoupler, refusing missing values,
+scores one profile at a time over its observed genes; 6 samples over the targets of
+PROGENy's top 500 genes and 1,000 others; a cube of one cell type, scored as its
+log-CPM; and limma_voom's moderated t-statistics in two cell types that test different
+genes. `ulm`, `mlm` and `weighted_aggregate` run as decoupler's `mt.ulm`, `mt.mlm` and
+`mt.waggr` with `tmin` 5, or 3 for a network of weights of one sign. Reference:
+decoupler 2.2.0 with scipy 1.18.1, and progeny 1.28.0 on R 4.4.3.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| ULM's t-statistics and slopes, in 10 cases | `mt.ulm` | 2.3e-13 | 1e-10 | 20 pass |
+| ULM's p-values, and their Benjamini-Hochberg adjustment, in 10 cases | `mt.ulm`; scipy's `false_discovery_control` of its p-values | 4.4e-11 | 1e-10 | 20 pass |
+| ULM's adjusted p-values, in single precision | `mt.ulm` | 0 | 1.2e-7 | 10 pass |
+| MLM's t-statistics and coefficients, in 6 cases | `mt.mlm` | 3.2e-14 | 1e-10 | 12 pass |
+| MLM's p-values | scipy's `t.sf` of `mt.mlm`'s t-statistics | 3.3e-12 | 1e-10 | 6 pass |
+| Weighted means and sums, and the normalized scores given decoupler's permutations (100 and 1,000) | `mt.waggr` | 1.1e-14 | 1e-10 | 4 pass |
+| Weighted sums of PROGENy's top 100 genes | progeny's `progeny(scale = FALSE)` | 6.5e-16 | 1e-10 | 1 pass |
+| `plot_top_activities`: the 15 bars of a sample, their sources and lengths | `pl.barplot` | 4.8e-14 | 1e-10 | 1 pass |
+| CollecTRI at the academic level; at the commercial level; PROGENy's weights and p-values, human and mouse; its top 100 human and 500 mouse genes | `op.collectri`, OmniPath's resources, progeny's models and `getModel` | 0 | 0 | 6 pass |
+| The files downloaded: sizes and MD5 digests | Zenodo, Bioconductor | 0 | 0 | 2 pass |
+| decoupler's `op.collectri` at its levels; PROGENy through OmniPath | `op.collectri`, `op.progeny` | n/a | n/a | 2 information |
+| The weighted aggregate's p-values; a sample of zeros; MLM with two sources alike; CollecTRI's interactions without a reference | `mt.waggr`, `mt.ulm`, `mt.mlm`, `op.collectri` | 0.97 | n/a | 5 deliberate differences |
+
+Scores and estimates are compared relative to the largest absolute value of a case,
+p-values relative to each value, and NaN must stand where the reference has none; the
+networks and the bars must be identical. decoupler keeps its adjusted p-values in
+single precision, so CytePool's are rounded to it first. decoupler computes MLM's
+p-values as one minus the distribution function, which loses their digits below about
+1e-12, so CytePool's are compared with scipy's upper tail at decoupler's t-statistics.
+The normalized scores are compared given decoupler's permutations: the genes in the
+order in which decoupler shuffles them, and its seed, so that both draw the same
+permutations. decoupler 2.2.0 accepts a licence for CollecTRI but returns the whole
+file at every level. Its `op.progeny` reads PROGENy from OmniPath's annotations, which
+name genes by their current symbols, leave out genes OmniPath does not map to a
+protein, and merge some genes: of its 62,421 edges with a p-value below 0.05, where the
+progeny package has 69,827, 59,617 are named alike, and 59,599 of them have the same
+weight and p-value.
+
+Deliberate differences:
+
+- The weighted aggregate's p-values (largest difference 0.97 with 100 permutations,
+  2.0e-3 with 1,000): decoupler counts the permutations whose absolute score exceeds
+  the absolute observed score and then folds that share as it would fold a one-sided
+  one, so that a score near zero gets a p-value near 2 / n for n permutations; CytePool
+  doubles the smaller of the two one-sided p-values (1 + b) / (1 + n).
+- A sample whose values are all zero: decoupler leaves it out of its result; CytePool
+  gives it NaN scores. The other samples agree exactly.
+- MLM with two sources of the same targets and weights: decoupler inverts a singular
+  matrix and gives NaN t-statistics for both (12 in 6 samples); CytePool refuses,
+  naming the source it cannot tell apart from the other.
+- CollecTRI's 185 interactions whose field of references is empty: decoupler's loader
+  drops them, through pandas' `dropna`; CytePool keeps them, as the file holds them and
+  the paper counts them (43,175 interactions).
+- MLM's adjusted p-values: decoupler reports MLM's p-values unadjusted, under the name
+  of its adjusted p-values; CytePool adjusts them by Benjamini and Hochberg's method
+  over the sources of each profile, as for the other methods, so the script compares
+  MLM's p-values before adjustment only.
+
+## Several studies
+
+(validation-cube-collection)=
+### Studies aligned in a collection
+
+The script printed 15 checks (14 pass and 1 control) in 26.7 s, with a peak memory of
+495 MiB. [Aligning studies](statistics/aligning_studies.md#aligning-samples) explains what it
+checks.
+
+[`validation/cube_collection.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/cube_collection.py)
+simulates the cells of three studies of one stimulation (seed 20261026) and pools each
+with `from_cells`: `lupus`, 8 samples of 4 donors, each control and stimulated, 4 cell
+types with Cell Ontology ids and 700 genes; `covid`, 10 samples of 5 donors whose
+sample and donor ids repeat those of `lupus`, 5 cell types of which two share an
+ontology id and merge, and 750 genes, 40 of them filled with zeros and marked as not
+measured; and `atlas`, 6 unpaired samples with integer donor ids, 5 cell types without
+ontology ids, aligned by a mapping that leaves one out, and 950 genes. The collection
+aligns the cell types by ontology id and writes donor ids `study::donor`. anndata and
+pandas run as a separate program: each study's cube is exported with `to_anndata`, the
+genes marked as not measured are dropped, the rows of each sample and aligned cell type
+are summed, and the studies are joined with `anndata.concat` (outer and inner joins,
+labelled by study); pandas joins the sample tables. R runs limma-voom on each study's
+own counts, summing the cell types that share an aligned id, and on the stacked counts
+of `lupus` and `covid` with `~ donor + condition`, by the steps of
+`differential_expression.py`. Reference: anndata 0.13.4, pandas 3.1.0, numpy 2.5.4,
+Python 3.13.12; R 4.4.3, limma 3.62.1, edgeR 4.4.0. CytePool ran with numpy 2.5.4 and
+numba 0.68.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| The sample table: ids `study::sample_id`, donors `study::donor`, the union of the columns, ages that are integers in two studies and floats in one as float64, and missing values where a study lacks a column | `pandas.concat` | 0 mismatches | 0 | 1 pass |
+| The genes, as a set and in the order in which the studies first list them, and which study measured which | `anndata.concat`, outer join (NaN where a study lacks a gene), `pandas.unique` | identical; 0 mismatches | 0 | 2 pass |
+| Every layer of each study's aligned cube: merged cell types, measured genes | the outer join's values | 0 | 1e-10 | 1 pass |
+| `stack()`: genes in order, cell types and samples; every layer; the cells of each entry, and an entry without cells | `anndata.concat`, inner join, kept to the cell types of every study | 0 | 0 and 1e-10 | 3 pass |
+| `limma_voom` on each study's aligned cube, lined up by `StudyResults.table`: logFC, AveExpr, t, P.Value, adj.P.Val, B and the standard error, in 12 cell types of 3 studies | limma, study by study | 3.8e-13 | 1e-10 | 3 pass |
+| The status of every gene of every study: tested, measured and left out, or not measured | limma's tables and each study's measured genes | 0 mismatches | 0 | 3 pass |
+| `limma_voom` on the stack of `lupus` and `covid`, `~ donor + condition` with donors `study::donor` | limma on the stacked counts | 1.4e-13 | 1e-10 | 1 pass |
+| The same with the donor ids as the studies give them | limma on the stacked counts, donors `study::donor` | 1.9 (log2 fold changes) | must exceed 1e-10 | 1 control |
+
+limma ran on each study's own counts, with the genes filled with zeros, and its tables
+equal those of the aligned cubes, which leave those genes out: genes without counts
+change no library size, expression filter or normalization factor, so a gene that a
+study did not measure can be marked missing without changing any other gene's result.
+The control shows why donor ids are written with their study: taken for one person,
+donor D1 of two studies changes the fit of every gene.
+
+(validation-meta-analysis)=
+### Meta-analysis
+
+The script printed 75 checks (52 pass, 20 information and 3 deliberate differences) in
+59.5 s, with a peak memory of 256 MiB. [Meta-analysis](statistics/meta_analysis.md#meta-analysis-model)
+explains what it checks.
 
 [`validation/meta_analysis.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/meta_analysis.py)
 compares `fit_meta_analysis` with metafor's `rma.uni`, run feature by feature in R on the
@@ -2050,8 +2256,8 @@ R 4.4.3, metafor 5.0.1, jsonlite 2.0.0.
 | A Paule-Mandel estimate above metafor's search interval: against metafor with `tau2.max = 1e6`, and with its default, where it stops | `rma.uni` | 1.7e-15 | 1e-6 | 1 pass, 1 deliberate difference |
 | Zero and infinite standard errors, which CytePool refuses | `rma.uni` | metafor stops for an infinite one, and for a zero one with the fixed effect, DerSimonian-Laird and Paule-Mandel; with REML it fits without Q, I² and H² | n/a | 1 pass, 1 deliberate difference |
 
-Differences are scaled by max(\|reference\|, 1), and p-values by
-max(p, 1e-300) max(1, \|log p\|); I² is compared in percent, as metafor reports it
+Differences are scaled as [above](#reading-the-tables), values as statistics and p-values as
+p-values; I² is compared in percent, as metafor reports it
 (CytePool reports a proportion), and the number of studies must be equal. A row covers
 both tests of one case and method. The REML rows' largest differences, near 1e-10, are
 in I²: metafor stops when tau² changes by less than its threshold of 1e-13, which I² in
@@ -2084,7 +2290,12 @@ CytePool's REML estimate is zero; metafor's step halving approaches zero and sto
 its threshold, at about 1e-6 by default. With standard errors 1e-8 of the spread of the
 effects, the two programs agree to 1.5e-14.
 
-## Combined p-values and replication
+(validation-combined-p-values-and-replication)=
+### Combined p-values and replication
+
+The script printed 54 checks (47 pass and 7 deliberate differences) in 67.4 s, with a
+peak memory of 444 MiB. [Replication](statistics/replication.md#combined-p-values) explains what it
+checks.
 
 [`validation/combined_p_values_and_replication.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/combined_p_values_and_replication.py)
 checks combined p-values, partial conjunctions, the proportion of true nulls and the
@@ -2130,8 +2341,8 @@ figures are compared with what R computes for them. Reference: scipy 1.18.1, mpm
 | `plot_study_agreement` and `plot_replicated_genes`: the values and bars drawn | `pi0est`, R | 0 | 1e-10, 0 mismatches | 2 pass |
 | metap at a p-value of 0 and for one study; pi0est where no p-value reaches the largest lambda (smoother, bootstrap), where its estimate is at most 0, for pi1 of 23 pairs of studies, and for 96 values of lambda | metap, `pi0est` | listed below | n/a | 7 deliberate differences |
 
-Differences are scaled by max(\|reference\|, 1), and p-values by
-max(p, 1e-300) max(1, \|log p\|); counts and directions must be equal. qvalue's
+Differences are scaled as [above](#reading-the-tables), values as statistics and p-values as
+p-values; counts and directions must be equal. qvalue's
 smoother is R's `smooth.spline`, which CytePool follows step by step in its search for
 the smoothing parameter: the estimates agree to about 1e-12. Deliberate differences:
 
@@ -2149,7 +2360,12 @@ the smoothing parameter: the estimates agree to about 1e-12. Deliberate differen
   only; CytePool keeps one at every lambda. For 96 values (0, 0.01, ..., 0.95) the
   estimates differed by 2.6e-5, relative.
 
-## SumRank and held-out prediction
+(validation-sumrank)=
+### SumRank and held-out prediction
+
+The script printed 23 checks (13 pass, 9 information and 1 deliberate difference) in
+44.9 s, with a peak memory of 399 MiB. [Replication](statistics/replication.md#sum-of-ranks)
+explains what it checks.
 
 [`validation/sumrank.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/sumrank.py)
 runs the authors' R code of SumRank, under the Apache-2.0 licence, as they publish it:
@@ -2208,6 +2424,13 @@ gave a held-out AUC of 1 in every study; chosen by the meta-analysis with Knapp-
 
 ## Figures
 
+(validation-plotting)=
+### Figures of limma, edgeR, DESeq2, speckle and metafor
+
+The script printed 26 checks (23 pass, 2 information and 1 deliberate difference) in
+25.4 s, with a peak memory of 810 MiB. The API reference of {api}`cytepool.plotting`
+documents what it checks.
+
 [`validation/plotting.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/plotting.py)
 draws each figure of `cytepool.plotting` that follows an R function with CytePool and
 with R on the same data, and compares what the two drew: R's base graphics as the
@@ -2235,15 +2458,17 @@ composition. limma-voom runs in R as the limma User's Guide runs it, and voom wi
 | Forest plots of 3 genes, one of them tested by two studies, by REML with z-tests and by DerSimonian-Laird with the Knapp-Hartung adjustment: the studies' intervals, and the pooled estimate and interval | `forest`, `rma.uni` | 4.5e-15 | 1e-6 (REML), 1e-10 | 6 pass |
 | Composition: the bar segment of every sample and cell type; proportions by condition, their means and adjusted p-values | `plotCellTypeProps`, `propeller` | 5.0e-16 | 1e-10; 1e-6 | 2 pass |
 
-Differences are scaled by max(\|reference\|, 1). R writes numbers with 15 significant
+Every difference, p-values included, is scaled as a statistic is [above](#reading-the-tables). R
+writes numbers with 15 significant
 digits, which the exact rows reach. The residual variances agree to 2.6e-9 because
-limma solves the prior's degrees of freedom to a tolerance (see Empirical Bayes
-moderation above). After robust moderation, `plotSA` marks the variances whose
+limma solves the prior's degrees of freedom to a tolerance (see [Empirical Bayes
+moderation](#validation-empirical-bayes)). After robust moderation, `plotSA` marks the variances whose
 two-sided p-value as a variance of the prior, adjusted by Benjamini and Hochberg, is
 below 0.5 (found by probing), and both mark the same 14. CytePool's dispersions differ
 from DESeq2's where DESeq2's line search stops short of the maximum, and its
-quasi-dispersions from edgeR's by the exact moments of the unit deviance (see the
-sections on DESeq2 and on quasi-likelihood F-tests above), so these figures are
+quasi-dispersions from edgeR's by the exact moments of the unit deviance (see [DESeq2's
+dispersions and tests](#validation-deseq2-tests) and [Quasi-likelihood
+F-tests](#validation-quasi-likelihood)), so these figures are
 compared drawn from R's own estimates, and from CytePool's fits for information.
 metafor clips its diamond at the axis limits, which a pooled interval of two studies
 with the Knapp-Hartung adjustment exceeds here, so the pooled estimate and interval
@@ -2252,7 +2477,13 @@ difference: a gene without residual degrees of freedom, such as one without coun
 has no quasi-dispersion (its deviance and its degrees of freedom are 0); edgeR draws it
 at 0, and CytePool leaves it out.
 
-## Principal components and dot plots
+(validation-pca-and-dot-plots)=
+### Principal components and dot plots
+
+The script printed 13 checks (11 pass, 1 deliberate difference and 1 information) in
+19.8 s, with a peak memory of 671 MiB. [Normalization and
+filtering](statistics/normalization_and_filtering.md#samples-at-a-glance), with
+[Pseudobulk profiles and cubes](statistics/cubes.md#dot-plot), explains what it checks.
 
 [`validation/pca_and_dot_plots.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/pca_and_dot_plots.py)
 compares `principal_components` and `plot_pca` with DESeq2's `plotPCA`, run as a black
@@ -2278,9 +2509,10 @@ counts of 40 genes; scanpy normalizes them (`normalize_total`, `log1p`) and
 | Dot plots: the areas and the fractions they encode, and the values the colours show, plain, scaled by gene or by group and over the expressing cells only, for every sample and for 3 samples and 3 cell types in a chosen order, and for genes in groups; the names of the rows and columns, and the key of the areas | `scanpy.pl.dotplot` | 1.0e-15 | 1e-10 | 6 pass |
 | The brackets of genes given in groups: their columns and names | `scanpy.pl.dotplot` | identical | 0 | 1 pass |
 
-Differences are scaled by max(\|reference\|, 1). R's `prcomp`, whose coordinates
-`plotPCA` returns, leaves the sign of each component arbitrary; CytePool makes each
-component's largest coordinate positive, so the coordinates are compared after each
+Every difference is scaled as a statistic is [above](#reading-the-tables). R's `prcomp`, whose
+coordinates `plotPCA` returns, leaves the sign of each component arbitrary; CytePool
+makes each component's coordinate of largest absolute value positive, so the
+coordinates are compared after each
 component takes the sign that matches R's. What DESeq2's help page leaves open was
 found by probing: the genes are ranked by their variance, genes of equal variance keep
 their order (the first are kept), `ntop` beyond the number of genes takes every gene,
@@ -2293,7 +2525,13 @@ Deliberate difference: with two samples, DESeq2's `plotPCA` returns, and draws, 
 second component of rounding noise; CytePool returns one component, since the centred
 values of n samples have at most n - 1 dimensions, and refuses to draw a second.
 
-## Distributions and special functions
+## Building blocks on arrays
+
+(validation-distributions)=
+### Distributions and special functions
+
+The script printed 51 checks (51 pass) in 12 min 28 s, with a peak memory of 174 MiB.
+The API reference of {api}`cytepool.stats.distributions` documents what it checks.
 
 [`validation/distributions.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/distributions.py)
 checks every public function of `cytepool.stats.special` and
@@ -2344,7 +2582,12 @@ distribution's cdf and 0.193 for `gammainc` (1.94e-13, 1.95e-13 and 1.26e-13 for
 CytePool), and it returns non-finite values at up to 493 points of a check
 (`f_isf`).
 
-## LOWESS and spline bases
+(validation-smoothing)=
+### LOWESS and spline bases
+
+The script printed 90 checks (87 pass, 1 information and 2 deliberate differences) in
+1.5 s, with a peak memory of 175 MiB. [limma-voom and
+limma-trend](statistics/limma_voom.md#voom-span) explains what it checks.
 
 [`validation/smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py)
 compares `lowess` with R's `stats::lowess` and `natural_spline_basis` with
@@ -2418,18 +2661,25 @@ observation weights or missing values fit each gene on its own, on 2 threads her
 | Block correlation | 0.13 | 0.090 |
 | Block correlation and observation weights | 10.81 | 0.194 |
 
-`mixed_models.py --benchmark` on 20,000 genes x 120 samples with observation weights
-and the fixed effects `~ condition + age` (3 conditions): CytePool on one thread, the
-median of three runs after a first call that compiled it, and lmerTest's `lmer` and
-`summary` (Satterthwaite's df for every coefficient, with lme4's default tolerances)
-on 100 of the genes, after one fit that was not timed. The peak resident memory of
-the run was 424 MiB.
+`mixed_models.py --benchmark`, run on 2026-10-28, on 20,000 genes with observation
+weights and the fixed effects `~ condition + age` (3 conditions), at 120 samples with three structures of
+random effects and at 18 samples, a study small enough for dream's default to use
+Kenward-Roger's method, with one random intercept: CytePool on one thread, the fits the
+median of three runs and the tests one run, after a first call that compiled them, and
+lmerTest's `lmer` and `summary` (Satterthwaite's df for every coefficient, with lme4's
+default tolerances) on 100 of the genes, after one fit that was not timed. The peak
+resident memory of the run was 729 MiB.
 
-| Random effects | `fit_mixed_model` (s) | `fixed_effect_tests` (s) | lmerTest, per gene (s) | lmerTest, 20,000 genes at that rate (min) |
-| --- | --- | --- | --- | --- |
-| One random intercept: 40 donors x 3 samples | 0.63 | 0.06 | 0.045 | 15.1 |
-| Two crossed: 40 donors, 6 batches | 1.50 | 0.06 | 0.052 | 17.5 |
-| Two nested: 20 donors x 3 samples x 2 replicates | 4.12 | 0.06 | 0.051 | 17.0 |
+| Random effects | Samples | `fit_mixed_model` (s) | Satterthwaite's tests (s) | Kenward-Roger's tests (s) | lmerTest, per gene (s) | lmerTest, 20,000 genes at that rate (min) |
+| --- | --- | --- | --- | --- | --- | --- |
+| One random intercept: 40 donors x 3 samples | 120 | 0.49 | 0.06 | 8.49 | 0.026 | 8.8 |
+| Two crossed: 40 donors, 6 batches | 120 | 1.18 | 0.07 | 9.70 | 0.033 | 11.1 |
+| Two nested: 20 donors x 3 samples x 2 replicates | 120 | 3.03 | 0.08 | 9.17 | 0.029 | 9.7 |
+| One random intercept: 6 donors x 3 samples | 18 | 0.20 | 0.06 | 0.15 | 0.021 | 7.1 |
+
+Kenward-Roger's tests cost O(n³) operations per gene for n samples: in the small study
+they took 0.15 s, against 0.06 s for Satterthwaite's, and at 120 samples more than 100
+times as long as Satterthwaite's.
 
 On fgsea's example data, 12,000 genes and 586 sets of 15 to 500 genes, with its
 defaults, fgsea's `fgsea` took 2.9 s and `gsea` 4.1 s, both on one thread, after a
@@ -2478,9 +2728,10 @@ one:
 
 A read holds what it returns and about one decompressed chunk (3.3 MB of `log_sum`).
 Genes at random lie in every chunk, so they decompress the whole file, and so does a
-selection of samples, since every chunk holds every sample. A read that covers a whole
-group is hashed, to check it against the digest stored with the file, and a selection's
-groups are hashed as they are read, for the selection's own fingerprint.
+selection of samples, since every chunk of this file holds every sample. A read that
+covers a whole group is hashed, to check it against the digest stored with the file,
+and a selection's groups are hashed as they are read, for the selection's own
+fingerprint.
 
 (reproduce-validation)=
 ## Reproducing this page

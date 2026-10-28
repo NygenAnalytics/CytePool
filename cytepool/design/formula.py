@@ -1,5 +1,13 @@
 """Parse R-style model formulas into terms.
 
+:func:`~cytepool.design.parse_formula` expands the right-hand side of a formula into
+its terms, a :class:`~cytepool.design.FormulaTerms`;
+:func:`~cytepool.design.parse_random_effects` reads random-effect terms in lme4's
+notation (Bates et al. 2015) into :class:`~cytepool.design.RandomEffect` entries; and
+:func:`quote_name` writes a variable name as R writes it in term labels.
+https://docs.nygen.io/CytePool/statistics/linear-models#designs-and-formulas explains
+designs and their formulas.
+
 A formula such as ``"~ condition * batch"`` describes the columns of a design matrix,
 in the notation of Wilkinson and Rogers (1973) as S and R adapted it. It is expanded to
 an intercept flag and a list of terms, each term a set of variables, by the rules of
@@ -22,15 +30,17 @@ appearance within each order, and the variables of a term are listed in the orde
 which they first appear in the formula. Term labels quote names that are not
 syntactic R names with backticks, as R does.
 
-Some formulas that R accepts are rejected because their R meaning is almost never
-what was intended: a ``-`` that removes nothing (``~ x - z`` does not subtract z; it
-is ``~ x`` in R), ``^`` applied to a single term (R reads ``~ age^2`` as ``~ age``),
-and a power that is not a whole number (R truncates ``^2.5`` to ``^2``). Function
-calls such as ``log(age)`` or ``I(age^2)`` are rejected with a suggestion to add a
-column with the computed values.
+Differences from R:
+    Some formulas that R accepts are rejected, because their R meaning is almost
+    never what was intended:
 
-Random-effect terms, such as ``(1 | donor)``, are written in lme4's notation (Bates et
-al. 2015) and read by ``parse_random_effects``.
+    - a ``-`` that removes nothing: ``~ x - z`` does not subtract z, it is ``~ x``
+      in R;
+    - ``^`` applied to a single term: R reads ``~ age^2`` as ``~ age``;
+    - a power that is not a whole number: R truncates ``^2.5`` to ``^2``.
+
+    Function calls such as ``log(age)`` or ``I(age^2)`` are rejected too, with a
+    suggestion to add a column with the computed values.
 
 References:
     Wilkinson GN, Rogers CE (1973). Symbolic description of factorial models for
@@ -212,8 +222,10 @@ class RandomEffect:
 
         A single grouping variable keeps its name as it is (``cell type``); a
         combination of variables is written as in a formula, with backticks around
-        names that need them (found by probing lme4).
+        names that need them, as lme4 writes it.
         """
+        # lme4 names a combination of grouping variables as a formula writes it
+        # (found by probing lme4).
         if len(self.grouping) == 1:
             return self.grouping[0]
         return ":".join(quote_name(name) for name in self.grouping)

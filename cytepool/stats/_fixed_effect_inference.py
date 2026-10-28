@@ -10,7 +10,7 @@ The tests of :mod:`cytepool.stats.mixed_models`, dream's moderated tests
   contrast follow. ``chosen_parts`` takes each feature's parts from one of two sets.
 - ``contrast_tests``: the t-tests of contrasts.
 - ``f_test``: the F-test that several contrasts are all zero, by Satterthwaite's
-  method as lmerTest's ``contestMD`` computes it or by Kenward and Roger's as
+  method as lmerTest's ``contestMD`` computes it or by Kenward-Roger's as
   pbkrtest's ``KRmodcomp`` does.
 - ``combined_df``: the denominator degrees of freedom of an F-statistic that is the
   mean of the squares of independent t-statistics, from theirs.
@@ -103,7 +103,7 @@ class FTests(NamedTuple):
     df1: int  # numerator degrees of freedom: the number of independent contrasts
     df2: FloatArray  # (G,) denominator degrees of freedom
     p_value: FloatArray  # (G,)
-    scaling: FloatArray  # (G,) Kenward and Roger's scaling of the statistic (or 1)
+    scaling: FloatArray  # (G,) Kenward-Roger's scaling of the statistic (or 1)
 
 
 def satterthwaite_parts(fit: Any) -> InferenceParts:
@@ -120,7 +120,7 @@ def satterthwaite_parts(fit: Any) -> InferenceParts:
 
 
 def kenward_roger_parts(fit: Any, average_weight: bool) -> InferenceParts:
-    """The parts of Kenward and Roger's tests of a REML fit; see the module docstring.
+    """The parts of Kenward-Roger's tests of a REML fit; see the module docstring.
 
     Args:
         fit: A ``MixedModelFit`` by REML, with its weights and the levels of its
@@ -268,7 +268,7 @@ def f_test(
       squared t-statistics, and its denominator degrees of freedom combine their
       Satterthwaite degrees of freedom by ``combined_df`` (Fai and Cornelius 1996;
       Kuznetsova et al. 2017).
-    - Kenward and Roger's, as pbkrtest's ``KRmodcomp``: the Wald statistic with the
+    - Kenward-Roger's, as pbkrtest's ``KRmodcomp``: the Wald statistic with the
       adjusted covariance matrix, divided by the rank and scaled by lambda, on
       (rank, m) degrees of freedom (Kenward and Roger 1997, section 4). It does not
       depend on how the hypothesis is spanned.
@@ -386,7 +386,7 @@ def _kenward_roger_f(
     parts: InferenceParts,
     rank: int,
 ) -> tuple[FloatArray, FloatArray, FloatArray]:
-    """Kenward and Roger's F-statistic, denominator df and scaling, per feature.
+    """Kenward-Roger's F-statistic, denominator df and scaling, per feature.
 
     With Theta = L' (L Phi L')^-1 L for the unadjusted Phi, A1 = sum_ij W_ij
     tr(Theta E_i) tr(Theta E_j) and A2 = sum_ij W_ij tr(Theta E_i Theta E_j), where the
@@ -457,7 +457,7 @@ def _kenward_roger_features(
     derivatives: FloatArray,
     parameter_covariance: FloatArray,
 ) -> None:
-    """Kenward and Roger's parts of features ``start:stop``, in the basis.
+    """Kenward-Roger's parts of features ``start:stop``, in the basis.
 
     Everything is computed with Sigma / s^2 = R + sum_k gamma_k Z_k Z_k' (gamma_k =
     sigma_k^2 / s^2), whose inverse is M, and U = M q: then X' Sigma^-1 G_i Sigma^-1 X

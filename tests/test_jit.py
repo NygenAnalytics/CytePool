@@ -217,9 +217,9 @@ def test_thread_limit_restores_threads_after_an_exception() -> None:
     [
         (0, ValueError, "n_threads must be at least 1, got 0"),
         (-2, ValueError, "at least 1, got -2"),
-        (1.5, TypeError, "positive integer or None, got float"),
+        (1.5, TypeError, "an integer or None, got float"),
         ("2", TypeError, "got str"),
-        (True, TypeError, "not bool"),
+        (True, TypeError, "got bool"),
     ],
 )
 def test_thread_limit_rejects_invalid_counts(

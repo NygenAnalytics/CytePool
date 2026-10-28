@@ -1,117 +1,77 @@
 """Gene-set tests of one contrast of a linear model: limma's camera and fry.
 
-A gene set, such as a pathway, is tested as a unit for one contrast of the linear model
-fitted to every gene. :func:`~cytepool.camera` is competitive: it asks whether the genes
-of a set are more differentially expressed than the other genes, allowing for the
-correlation between the genes of the set (Wu and Smyth 2012). :func:`~cytepool.fry` is
-self-contained: it asks whether the genes of a set are differentially expressed at all,
-as the rotation test of Wu et al. (2010) with the mean statistic does, without drawing
-rotations (Giner and Smyth 2016). Results match limma 3.62.1 except where noted under
-"Deliberate differences". The rotation tests, which draw rotations (limma's roast,
-mroast and romer), are :func:`~cytepool.roast`, :func:`~cytepool.mroast` and
-:func:`~cytepool.romer`.
+:func:`~cytepool.camera` asks whether the genes of each set are more differentially
+expressed for a contrast than the other genes, allowing for the correlation between the
+genes of the set (Wu and Smyth 2012), and :func:`~cytepool.fry` whether they are
+differentially expressed at all, in one direction or in either, by the limit of the
+rotation test of Wu et al. (2010) with the mean statistic over infinitely many rotations
+(Giner and Smyth 2016). Each returns a table with one row per set. The rotation tests,
+which draw rotations, are :func:`~cytepool.roast`, :func:`~cytepool.mroast` and
+:func:`~cytepool.romer`. https://docs.nygen.io/CytePool/statistics/gene-set-tests#camera
+explains the tests, and
+https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits how they
+differ from limma's.
 
-Effects:
-    Both tests work with the effects of each gene's least squares fit (Wu et al. 2010,
-    section 4.1). The design X, n samples by p coefficients, is reparametrised so that
-    the contrast is its last coefficient: a contrast given as a column of the design
-    moves that column last; a contrast given as weights c becomes the last column, X c /
-    (c'c), after the columns X h_2, ..., X h_p, where h_1, ..., h_p are the columns of
-    the Householder reflection H of c, so that the last coefficient is c'alpha (limma's
-    ``contrastAsCoef``, found by probing). With the Householder QR decomposition (Golub
-    and Van Loan 2013) of this design in R's sign convention, a gene's data y give the
-    effects Q'y; the p-th is the contrast effect u_0, which divided by the residual
-    standard deviation is the gene's t-statistic, and the last d = n - p are its
-    residual effects u_1, ..., u_d, independent with variance sigma^2 under the model.
-    With precision weights W each gene's data and design are whitened by W^(1/2) first.
-    Every sample must be observed, with a positive weight, in every gene, so that all
-    genes have the same residual degrees of freedom d.
+Both tests work with the effects of each gene's least squares fit (Wu et al. 2010,
+section 4.1): with the design reparametrised so that the contrast is its last
+coefficient, the QR decomposition of the design, whitened by the gene's precision
+weights, gives the gene's contrast effect u_0 and its d residual effects
+(https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-effects). Every sample
+must be observed, with a positive weight, in every gene, so that all genes have the same
+residual degrees of freedom d, and the design must be of fixed effects only, of full
+column rank, with d of at least 1.
 
-    The residual effects are coordinates in a basis of the residual space, which the
-    QR decomposition chooses. With observation weights each gene has a basis of its
-    own, and the inter-gene correlation of camera and the statistics of fry depend on
-    them; fry's standardizations other than "none" depend on the basis even without
-    weights, through the largest effect. The bases are limma's: they depend on how the
-    contrast is given, and a pivot of the decomposition that is zero up to rounding
-    (below 1e-12 of its column), as in indicator designs with the samples sorted by
-    group, counts as zero, which R's ``qr()`` gives the positive sign. limma computes
-    most such zeros exactly, but leaves rounding noise in a few percent of genes, a
-    different few in camera and in fry, so that their bases, and limma's results, change
-    with the last bits of the data there; CytePool's do not (found by probing).
+Matching limma:
+    The results match limma 3.62.1. limma's documentation gives some of the conventions
+    below, and running limma on chosen inputs gave the others.
 
-camera:
-    Genes get moderated t-statistics, the contrast effect over the posterior standard
-    deviation of :func:`~cytepool.stats.empirical_bayes.squeeze_variances` on
-    min(d + d0, G d) degrees of freedom (as ``eBayes`` caps them, for G genes), turned
-    into z-scores by Hill's (1970) approximation (Brophy 1987, equation 5), as limma's
-    ``zscoreT(approx = TRUE, method = "hill")`` does (found by probing). With the mean
-    z-score of a set of m genes and the mean and variance of all G z-scores, the test
-    statistic is the two-sample t-statistic of the set against the other G - m genes
-    with the variance of the set's mean inflated by VIF = 1 + (m - 1) rho (Wu and Smyth
-    2012). The inter-gene correlation rho is a value given for every set, or estimated
-    for each set from the residual effects: each gene's are divided by its residual
-    standard deviation (its variance bounded below by 1e-8, found by probing), the m x d
-    matrix is averaged over genes, and m/d times the sum of squares of that mean
-    estimates the VIF. Unless negative correlations are allowed, rho enters the VIF as
-    max(rho, 0); a given negative correlation that makes the VIF of a set negative,
-    which no correlation matrix allows, gives the set a NaN p-value. The p-value is
-    two-sided, from the t distribution on G - 2 degrees of freedom for a given
-    correlation and on min(d, G - 2) for an estimated one (found by probing). The rank
-    version replaces the t-statistic by the Wilcoxon-Mann-Whitney rank sum of the set's
-    z-scores among all genes, with the variance of the rank sum when the set's values
-    share a correlation rho (Wu and Smyth 2012, from Barry et al. 2008, equation 4.5),
-    times Zar's (1999, section 8.10) correction for ties, 1 - sum(t^3 - t) / (G^3 - G),
-    and a continuity correction of 1/2; it is referred to the normal distribution for a
-    given correlation and to the t distribution on min(d, G - 2) degrees of freedom for
-    an estimated one (found by probing).
-
-fry:
-    The effects of each gene are divided by a scale (see ``standardize``), and the set
-    statistic is the mean b over the set's genes of these (d + 1)-vectors. Under the
-    null hypothesis the d + 1 effects of a gene are independent with equal variances,
-    so one rotation applied to the effects of every gene leaves the joint distribution
-    of the data unchanged (Wu et al. 2010, section 3.4). Under a uniformly random
-    rotation b turns uniformly over its sphere, so T = b_0 / (sum_k b_k^2 / d)^(1/2) has
-    the t distribution on d degrees of freedom: the p-value the rotation test of the
-    mean statistic would give with infinitely many rotations, exactly so when every
-    gene has the same scale. The mixed (non-directional) statistic is the sum over
-    genes of the squared standardized contrast effects. Under rotation it is r'(E'E)r
-    for the set's m x (d + 1) matrix E of standardized effects and r uniform on the unit
-    sphere, so it equals sum_k lambda_k v_k with lambda_k the d + 1 eigenvalues of E'E
-    and (v_k) Dirichlet(1/2, ..., 1/2); scaled to [0, 1] by the smallest and largest
-    eigenvalue, it is approximated by the beta distribution with its first two moments
-    (found by probing to be limma's approximation, for sets of more than d genes). With
-    one gene the approximation is exact: the mixed p-value is the two-sided p-value of
-    the gene's t-statistic. For more genes it can be much too small in the tail, as
-    limma's is: 6.3e-4 where a simulation of the rotation test gives 3.2e-3.
-
-    The scales of ``standardize="residual_sd"`` and ``"posterior_sd"`` start from the
-    mean square of a gene's d + 1 effects without the largest, which leaves out the
-    contrast effect of a strongly differentially expressed gene (found by probing).
-    ``"posterior_sd"`` divides it by its expected value under the null hypothesis,
-    which makes it unbiased for sigma^2, and moderates it with the prior of the
-    residual variances as a variance on 0.92 d degrees of freedom, fewer than d since
-    the largest effect is left out (limma's rule, found by probing).
-
-Deliberate differences from limma:
-    - fry's mixed p-value of a set of 2 to d genes. limma uses only the set's m nonzero
-      eigenvalues and treats them as an m-dimensional problem (found by probing), which
-      can be far from the rotation p-value; here all d + 1 dimensions are used, as for
-      larger sets. ``validation/gene_set_tests.py`` compares both with the rotation
-      p-value by simulation.
-    - fry's ``standardize="posterior_sd"``. limma's expected value of the trimmed mean
-      square is about 7.3e-5 (d + 1) / d above the exact one used here (found by
-      probing), which moves p-values by about 1e-4 of their value.
-    - camera's rank test with continuity correction can give both tails above 1/2;
-      limma then reports twice the smaller, a p-value above 1, and here it is 1.
-    - A gene listed twice in a set counts once; limma counts it twice.
-    - A set without genes, or containing every gene in camera, has NaN p-values and no
-      direction, and is left out of the adjusted p-values of the other sets. limma
-      reports the direction "Up", in camera's rank test the p-value 2, which it adjusts
-      with the others, and in fry a mixed p-value of 0 for an empty set.
-    - camera takes ``robust``: the moderated t-statistics of the robust empirical Bayes
-      estimator (Phipson et al. 2016), each turned into a z-score on its own degrees of
-      freedom. limma's camera has no such option and ignores it.
+    - The design is reparametrised as limma's ``contrastAsCoef`` does: a contrast given
+      as a column of the design moves that column last; a contrast given as weights c
+      becomes the last column, X c / (c'c), after the columns X h_2, ..., X h_p, where
+      h_1, ..., h_p are the columns of the Householder reflection H of c, so that the
+      last coefficient is c'alpha.
+    - The QR decomposition is Householder's (Golub and Van Loan 2013) in R's sign
+      convention, so that the residual effects are in limma's basis. With observation
+      weights each gene has a basis of its own, and the correlation that camera
+      estimates and the statistics of fry depend on it; fry's standardizations other
+      than "none" depend on the basis even without weights, through the largest
+      effect. The basis depends on how the contrast is given, and a pivot that is zero
+      up to rounding (below 1e-12 of its column), as in indicator designs with the
+      samples sorted by group, counts as zero, which R's ``qr()`` gives the positive
+      sign.
+    - camera's moderated t-statistics are the contrast effects over the posterior
+      standard deviations of :func:`~cytepool.stats.empirical_bayes.squeeze_variances`,
+      on min(d + d0, G d) degrees of freedom (as ``eBayes`` caps them, for G genes),
+      turned into z-scores by Hill's (1970) approximation (Brophy 1987, equation 5), as
+      limma's ``zscoreT(approx = TRUE, method = "hill")`` does.
+    - camera's estimated correlation divides each gene's residual effects by its
+      residual standard deviation (its variance bounded below by 1e-8), averages the
+      m x d matrix over the set's m genes, and takes m/d times the sum of squares of
+      that mean as the variance inflation factor, VIF = 1 + (m - 1) rho (Wu and Smyth
+      2012). Unless negative correlations are allowed, rho enters the VIF as
+      max(rho, 0); a given negative correlation that makes the VIF of a set negative,
+      which no correlation matrix allows, gives the set a NaN p-value.
+    - camera's p-value is two-sided, from the t distribution on G - 2 degrees of
+      freedom for a given correlation and on min(d, G - 2) for an estimated one, and a
+      set whose two tails are equal goes "up". The rank version uses the variance of
+      the rank sum when the set's values share a correlation rho (Wu and Smyth 2012,
+      from Barry et al. 2008, equation 4.5), times Zar's (1999, section 8.10)
+      correction for ties, 1 - sum(t^3 - t) / (G^3 - G), with a continuity correction
+      of 1/2, referred to the normal distribution for a given correlation and to the t
+      distribution on min(d, G - 2) degrees of freedom for an estimated one.
+    - fry's mixed p-value is limma's beta approximation for sets of more than d genes.
+      Under a rotation r, the sum of the set's squared standardized contrast effects
+      is r'(E'E)r for the set's m x (d + 1) matrix E of standardized effects, so it
+      equals sum_k lambda_k v_k, with lambda_k the d + 1 eigenvalues of E'E and (v_k)
+      Dirichlet(1/2, ..., 1/2); scaled to [0, 1] by the smallest and largest
+      eigenvalue, it is given the beta distribution with its first two moments.
+    - fry's scales for ``standardize="residual_sd"`` and ``"posterior_sd"`` start from
+      the mean square of a gene's d + 1 effects without the largest, which leaves out
+      the contrast effect of a strongly differentially expressed gene.
+      ``"posterior_sd"`` divides it by its expected value under the null hypothesis,
+      which makes it unbiased for sigma^2, and moderates it with the prior of the
+      residual variances as a variance on 0.92 d degrees of freedom, fewer than d since
+      the largest effect is left out.
 
 References:
     Wu D, Smyth GK (2012). Camera: a competitive gene set test accounting for inter-gene
@@ -222,10 +182,14 @@ def camera(
     limma's ``camera`` (Wu and Smyth 2012): tests whether the genes of each set are more
     differentially expressed for ``contrast`` than the other genes, by a two-sample test
     of their moderated z-scores against those of the other genes, with the variance of
-    the set's mean inflated by the correlation between its genes. The module docstring
-    gives the method. The default correlation of 0.01 is limma's (since limma 3.29.6):
-    it ranks co-regulated, interpretable sets higher than a correlation estimated for
-    each set, whose error rate control is strict.
+    the mean of a set of m genes inflated by VIF = 1 + (m - 1) rho for a correlation
+    rho between them.
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#camera explains the test,
+    the module documentation the conventions that match limma, and
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits the
+    differences from it. The default correlation of 0.01 is limma's (since limma
+    3.29.6): it ranks co-regulated, interpretable sets higher than a correlation
+    estimated for each set, whose error rate control is strict.
 
     A result of :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested
     as limma's camera tests the fit of one group: its values and weights, the design
@@ -273,13 +237,16 @@ def camera(
             estimated, may shrink the variance of a set's mean; otherwise it counts as
             zero.
         use_ranks: Whether to test the ranks of the z-scores (a correlation-adjusted
-            Wilcoxon-Mann-Whitney test) rather than their values.
+            Wilcoxon-Mann-Whitney test) rather than their values. Where the
+            continuity correction leaves both tails above 1/2, the p-value is 1;
+            limma reports twice the smaller tail, above 1.
         trend: Whether the prior variance of the moderation follows the mean
             log-expression of the genes (limma's ``trend.var``); None takes the
             moderation of a result (limma-trend's trend), and False otherwise.
-        robust: Whether to moderate the variances with the robust estimator, which
-            limma's camera does not offer; None takes the result's setting, and
-            False otherwise.
+        robust: Whether to moderate the variances with the robust estimator
+            (Phipson et al. 2016), which limma's camera does not offer; each gene's
+            moderated t-statistic then becomes a z-score on its own degrees of
+            freedom. None takes the result's setting, and False otherwise.
 
     Returns:
         A table with one row per gene set, in the order of ``gene_sets``: ``gene_set``;
@@ -288,7 +255,9 @@ def camera(
         one; ``direction``, ``"up"`` or ``"down"`` (None where the p-value is NaN);
         ``p_value``, two-sided; and ``adjusted_p_value``, Benjamini-Hochberg over the
         sets (Benjamini and Hochberg 1995). A set with no genes, or with every gene,
-        has NaN p-values.
+        has NaN p-values and no direction, and the adjustment leaves it out; limma
+        reports "Up" for it, and in the rank test the p-value 2, which it adjusts
+        with the others.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -304,9 +273,9 @@ def camera(
     """
     rho = _correlation_option(inter_gene_correlation)
     allow_negative = checked_flag(
-        allow_negative_correlation, "allow_negative_correlation", expected="a bool"
+        allow_negative_correlation, "allow_negative_correlation"
     )
-    ranks = checked_flag(use_ranks, "use_ranks", expected="a bool")
+    ranks = checked_flag(use_ranks, "use_ranks")
     read = gene_set_data(
         data,
         group=group,
@@ -399,12 +368,18 @@ def fry(
     limma's ``fry`` (Giner and Smyth 2016): tests whether the genes of each set are
     differentially expressed for ``contrast``, in the same direction (the directional
     p-value) or in either (the mixed p-value), by the limit of the rotation test of Wu
-    et al. (2010) with the mean statistic over infinitely many rotations. The module
-    docstring gives the method and the deliberate differences from limma. limma's
-    gene contribution weights (``gene.weights``, or weights inside a set), which give
-    genes signs and sizes in the set statistic, are not implemented. A result of
-    :func:`~cytepool.limma_voom` or :func:`~cytepool.limma_trend` is tested as for
-    :func:`camera`.
+    et al. (2010) with the mean statistic over infinitely many rotations: the mean b of
+    the set's standardized effects gives T = b_0 / (sum_k b_k^2 / d)^(1/2) on d degrees
+    of freedom, and the mixed p-value is a beta approximation to the rotation p-value
+    of the sum of the set's squared standardized contrast effects, from all d + 1
+    dimensions of the rotation, also when the set has 2 to d genes, where limma uses
+    only the set's own m. https://docs.nygen.io/CytePool/statistics/gene-set-tests#fry
+    explains the test, the module documentation the conventions, and
+    https://docs.nygen.io/CytePool/statistics/gene-set-tests#gene-set-tests-limits the
+    differences from limma. limma's gene contribution weights (``gene.weights``, or
+    weights inside a set), which give genes signs and sizes in the set statistic, are
+    not implemented. A result of :func:`~cytepool.limma_voom` or
+    :func:`~cytepool.limma_trend` is tested as for :func:`camera`.
 
     Args:
         data: A differential-expression result, a VoomResult or log-expression
@@ -438,7 +413,9 @@ def fry(
         Benjamini-Hochberg over the sets; ``mixed_p_value``, the non-directional
         p-value; and ``mixed_adjusted_p_value``. A set with no genes has NaN p-values,
         and so, with ``standardize="residual_sd"``, has a set containing a gene whose
-        d + 1 effects are zero but for at most one, which cannot be scaled.
+        d + 1 effects are zero but for at most one, which cannot be scaled; such a set
+        has no direction, and the adjustment leaves it out. For a set with no genes,
+        limma reports "Up" and a mixed p-value of 0.
 
     Raises:
         TypeError: If an argument has the wrong type, or is or holds a numpy masked
@@ -453,12 +430,8 @@ def fry(
             "standardize must be one of "
             f"{', '.join(map(repr, _STANDARDIZATIONS))}, got {standardize!r}"
         )
-    given_trend = (
-        None if trend is None else checked_flag(trend, "trend", expected="a bool")
-    )
-    given_robust = (
-        None if robust is None else checked_flag(robust, "robust", expected="a bool")
-    )
+    given_trend = None if trend is None else checked_flag(trend, "trend")
+    given_robust = None if robust is None else checked_flag(robust, "robust")
     if (given_trend or given_robust) and standardize != "posterior_sd":
         raise ValueError(
             "trend and robust shape the prior of the posterior standard deviations, so "
@@ -575,6 +548,8 @@ def _hill_z_scores(t: FloatArray, df: FloatArray) -> FloatArray:
     + 100))) with w^2 = (df - 1/2) log(1 + t^2 / df) and b = 48 (df - 1/2)^2 (Brophy
     1987, equation 5). Infinite t stay infinite.
     """
+    # camera's z-scores, as limma's zscoreT(approx = TRUE, method = "hill") gives them
+    # (found by probing).
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         a = df - 0.5
         b = 48.0 * a * a
@@ -706,6 +681,8 @@ def _trimmed_mean_square_expectation(d: int) -> float:
     z > 0 of 2 z (1 - (1 - 2 Q(z))^k), Q the normal upper tail, by composite
     Gauss-Legendre quadrature; 1 - 2/pi for d = 1.
     """
+    # The exact expectation; limma's is about 7.3e-5 (d + 1) / d above it (found by
+    # probing), a deliberate difference.
     k = float(d + 1)
     total = 0.0
     for panel in range(_PANELS):
@@ -726,6 +703,9 @@ def _mixed_p_value(standardized: FloatArray, d: int) -> float:
     to [0, 1] by the smallest and largest of the d + 1 eigenvalues lambda_k of E'E, it
     is given the beta distribution with the same mean and variance.
     """
+    # limma's approximation for sets of more than d genes (found by probing). For
+    # sets of 2 to d genes limma uses only the set's m nonzero eigenvalues, as an
+    # m-dimensional problem (found by probing); all d + 1 are used here, on purpose.
     n_effects = d + 1
     singular = np.linalg.svd(standardized, compute_uv=False)
     eigenvalues = np.zeros(n_effects)

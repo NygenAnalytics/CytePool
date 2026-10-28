@@ -1,14 +1,14 @@
 """Variance partitioning of every group (cell type) of a cube.
 
-:func:`~cytepool.variance_partitioning` takes, in every group of a cube, the steps of
-:func:`~cytepool.dream_voom` up to voom's precision weights (Law et al. 2014), the
-mean-variance trend of the design's mixed model (Hoffman and Roussos 2021), and
-partitions the variance of every feature among the variables of the design, as
-variancePartition's ``fitExtractVarPartModel`` does (Hoffman and Schadt 2016):
-:mod:`cytepool.stats.variance_fractions` gives the model, the fractions and the
-conventions found by probing variancePartition, and
-:func:`~cytepool.stats.variance_fractions.variance_fractions` partitions the variance
-of a samples x features matrix.
+:func:`~cytepool.variance_partitioning` partitions the variance of every feature among
+the variables of a design in every group of a cube, as variancePartition's
+``fitExtractVarPartModel`` does (Hoffman and Schadt 2016), after the steps of
+:func:`~cytepool.dream_voom` up to voom's precision weights (Law et al. 2014; Hoffman
+and Roussos 2021), into a :class:`~cytepool.VariancePartitioningResult`;
+:func:`~cytepool.stats.variance_fractions.variance_fractions` does it for a samples x
+features matrix.
+https://docs.nygen.io/CytePool/statistics/mixed-models#variance-fractions explains the
+method.
 
 References:
     Hoffman GE, Schadt EE (2016). variancePartition: interpreting drivers of variation
@@ -85,7 +85,7 @@ BoolArray = npt.NDArray[np.bool_]
 # Columns of the tables of a cube's groups other than the fractions.
 _IDENTITY = ("feature_id", "symbol")
 _METHOD = "variance_partitioning"
-# The fits behind the precision weights, recorded in the provenance: maximum
+# The fits of the precision weights, recorded in the provenance: maximum
 # likelihood, as variancePartition's voomWithDreamWeights fits.
 _FIXED_SETTINGS = {"weights_fit": "ml"}
 
@@ -358,8 +358,8 @@ def variance_partitioning(
             dreamlet weights samples; or None. Needs a cube that records cell
             numbers.
         method: ``"ml"`` (maximum likelihood, variancePartition's default) or
-            ``"reml"``, for the fits behind the fractions; the fits behind the
-            precision weights are by maximum likelihood, as
+            ``"reml"``, for the fits from which the fractions come; the fits from
+            which the precision weights come are by maximum likelihood, as
             ``voomWithDreamWeights`` fits them.
         n_threads: The most threads for the fits of the features, at least 1; None
             keeps numba's setting. The results do not depend on it.

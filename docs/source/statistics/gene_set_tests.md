@@ -1,368 +1,311 @@
 ---
-description: Competitive and self-contained gene-set tests on a linear model, as limma's camera, fry, roast, mroast and romer compute them; gene set enrichment analysis of ranked genes, as fgsea computes it; over-representation analysis of the genes called significant, as limma's kegga computes it; scores of gene sets in every sample by GSVA, ssGSEA, combined z-scores and PLAGE, as the GSVA package computes them; activities of transcription factors and pathways from the networks CollecTRI and PROGENy, as decoupler computes them; gene sets read from GMT files; and how to choose between the tests.
+description: Whether the genes of a pathway respond to a contrast, tested on the linear model of every gene by limma's camera, fry, roast, mroast and romer.
 ---
 
 # Gene-set tests
 
-A gene-set test asks a question of a pathway or a signature as a whole, for one contrast
-of the linear model fitted to every gene. Two questions differ [@goeman2007]:
+The chapters so far asked which genes change ([limma-voom and limma-trend](limma_voom.md))
+and which cell types expand or contract ([Composition tests](composition.md)). This part
+asks the question of a pathway or a signature as a whole: do the genes of a set respond
+to a contrast? {api}`camera` answers it by default for a collection of sets: it asks
+whether the genes of each set change more than the other genes, and allows for the
+correlation between them [@wu2012]. {api}`fry`, {api}`roast` and {api}`mroast` ask whether
+the genes of a set change at all, and {api}`romer` compares the ranks of a set's genes
+with those of the others. All five test one contrast of the linear model that
+{api}`limma_voom` or {api}`limma_trend` fitted to a cell type. [Gene sets and
+pathways](../guides/gene_sets.ipynb) runs camera, fry and roast on published data.
 
-- **Self-contained**: are the genes of the set differentially expressed at all?
-  {api}`fry`, {api}`roast` and {api}`mroast`.
-- **Competitive**: are they more differentially expressed than the other genes?
-  {api}`camera` and {api}`romer`; {api}`gsea`, which asks it of a ranking of all genes;
-  and {api}`over_representation`, which asks it of the genes called significant.
+(gene-set-collections)=
+## Gene-set collections
 
-A self-contained test finds a set significant when its genes respond, however many other
-genes respond too: in a response that touches thousands of genes, many sets are. A
-competitive test asks whether a set stands out from the other genes, and so suits
-ranking many sets, such as a pathway collection. The five tests of limma work on the
-linear model, so they allow any design and contrast and do not permute samples; all but
-romer take voom's precision weights. Each tests a cell type of a result of
-{api}`limma_voom` or {api}`limma_trend`, whose fit it computes again
-({api}`DifferentialExpressionResult.fit`), or values with a design and a contrast;
-romer, which takes sample weights only, tests a result of limma-trend. Gene set
-enrichment analysis needs only a statistic of every gene, and over-representation
-analysis only the genes that an analysis called significant.
-[Gene sets and pathways](../guides/gene_sets.ipynb) and
-[Pathway and regulator activity](../guides/pathway_activity.ipynb) run these methods on
-published data.
+A gene set names genes that share a function or a response, such as a pathway, the
+targets of a transcription factor or a signature. Collections such as MSigDB
+[@liberzon2011; @liberzon2015], Reactome and WikiPathways distribute them as GMT files,
+and so do the Gene Ontology's GMT exports, such as MSigDB's: one set per line, a name,
+a description and the genes, in fields separated by tabs [@subramanian2005; @gsea2026].
+{api}`read_gmt` reads such a file into a {api}`GeneSets`, a mapping from set names to
+gene ids that every function of this part takes as its gene sets, and {api}`write_gmt`
+writes one back. CytePool bundles no collection, since each provider states its own
+terms. A collection records the name, version and licence that you give when you read
+it, with the name and SHA-256 digest of the file, so that a result can say which sets it
+used.
 
+Sets name genes by symbol, by Entrez id or by Ensembl id, and an analysis must name them
+the same way: the tests read a result's ids from a column of its features (`id_column`,
+such as `"symbol"`). {api}`GeneSets.restrict_to` matches a collection to the genes that
+an analysis measured, as limma's `ids2indices` does, and its error when nothing matches
+is the sign that the two name genes differently. {api}`GeneSets.filter_by_size` then
+keeps sets by their size among the genes measured, and {api}`GeneSets.select` by name.
+The GSEA program skips sets of under 15 or over 500 genes by default [@gsea2026]; the
+gene-set tests, GSEA and the pathway scores of CytePool test sets of every size unless
+told otherwise, as fgsea and GSVA do.
+
+(competitive-and-self-contained)=
+## Competitive or self-contained
+
+Two questions can be asked of a set's genes [@goeman2007]. A *self-contained* test asks
+whether they respond to the contrast at all: {api}`fry`, {api}`roast` and {api}`mroast`
+ask it. A *competitive* test asks whether they respond more than the other genes:
+{api}`camera` and {api}`romer` ask it, as do the over-representation analysis and the
+gene set enrichment analysis of the [next chapter](over_representation_and_gsea.md). In
+a response that touches thousands of genes, the genes of many sets respond, and a
+self-contained test finds each of those sets significant; a competitive test asks which
+sets respond more than the other genes, and so ranks a collection. A self-contained test
+suits a set chosen in advance, such as an interferon signature in an interferon
+stimulation.
+
+(correlated-genes)=
+## Genes that respond together
+
+The genes of a set are seldom independent: co-regulated genes rise and fall together
+from sample to sample. A test that takes them as independent draws, such as one that
+compares a set with random sets of genes, counts one shared fluctuation many times, and
+its p-values are too small for sets whose genes are correlated [@goeman2007; @wu2012].
+The tests of this chapter allow for it in two ways. camera inflates the variance of a
+set's mean statistic by a factor that grows with the correlation between its genes. fry,
+roast, mroast and romer compare a set's statistic with its values under rotations of the
+residual space, which keep the correlation between genes as it is.
+
+(gene-effects)=
 ## The effects of each gene
 
-The five tests on the linear model start from the same decomposition [@wu2010, section 4.1]. The design is
-reparametrized so that the contrast is its last coefficient, and the QR decomposition of
-that design turns each gene's data into a contrast effect $u_0$ and $d$ residual effects
-$u_1, \dots, u_d$, independent with variance $\sigma^2$ under the model. The contrast
-effect over the residual standard deviation is the gene's t-statistic.
+The five tests start from the same decomposition [@wu2010, section 4.1]. The design, of n
+samples and p coefficients, is reparametrized to make the contrast its last
+coefficient, and the QR decomposition of that design turns the values of a gene into a
+contrast effect $u_0$ and $d = n - p$ residual effects $u_1, \dots, u_d$. Under the
+model they are independent, each with the gene's variance $\sigma^2$, and $u_0$ over the
+residual standard deviation is the gene's t-statistic. With precision weights, each
+gene's values and design are first multiplied by the square roots of its weights.
 
+Under the null hypothesis $u_0$ has mean zero too, so the $d + 1$ effects of a gene are
+independent with equal variances, and a rotation of them leaves their distribution
+unchanged. One rotation applied to the effects of every gene then leaves the joint
+distribution of the data unchanged, the correlation between genes included [@wu2010;
+@langsrud2005]. Rotations take the place of permutations of the samples, which a small
+experiment has too few of and a design with several factors or covariates does not
+allow: they need only residual degrees of freedom.
+
+A result of {api}`limma_voom` or {api}`limma_trend` is tested on the fit of one cell type,
+which {api}`DifferentialExpressionResult.fit` computes again: its log-CPM values and
+precision weights, the design rows of the samples fitted, the contrast's weights on the
+columns kept, and the moderation the result used. Values with a design and a contrast
+are tested the same way.
+
+(camera)=
 ## camera
 
-Genes are correlated, so a set's genes are not independent evidence. camera turns each
-gene's moderated t-statistic into a z-score and compares the mean z-score of the set's
-$m$ genes with that of the other genes by a two-sample t-test, with the variance of the
-set's mean inflated by
+camera turns each gene's moderated t-statistic into a z-score and compares the mean
+z-score of the set's $m$ genes with that of the other genes by a two-sample t-test, with
+the variance of the set's mean inflated by
 
 $$
 \mathrm{VIF} = 1 + (m - 1)\rho,
 $$
 
-for an inter-gene correlation $\rho$ [@wu2012]. The default $\rho = 0.01$ is limma's;
-`inter_gene_correlation=None` estimates it for each set from its residual effects.
-`use_ranks=True` gives the rank version, a correlation-adjusted Wilcoxon-Mann-Whitney
-test.
+where $\rho$ is the correlation between the set's genes [@wu2012]. The default
+$\rho = 0.01$ is limma's. `inter_gene_correlation=None` estimates $\rho$ for each set
+from the residual effects of its genes, each divided by the gene's residual standard
+deviation: the sum of squares of their mean over the set, times $m/d$, estimates the
+variance inflation factor. `use_ranks=True` gives the rank version, a
+Wilcoxon-Mann-Whitney test of the set's z-scores against the others, with the variance
+of the rank sum adjusted for the correlation [@barry2008; @wu2012]. The p-value is
+two-sided, and the direction says whether the set's genes went up or down.
 
+(fry)=
 ## fry
 
-fry averages each gene's standardized effects over the set into a vector $b$ of $d + 1$
-values. Under the null hypothesis a random rotation of the residual space leaves the
-data's distribution unchanged, so
+fry asks whether a set's genes respond in one direction, for the directional p-value, or
+each in its own direction, for the mixed p-value [@giner2016]. It divides each gene's
+$d + 1$ effects by an estimate of the gene's standard deviation and averages them over
+the set's genes into a vector $b$. Under the null hypothesis a random rotation turns $b$
+uniformly over its sphere, so
 
 $$
 T = \frac{b_0}{\sqrt{\sum_{k=1}^{d} b_k^2 / d}}
 $$
 
-follows a t distribution on $d$ degrees of freedom: the p-value that roast with the mean
-statistic would give with infinitely many rotations [@giner2016]. fry is fast enough for
-thousands of sets and gives a directional and a mixed p-value for each.
+follows a t distribution on $d$ degrees of freedom. When the prior degrees of freedom are
+very large, as when every gene has the same residual variance, this is the p-value that
+roast with the mean statistic gives with infinitely many rotations; otherwise fry
+approximates it. The mixed statistic sums the squared standardized contrast effects of
+the set's genes, and its p-value under rotation is approximated by the beta distribution
+whose mean and variance match its own; for a set of one gene it equals the gene's
+two-sided t-test p-value.
 
+By default (`standardize="posterior_sd"`) each gene is divided by a posterior standard
+deviation: the mean square of its $d + 1$ effects with the largest left out, so that a
+gene's own strong response does not inflate it, moderated by the prior of [empirical
+Bayes moderation](empirical_bayes.md). `"residual_sd"` divides by the root of that mean
+square, unmoderated, and `"none"` leaves the effects as they are, which suits genes of
+equal variance. fry draws no rotations, so it is fast enough for thousands of
+sets, and its p-values are not limited by a number of rotations.
+
+(roast)=
 ## roast and mroast
 
-roast draws random rotations of the residual space and compares a set statistic with its
-values under them [@wu2010; @langsrud2005]. The statistic summarizes the genes'
-z-scores: their mean (the default), which detects sets in which most genes change in the
-same direction, or a floored mean, the mean of the top half or the mean square, which
-detect sets in which fewer genes change, the mean square the fewest. With $b$ of $B$
-rotations at least as extreme as the observed statistic, the p-value is
+roast draws random rotations of the residual space and sets the observed set statistic
+against the statistics of the rotated data [@wu2010; @langsrud2005]. Each gene's
+moderated t-statistic becomes a z-score, and the statistic summarizes the z-scores of the
+set's genes, for the alternatives up, down and mixed:
+
+- `"mean"`, the default, their mean, which makes a set significant when most of its genes
+  change in the same direction;
+- `"floormean"`, the mean with values on the wrong side of zero, or for the mixed
+  alternative small values, raised to a floor, and `"mean50"`, the mean of the larger
+  half, which detect sets in which as few as a quarter of the genes change;
+- `"msq"`, the mean square, which detects smaller shares still when their changes are
+  large, but which a few genes can drive.
+
+If $b$ of the $B$ rotated statistics are at least as extreme as the observed one, the
+p-value is
 
 $$
 p = \frac{b + 1}{B + 1}
 $$
 
-[@phipson2010], so it is never zero; each rotation also gives its mirror image for the
-up and down alternatives. roast reports the proportion of the set's genes that are
-active in each direction. {api}`mroast` tests many sets with the same rotations and
-adjusts their p-values. Rotations come from a seeded numpy generator, so a seed gives
-the same p-values every time; they agree with limma's within Monte Carlo error.
+[@phipson2010], so it is never zero. The two-sided p-value asks whether the set's genes
+went one way, up or down, and the mixed p-value whether they changed in either direction
+gene by gene. Each rotation also gives its mirror image for the up and down
+alternatives, so their p-values count $2B$ rotations: p-values reach down to
+$1/(B + 1)$ for the two-sided and mixed alternatives and $1/(2B + 1)$ for up or down,
+0.0005 and 0.00025 with the default 1,999 rotations. roast also reports the proportion
+of the set's genes that are active in each direction, with z-scores beyond $\sqrt 2$ in
+size [@wu2010]. Contribution weights of opposite signs mark genes expected to change in
+opposite directions, as in a signature of genes up and genes down, and larger weights
+count more (`gene_weights`, or a mapping of gene to weight as the set).
 
+{api}`mroast` tests many sets with the same rotations and adjusts their p-values for the
+number of sets by Benjamini and Hochberg's method, which it applies to mid-p-values
+[@routledge1994], since they suit false discovery rates, as limma does by default. The
+rotations come from a numpy generator: a seed (`rng`) gives the same p-values every
+time.
+
+(romer)=
 ## romer
 
-romer ranks every gene's moderated t-statistic among all genes and compares a set's mean
-rank with its values when every gene's rotated statistics are ranked again
-[@majewski2010]. Like gene set enrichment analysis [@subramanian2005] it pits the sets
-against each other, but by rotating the residual space instead of permuting samples, so
-it works for any contrast with residual degrees of freedom. Before rotating, each gene's
-contrast effect is shrunk by its posterior probability of being differentially
-expressed, so that strongly responding genes do not inflate the rotated statistics.
+romer is a competitive test by ranks [@majewski2010]. It ranks every gene's moderated
+t-statistic among all genes, ranking $t$ for the up alternative, $-t$ for down and
+$|t|$ for mixed, and compares a set's mean rank with the mean ranks that the rotations
+give, each rotation ranking every gene again; the mean, the floor mean or the mean of the
+larger half summarizes the ranks, as for roast. Like gene set enrichment analysis it
+compares a set's genes with the other genes, but its null distribution comes from
+rotations of the residual space, not from random sets of genes. Before the rotations,
+romer shrinks each gene's contrast effect according to the gene's posterior probability
+of differential expression, so that the genes that respond strongly do not inflate the
+rotated statistics. Its p-values are $(b + 1)/(B + 1)$, at least 0.0001 with the default
+9,999 rotations, and are not adjusted for the number of sets, as in limma.
 
-## Gene-set files
+(gene-set-tests-choices)=
+## Defaults and choices
 
-Gene sets come from collections such as MSigDB [@liberzon2011; @liberzon2015],
-Reactome, WikiPathways and the Gene Ontology, which distribute them as GMT files: one
-set per line, with its name, a description and its genes, separated by tabs
-[@subramanian2005; @gsea2026]. {api}`read_gmt` reads such a file into a
-{api}`GeneSets`, a mapping of set name to gene ids, which every function on this page
-takes as its gene sets. CytePool bundles no collection: each provider states its own
-terms. The collection records the source, version and licence that you give when you
-read it, with the name of the file and the SHA-256 digest of its bytes, so that a
-result can say which sets it used; {api}`write_gmt` writes a collection back.
+- **Competitive or self-contained.** {api}`camera` ranks a collection by default; for one
+  set chosen in advance, {api}`fry` or {api}`roast` asks whether it responds at all
+  ([Competitive or self-contained](#competitive-and-self-contained)).
+- **The correlation.** camera's small default correlation, 0.01, ranks highly
+  co-regulated sets, which are often the interpretable ones, higher; a correlation
+  estimated for each set (`inter_gene_correlation=None`) controls the error rate
+  strictly for every set, as limma's documentation says of the two. Negative
+  correlations count as zero unless `allow_negative_correlation=True`.
+- **fry or roast.** fry approximates the directional p-value of mroast's mean statistic
+  without rotations, so it suits many sets. Its mixed p-value comes from an
+  approximation, and roast's from the rotations themselves.
+- **The set statistic.** `set_statistic="mean"`, limma's default, asks that most genes
+  change together; `"floormean"`, `"mean50"` and `"msq"` find sets in which fewer genes
+  change.
+- **Rotations.** roast and mroast draw 1,999 rotations by default and romer 9,999, as
+  limma does. Use enough of them for the number of sets that the p-values are adjusted
+  for: limma's documentation recommends at least 9,999 for publication.
+- **Weights.** A result of limma-voom is tested with its precision weights. romer takes
+  sample weights only, as limma's does, so it tests a result of {api}`limma_trend`.
+- **The moderation.** camera, fry, roast and mroast moderate the variances as the result
+  did: with the trend of limma-trend, and robustly when the result was ([Estimating the
+  prior](#estimating-the-prior)); `trend` and `robust` change it. romer always moderates
+  them without a trend and not robustly, as limma's romer, which offers neither.
+- **Gene ids.** `id_column` names the column of a result's features that holds the ids
+  the sets use, `"feature_id"` by default.
 
-Sets name genes by symbol, by Entrez id or by Ensembl id, and an analysis must name
-them the same way. {api}`GeneSets.restrict_to` keeps the genes of each set that an
-analysis measured, drops the sets left without genes, as limma's `ids2indices` does,
-and refuses ids that match no gene at all. {api}`GeneSets.filter_by_size` then keeps
-the sets of a range of sizes, counted within the analysis: GSEA leaves out sets of
-fewer than 15 or more than 500 genes by default, since two or three genes can make a
-small set significant [@gsea2026]. {api}`GeneSets.select` takes sets by name.
+(gene-set-tests-limits)=
+## Limits and differences
 
-## Over-representation analysis
+- **Fixed effects only.** The tests fit a linear model of fixed effects: a design with
+  random effects is refused, there is no block correlation, and a result of
+  {api}`dream_voom` is refused, as its fits are mixed models. Test a result of
+  {api}`limma_voom` with the donor as a fixed effect instead. Every value must be
+  observed, with a positive weight, so that every gene has the same residual degrees of
+  freedom.
+- **Not implemented.** fry's gene contribution weights (limma's `gene.weights`), and exact
+  z-scores and given priors in the rotation tests (`approx.zscore = FALSE`, `var.prior`,
+  `df.prior`) ([Not implemented yet](#not-implemented-yet)).
+- **Rotations.** CytePool draws its rotations from numpy, and limma from R, so their
+  p-values agree within Monte Carlo error; given limma's rotations, CytePool returns
+  limma's p-values. mroast tests every set with the same rotations, where limma draws new
+  ones for each set; each p-value is a rotation p-value either way.
+- **fry's mixed p-value of small sets.** For a set of 2 to $d$ genes, limma approximates
+  the rotation p-value with the set's own dimensions only, which can be far from it;
+  CytePool uses all $d + 1$ dimensions, as for larger sets. For larger sets the two
+  agree, and the approximation that both use can be much too small far in the tail.
+- **fry's posterior standard deviations.** limma's expected value of a gene's mean square
+  without its largest effect is slightly above the exact value that CytePool uses, which
+  moves fry's p-values by a small fraction of their value.
+- **Equal statistics in roast.** roast and mroast count a rotated statistic that equals
+  the observed one as at least as extreme, as Wu et al. and Phipson and Smyth define the
+  p-value, and as limma's romer counts it; limma's roast counts only larger ones. The two
+  differ only where a floor-mean or mean-square statistic is the smallest it can be: a
+  set with no gene on one side of zero has a one-sided p-value of 1 here and about 1/2
+  in limma, and a set whose z-scores all lie within $\pm 0.674$ has a mixed floor-mean
+  p-value of 1 here.
+- **Contribution weights.** A gene whose weight is zero is dropped from the set, and the
+  mean square and the mixed floor mean weigh each gene by the size of its weight, as the
+  paper does. limma keeps a gene of weight zero in the set; its mean-square p-values
+  change, beyond 1,000 rotations, when every weight is multiplied by the same number, and
+  with weights of both signs its up, down and two-sided ones depart from the paper's; and
+  its mixed floor mean takes a negative weight as evidence against the set.
+- **Sets without meaning.** A set without genes, or that holds every gene in camera, has
+  no p-value and no direction, and the adjustment of the others leaves it out; limma
+  reports a direction for it, and in some cases a p-value. A gene that a set lists twice
+  counts once, where limma counts it twice, and camera's rank test reports 1 where its
+  continuity correction puts both tails above 1/2 and limma reports a p-value above 1.
+- **Values that overflow.** romer's shrinkage stays finite for genes with very large
+  effects, where limma's becomes NaN beyond a log-odds of 709.8 (an absolute t above
+  about 38 with an infinite prior df) and changes the p-values of every set, and the
+  z-scores of the rotation tests stay finite for t-statistics whose square overflows.
+- **Bases of the residual space.** With observation weights each gene's residual effects
+  have a basis of their own, on which camera's estimated correlations and fry's
+  standardized statistics depend. Where a pivot of the decomposition is zero but for
+  rounding, limma leaves rounding noise in a few percent of genes, a different few in
+  camera and in fry, so that its basis there, and with it its results, can change with
+  the last bits of the data; CytePool's does not.
+- **Robust camera.** camera takes `robust`, which limma's camera does not offer.
 
-Over-representation analysis asks whether the genes called significant hold more of a
-set's genes than chance would give [@tavazoie1999]. Of a universe of $N$ genes, $n$
-are selected; a set has $K$ genes in the universe, and $k$ of them are selected. Were
-the $n$ genes drawn at random from the universe, $k$ would follow the hypergeometric
-distribution, and the p-value is the chance of an overlap at least as large:
+(gene-set-tests-checks)=
+## Checks and further reading
 
-$$
-P(X \ge k) = \sum_{j=k}^{\min(K, n)}
-\frac{\binom{K}{j} \binom{N - K}{n - j}}{\binom{N}{n}},
-$$
+Each test is compared with limma 3.62.1, run as a separate program on the same data:
 
-the one-sided p-value of Fisher's exact test of the table of genes in and out of the
-set, selected or not [@fisher1922; @rivals2007]. The expected overlap is $K n / N$.
-{api}`over_representation` computes it as limma's `kegga` and `goana` do [@young2010],
-for the genes that go up, those that go down and those that change either way in a
-group and contrast of a differential-expression result or in a table of results, or
-for a list of genes; the adjusted p-values are Benjamini and Hochberg's over the sets
-of each list. {api}`plot_over_representation` draws the top sets as dots for each
-list, as clusterProfiler compares lists of genes [@yu2012].
+- camera and fry: exact (1e-10); camera with robust moderation close (1e-6); fry's
+  default standardization, with or without a trend or robust moderation, within 1e-3, as
+  it differs on purpose; fry's mixed p-values within 0.1 of a simulation of the rotation
+  test ([Validation](#validation-gene-set-tests)).
+- roast, mroast and romer: exact (1e-12) when given the rotations that limma drew,
+  mroast against limma run on each set from the same seed, and calibrated, within Monte
+  Carlo error, when each program draws its own
+  ([Validation](#validation-rotation-gene-set-tests)).
+- GMT files read and written, and sets matched to an analysis as limma's `ids2indices`
+  matches them: identical, against R 4.4.3, decoupler 2.2.0's `read_gmt` and limma
+  3.62.1 ([Validation](#validation-gene-set-files-and-ora)).
 
-The universe is the genes that could have been selected, by default the genes tested.
-The genes of the genome, or of all the sets, include genes that were never expressed
-or tested, and make the p-values too small [@timmons2015; @wijesooriya2022]. Genes of
-the universe that are in no set stay in it, as in `kegga`.
+Further reading:
 
-The test takes genes, not samples, as the units drawn, independently of each other.
-The genes of a set are often correlated, as co-regulated genes are, so its p-values
-are too small for sets that respond together [@goeman2007], the problem that camera
-solves for a linear model [@wu2012]. The result also depends on the cutoff
-that selects the genes, and ignores how much each one changes. In RNA-seq data, long
-and highly expressed genes are called significant more often, which favours sets of
-such genes [@young2010]; the adjustment that `kegga` and `goana` offer for this is not
-implemented.
+- @goeman2007 set out the competitive and self-contained questions that a gene-set test
+  can ask, and the problems of tests that take genes as independent.
+- @wu2012 showed that gene set tests that permute genes are very sensitive to the
+  correlation between genes, and introduced camera, which allows for it.
+- @wu2010 introduced ROAST, which rotates the residuals of a linear model instead of
+  permuting samples, so that it applies to almost any design.
+- @langsrud2005 introduced rotation tests for multivariate linear models.
+- @giner2016 presented fry, which approximates roast's test of the mean without
+  rotations.
+- @majewski2010 described romer, the rotation test of the mean ranks of a set's genes.
 
-## Gene set enrichment analysis
-
-Gene set enrichment analysis (GSEA) ranks all genes by a statistic, such as the moderated
-t-statistic of a contrast, and asks whether the genes of a set gather at the top or at
-the bottom of the ranking [@subramanian2005]. A walk down the ranking of $N$ genes rises
-at each of the $m$ genes of the set by its share of the set's weight and falls at each
-other gene by $1/(N - m)$; after the $i$-th gene of the set, at rank $p_i$, it stands at
-
-$$
-\mathrm{RS}_i = \frac{\sum_{j \le i} |r_j|^q}{\sum_{j = 1}^{m} |r_j|^q}
-- \frac{p_i - i}{N - m},
-$$
-
-with $r_j$ the statistics of the set's genes and $q$ the exponent: 1 for the weighted
-score of GSEA, 0 for the unweighted one of @mootha2003. The enrichment score is the
-walk's largest deviation from zero, positive when the set's genes gather at the top and
-negative when they gather at the bottom, and the leading edge is the set's genes that
-the walk passes before its extreme, which drive the score. {api}`gsea` computes them as
-fgsea does [@korotkevich2021], from a group and contrast of a differential-expression
-result, a table of results or a mapping of gene id to statistic. Genes with equal
-statistics keep the order in which they are given, as in fgsea, so that the score of a
-set whose genes tie with others depends on that order; a warning says how many tie.
-
-The scores of random sets of the same size give the null distribution, so that the test
-is competitive, like camera's, and it permutes genes, not samples. Like
-over-representation analysis it treats genes as independent: the genes of a set that
-respond together make its p-values too small [@goeman2007; @wu2012]. Each score is
-divided by the mean of the random scores of its sign, so that sets of different sizes
-compare, and the p-value is the share of the random scores of its sign that reach it.
-With $n$ random sets it is at least $1/(n + 1)$; fgsea's multilevel method, the default,
-reaches far smaller ones [@korotkevich2021]. It draws random sets of the size of the set,
-keeps at each level the half with the higher scores and moves them by a Markov chain that
-keeps their scores above the level's median, so that each level about halves the
-probability, until the median reaches the observed score; `log2_error` gives the expected
-standard deviation of $\log_2 p$.
-
-The random sets come from seeds that `rng` draws, through the Mersenne Twister
-[@matsumoto1998] seeded as C++ seeds it, as fgsea draws them: given fgsea's seeds,
-{api}`gsea` gives fgsea's results exactly, and a seed gives the same results every time.
-{api}`plot_enrichment` draws the walk of one set, as fgsea's `plotEnrichment` does, and
-{api}`plot_gsea_table` the top sets with their genes on the ranking, as its
-`plotGseaTable` does.
-
-## Pathway scores per sample
-
-The tests above ask one question of a contrast. A pathway score instead turns the
-expression of a set's genes in each sample into one number, so that pathways can be
-compared across samples, drawn as a heatmap, correlated with other measurements, and
-tested with the same designs and contrasts as genes [@haenzelmann2013]. {api}`gsva`,
-{api}`ssgsea`, {api}`combined_z_scores` and {api}`plage` compute the four methods of the
-GSVA package, from a samples x genes matrix or a cell type of a cube, whose log-CPM
-after TMM normalization (or counts, for GSVA's Poisson kernel) they score over the genes
-that `filterByExpr` keeps. They return a {api}`PathwayScores`, profiles x sets, with the
-table of the profiles (the samples scored) and the genes each set used;
-{api}`PathwayScores.table` lists the scores one per row.
-
-**GSVA** first puts each gene on a common scale: the probability of a value at most as
-high under the gene's distribution across the $n$ samples, estimated by a kernel,
-
-$$
-F_{ij} = \frac{1}{n} \sum_{k=1}^{n} \Phi\!\left(\frac{x_{ij} - x_{ik}}{h_i}\right),
-$$
-
-with the bandwidth $h_i$ a quarter of the gene's standard deviation, for continuous
-values such as log-CPM, or the Poisson probability $P(Y \le x_{ij})$ with mean
-$x_{ik} + 1/2$ for counts. Each sample ranks its $p$ genes by $F_{ij}$, and each gene
-weighs $|p/2 - r_{ij}|$, so that the genes at both ends of the ranking weigh most. A walk
-down the ranking rises at the genes of a set and falls at the others, as in gene set
-enrichment analysis, and the score is the walk's largest deviation above zero minus its
-largest deviation below: high for a set whose genes are higher than usual in the sample,
-low for one whose genes are lower, and between $-1$ and $1$. GSVA estimates $\Phi$ from a
-table of its values at steps of 0.001, and {api}`gsva` does the same, so that genes are
-ranked as in GSVA.
-
-**ssGSEA** ranks the genes of each sample by their values and sums the same walk over
-all genes rather than taking its extreme, with the genes of the set weighted by their
-ranks to the power $\alpha = 1/4$ [@barbie2009]. By default every score is divided by the
-range of all the scores, over sets and samples, so that a score depends on the other
-sets and samples scored with it. **Combined z-scores** standardize each gene across
-samples and add the $k$ z-scores of a set, divided by $\sqrt{k}$ [@lee2008]. **PLAGE**
-takes the standardized values of a set's genes as a genes x samples matrix and scores
-the samples by its first right singular vector, the direction along which the genes vary
-most together [@tomfohr2005]; its sign is arbitrary, and CytePool chooses the one that
-makes the scores rise with the set's mean standardized expression.
-
-ssGSEA ranks the values themselves, so that a set of highly expressed genes scores high
-in every sample. GSVA first sets each gene against its own distribution across the
-samples, so that a set scores high where its genes are higher than usual, compared with
-the other genes of the sample. Combined z-scores and PLAGE also set each gene against
-itself across samples, but do not compare it with other genes. GSVA's guide notes that
-the scores of larger sets vary less; to test them, fit the design to the scores and let
-the prior variance follow the set sizes, as its guide does with limma-trend:
-`limma(scores, design, trend=scores.n_genes)`, with the design built for the cube.
-{api}`plot_pathway_scores` draws the scores as a heatmap, with the samples grouped by a
-variable.
-
-The scores agree with GSVA's to rounding, except where CytePool differs on purpose:
-PLAGE's sign, GSVA's walk in samples with missing values, and inputs on which GSVA
-stops with an error. A gene's rank is decided by comparing its kernel estimate with
-those of the other genes, and genes with equal estimates in exact arithmetic, such as
-genes with the same low counts in different samples, can be ordered by the last bit of
-R's probabilities: their ranks, and the scores of their sets, can then differ slightly
-from GSVA's.
-
-## Activities of regulators and pathways
-
-A transcription factor raises some of its target genes and lowers others, and a
-signalling pathway leaves a footprint of genes that respond to it. A network gives each
-such source signed weights on its targets: 1 for a target that a transcription factor
-activates and -1 for one it represses in CollecTRI's regulons [@muellerdott2023], and in
-PROGENy the z-scores with which genes responded to the perturbation of each of 14
-pathways in hundreds of experiments [@schubert2018; @holland2020b]. A source is active
-in a profile, the expression of a sample or the statistics of a contrast, when its
-targets are high where their weights are positive and low where they are negative.
-{api}`ulm`, {api}`mlm` and {api}`weighted_aggregate` score every source in every profile
-as decoupler does [@badiaimompel2022], from a samples x genes matrix, a cell type of a
-cube (its log-CPM, as for the pathway scores) or a differential-expression result, one
-profile per group and contrast, by default of its moderated t-statistics. They return an
-{api}`Activities`, profiles x sources, which {api}`limma` tests with the design built
-for the cube, as it tests pathway scores; {api}`Activities.table` lists the scores one
-per row.
-
-**ULM**, the univariate linear model, fits for each source a line through the values
-of the profile's $n$ genes against the source's weights $x_g$, zero for the genes that
-are not its targets,
-
-$$
-y_g = \beta_0 + \beta_1 x_g + \varepsilon_g,
-$$
-
-and the score is the t-statistic of the slope,
-$t = \hat\beta_1 / \mathrm{se}(\hat\beta_1) = r \sqrt{(n - 2) / (1 - r^2)}$, with $r$
-the correlation of $y$ and $x$, tested on $n - 2$ degrees of freedom. Each source is
-tested against all the other genes, those of other sources included. **MLM**, the
-multivariate linear model, fits all the sources at once, with an intercept,
-$y_g = \beta_0 + \sum_s \beta_s x_{gs} + \varepsilon_g$, so that each score, the
-t-statistic of $\beta_s$ on $n - m - 1$ degrees of freedom for $m$ sources, measures a
-source beyond what the others explain: where two regulators share targets, ULM
-credits both with their response and MLM splits it between them. MLM needs more genes
-than sources, and sources whose weights are not linear combinations of the weights of
-others; it refuses those it cannot tell apart, by name. The **weighted aggregate** is
-the weighted mean of the values of a source's targets, $\sum_g w_g y_g / \sum_g |w_g|$,
-or their weighted sum, which is PROGENy's original score [@schubert2018]. With random
-permutations of the genes (1,000 by default, as decoupler draws them), the score is
-normalized by those of the permutations, $(\mathrm{ES} - \text{mean}) / \text{sd}$, and
-its p-value doubles the smaller of the two one-sided permutation p-values
-[@phipson2010].
-
-Targets are matched to the genes' ids exactly, and genes whose values are zero in
-every profile are left out, as decoupler leaves them out. A source with fewer than
-`min_targets` targets among a profile's genes (5, decoupler's `tmin`) has no score
-there; NaN marks a missing value, so that each profile of a differential-expression
-result uses the genes its group tested. The adjusted p-values are Benjamini and
-Hochberg's over the sources of each profile [@benjamini1995]. {api}`plot_activities`
-draws the activities as a heatmap, and {api}`plot_top_activities` the sources with the
-largest scores of one profile as bars, as decoupler's `pl.barplot` draws them.
-
-The networks are a {api}`Network`: each source with its targets and weights, and the
-network's name, version, licence and citation. {api}`collectri` and {api}`progeny`
-download their files on first use from where they were published, check them against
-pinned SHA-256 digests, and keep them in a cache, so that a machine without a
-connection can use a file copied there. CollecTRI gathers twelve resources, each with
-its own terms, which OmniPath records [@tuerei2021]: `licence="commercial"`, the
-default, keeps the 39,896 interactions that a resource listed for commercial use
-supports, leaving out the 3,279 that GEREDB alone supports, which OmniPath lists for
-academic use; `licence="academic"` keeps all 43,175 (the
-[Datasets](../reference/datasets.md#networks) page gives the terms). PROGENy's weights
-are those of the R package progeny, under the Apache License 2.0, for human and mouse;
-{api}`progeny` keeps the genes with a p-value below 0.05, as decoupler does, or the
-`top` genes of each pathway, as progeny's `getModel` does, 100 by default there. Its
-genes are named by the symbols of its release; decoupler reads PROGENy through
-OmniPath, which renames some of them to their current symbols. Any network given as a
-table of `source`, `target` and `weight`, or gene sets with weights of 1, works the
-same way, and {api}`Network.select` keeps some of its sources.
-
-The scores, estimates and p-values agree with decoupler's to rounding, and PROGENy's
-weights with progeny's. CytePool differs on purpose in three places: it adjusts MLM's
-p-values, which decoupler reports unadjusted as its adjusted ones; its permutation
-p-values double the smaller tail, where decoupler's send a score near zero to $2/n$ for
-$n$ permutations; and it gives a profile whose values are all zero NaN scores, where
-decoupler leaves it out. decoupler's VIPER is not offered,
-because the licence of its reference implementation allows only non-profit academic
-use.
-
-## Choices
-
-- **Competitive or self-contained.** Rank a collection with camera; ask about one set
-  chosen in advance, such as an interferon signature in an interferon stimulation, with
-  fry or roast.
-- **Correlation.** camera's small default correlation ranks co-regulated sets higher; an
-  estimated correlation controls the error rate strictly for each set.
-- **Rotations.** roast's smallest p-value is $1/(B+1)$; use enough rotations for the
-  number of sets adjusted for.
-- **Weights.** Pass a voom result to use its precision weights; romer takes sample
-  weights only.
-- **Over-representation or camera.** Over-representation analysis needs only the
-  genes called significant, so it takes the results of any method and lists from
-  elsewhere. camera uses every gene's statistic and allows for the correlation between
-  genes, so with a linear model at hand it is the sounder competitive test.
-- **GSEA or camera.** GSEA needs only a statistic of every gene, from any method, and
-  uses the whole ranking rather than a cutoff; like over-representation analysis it
-  takes genes as independent, which camera does not. Set `min_size` and `max_size`, as
-  GSEA's 15 and 500, to leave out sets too small to rely on and too large to mean much.
-- **Scores or tests.** Pathway scores serve analyses beyond one contrast: heatmaps,
-  correlations and models with any design. For one contrast, camera, fry and GSEA test
-  the genes' own statistics, where scores first reduce each set to one number per
-  sample. GSVA and ssGSEA compare a set's genes with the other genes of each sample;
-  combined z-scores and PLAGE follow each set across samples.
-- **Activities or scores.** Activities use the signs and sizes of a network's weights,
-  so that a regulator's repressed targets count against it; pathway scores treat every
-  gene of a set alike. ULM is decoupler's default for regulators and pathways alike;
-  MLM separates sources whose targets overlap, provided the network gives it fewer
-  sources than genes and no two sources it cannot tell apart. For a contrast, score its
-  statistics; to compare samples, or to test activities with a design, score the
-  samples.
+[Over-representation and GSEA](over_representation_and_gsea.md), the next chapter,
+needs no linear model.

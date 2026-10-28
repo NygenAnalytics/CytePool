@@ -1,73 +1,53 @@
 """Over-representation analysis: gene sets among the genes called significant.
 
-:func:`~cytepool.over_representation` asks of each gene set whether the genes called
-significant in an analysis hold more of its genes than chance would give, by the
-one-sided hypergeometric test against a universe of genes, as limma's ``kegga`` and
-``goana`` compute it with their defaults (Young et al. 2010). From a
-differential-expression result it tests the genes that go up and the genes that go down
-separately, as ``kegga`` and ``goana`` test a fit of limma, and the genes that change in
-either direction together. Results match limma 3.62.1 except where noted under
-"Deliberate differences".
+:func:`~cytepool.over_representation` tests each gene set for over-representation among
+the genes called significant, by the one-sided hypergeometric test against a universe of
+genes, as limma's ``kegga`` and ``goana`` compute it with their defaults (Young et al.
+2010). It returns a table with a row for each set and list of selected genes: for a
+differential-expression result, the genes up, the genes down and both together.
+https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#over-representation
+explains the test and why the universe matters, and
+https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#over-representation-and-gsea-limits
+how it differs from ``kegga``.
 
 The test:
-    The universe holds the N genes that could have been called significant. Of a gene
-    set, K genes are in the universe; n genes of the universe are selected, and k of
-    them are in the set. Were the n genes drawn at random from the universe, without
-    regard to the set, k would follow the hypergeometric distribution of n draws without
-    replacement from N genes of which K are in the set, whose mean K n / N is the
-    expected overlap. The p-value is P(X >= k), the one-sided p-value of Fisher's (1922)
-    exact test of the 2 x 2 table of the genes of the universe, in the set or not and
-    selected or not (Rivals et al. 2007); the hypergeometric test of functional
-    categories goes back to Tavazoie et al. (1999). It is computed by
+    With N genes in the universe, n of them selected, K in a set and k in both, the
+    p-value is P(X >= k) for X hypergeometric, n draws without replacement from N
+    genes of which K are in the set: the one-sided p-value of Fisher's (1922) exact
+    test of the 2 x 2 table (Rivals et al. 2007), and the test of functional
+    categories of Tavazoie et al. (1999). It is computed by
     :func:`~cytepool.stats.distributions.hypergeom_sf`, which keeps its relative
-    accuracy far into the tail. The adjusted p-values are Benjamini and Hochberg's
-    (1995), over the sets of each list of selected genes; limma's ``kegga`` and
-    ``goana`` report p-values only.
+    accuracy far into the tail. The p-values of each list of selected genes are
+    adjusted over the sets by Benjamini and Hochberg's (1995) method.
 
 The genes and the universe:
-    - From a :class:`~cytepool.DifferentialExpressionResult`
-      (one group and contrast) or any table of results, the genes whose adjusted
-      p-value is below ``alpha`` are selected, as ``kegga`` selects the genes of a fit
-      whose adjusted p-value is below its ``FDR`` (strictly, found by probing): up
-      where the log2 fold change is positive, down where it is negative, and in either
-      direction for both lists together. The universe is the genes tested: those
-      with a p-value. A gene id on several rows, such as a symbol shared by two
-      features, is one gene, in the universe when any of its rows was tested and
-      selected up or down when any of its rows is, so that it can be in both lists,
-      as ``kegga`` counts it; rows without an id are left out, as ``kegga`` leaves
-      them out (both found by probing).
+    - From a :class:`~cytepool.DifferentialExpressionResult` (one group and contrast)
+      or any table of results, the genes whose adjusted p-value is below ``alpha`` are
+      selected: up where the log2 fold change is positive, down where it is negative,
+      and in either direction for both lists together. The universe is the genes
+      tested: those with a p-value. A gene id on several rows, such as a symbol shared
+      by two features, is one gene, in the universe when any of its rows was tested and
+      selected up or down when any of its rows is, so that it can be in both lists.
+      Rows without an id are left out.
     - From a list of gene ids: the list is the selection, and the universe must be
       given.
     - A universe given replaces the default. Selected genes and genes of a set outside
-      it are left out, and genes of the universe that are in no set stay in it, as in
-      ``kegga`` by default (``restrict.universe = FALSE``).
+      it are left out, and genes of the universe that are in no set stay in it.
 
-    The universe matters: the genes of the genome, or of the sets, include genes that
-    could not have been selected, such as genes not expressed or filtered out before
-    the tests, and make p-values too small (Timmons et al. 2015; Wijesooriya et al.
-    2022). The default, the genes tested, is the universe that the test assumes.
+    The test takes genes as independent draws, depends on the cutoff ``alpha`` and
+    ignores the size of each change; :func:`~cytepool.camera` allows for the
+    correlation between the genes of a set (Goeman and Buehlmann 2007).
 
-What the test assumes:
-    The test takes genes as independent draws. The genes of a set are often correlated,
-    as co-regulated genes are, which makes its p-values too small (Goeman and Buehlmann
-    2007); :func:`~cytepool.camera` allows for the correlation. The test also depends on
-    the cutoff ``alpha`` and ignores the size of each change. In RNA-seq data, long and
-    highly expressed genes are called significant more often, which biases the test
-    towards sets of such genes (Young et al. 2010); the adjustment of ``kegga`` and
-    ``goana`` for such a trend (``trend``, Wallenius' noncentral hypergeometric
-    distribution) is not implemented.
-
-Deliberate differences from limma:
-    - A set without genes in the universe has a row with no p-value (NaN), which the
-      adjustment leaves out; ``kegga`` leaves the set out of its table.
-    - ``kegga``'s method for a fit of limma keeps the genes without a p-value in the
-      universe (found by probing); here a gene without a p-value was not tested and is
-      left out, as the test assumes.
-    - ``kegga``'s method for a fit adjusts the p-values of the rows with an id only,
-      leaving the others out of the Benjamini-Hochberg adjustment, so that the genes
-      it selects depend on which rows have an id, such as a symbol (found by
-      probing). Here the adjusted p-values of the results are used as they are, so
-      that the genes selected are those the analysis called significant.
+Matching limma:
+    The results match limma 3.62.1, whose ``kegga`` and ``goana`` report p-values only.
+    limma's documentation gives some of these conventions, and running limma on chosen
+    inputs gave the others: genes are selected where their adjusted p-value is below
+    ``kegga``'s ``FDR``, strictly; a gene id on several rows is counted once, in both
+    lists when one row goes up and another down; rows without an id are left out; and
+    genes of the universe that are in no set stay in it (``restrict.universe = FALSE``).
+    The adjustment of ``kegga`` and ``goana`` for genes called significant more often,
+    such as long ones (``trend``, Wallenius' noncentral hypergeometric distribution), is
+    not implemented.
 
 References:
     Young MD, Wakefield MJ, Smyth GK, Oshlack A (2010). Gene ontology analysis for
@@ -141,8 +121,12 @@ def over_representation(
 
     The one-sided hypergeometric test of limma's ``kegga`` and ``goana`` (Young et al.
     2010): whether the selected genes hold more of a set's genes than random draws
-    from the universe would. The module docstring gives the method, how the genes and
-    the universe are read, and the deliberate differences from limma.
+    from the universe would.
+    https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#over-representation
+    explains the test, the module documentation how the genes and the universe are
+    read, and
+    https://docs.nygen.io/CytePool/statistics/over-representation-and-gsea#over-representation-and-gsea-limits
+    the differences from limma.
 
     Args:
         genes: The genes to test: a
@@ -181,7 +165,7 @@ def over_representation(
         selected genes in the universe (n); ``n_universe``, the genes of the
         universe (N); and ``overlap_genes``, the selected genes of the set, in the
         set's order, separated by ``", "``. A set without genes in the universe has
-        NaN p-values.
+        NaN p-values, and the adjustment leaves it out.
 
     Raises:
         TypeError: If an argument has the wrong type, gene ids are not strings, a
@@ -375,6 +359,9 @@ def _selections(
             f"the column {p_value_column!r} holds values outside [0, 1], such as "
             f"{p[outside][0]}; it must hold p-values"
         )
+    # kegga selects the genes whose adjusted p-value is below its FDR, strictly; it
+    # counts a gene id on several rows once, in both lists when one row goes up and
+    # another down, and leaves out rows without an id (found by probing).
     tested = named & ~np.isnan(p)
     with np.errstate(invalid="ignore"):
         selected = tested & (p < alpha)
@@ -396,6 +383,9 @@ def _selections(
         direction: list(dict.fromkeys(ids[rows].tolist()))
         for direction, rows in lists.items()
     }
+    # The universe is the genes tested. kegga's method for a fit of limma keeps genes
+    # without a p-value in it, and adjusts the p-values of the rows with an id only
+    # (found by probing); here the results' adjusted p-values are taken as they are.
     return selections, list(dict.fromkeys(ids[tested].tolist()))
 
 

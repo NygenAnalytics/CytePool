@@ -2,7 +2,7 @@
 
 The result of a workflow on a cube, such as ``limma_voom`` or ``propeller``, holds a
 provenance record. These functions build the parts that every workflow records alike:
-the cube it read, identified by its fingerprint and the digests behind it; the design
+the cube it read, identified by its fingerprint and the digests it is made of; the design
 it fitted, with the contrasts it tested; and the versions of the software.
 """
 

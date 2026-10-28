@@ -630,7 +630,7 @@ def test_none_or_false_turns_quality_weights_off() -> None:
         (
             {"quality_weights": {"prior_n": -1}},
             ValueError,
-            r"quality_weights\['prior_n'\] must be finite and at least 0",
+            r"quality_weights\['prior_n'\] must be non-negative",
         ),
         (
             {"quality_weights": {"max_iterations": 0}},

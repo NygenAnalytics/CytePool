@@ -4,77 +4,27 @@
 studies that tested it into one p-value of the global null hypothesis that no study
 has an effect, by the methods of Fisher (1932), Stouffer et al. (1949), Tippett
 (1931), Wilkinson (1951), Pearson (1933), Mudholkar and George (George and Mudholkar
-1983) and Simes (1986), as scipy's ``combine_pvalues`` and the R package metap compute
-them. :func:`partial_conjunction` gives the p-value that at least u of the n studies
-have an effect (Benjamini and Heller 2008): a gene that one study finds is not
-replicated by the others, and the global null hypothesis, which one study's effect
-rejects, cannot say so.
-
-The methods:
-    For the p-values p_1, ..., p_k of the k studies that tested a feature, in order
-    p_(1) <= ... <= p_(k):
-
-    - ``"fisher"``: X = -2 sum log p_i against the chi-squared distribution with 2k
-      degrees of freedom (metap's ``sumlog``).
-    - ``"stouffer"``: Z = sum w_i z_i / sqrt(sum w_i^2), with z_i = Phi^-1(1 - p_i),
-      against the standard normal distribution (Stouffer et al. 1949; Lipták 1958;
-      metap's ``sumz``). The weights w_i are equal by default; the square roots of
-      the studies' sample sizes are the usual choice (Zaykin 2011).
-    - ``"tippett"``: the smallest p-value, with P(p_(1) <= s) = 1 - (1 - s)^k
-      (metap's ``minimump``).
-    - ``"wilkinson"``: the r-th smallest p-value, against the beta distribution with
-      parameters r and k - r + 1 (metap's ``wilkinsonp``; r = 1 is Tippett's method
-      and r = k metap's ``maximump``, p_(k)^k). It tests the global null hypothesis:
-      that p_(k)^k is small says that every study has some evidence, not that every
-      study has an effect, which :func:`partial_conjunction` tests.
-    - ``"pearson"``: X = -2 sum log(1 - p_i), whose chi-squared distribution function
-      with 2k degrees of freedom is the p-value: small when every p-value is small,
-      and near 1 when any p-value is near 1 (scipy's ``"pearson"``, whose statistic
-      is -X).
-    - ``"mudholkar_george"``: the logit statistic T = sum log((1 - p_i) / p_i), times
-      sqrt(3 / k) / pi sqrt((5k + 4) / (5k + 2)), against Student's t distribution
-      with 5k + 4 degrees of freedom (metap's ``logitp``, whose statistic this is;
-      scipy reports T).
-    - ``"simes"``: min over j of k p_(j) / j, a p-value of the global null hypothesis
-      that is valid for independent and positively dependent p-values (Simes 1986).
-
-    The statistics are monotone in each p-value, and each p-value is exact for
-    independent studies whose p-values are uniform under the null hypothesis. Fisher's
-    and Tippett's methods respond to the strongest study; Stouffer's, the logit and
-    Pearson's to consistent evidence across studies; a p-value near 1 weighs most on
-    Pearson's.
+1983) and Simes (1986). :func:`partial_conjunction` gives the p-value that at least u of
+the n studies have an effect (Benjamini and Heller 2008). Both return a
+:class:`CombinedPValues`.
+https://docs.nygen.io/CytePool/statistics/replication#combined-p-values explains the
+methods and when to choose each, and
+https://docs.nygen.io/CytePool/statistics/replication#partial-conjunction the partial
+conjunctions.
 
 One-sided and two-sided p-values:
-    The methods are defined for one-sided p-values, all for the same direction of
-    effect, which effects in the other direction push towards 1. Two-sided p-values
-    combined as they are test whether some study has an effect in either direction,
-    and effects in opposite directions do not cancel. ``directions``, the signs of
-    the studies' effects (such as their log2 fold changes), turns two-sided p-values
-    into one-sided ones, as metap's ``two2one``: p / 2 for an effect above zero and
-    1 - p / 2 for one below, and 1/2 for an effect of exactly zero, for the effects
-    above zero; their complements, for the effects below. Each direction is
-    combined, giving ``up_p_value`` and ``down_p_value``, and the p-value is
-    min(1, 2 min(p_up, p_down)), the Bonferroni bound over the two directions (Owen
-    2009): for Stouffer's method it is the two-sided p-value of Z, 2 (1 - Phi(|Z|)),
-    and effects in opposite directions cancel. The one-sided p-value near 0 is kept
-    exactly: Stouffer's z_i is the normal quantile of p / 2 with the sign of the
-    effect, and each method reads log(1 - p_i) from the complement p / 2 where p_i is
-    1 - p / 2.
-
-Partial conjunction:
-    The hypothesis that fewer than u of the n studies that tested a feature have an
-    effect is tested by combining the n - u + 1 largest p-values, p_(u), ..., p_(n),
-    by a method valid for n - u + 1 independent p-values (Benjamini and Heller 2008):
-    Fisher's, Stouffer's (without weights, as the paper defines it) or Simes's,
-    min over i = u, ..., n of (n - u + 1) p_(i) / (i - u + 1). For u = 1 it is the
-    global null hypothesis; for u = n, every method gives p_(n). With
-    ``directions``, the effects must also share their direction: the one-sided
-    p-values of each direction are combined as above, and the p-value is
-    min(1, 2 min(p_up, p_down)). A feature that fewer than u studies tested has no
-    p-value (NaN). Adjusting the p-values of the features by Benjamini and Hochberg's
-    procedure controls the false discovery rate of the claims that a feature has an
-    effect in at least u studies, for independent features (Benjamini and Heller
-    2008), as ``adjust_p_values(result.p_value, "bh")`` gives it.
+    The p-values are one-sided, for one direction of effect, unless ``directions``
+    gives the signs of the studies' effects (such as their log2 fold changes) for
+    two-sided ones. These become one-sided ones, as metap's ``two2one`` makes them:
+    for the effects above zero, p / 2 where a study's effect is above zero, 1 - p / 2
+    where it is below and 1/2 where it is exactly zero; for the effects below zero,
+    their complements. Each direction is combined, into ``up_p_value`` and
+    ``down_p_value``, and the p-value is min(1, 2 min(p_up, p_down)), the Bonferroni
+    bound over the two directions (Owen 2009); for Stouffer's method it equals
+    2 (1 - Phi(|Z|)), in which effects in opposite directions cancel. The one-sided
+    p-value near 0 is kept exactly: Stouffer's z_i is the normal quantile of p / 2 with
+    the sign of the effect, and each method reads log(1 - p_i) from the complement
+    p / 2 where p_i is 1 - p / 2.
 
 Studies that did not test a feature:
     NaN marks them. Each feature is combined over the k studies that tested it,
@@ -89,14 +39,16 @@ p-values of exactly 0 and 1:
     makes Pearson's 1, and Stouffer's and the logit 1 unless another study's p-value
     is 0, where the limit does not exist and the combined p-value is NaN.
 
-Deliberate differences from scipy and metap:
-    ``validation/combined_p_values_and_replication.py`` reports them.
+Matching scipy and metap:
+    The combined p-values match scipy 1.18.1's ``combine_pvalues`` and metap 1.1, and
+    the partial conjunctions their definition computed with metap; running metap on
+    chosen inputs settled what its documentation leaves open.
 
-    - metap leaves out p-values of 0 (and of 1 for ``sumz`` and ``logitp``), with a
-      warning that "some studies omitted", and stops with fewer than two studies.
-      Here they are combined as limits, and one study gives its own p-value.
-    - scipy's ``combine_pvalues`` gives NaN for a feature with a missing p-value
-      unless asked to omit it (``nan_policy="omit"``), which this module does.
+Differences from scipy and metap:
+    https://docs.nygen.io/CytePool/statistics/replication#replication-limits gives
+    those from metap. scipy's ``combine_pvalues`` gives NaN for a feature with a
+    missing p-value unless asked to omit it (``nan_policy="omit"``), as this module
+    always does.
 
 References:
     Fisher RA (1932). Statistical Methods for Research Workers, 4th edition. Oliver
@@ -236,9 +188,46 @@ def combine_p_values(
 
     Every feature's p-values, over the studies that tested it, are combined into one
     p-value of the hypothesis that no study has an effect, by the methods that
-    scipy's ``combine_pvalues`` and metap offer; the module description gives each
-    method, the handling of one-sided and two-sided p-values and of p-values of 0
-    and 1.
+    scipy's ``combine_pvalues`` and metap offer. With ``directions``, two-sided
+    p-values become one-sided ones for each direction, each direction is combined,
+    and the p-value is min(1, 2 min(p_up, p_down)). NaN marks a study that did not
+    test a feature, and p-values of 0 and 1 are combined as the limits they are.
+    https://docs.nygen.io/CytePool/statistics/replication#combined-p-values explains
+    when to choose each method.
+
+    The methods:
+        For the p-values p_1, ..., p_k of the k studies that tested a feature, in order
+        p_(1) <= ... <= p_(k):
+
+        - ``"fisher"``: X = -2 sum log p_i against the chi-squared distribution with 2k
+          degrees of freedom (metap's ``sumlog``).
+        - ``"stouffer"``: Z = sum w_i z_i / sqrt(sum w_i^2), with z_i = Phi^-1(1 - p_i),
+          against the standard normal distribution (Stouffer et al. 1949; Lipták 1958;
+          metap's ``sumz``). The weights w_i are equal by default; the square roots of
+          the studies' sample sizes are the usual choice (Zaykin 2011).
+        - ``"tippett"``: the smallest p-value, with P(p_(1) <= s) = 1 - (1 - s)^k
+          (metap's ``minimump``).
+        - ``"wilkinson"``: the r-th smallest p-value, against the beta distribution with
+          parameters r and k - r + 1 (metap's ``wilkinsonp``; r = 1 is Tippett's method
+          and r = k metap's ``maximump``, p_(k)^k). It tests the global null hypothesis,
+          also with r = k: that every study has an effect is the alternative of
+          :func:`partial_conjunction` with ``at_least`` = k.
+        - ``"pearson"``: X = -2 sum log(1 - p_i), whose chi-squared distribution function
+          with 2k degrees of freedom is the p-value: small when every p-value is small,
+          and near 1 when any p-value is near 1 (scipy's ``"pearson"``, whose statistic
+          is -X).
+        - ``"mudholkar_george"``: the logit statistic T = sum log((1 - p_i) / p_i), times
+          sqrt(3 / k) / pi sqrt((5k + 4) / (5k + 2)), against Student's t distribution
+          with 5k + 4 degrees of freedom (metap's ``logitp``, whose statistic this is;
+          scipy reports T).
+        - ``"simes"``: min over j of k p_(j) / j, a p-value of the global null hypothesis
+          that is valid for independent and positively dependent p-values (Simes 1986).
+
+        The statistics are monotone in each p-value, and each p-value is exact for
+        independent studies whose p-values are uniform under the null hypothesis.
+
+    With ``directions``, a two-sided p-value below the smallest normal double
+    (2.2e-308) loses digits when halved, and one of 5e-324 halves to 0.
 
     Args:
         p_values: ``(n_studies, n_features)`` p-values in [0, 1], or ``(n_studies,)``
@@ -310,11 +299,18 @@ def partial_conjunction(
     than u = ``at_least`` of the n studies that tested a feature have an effect is
     tested by combining its n - u + 1 largest p-values by Simes's, Fisher's or
     Stouffer's method. With ``at_least=2`` a small p-value says that the effect is
-    replicated: one study's effect alone does not make it small. With
-    ``directions``, the effects must share their direction. The module description
-    gives the method; adjust the p-values over the features with
+    replicated: one study's effect alone does not make it small. Simes's p-value is
+    the minimum over i = u, ..., n of (n - u + 1) p_(i) / (i - u + 1), for the
+    p-values in order p_(1) <= ... <= p_(n); Fisher's and Stouffer's (without
+    weights, as the paper defines it) combine the n - u + 1 largest p-values. For
+    u = 1 it is the global null hypothesis, and for u = n every method gives p_(n).
+    With ``directions``, the effects must share their direction: the one-sided
+    p-values of each direction are combined, and the p-value is min(1, 2 min(p_up,
+    p_down)). Adjust the p-values over the features with
     ``adjust_p_values(result.p_value, "bh")`` to control the false discovery rate of
-    the replication claims.
+    the replication claims, for independent features (Benjamini and Heller 2008).
+    https://docs.nygen.io/CytePool/statistics/replication#partial-conjunction explains
+    the test.
 
     Args:
         p_values: ``(n_studies, n_features)`` p-values in [0, 1], or ``(n_studies,)``

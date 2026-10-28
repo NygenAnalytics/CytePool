@@ -1,117 +1,73 @@
 """dream: voom weights from mixed models, and moderated tests of their fixed effects.
 
-dream (Hoffman and Roussos 2021) is limma-voom with a linear mixed model in place of
-the linear model, for designs with repeated measures: several samples of a donor,
-tissues of one patient, time courses. The donor (or another grouping factor) gets a
-random intercept, whose variance is estimated for every gene, and contrasts of the
-fixed effects are tested with Kenward and Roger's (1997) degrees of freedom in small
-studies and Satterthwaite's (1946) in larger ones. dreamlet (Hoffman et al. 2026) runs
-it on the pseudobulk profiles of every cell type. The steps, as variancePartition runs
-them (``voomWithDreamWeights``, ``dream``, ``eBayes`` and ``topTable``):
+:func:`voom_with_dream_weights` gives voom's precision weights from the mean-variance
+trend of mixed model fits, as variancePartition's ``voomWithDreamWeights`` does, in a
+:class:`~cytepool.stats.voom.VoomResult`, and :func:`moderated_fixed_effect_tests`
+moderates the tests of :func:`~cytepool.stats.mixed_models.fixed_effect_tests` by
+empirical Bayes, as its ``eBayes`` and ``topTable`` do for ``dream`` fits, in a
+:class:`ModeratedFixedEffectTests`. dream (Hoffman and Roussos 2021) is limma-voom (Law
+et al. 2014) on linear mixed models; :func:`~cytepool.dream_voom` runs it on the cell
+types of a cube, as dreamlet does (Hoffman et al. 2026).
+https://docs.nygen.io/CytePool/statistics/mixed-models#dream gives the steps.
 
-1. Precision weights, :func:`voom_with_dream_weights`. voom's (Law et al. 2014): the
-   log2 counts per million are fitted, the square roots of the residual standard
-   deviations are smoothed by LOWESS against the average log2 counts, and each
-   observation gets the inverse fourth power of the trend at its fitted value
-   (:mod:`cytepool.stats.voom`). The fit is the mixed model of every feature, by
-   maximum likelihood, and the fitted values include the predicted random effects.
-2. Fits and tests: :func:`~cytepool.stats.mixed_models.fit_mixed_model` by REML with
-   those weights, and :func:`~cytepool.stats.mixed_models.fixed_effect_tests`, with
-   the degrees of freedom of dream's ``ddf``: by default (``"adaptive"``) Kenward and
-   Roger's for fewer than 20 samples, with their adjusted standard errors, and
-   Satterthwaite's otherwise.
-3. Moderation, :func:`moderated_fixed_effect_tests`. The residual variance of every
-   feature, that of an observation of its average weight, is shrunk towards a prior
-   by limma's empirical Bayes (Smyth 2004) on the approximate residual degrees of
-   freedom of the mixed model, tr((I - H)' (I - H)) for its hat matrix H
-   (``MixedModelFit.df_residual``). The moderated t-statistic divides an estimate by
-   its standard error with the posterior variance in place of the residual
-   variance, and has the degrees of freedom of the test plus the prior's. Several
-   contrasts are tested at once by the moderated F-statistic t' R^-1 t / r, limma's,
-   for their moderated t-statistics and the correlation matrix R of their estimates,
-   with r the number of linearly independent contrasts.
+Matching variancePartition:
+    The results match variancePartition 1.36.2, with limma 3.62.1 and lme4 1.1-38: its
+    documentation gives the method, and running it on chosen inputs settled the
+    conventions it leaves open.
 
-Conventions that the documentation leaves open were found by running
-variancePartition 1.36.2, with limma 3.62.1 and lme4 1.1-38, as a black box:
+    - ``voomWithDreamWeights`` fits the mixed models by maximum likelihood, and reads
+      the trend at lme4's ``fitted`` values, which include the predicted random effects.
+      Without random effects it is limma's ``voom``.
+    - It divides each feature's prior weights by their mean before the fits, for sample
+      weights and observation weights alike. By default it returns the trend's weights
+      alone (``rescaleWeightsAfter = FALSE``), as limma's ``voom`` does; with
+      ``rescaleWeightsAfter = TRUE``, the trend's weights times the scaled prior
+      weights, which are the weights a fit needs and the ones returned here. They do not
+      change when the prior weights are multiplied by a constant.
+    - ``dream`` also fits each feature with its weights divided by their mean, so its
+      ``sigma`` is the residual standard deviation of an observation of the feature's
+      average weight: ``residual_variance / mean_weights`` of a fit to the weights as
+      given (https://docs.nygen.io/CytePool/statistics/mixed-models#dream says what
+      that means for the trend). With every variance component at zero, the fit is
+      limma's weighted fit, and the moderated tests are limma's for the weights of each
+      feature divided by their mean.
+    - ``eBayes`` moderates those variances on the approximate residual degrees of
+      freedom ``rdf``, with limma's ``squeezeVar`` and its default estimator: the
+      likelihood estimator (Chen et al. 2025) when the degrees of freedom differ between
+      features, as they usually do, and the method of moments otherwise
+      (``legacy = NULL``). The moderated t-statistics and the B-statistics are those of
+      limma's ``eBayes`` (Smyth 2004) for these variances on these degrees of freedom;
+      the p-values use the degrees of freedom of the tests, Satterthwaite's or
+      Kenward-Roger's, plus the prior's, which, unlike limma's total degrees of freedom,
+      are not capped at the sum of the residual degrees of freedom.
+    - ``topTable`` adds ``z.std``, sign(t) times the standard normal quantile of half
+      the two-sided p-value: the z-statistic with the p-value of the t-statistic, so
+      that tests on different degrees of freedom can be compared. It computes it from
+      the p-value floored at 1e-300.
+    - ``dream(ddf = "adaptive")``, the default, uses Kenward-Roger's method (Kenward
+      and Roger 1997) for 19 samples and Satterthwaite's (1946) for 20; its help page
+      says that it "uses KR for <= 20 samples". With ``ddf = "Kenward-Roger"`` it
+      tests with lmerTest's ``contest``, which calls pbkrtest: Kenward-Roger's
+      adjustment is computed with every observation at the average weight (see
+      :mod:`cytepool.stats.mixed_models`), the standard errors are the adjusted ones,
+      and ``eBayes`` moderates the tests as it does Satterthwaite's. A gene whose
+      adjusted covariance matrix of the coefficients is not positive definite or has a
+      condition number above 1e6, by R's estimate ``kappa``, is tested by
+      Satterthwaite's method instead, the rule that variancePartition's NEWS for
+      1.31.16 states. The condition number depends on the units of continuous
+      covariates.
+    - ``topTable`` with several coefficients gives the coefficients, ``AveExpr``,
+      ``F``, ``P.Value``, ``adj.P.Val`` and ``F.std``: F is limma's moderated
+      F-statistic, from the moderated t-statistics and each gene's covariance matrix of
+      the coefficients, Kenward-Roger's adjusted one under their method, and
+      ``F.std`` the F-statistic on infinite denominator degrees of freedom with the same
+      p-value.
 
-- ``voomWithDreamWeights`` fits the mixed models by maximum likelihood (its weights
-  agree with those of maximum likelihood fits to lme4's tolerance, and differ from
-  those of REML fits by up to 12% in an example), and reads the trend at lme4's
-  ``fitted`` values, which include the predicted random effects. Without random
-  effects it is limma's ``voom``.
-- It divides each feature's prior weights by their mean before the fits, for sample
-  weights and observation weights alike. By default it returns the trend's weights
-  alone (``rescaleWeightsAfter = FALSE``), as limma's ``voom`` does; with
-  ``rescaleWeightsAfter = TRUE``, the trend's weights times the scaled prior
-  weights, which are the weights a fit needs and the ones returned here. They do
-  not change when the prior weights are multiplied by a constant.
-- ``dream`` also fits each feature with its weights divided by their mean, so its
-  ``sigma`` is the residual standard deviation of an observation of the feature's
-  average weight: ``residual_variance / mean_weights`` of a fit to the weights as
-  given. With voom's weights this is about the variance that the trend predicts at
-  the feature's expression, so the variances that ``eBayes`` moderates keep the
-  mean-variance trend that the weights removed; ``trend=True`` lets the prior follow
-  it. Its ``sigma`` therefore differs from limma's with the same weights; with
-  every variance component at zero, the fit is limma's weighted fit, and the
-  moderated tests are limma's for the weights of each feature divided by their mean.
-- ``eBayes`` moderates those variances on the approximate residual degrees of
-  freedom ``rdf``, with limma's ``squeezeVar`` and its default estimator: the
-  likelihood estimator (Chen et al. 2025) when the degrees of freedom differ between
-  features, as they usually do, and the method of moments otherwise
-  (``legacy = NULL``). The moderated t-statistics and the B-statistics are those of
-  limma's ``eBayes`` for these variances on these degrees of freedom; the p-values
-  use Satterthwaite's degrees of freedom plus the prior's, which, unlike limma's
-  total degrees of freedom, are not capped at the sum of the residual degrees of
-  freedom.
-- ``topTable`` adds ``z.std``, sign(t) times the standard normal quantile of half
-  the two-sided p-value: the z-statistic with the p-value of the t-statistic, so
-  that tests on different degrees of freedom can be compared. It computes it from
-  the p-value floored at 1e-300.
-- ``dream(ddf = "adaptive")``, the default, uses Kenward and Roger's method for 19
-  samples and Satterthwaite's for 20; the help page says "<= 20 samples". With
-  ``ddf = "Kenward-Roger"`` it tests with lmerTest's ``contest``, which calls
-  pbkrtest: Kenward and Roger's adjustment is computed with every observation at the
-  average weight (see :mod:`cytepool.stats.mixed_models`), the standard errors are
-  the adjusted ones, and ``eBayes`` moderates the tests as it does Satterthwaite's. A gene whose adjusted
-  covariance matrix of the coefficients is not positive definite or has a condition
-  number above 1e6, by R's estimate ``kappa``, is tested by Satterthwaite's method
-  instead (variancePartition's NEWS for 1.31.16 states the rule; the bound was found
-  by probing). The condition number depends on the units of continuous covariates.
-- ``topTable`` with several coefficients gives the coefficients, ``AveExpr``, ``F``,
-  ``P.Value``, ``adj.P.Val`` and ``F.std``: F is limma's moderated F-statistic, from
-  the moderated t-statistics and each gene's covariance matrix of the coefficients,
-  Kenward and Roger's adjusted one under their method, and ``F.std`` the F-statistic
-  on infinite denominator degrees of freedom with the same p-value.
-
-Deliberate differences from variancePartition, reported by ``validation/dream.py``
-and ``validation/kenward_roger_and_f_tests.py``:
-
-- The LOWESS span is chosen from the number of features by default, as
-  :func:`~cytepool.stats.voom.voom` and limma's ``voom`` (since limma 3.66) choose it.
-  ``voomWithDreamWeights`` uses 0.5, which ``span=0.5`` reproduces.
-- Beyond a p-value of 1e-300, the z-statistic is computed from the logarithm of the
-  tail probability, so it stays exact where ``topTable`` stops at 37.07.
-- A feature whose mixed model has no minimum, which the fixed and random effects
-  reproduce, is not fitted (see :class:`~cytepool.stats.mixed_models.MixedModelFit`):
-  it is left out of the trend, its weights are read at its values, which the effects
-  reproduce, and its tests are NaN. lme4 fits it with a residual standard deviation
-  near zero, which enters the trend, and ``dream`` tests it.
-- ``topTable`` computes the p-values of an F-test of every gene on the total degrees
-  of freedom of the first gene for the first coefficient listed (found by probing),
-  so that they change with the order of the genes and of the coefficients. Here each
-  gene has its own: F is the mean of the squares of r uncorrelated moderated
-  t-statistics, those of the eigenvectors of R, whose degrees of freedom are those of
-  their contrasts plus the prior's, and the denominator degrees of freedom combine
-  them as lmerTest combines those of its F-tests (2 E / (E - r), with E = sum nu_m /
-  (nu_m - 2); see :mod:`cytepool.stats.mixed_models`). With one contrast, the F-test
-  is the moderated t-test. ``F.std`` uses the number of coefficients where it
-  differs from their rank; here the rank, the F-test's numerator degrees of freedom.
-- ``dream_voom`` decides which genes fall back to Satterthwaite's method from the
-  exact condition number, where dream uses R's estimate: they agree except within
-  about 2% of 1e6.
-
-Random slopes are not implemented yet; variancePartition's variance partitioning is
-:func:`cytepool.variance_partitioning`.
+Differences from variancePartition:
+    https://docs.nygen.io/CytePool/statistics/mixed-models#mixed-models-limits lists
+    them; the docstrings of :func:`voom_with_dream_weights`,
+    :class:`ModeratedFixedEffectTests` and :func:`~cytepool.dream_voom` give those that
+    change what they return.
 
 References:
     Hoffman GE, Roussos P (2021). Dream: powerful differential expression analysis for
@@ -209,8 +165,8 @@ class ModeratedFixedEffectTests:
     ``tests``. The arrays are read-only.
 
     Attributes:
-        tests: The tests moderated, with their fit, contrasts and Satterthwaite's
-            degrees of freedom.
+        tests: The tests moderated, with their fit, contrasts and degrees of
+            freedom, Satterthwaite's or Kenward-Roger's.
         residual_variance_at_mean_weight: ``(n_features,)`` the variances
             moderated: the residual variance of an observation of each feature's
             average weight, ``fit.residual_variance / fit.mean_weights`` (dream's
@@ -226,18 +182,20 @@ class ModeratedFixedEffectTests:
         t: ``(n_features, n_contrasts)`` moderated t-statistics: the estimates over
             their standard errors times (residual_variance_at_mean_weight /
             posterior_variance)^(1/2).
-        df_total: ``(n_features, n_contrasts)`` their degrees of freedom:
-            Satterthwaite's plus the prior's (``df.total``).
+        df_total: ``(n_features, n_contrasts)`` their degrees of freedom: those
+            of the tests plus the prior's (``df.total``).
         p_value: Two-sided p-values of ``t`` on ``df_total`` degrees of freedom.
         log_odds: Log-odds that each contrast is non-zero (limma's B-statistic,
             ``lods``), as limma's ``eBayes`` gives them for these variances on
             ``df_residual``.
         z: Signed z-statistics with the same p-values, sign(t) times the standard
-            normal quantile of half the p-value (``topTable``'s ``z.std``).
+            normal quantile of half the p-value (``topTable``'s ``z.std``). Below
+            p-values of 1e-300 they come from the log of the tail probability, so
+            they keep growing where ``z.std`` stops at 37.07.
         coefficient_prior_variance: ``(n_contrasts,)`` unscaled prior variance of
             a non-zero contrast (``var.prior``).
-        proportion: The assumed proportion of non-zero contrasts behind
-            ``log_odds``.
+        proportion: The assumed proportion of non-zero contrasts that
+            ``log_odds`` takes.
         prior_estimator: The estimator of the prior: ``"moments"`` or
             ``"likelihood"``.
         f_statistic: ``(n_features,)`` moderated F-statistics testing every
@@ -246,13 +204,18 @@ class ModeratedFixedEffectTests:
             (``topTable``'s ``F`` for these contrasts).
         f_df1: The numerator degrees of freedom of the F-tests, the number of
             linearly independent contrasts.
-        f_df2: ``(n_features,)`` their denominator degrees of freedom; see the
-            module docstring.
+        f_df2: ``(n_features,)`` their denominator degrees of freedom, those of
+            the r uncorrelated moderated t-statistics combined as 2 E / (E - r),
+            with E = sum nu_m / (nu_m - 2) over their degrees of freedom nu_m, as
+            lmerTest combines those of its F-tests: each feature's own, where
+            ``topTable`` uses the first gene's for every gene. With one contrast,
+            the F-test is the moderated t-test.
         f_p_value: ``(n_features,)`` p-values of ``f_statistic`` on ``f_df1`` and
             ``f_df2`` degrees of freedom.
         standardized_f_statistic: ``(n_features,)`` the F-statistic on ``f_df1``
             and infinite degrees of freedom with the same p-value (``topTable``'s
-            ``F.std``), so that tests on different degrees of freedom compare.
+            ``F.std``, which takes the number of coefficients where it differs from
+            their rank), so that tests on different degrees of freedom compare.
     """
 
     tests: FixedEffectTests
@@ -299,10 +262,13 @@ def voom_with_dream_weights(
     variancePartition's ``voomWithDreamWeights``: voom (see
     :func:`~cytepool.stats.voom.voom`), with the linear model replaced by the mixed
     model of ``design``, fitted to every feature by maximum likelihood, and the trend
-    read at the fitted values with the predicted random effects; the module
-    docstring gives the conventions. Continue with ``fit_mixed_model(result.log2_cpm,
-    design, weights=result.weights)``, ``fixed_effect_tests`` and
-    :func:`moderated_fixed_effect_tests`.
+    read at the fitted values with the predicted random effects. A feature whose
+    mixed model has no minimum, as one that the fixed and random effects reproduce
+    (see :class:`~cytepool.stats.mixed_models.MixedModelFit`), is left out of the
+    trend, and its weights are read from the trend at its own values. Continue with
+    ``fit_mixed_model(result.log2_cpm, design, weights=result.weights)``,
+    ``fixed_effect_tests`` and :func:`moderated_fixed_effect_tests`.
+    https://docs.nygen.io/CytePool/statistics/mixed-models#dream explains the steps.
 
     Args:
         counts: ``(n_samples, n_features)`` counts, as for ``voom``: finite and
@@ -319,8 +285,8 @@ def voom_with_dream_weights(
         weights: Prior weights: ``(n_samples,)`` sample weights, such as each
             pseudobulk sample's number of cells, or ``(n_samples, n_features)``
             observation weights; finite and positive. Each feature's weights are
-            divided by their mean, then weight the fits behind the trend, and
-            multiply the weights returned.
+            divided by their mean, then weight the fits from which the trend is
+            estimated, and multiply the weights returned.
         method: ``"ml"``, maximum likelihood, as ``voomWithDreamWeights`` fits, or
             ``"reml"``.
         n_threads: The most threads for the fits, as for ``fit_mixed_model``.
@@ -361,6 +327,9 @@ def voom_with_dream_weights(
     # A copy, so that the result does not change with the caller's array.
     sizes = np.array(effective_library_sizes(y, library_sizes, norm_factors))
     fraction = trend_span(span, y.shape[1])
+    # voomWithDreamWeights divides each feature's prior weights by their mean, and with
+    # rescaleWeightsAfter = TRUE returns the trend's weights times them (found by
+    # probing).
     prior = scaled_prior_weights(weights, y.shape)
     with thread_limit(n_threads):
         return _dream_weights(y, sizes, fraction, parts, prior, ml)
@@ -384,9 +353,10 @@ def moderated_fixed_effect_tests(
     empirical Bayes (:func:`~cytepool.stats.empirical_bayes.moderated_statistics`,
     with its estimators and options), each contrast's t-statistic uses the posterior
     variance, and its degrees of freedom are those of the tests (Satterthwaite's or
-    Kenward and Roger's) plus the prior's. The moderated F-statistic tests every
-    contrast of ``tests`` at once, as ``topTable`` does for several coefficients.
-    See the module docstring.
+    Kenward-Roger's) plus the prior's. The moderated F-statistic tests every
+    contrast of ``tests`` at once, as ``topTable`` does for several coefficients,
+    with degrees of freedom of its own for every feature.
+    https://docs.nygen.io/CytePool/statistics/mixed-models#dream explains the steps.
 
     Args:
         tests: Tests from :func:`~cytepool.stats.mixed_models.fixed_effect_tests`,
@@ -456,7 +426,8 @@ def _moderated_tests(
             "fixed_effect_tests tested none; add fixed effects to the design, such as "
             "an intercept"
         )
-    # dream's sigma^2: the residual variance of an observation of average weight.
+    # dream's sigma^2: the residual variance of an observation of average weight, as
+    # dream fits each feature with its weights divided by their mean (found by probing).
     variance = fit.residual_variance / fit.mean_weights
     fitted = np.isfinite(variance) & np.isfinite(fit.df_residual)
     if not fitted.any():
@@ -469,7 +440,7 @@ def _moderated_tests(
     with np.errstate(divide="ignore", invalid="ignore"):
         stdev_unscaled = tests.standard_error / sigma[:, np.newaxis]
         # The covariance matrix that the tests use: dream's cov.coefficients.list,
-        # Kenward and Roger's adjusted one under their method (found by probing).
+        # Kenward-Roger's adjusted one under their method (found by probing).
         per_feature = tests.covariance / variance[:, np.newaxis, np.newaxis]
     cross = fit.design.T @ fit.design
     linear = LinearModelFit(
@@ -485,6 +456,9 @@ def _moderated_tests(
         cov_coefficients_per_feature=per_feature,
         contrasts=matrix,
     )
+    # eBayes moderates on the approximate residual degrees of freedom with limma's
+    # default estimator, and its p-values take the tests' degrees of freedom plus the
+    # prior's, without limma's cap (found by probing).
     moderated = moderated_statistics(
         linear,
         proportion=proportion,
@@ -577,6 +551,8 @@ def _dream_weights(
         ml: Whether to fit by maximum likelihood.
     """
     log2_cpm = voom_log_cpm(y, sizes)
+    # voomWithDreamWeights fits by maximum likelihood, and reads the trend at the
+    # fitted values with the predicted random effects (found by probing).
     fit = _fit(log2_cpm, prior, ml, parts)
     mean_log_count = voom_mean_log_count(fit.mean_expression, sizes, y)
     sigma = np.sqrt(fit.residual_variance)

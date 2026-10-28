@@ -4,6 +4,8 @@ CytePool keeps sample, group and feature metadata, and later tidy results, in a
 ``Table`` because pandas is not a dependency. A table holds 1-D numpy arrays of equal
 length, one per column name. Columns are copied in and read-only, and every method
 that changes something returns a new table.
+https://docs.nygen.io/CytePool/statistics/cubes#what-a-cube-records describes the
+tables of a cube.
 
 Column types:
 
@@ -134,7 +136,7 @@ class Table:
         if not isinstance(name, str):
             raise TypeError(
                 "columns are looked up by name (str); use take() or filter() to choose "
-                f"rows and select() to choose several columns, not {type(name).__name__}"
+                f"rows and select() to choose several columns, got {type(name).__name__}"
             )
         try:
             return self._columns[name].view()

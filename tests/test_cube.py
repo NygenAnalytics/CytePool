@@ -1847,7 +1847,7 @@ def test_group_and_layer_lookup(cube: Cube, layers: dict[str, np.ndarray]) -> No
         IndexError, match="group position 4 is out of range for 4 groups"
     ):
         cube.mean(4)
-    with pytest.raises(TypeError, match="not bool"):
+    with pytest.raises(TypeError, match="got bool"):
         cube.mean(True)
     with pytest.raises(TypeError, match="got float"):
         cube.mean(2.0)  # type: ignore[arg-type]

@@ -4,8 +4,8 @@ random generators.
 Each check takes the option as the caller gave it and its name, and returns it as a
 bool, str, float, int or numpy random generator, or raises TypeError for a value of
 the wrong type and ValueError for one out of range. The messages name the option, say
-what it must be and what it was; where the methods word a message differently, the
-check takes the phrase as an argument, so that every message stays as it was.
+what it must be and what it was: a TypeError ends with the type it got, and a
+ValueError with the value.
 """
 
 import math
@@ -18,20 +18,18 @@ import numpy as np
 from ._masked_arrays import reject_masked
 
 
-def checked_flag(value: Any, name: str, *, expected: str = "True or False") -> bool:
+def checked_flag(value: Any, name: str) -> bool:
     """An option that is True or False, as a bool.
 
     Args:
         value: The option as given; a numpy bool is accepted.
         name: The option's name, for the message.
-        expected: What the message says the option must be: "True or False", or
-            "a bool" as the statistics' messages say.
 
     Raises:
-        TypeError: If ``value`` is not a bool.
+        TypeError: If ``value`` is not True or False.
     """
     if not isinstance(value, bool | np.bool_):
-        raise TypeError(f"{name} must be {expected}, got {type(value).__name__}")
+        raise TypeError(f"{name} must be True or False, got {type(value).__name__}")
     return bool(value)
 
 
@@ -80,14 +78,6 @@ def non_negative_number(value: Any, name: str) -> float:
     number = real_number(value, name, finite=True)
     if number < 0:
         raise ValueError(f"{name} must be non-negative, got {number}")
-    return number
-
-
-def number_at_least(value: Any, name: str, lower: float) -> float:
-    """A finite real number of at least ``lower``."""
-    number = real_number(value, name)
-    if not (math.isfinite(number) and number >= lower):
-        raise ValueError(f"{name} must be finite and at least {lower:g}, got {number}")
     return number
 
 

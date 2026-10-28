@@ -66,6 +66,7 @@ class Cube:
     for every feature, sums over those cells. Every layer is a sum, so merging groups
     or pooling samples is an exact sum and never needs the cells again. A cube is
     immutable: methods that change something return a new cube.
+    https://docs.nygen.io/CytePool/statistics/cubes explains cubes.
 
     Layout:
         Layers have shape ``(n_groups, n_samples, n_features)``, so one group is a
@@ -104,10 +105,11 @@ class Cube:
             "library_size", "target_sum": 10000.0, "log": "natural", "pseudocount":
             1.0}``. Required with ``log_sum``, ``log_sum_sq`` or ``linear_sum``.
         provenance: A JSON-serialisable mapping that says where the data came from
-            and how the cube was made (``cytepool.cube.provenance`` documents the
-            keys CytePool writes). Operations that derive a cube append a record of
-            the operation, its input and what it kept or pooled to the list under
-            ``"operations"``.
+            and how the cube was made
+            (https://docs.nygen.io/CytePool/reference/cube-files#provenance-keys
+            specifies the keys CytePool writes). Operations that derive a cube append
+            a record of the operation, its input and what it kept or pooled to the
+            list under ``"operations"``.
         copy: If False, a layer given as a C-contiguous numpy array with an
             accepted native dtype is stored without a copy and made read-only in
             place, so it must not be changed through other references afterwards.
@@ -175,12 +177,13 @@ class Cube:
         reorders samples or features), also hashes the group, to check it against
         its digest: stored with the cube file, or kept from the first such read. A
         read of a whole group of a layer derived from one hashes that group too, to
-        keep its digest for ``fingerprint()``. SHA-256 runs at about 2 GB/s on
-        processors with SHA instructions and 0.5 GB/s without, which adds about a
-        fifth to the time of reading a gzip-compressed group on the former. A
-        selection of some samples or features reads part of a group, which cannot
-        be checked on its own; ``verify_fingerprint()`` reads the groups it comes
-        from whole.
+        keep its digest for ``fingerprint()``. A selection of some samples or
+        features reads part of a group, which cannot be checked on its own;
+        ``verify_fingerprint()`` reads the groups it comes from whole.
+
+        Hashing takes about 0.4 s per 100 million values, each hashed as 8
+        bytes, on a laptop processor with SHA instructions (an Intel Core Ultra 7
+        265U), and about 1.3 s without them.
 
     Fingerprint and provenance:
         ``fingerprint()`` identifies the cube's values, tables and cell numbers
@@ -188,10 +191,9 @@ class Cube:
         source record, the function that built it with its settings, and each
         operation that derived it, with the fingerprint of its input.
         ``history()`` reads the record back in plain terms;
-        ``cytepool.cube.fingerprints`` and ``cytepool.cube.provenance`` document
-        both. To record the fingerprint of its input, the first operation applied
-        to a cube in memory hashes its layers, once, at about 1 s per GB of values
-        on processors with SHA instructions.
+        https://docs.nygen.io/CytePool/reference/cube-files specifies both. To
+        record the fingerprint of its input, the first operation applied to a cube
+        in memory hashes its layers, once, at the cost given under "Lazy layers".
     """
 
     __slots__ = (
@@ -240,7 +242,7 @@ class Cube:
             reject_masked_table(value, argument, id_column)
         # A flag read by its truth value would read a masked one through its mask.
         if not isinstance(copy, bool | np.bool_):
-            raise TypeError(f"copy must be a bool, got {type(copy).__name__}")
+            raise TypeError(f"copy must be True or False, got {type(copy).__name__}")
         sample_table, sample_index = checked_axis_table(samples, "samples", "sample_id")
         group_table, group_index = checked_axis_table(groups, "groups", "group_id")
         feature_table, feature_index = checked_axis_table(
@@ -358,7 +360,11 @@ class Cube:
 
     @property
     def provenance(self) -> dict[str, Any]:
-        """A copy of the provenance mapping (see ``cytepool.cube.provenance``)."""
+        """A copy of the provenance mapping.
+
+        https://docs.nygen.io/CytePool/reference/cube-files#provenance-keys specifies
+        the keys that CytePool writes.
+        """
         return provenance_from_texts(self._provenance)
 
     def __repr__(self) -> str:
@@ -565,8 +571,8 @@ class Cube:
         layer. It leaves out the provenance, so cubes with the same values have the
         same fingerprint however they were made, and a result can name the cube it
         was computed from. It is ``"sha256:"`` followed by 64 hexadecimal digits;
-        ``cytepool.cube.fingerprints`` documents how it is computed, so another
-        program can compute it too.
+        https://docs.nygen.io/CytePool/reference/cube-files#fingerprint-encoding
+        specifies how it is computed, so another program can compute it too.
 
         Cost:
             The fingerprint is built from a digest of each table, of ``n_cells``,
@@ -590,6 +596,10 @@ class Cube:
             - A lazy layer of another array-like, which can change, is read on every
               call.
 
+            Hashing takes about 0.4 s per 100 million values, each hashed as 8
+            bytes, on a laptop processor with SHA instructions (an Intel Core Ultra 7
+            265U), and about 1.3 s without them.
+
         Raises:
             ValueError: If a lazy layer gives a value that breaks a constraint, or a
                 group of a cube file does not match its digest.
@@ -609,11 +619,12 @@ class Cube:
         at the same cost.
 
         Returns:
-            A new JSON-serialisable dict in the form cube files store, which
-            ``cytepool.cube.fingerprints`` documents. It holds the fingerprint
-            version and the cube's shape; the digest of each table, of ``n_cells``
-            and of the normalization (None without them); for each layer, its type
-            and the digest of each group, by position; and the fingerprint.
+            A new JSON-serialisable dict in the form cube files store
+            (https://docs.nygen.io/CytePool/reference/cube-files#digest-record). It
+            holds the fingerprint version and the cube's shape; the digest of each
+            table, of ``n_cells`` and of the normalization (None without them); for
+            each layer, its type and the digest of each group, by position; and the
+            fingerprint.
 
         Raises:
             ValueError, OverflowError: As ``fingerprint()``.
@@ -678,12 +689,12 @@ class Cube:
     def history(self) -> str:
         """Describe how the cube was made, in plain terms, for printing.
 
-        The text is ``describe_provenance(cube.provenance)`` (see
-        ``cytepool.cube.provenance``): the caller's source record, how the cube was
-        built, and each operation in order, with the fingerprint of the cube it was
-        applied to. A last line gives the cube's own fingerprint when it is known
-        without reading lazy layers (see ``fingerprint()``). Lines are at most 80
-        characters, a longer item continuing on the next line.
+        The text is ``describe_provenance(cube.provenance)``: the caller's source
+        record, how the cube was built, and each operation in order, with the
+        fingerprint of the cube it was applied to. A last line gives the cube's own
+        fingerprint when it is known without reading lazy layers (see
+        ``fingerprint()``). Lines are at most 80 characters, a longer item continuing
+        on the next line.
         """
         lines = [describe_provenance(self.provenance)]
         fingerprint = self._known_fingerprint()
@@ -1006,7 +1017,7 @@ class Cube:
         each group's cells together, as :func:`~cytepool.plotting.plot_dotplot`
         pools them. Sample columns that are constant within every pooled set are
         kept and the others are dropped. The column ``n_pooled_samples`` holds the
-        number of original samples behind each new sample and comes last; if it
+        number of original samples that each new sample pools, and comes last; if it
         already exists, it keeps its place and is summed, so collapsing twice counts
         the original samples. Integer layers of the result are int64 when samples
         are pooled, and keep their dtype when every new sample is one sample. The
@@ -1432,7 +1443,7 @@ class Cube:
             return position
         if isinstance(group, bool | np.bool_):
             raise TypeError(
-                "group must be a group id (str) or a position (int), not bool"
+                "group must be a group id (str) or a position (int), got bool"
             )
         try:
             position = operator.index(group)  # type: ignore[arg-type]

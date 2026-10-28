@@ -1,374 +1,109 @@
 <h1><img src="https://docs.nygen.io/assets/brand/logo/cytepool-dark.png" alt="" width="96" align="right"> CytePool</h1>
 
-CytePool is a Python library for statistics on aggregated omics data: pseudobulk
-profiles, built by pooling the cells of each sample and cell type, and ordinary bulk
-RNA-seq. Its aim is to bring the sample-level methods that are standard in R into one
-package with one data model. The status table below separates what is implemented from
-what is planned.
+Test which genes, cell types and pathways change between conditions in studies of many
+samples, from single-cell or bulk RNA-seq data. Cells of one donor are not independent
+replicates, so CytePool pools the cells of each sample and cell type into a cube of
+pseudobulk profiles and tests the samples with the methods that are standard in R:
+limma, edgeR, DESeq2, dream, propeller and metafor. It runs them in Python, with numpy
+and numba as its only required dependencies, and every method is checked against an
+independent reference, usually the package that defined it.
 
 **Status:** early development. Nothing is released yet.
 
-## What is implemented
+## Install
 
-| Area | Implemented | Checked against |
-| --- | --- | --- |
-| Pseudobulk cubes | `Cube` (additive layers per sample, group and feature; merging groups; pooling samples by one or more columns, or all of them; columns added to its tables; lazy layers, read as a selection needs them), `from_cells` (dense or CSR counts), `from_bulk` | scanpy, decoupler |
-| Provenance and fingerprints | A record of each cube's source (the caller's record, kept unchanged), of the settings that built it and of what each operation kept, merged or pooled, with the fingerprint of the cube it was applied to; `Cube.history()` reads it back. A content fingerprint (SHA-256, documented encoding) of the tables, cell numbers, normalization and layers | a reimplementation of the documented encoding, zarr-python |
-| Cube files | `write_cube`, `read_cube` (a subset of Zarr v3, with orthogonal selections; a read opens only the chunks that hold the selected features; gzip, and zstd on Python 3.14 or newer; stored digests, checked when a file is opened and when a read covers a whole group) | zarr-python |
-| AnnData and MuData | `to_anndata`, `from_anndata`, `to_mudata`, `from_mudata` (optional extras `anndata` and `mudata`): cubes to and from the long AnnData (with a layer copied into `X` on request) of `scanpy.get.aggregate` and `decoupler.pp.pseudobulk` and the MuData of LIANA's `adata_to_views`, whose layouts are recognised; an import takes sums and counts of cells, refuses means, and gives a cube exported and read back with the same fingerprint | scanpy, decoupler, LIANA, anndata, mudata |
-| Several studies | `CubeCollection`: the cubes of several studies aligned, each kept as it is: samples named `study::sample_id`, with donor ids alike; genes aligned by id, with which study measured which, so that a gene a study did not measure is missing there, not zero; cell types aligned by Cell Ontology id, group id or a mapping for each study, merging those that a study splits, and named as given; each study's cube on the collection's axes, for analyses study by study; and one cube of the genes and cell types every study has, for a joint model. `analyse_each_study` runs one analysis per study, and `StudyResults` keeps the results with the collection, lined up gene by gene, with the reason a study has none for a gene, or as a studies x genes matrix | anndata, pandas, limma |
-| Normalization and filtering | TMM, upper-quartile and RLE factors, DESeq2 size factors, CPM, log-CPM, `filter_by_expression` | edgeR, DESeq2 |
-| Designs | Model matrices from R formulas, named contrasts, design checks | R, limma, lme4 |
-| Linear models | Ordinary, weighted and generalised least squares for every gene (in parallel when each gene needs its own fit), contrasts (named contrasts are matched to the coefficients by name) | limma |
-| Mixed models | `fit_mixed_model`: linear mixed models with random intercepts of one or more grouping factors (nested or crossed), with observation weights, fitted to every gene by REML or maximum likelihood, with exact zeros for variance components at the boundary, fitted values with the predicted random effects, and approximate residual degrees of freedom; `fixed_effect_tests`: t-tests of contrasts with Satterthwaite's degrees of freedom, as lmerTest computes them, or Kenward-Roger's adjusted standard errors and degrees of freedom, as pbkrtest computes them, with precision weights taken as dream takes them (every observation at its gene's average weight) or as the weighted model has them; `fixed_effect_f_test`: F-tests of several contrasts at once by either method (lmerTest's `contestMD`, pbkrtest's `KRmodcomp`) | lme4, lmerTest, pbkrtest, variancePartition |
-| Precision weights for counts | `voom`: log-CPM values and observation weights from the mean-variance trend, whose LOWESS span is chosen from the number of genes as in limma, with prior weights for samples, observations or genes, for a weighted linear model (limma-voom); `voom_with_quality_weights`, which combines them with sample quality weights | limma |
-| dream | `voom_with_dream_weights`: voom's precision weights from the mean-variance trend of every gene's mixed model, fitted by maximum likelihood, as variancePartition's `voomWithDreamWeights`; `moderated_fixed_effect_tests`: Satterthwaite or Kenward-Roger t-tests of a mixed model moderated by empirical Bayes as variancePartition's `eBayes` moderates `dream` fits, with `topTable`'s z-statistic, and the moderated F-test of several contrasts | variancePartition |
-| Sample quality weights | `sample_quality_weights`: a weight for each sample, or each group of samples, from how closely its values follow the linear model, by REML or the gene-by-gene update, as limma's `arrayWeights` | limma |
-| Negative binomial models | `fit_negative_binomial_model`: a negative binomial log-linear model for every gene, with known dispersions, as edgeR's `glmFit` (one-way layouts group by group, other designs by Newton's method with Levenberg damping, in parallel), with log fold changes shrunk by prior counts; exact unit deviances and deviances | edgeR, mpmath |
-| Quasi-likelihood F-tests | `fit_quasi_likelihood` and `quasi_likelihood_f_test`: edgeR 4's `glmQLFit` and `glmQLFTest` with their defaults: the common negative binomial dispersion of the most highly expressed genes by Cox-Reid adjusted profile likelihood (`common_dispersion`), deviances adjusted for small counts with exact moments of the unit deviance (`negative_binomial_unit_deviance_moments`), the average quasi-dispersion, limma's prior for unequal degrees of freedom with a trend in the average log CPM (`average_log2_cpm`) or robust, prior weights and offsets, and F-tests of coefficients and named contrasts with edgeR's columns (logFC, logCPM, F, PValue, FDR) | edgeR, limma, mpmath |
-| DESeq2 | `fit_deseq2`, `deseq2_wald_test`, `deseq2_likelihood_ratio_test` and `deseq2_dispersions`: DESeq2's analysis with its defaults, from gene-wise dispersions (Cox-Reid adjusted profile likelihood), the parametric trend and the maximum a posteriori dispersions to its fits of every gene, Wald tests of coefficients and contrasts, and likelihood ratio tests of a reduced design (all the levels of a factor at once, a time course), with the columns of `results()`, its independent filtering and its Cook's distance flags | DESeq2, PyDESeq2 |
-| Empirical Bayes moderation | Moderated t and F statistics, B-statistics, TREAT, with constant, trend and robust priors, estimated as limma estimates them by default: by the method of moments, or, when the residual degrees of freedom differ between genes, by weighted moments and profile likelihood (limma's `fitFDistUnequalDF1`); either can be chosen | limma |
-| Gene-set tests | `camera` (competitive, allowing for the correlation between the genes of a set, given or estimated per set; parametric or rank-based) and `fry` (self-contained, directional and mixed p-values), for one contrast of a cell type of a `limma_voom` or `limma_trend` result, or of a linear model of values with a design, with voom or other precision weights and trend or robust moderation; the rotation tests `roast` and `mroast` (self-contained, with the mean, floor-mean, mean-50 and mean-square set statistics, contribution weights per gene or per set, and the proportions of active genes) and `romer` (competitive, by the ranks of the genes), with rotations from a seeded generator; gene sets named by gene id or position. Gene sets read from and written to GMT files (MSigDB, Reactome, WikiPathways, the Gene Ontology), with the name, version and licence of the collection, matched to an analysis and filtered by size; over-representation analysis of the genes up, down or either way in a differential-expression result, a table or a list of genes (limma's `kegga` and `goana`), with its dot plot; gene set enrichment analysis (`gsea`) of genes ranked by a statistic, as fgsea computes it: enrichment scores, leading edges, normalized scores, and p-values by fgsea's multilevel method or by permutations, from seeds that a numpy generator draws, with its enrichment plot and table; scores of gene sets in every sample, as the GSVA package computes them: `gsva` (with the Gaussian, Poisson or no kernel, chosen as GSVA chooses it, and its three scores), `ssgsea`, `combined_z_scores` and `plage`, from a matrix or a cell type of a cube, with their heatmap, and tested for a contrast of a design by limma (`limma`, as for activities) | limma, R, decoupler, fgsea, GSVA |
-| Activities of regulators and pathways | `ulm`, `mlm` and `weighted_aggregate`, as decoupler computes them: the activity of every source of a network (transcription factors, pathways) in every sample, cell type of a cube or group and contrast of a differential-expression result, by a linear model of each source's weights, one model of all of them, or the weighted mean or sum of its targets with permutations; the networks CollecTRI (`collectri`, at a licence level for commercial or academic use) and PROGENy (`progeny`, human and mouse), downloaded from their releases on first use and checked against pinned SHA-256 digests, or any network given as a table; their heatmap and bar plot | decoupler, progeny |
-| Multiple testing | Bonferroni, Holm, Hochberg, Hommel, Benjamini-Hochberg, Benjamini-Yekutieli | R |
-| Differential expression | `limma_voom` and `limma_trend`: limma-voom and limma-trend on every group (cell type) of a cube, and `dream_voom`: dream, with the design's random intercepts, such as a donor's, in every group's fits, dream's choice of Kenward-Roger's or Satterthwaite's degrees of freedom by the number of samples in each group, and F-tests of several contrasts, with the design matched to the cube by sample id, samples with too few cells left out, rank-deficient groups fitted on their column space with the contrasts they can estimate, and a provenance record for every result, which keeps the cube and design it analysed and computes a cell type's fit again on request. Options for pseudobulk data, off by default: sample quality weights, prior weights from the number of cells, a minimum total count per sample, and p-values adjusted across cell types | limma, edgeR, variancePartition; on simulated data and on published single-cell data |
-| Variance partitioning | `variance_fractions`: the fraction of every gene's variance that each variable of a design explains, as variancePartition's `fitExtractVarPartModel`: a mixed model of every gene by maximum likelihood (or REML), with the categorical variables as random intercepts, the continuous ones as fixed effects and precision weights such as voom's, or a linear model without random effects; `variance_partitioning`: the same on every cell type of a cube, with dream's precision weights, the samples each fit used and a provenance record | variancePartition, lme4 |
-| Meta-analysis | `meta_analysis`: for every gene, the fixed-effect (inverse-variance) or random-effects estimate of a common effect from the `limma_voom` or `limma_trend` results of several cubes (`StudyResults`), matched by cell type, contrast and gene id, with the between-study variance by DerSimonian-Laird, REML or Paule-Mandel, Cochran's Q, I² and H², z-tests or the Knapp-Hartung adjustment, genes measured in some studies only, p-values adjusted over the genes and a provenance record; `fit_meta_analysis`: the same from arrays of effects and standard errors | metafor |
-| Combined p-values and replication | `combine_p_values`: every gene's p-values combined over the studies that tested it, by Fisher's, Stouffer's (weighted), Tippett's, Wilkinson's, Pearson's, Mudholkar and George's or Simes's method, one-sided or two-sided with the directions of the effects; `partial_conjunction`: the p-value that at least u studies have an effect, in one direction (Benjamini and Heller); `proportion_of_true_nulls`: pi0 and pi1 as qvalue's `pi0est`, with its smoother and bootstrap; `replication`: for the studies' results of a `CubeCollection` (`StudyResults`), every gene's combined and replication p-values, the studies that find it, its sign agreement and heterogeneity, pi1 (estimated at lambda = 0.5 by default) and sign agreement of every pair of studies, and the genes found in at least k studies, with their figures | scipy, metap, qvalue, metafor, mpmath |
-| Replication across studies | `sumrank`: SumRank (Nakatsuka et al. 2025), which ranks every gene within each study by its signed -log10 p-value and sums its best normalized ranks across studies, for genes up and down, for one cell type and contrast of the studies' results (`StudyResults`), with p-values from the Irwin-Hall distribution and from a null pooled over permutations that re-run each study's limma analysis from a seeded generator; `fit_sumrank`: the same from a matrix of statistics; `held_out_prediction`: each study left out in turn, genes chosen from the others by SumRank and by meta-analysis, its cases scored by UCell's rank score, and the AUC by study and method; with SumRank's Manhattan plot and the held-out AUC of every study | the authors' code, mpmath, scikit-learn |
-| Composition tests | `propeller`: differences in cell-type proportions between conditions, from the cell numbers of a cube or a table of them, with the logit or arcsine square-root transform, a design matched by sample id, t-tests of its contrasts and the F-test of a factor, robust empirical Bayes moderation, speckle's columns (baseline and mean proportions, proportion ratio, statistic, p-value, FDR) and a provenance record | speckle, limma |
-| Figures | `cytepool.plotting` (optional extra `plot`, matplotlib): the plots of limma, edgeR, DESeq2, speckle and metafor from CytePool's results, in one call each: MDS plots of pseudobulk samples (`plotMDS`), the cells pooled into each sample and cell type, cell-type composition and `propeller`'s results, voom's mean-variance trend, residual variances and their prior (`plotSA`), sample quality weights, MD and volcano plots, p-value histograms, the genes up and down in each cell type, barcode plots and summaries of gene-set tests, DESeq2's dispersions (`plotDispEsts`), edgeR's quasi-dispersions (`plotQLDisp`), forest plots of meta-analyses, the fractions of variance of every variable over the genes (`plotVarPart`) and of chosen genes (`plotPercentBars`), and heatmaps of pathway scores | limma, edgeR, DESeq2, metafor, speckle, variancePartition, GSVA |
-| Samples and cells at a glance | `principal_components` and `plot_pca`: samples on the principal components of their most variable genes, from a matrix or a cell type of a cube, as DESeq2's `plotPCA` computes and draws them; `plot_dotplot`: the fraction of cells that express each gene and their mean expression in each cell type, from a cube's sums and so without the cells, as scanpy's `dotplot` draws them | DESeq2, edgeR, scanpy |
-| Distributions and smoothers | Tails of the normal, t, F, chi-squared, gamma, beta and hypergeometric distributions, and quantiles of the first four; LOWESS, and limma's rule for its span; natural spline bases | mpmath, R, limma |
+CytePool needs Python 3.13 or newer:
 
-## Planned
+```bash
+pip install "git+https://github.com/NygenAnalytics/CytePool.git"
+```
 
-These are not implemented yet:
+The extras `anndata`, `mudata` and `plot` add conversions to AnnData and MuData and the
+figures; [Installation](https://docs.nygen.io/CytePool/installation) gives the details.
 
-- Likelihood ratio tests and gene-wise dispersions for negative binomial models
-  (edgeR's `glmLRT` and `estimateDisp`), edgeR's quasi-likelihood F-tests on every
-  group of a cube, and their `legacy = TRUE` methods
-- DESeq2's shrunken log fold changes (`lfcShrink` with apeglm, ashr or normal priors),
-  its replacement of outlier counts, and its local and glmGamPoi dispersion trends
-- Random slopes in mixed models, with which variancePartition also partitions the
-  variance within subsets of the samples. dream with random intercepts is implemented
-  (see the table above); `fit_linear_model` refuses a design whose random effects it
-  would drop, and its message points to `fit_mixed_model`.
-- Composition tests with precision weights or random effects (crumblr)
-- Ligand-receptor scoring and differential interactions
-- Dose-response fits, benchmark doses and synergy
-- Meta-regression (meta-analysis with study-level covariates) and multivariate
-  meta-analysis of correlated effects
-- Cell types aligned up the Cell Ontology
+## Example
 
-## Known limits
+Pool the cells into a cube, then test a stimulation in every cell type with
+limma-voom, with a design that pairs the samples of each donor:
 
-- `from_cells` needs the cell-level matrix in memory and returns dense layers:
-  32 bytes per group x sample x feature with all five layers, 4 with counts only. For
-  30 groups, 100 samples and 30,000 genes that is 2.9 GB, or 360 MB for counts only.
-  Ask for the layers you need.
-- A linear model fitted with observation weights or missing values stores a covariance
-  matrix for every gene: 8 x genes x coefficients² bytes, so 16 MB for 20,000 genes and
-  10 coefficients, and 1.6 GB at 100 coefficients.
-- Such fits, in which each gene needs its own fit, run on numba's threads, as
-  `from_cells` does. With numba's OpenMP threading layer, a process that has run a
-  parallel routine cannot fork workers that run one again: start them with the
-  "spawn" or "forkserver" method of `multiprocessing`. With one thread
-  (`n_threads=1`), these fits run without a parallel region.
-- A mixed model stores, for every gene, the covariance matrix of the coefficients and
-  its derivative with respect to each variance parameter, for Satterthwaite's degrees
-  of freedom: about 8 x genes x (components + 2) x coefficients² bytes, so 23 MB for
-  20,000 genes, two random intercepts and 6 coefficients, and its weights, as many
-  floats as the values. Kenward-Roger's tests invert each gene's n x n covariance
-  matrix of the observations, as pbkrtest does: O(n³) operations per gene for n
-  samples, 0.7 s for 20,000 genes of 20 samples and 13 s for 120 samples on one
-  thread, where Satterthwaite's take 0.1 s. `fit_mixed_model` fits random
-  intercepts only, by REML or maximum likelihood, to complete data with positive
-  weights: missing values or a zero weight make it raise an error, as no gene is
-  fitted to fewer samples. Its fitted values take as much memory as the values. It also
-  refuses a design whose fixed and random effects together span every sample, which
-  lme4 fits. A gene whose values the fixed and random effects reproduce, such as one
-  constant within every donor, has no REML estimate and is returned unfitted (NaN).
-  Its genes run on Python threads, in compiled code that releases the GIL, so the
-  forking limit above does not apply to it.
-- A chunk of a cube file holds up to 4,096 features of every sample of one group, and a
-  read decompresses every chunk that holds a selected feature. A few neighbouring
-  features are therefore quick to read, but features scattered over the file, or a few
-  samples of every feature, decompress most chunks of each selected group: 50 genes
-  drawn at random from 30,000 usually fall in all eight chunks of a group. A read holds
-  about what it returns plus one chunk, and with zstd also the decoder's window (2 MiB
-  at the default level).
-- Every read that covers a whole group of a cube file, in any order, is hashed and
-  checked against the digest stored with the file. Reading every group of a gzip
-  file of 20 groups x 100 samples x 30,000 genes took 23% longer (SHA-256 ran at
-  2.3 GB/s with the processor's SHA instructions; without them it runs at about
-  0.5 GB/s). A selection of some samples or features reads part of a group, which is
-  checked only by `Cube.verify_fingerprint()`. The fingerprint of a lazy cube derived
-  from a cube file reads the groups whose values the operation changed and that were
-  not read whole before, and an operation applied to such a cube records the
-  fingerprint of its input only if it was computed. The first operation applied to a
-  cube in memory hashes its layers to record its fingerprint (about 1 s per GB).
-- A lazy layer other than those of `read_cube` is read with `oindex` when it has one, as
-  zarr-python arrays do, and otherwise one whole group at a time, as HDF5 datasets
-  are. The cube copies what such a layer returns, so a read holds it twice for a moment.
-- Integer layers and cell numbers hold whole numbers up to 2**63 - 1, the largest int64.
-  A library size, merged group or pooled sample whose sum would exceed it raises
-  `OverflowError` instead of wrapping around. Normalization works in float64, which is
-  exact for counts up to 2**53.
-- With residual degrees of freedom that differ between genes, robust moderation
-  (`robust=True`) uses limma's likelihood estimator, as limma does, but leaves the
-  genes without residual degrees of freedom out of its test for outliers. limma 3.62.1
-  counts them in that test as zero variances, which become outliers and change which
-  other genes count as outliers: in a simulation where 2% of the genes had no residual
-  degrees of freedom, its robust prior degrees of freedom were 11.5% larger with a
-  constant prior and 6% to 10% larger with a trend. Where every gene has residual
-  degrees of freedom, the two agree. `fit_f_distribution_likelihood` also keeps prior
-  weights in its second robust fit, where limma's drops them.
-- Contrast standard errors and moderated F statistics are exact by default. limma's
-  approximations are available as an option and can differ when weights vary between
-  genes.
-- `voom` normalizes by library-size factors only, and fits its trend without a block
-  correlation; `voomLmFit` is not implemented. `voom` and `voom_with_quality_weights`
-  need a design of full column rank (limma drops aliased columns; `limma_voom` fits a
-  group's column space), and raise an error where limma returns values without
-  meaning: for a sample whose library size is zero, or a trend that is not positive
-  where weights are read. With prior weights, `voom` returns the trend's weights
-  times the prior weights, which a fit needs; limma returns the trend's alone.
-- In `limma_voom` and `limma_trend`, sample quality weights give each sample a weight
-  of its own; there is no variance model for groups of samples (limma's `var.group`
-  and `var.design`). Prior weights are the number of cells of each sample and cannot
-  be combined with quality weights, which edgeR's `voomLmFit` refuses too. In a
-  design that pairs two samples per donor, both samples of a donor get the same
-  quality weight from limma-trend and similar ones from limma-voom, as their
-  residuals are equal and opposite.
-- `sample_quality_weights` stops REML where limma does, so that its weights are
-  limma's: within about half a percent of the REML estimate without prior weights, and
-  up to about 15% from it with prior weights (as for the voom weights of
-  `voom_with_quality_weights` with `method="reml"`), where limma stops after one or
-  two iterations, and further where the iterations oscillate and limma stops early. A
-  smaller `tolerance` converges further where the iterations converge. The
-  gene-by-gene algorithm, limma's default for quality weights, depends on the order of
-  the genes, as limma's does, and its time grows with the cube of the number of
-  samples: 0.2 to 0.3 s for 20,000 genes and 40 samples, 2.5 to 3 s for 100 samples.
-- `voom` chooses the span of its trend from the number of genes, as limma does by
-  default since limma 3.66, and limma 3.60 to 3.65 do with `adaptive.span = TRUE`.
-  Their default, and that of earlier versions, is a span of 0.5: pass `span=0.5` to
-  reproduce it.
-- `camera` and `fry` need every value observed, with positive weights, and fit fixed
-  effects only (no block correlation); `fry` has no gene contribution weights (limma's
-  `gene.weights`). `fry`'s mixed p-value of a set of 2 to d genes (d the residual
-  degrees of freedom) differs from limma's on purpose: it uses all d + 1 dimensions of
-  the rotation, where limma's uses only the set's and can be far from the rotation
-  p-value. For larger sets the two agree, and their beta approximation can be much too
-  small far in the tail. `camera` also offers robust moderation, which limma's does
-  not.
-- `fit_negative_binomial_model` takes the dispersions as given; CytePool estimates
-  only a common dispersion (`common_dispersion`). Where a gene's maximum likelihood
-  estimate is infinite, as when every count of a group is zero, its fitted values tend
-  to zero and its coefficients are large but finite: -1e8 for such a group of a
-  one-way layout, as in edgeR. Its deviances are exact, and differ from edgeR's, which
-  adds 1e-8 to counts and means and approximates the deviance for dispersions below
-  1e-4 and where the dispersion times the mean reaches 1e6. Where weights differ
-  between samples by a factor of more than about 1e10, the coefficients that only the
-  samples of small weight determine lose accuracy (about 1e-16 times that factor), and
-  beyond about 1e14 they are not determined.
-- `roast`, `mroast` and `romer` draw their rotations from a numpy generator, so their
-  p-values agree with limma's within Monte Carlo error, and exactly when given the
-  rotations limma draws; `mroast` tests every set with the same rotations. Like `camera`
-  and `fry` they need every value observed and fit fixed effects only (no block
-  correlation), and `romer` takes sample weights only, as limma's does. A rotated
-  statistic equal to the observed one counts as at least as extreme, as Wu et al.
-  (2010) define the p-value; limma's `roast` counts only larger ones, which gives about
-  1/2 instead of 1 where a set has no gene on one side of zero (`"floormean"`,
-  `"msq"`). With contribution weights, a gene of weight zero leaves the set, and
-  `"msq"` and the mixed `"floormean"` statistic weigh each gene by the size of its
-  weight, as the paper does; limma's `"msq"` p-values differ for weights of both signs
-  (and change with the scale of the weights beyond 1,000 rotations), and its
-  `"floormean"` takes a negative weight as evidence against the set. `romer` shrinks
-  genes whose log-odds exceed 709.8, which limma's shrinkage turns into NaN. Exact
-  z-scores (limma's `approx.zscore = FALSE`) and given prior parameters (`var.prior`,
-  `df.prior`) are not offered.
-- `fit_quasi_likelihood` follows edgeR 4.4's default method only (`legacy = FALSE`),
-  as edgeR runs it on a matrix of counts; a given dispersion should come from a
-  global model (common or trended), as edgeR's help page says. edgeR's method for a
-  DGEList agrees, except when the DGEList holds a trended dispersion from
-  `estimateDisp`: it then takes one dispersion from that trend in place of the
-  Cox-Reid estimate. The moments of the unit deviance are exact, where edgeR's
-  approximations are off by up to about 1e-3 at dispersions up to 0.2 and 1e-2 at a
-  dispersion of 1, so that adjusted deviances, quasi-dispersions and F-statistics
-  differ from edgeR's by up to about 3e-3. The robust prior leaves genes without
-  residual degrees of freedom out of the outlier tests, where limma counts them as
-  zero variances. With offsets per observation, edgeR's `aveLogCPM` ignores the
-  offsets of the first gene, and so differs from CytePool's there.
-- `fit_negative_binomial_model` takes the dispersions as given; CytePool does not
-  estimate them yet. Where a gene's maximum likelihood estimate is infinite, as when
-  every count of a group is zero, its fitted values tend to zero and its coefficients
-  are large but finite: -1e8 for such a group of a one-way layout, as in edgeR. Its
-  deviances are exact, and differ from edgeR's, which adds 1e-8 to counts and means
-  and approximates the deviance for dispersions below 1e-4 and where the dispersion
-  times the mean reaches 1e6. Where weights differ between samples by a factor of more
-  than about 1e10, the coefficients that only the samples of small weight determine
-  lose accuracy (about 1e-16 times that factor), and beyond about 1e14 they are not
-  determined.
-- The DESeq2 functions give the results of `DESeq(..., minReplicatesForReplace =
-  Inf)`: outlier counts are not replaced, which DESeq2 does by default for samples
-  whose design row occurs seven or more times. Each dispersion is the maximum of its
-  objective, where DESeq2's line searches stop when an iteration gains less than 1e-6
-  and can stall where they start, but for genes whose rough dispersion is at the lower
-  bound, which keep it as in DESeq2; and the fits converge, where DESeq2's stop when
-  the deviance changes by less than 1e-8 of it. On the validation's data DESeq2's
-  final dispersions differ by medians of 1e-3 to 4e-2 on the log scale, and its
-  p-values by medians of 3e-4 to 8e-3, relative, with 7 of 1,297 genes called
-  differently at a false discovery rate of 0.1. Where DESeq2's parametric trend fails
-  it substitutes a local regression; CytePool uses the mean of the gene-wise
-  estimates, with a warning. With three or fewer residual degrees of freedom the
-  prior's variance is the maximum likelihood estimate, where DESeq2 compares densities
-  of simulated residuals: 10% apart in the validation. For Cook's distance a design
-  matrix given without its `Design` compares two groups when its rows take two
-  distinct values of zeros and ones, as a factor does in DESeq2 and a numeric
-  covariate does not. Observation weights, normalization factors that differ between
-  genes, thresholds on the fold change (`lfcThreshold`) and t-distributed Wald tests
-  (`useT`) are not implemented.
-- `limma_voom` and `limma_trend` fit fixed effects only: a design with random effects
-  is refused (`dream_voom` fits random intercepts), and there is no
-  `duplicateCorrelation`. Normalization factors are TMM or
-  none. In a group whose design is rank deficient they test every contrast the
-  group's samples can estimate, including those that weigh an aliased column, which
-  limma's `contrasts.fit` refuses, and they report the contrasts that cannot be
-  estimated, which limma either refuses or, when they weigh no aliased column,
-  computes with a changed meaning.
-- `dream_voom` chooses the degrees of freedom as `dream(ddf = "adaptive")` does:
-  Kenward-Roger's for fewer than 20 samples in a group (with 20, dream uses
-  Satterthwaite's, although its help page says "<= 20"), computed as dream computes
-  them with pbkrtest, with every observation at its gene's average weight, which can
-  make standard errors smaller than the unadjusted ones
-  (`kenward_roger_weights="precision"` uses each observation's weight), and
-  Satterthwaite's for a gene whose adjusted covariance
-  matrix is ill conditioned, which dream decides from R's estimate of the condition
-  number and CytePool from the exact one. dream's `topTable` gives the F-test of every
-  gene the degrees of freedom of the first gene; CytePool gives each gene its own. No
-  sample quality weights for dream. As variancePartition, they moderate the residual
-  variance of an observation of each gene's average weight, which keeps the
-  mean-variance trend that voom's weights remove; `trend=True` lets the prior follow
-  it. `voom_with_dream_weights` chooses its span from the number of genes, as `voom`
-  does; `voomWithDreamWeights` uses 0.5 (`span=0.5`). A gene whose values the fixed
-  and random effects reproduce is left out of the trend and untested, where
-  variancePartition keeps it with a residual standard deviation near zero.
-- `variance_fractions` and `variance_partitioning` fit random intercepts only:
-  variancePartition's models of the variance within subsets of the samples, such as
-  `(tissue + 0 | donor)`, need random slopes, and generalized linear mixed models and
-  bootstrap intervals of the fractions (`varPartConfInf`) are not available. As
-  variancePartition requires, a design with random effects gives its categorical
-  variables as random effects. A gene whose values the fixed and random effects
-  reproduce has no fractions (NaN), where variancePartition reports those of lme4's
-  fit with a residual variance near zero; with `method="reml"` and no random effects
-  the residual variance is REML's, where variancePartition takes the maximum
-  likelihood one.
-- `from_anndata` and `from_mudata` take only sums and counts of cells: means,
-  variances and medians, which `scanpy.get.aggregate` and `decoupler.pp.pseudobulk`
-  can give, are refused, and counts are checked against the cells that detect each
-  feature. A combination of sample and cell type without a row needs cell numbers to
-  become an entry without cells, and a row removed after pooling (decoupler's
-  `filter_samples`, LIANA's `min_cells`) becomes one too, so its cells are missing
-  when groups are merged or samples pooled: import before filtering. LIANA's
-  `adata_to_views` keeps no cell numbers with decoupler 2, so its views need them
-  given, for example as a crosstab of the cells' labels.
-- `to_anndata` and `to_mudata` leave `X` empty and write every layer under its own
-  name. anndata cannot write datetime or timedelta columns, text columns without any
-  value, or column names with `/`, so the exports write them as ISO 8601 text,
-  integers, NaN and names with `_`; the record in `uns` restores them on import. A
-  MuData file cannot store a modality whose name holds `/` or is `.` or `..`. The
-  tests of these
-  conversions are skipped on Python 3.15, for which h5py and numcodecs, which
-  anndata needs, have no wheels yet.
-- `propeller` fits fixed effects only: a design with random effects is refused, and
-  there is no `duplicateCorrelation`. It reads whole numbers of cells, not
-  proportions with assumed totals (speckle's `convertDataToList`), and its F-test
-  compares all the levels of a factor; to compare some of them, test their contrasts,
-  whose p-values use limma's degrees of freedom for t-tests, capped at the residual
-  degrees of freedom of all cell types, where those of F-tests are not. It leaves out
-  a cell type or a sample without cells, which speckle keeps when it is an unused
-  level of a factor of labels; it tests contrasts that speckle refuses, such as the
-  slope of a covariate, and gives no mean proportions or ratio for a contrast that
-  compares no levels, where speckle reports regression coefficients; and it refuses
-  data that the design fits exactly, such as copies of samples.
-- `meta_analysis` fits models without moderators and takes the studies as independent,
-  with known sampling variances, and it takes limma's moderated standard errors as such,
-  so a gene that one study tested, kept with `min_studies=1`, gets a z-test whose
-  p-value is smaller than the study's own t-test's. Its REML estimate is the largest
-  maximum of the restricted likelihood: where that likelihood has two maxima, as when an
-  imprecise study lies far from precise ones that agree, metafor's Fisher scoring from
-  the Hedges estimate can stop at the lower one or at zero (in 2 of the 9 such features
-  of one validation case), and on some features it does not converge without `stepadj`.
-  Its REML and Paule-Mandel estimates converge to rounding, beyond metafor's default
-  stopping rules, and it reports I² as a proportion, where metafor reports a percentage.
-  It refuses standard errors that are zero or infinite; NaN marks a study that did not
-  measure a gene.
-- `gsva` estimates each gene's distribution from every pair of its samples, O(n²)
-  operations per gene for n samples: 0.8 s for 15,000 genes of 50 samples on two
-  threads with the Gaussian kernel, and 7 s with the Poisson kernel, whose
-  probabilities cost more; from 200 samples on, `kernel="auto"` uses no kernel, as
-  GSVA does. Genes whose kernel estimates are equal in exact arithmetic, as genes with
-  the same low counts in different samples can be, are ordered by the last bit of
-  their probabilities, which R computes differently: on counts of 0 to 6, the scores
-  of their sets differed from GSVA's by up to 2.2e-3 of the largest score.
-- `combine_p_values` and `partial_conjunction` take the studies as independent, with
-  p-values uniform without effects. With directions, a two-sided p-value below the
-  smallest normal double (2.2e-308) loses digits when halved, and one of 5e-324 halves
-  to 0. They keep p-values of 0 and 1 and a single study, which metap leaves out or
-  refuses. `proportion_of_true_nulls` gives an estimate where qvalue stops: where no
-  p-value reaches the largest lambda, and where the estimate is at most 0 (it is 0);
-  with more than 49 values of lambda it keeps a knot at every one, where R's
-  `smooth.spline` keeps some. `replication` reads limma's two-sided p-values with the
-  signs of the log2 fold changes, so it needs a contrast, not an F-test.
-- `mlm` builds the design of the genes and sources of each set of profiles that observe
-  the same genes, and its QR factor: 16 x genes x sources bytes, 190 MB for 15,000
-  genes and 800 CollecTRI sources. `collectri` and `progeny` download 4.3 MB and
-  10.6 MB once, into `~/.cache/cytepool/networks`; PROGENy names genes by the symbols
-  of its 2020 release, so data named by current symbols miss the genes renamed since,
-  which decoupler's `op.progeny` renames through OmniPath.
-- numpy masked arrays, and array-likes that convert to one such as netCDF4 variables,
-  are refused with a `TypeError` that names the argument, because numpy drops the
-  mask when it converts one and the masked entries would be read as data. Where an
-  argument accepts missing values, mark them with NaN in numbers
-  (`numpy.ma.filled(values.astype(float), numpy.nan)`) and None in text
-  (`values.tolist()`); otherwise remove them first. pandas objects work as before.
+```python
+from cytepool import Design, camera, from_cells, limma_voom, read_gmt
 
-## Principles
+# counts: cells x genes; cell_sample and cell_type: the labels of each cell;
+# samples: a table with sample_id, donor and condition; genes: with feature_id
+# and symbol.
+cube = from_cells(
+    counts,
+    sample_labels=cell_sample,
+    group_labels=cell_type,
+    samples=samples,
+    features=genes,
+)
+design = Design(
+    cube.samples,
+    "~ donor + condition",
+    levels={"condition": ["ctrl", "stim"]},
+    contrasts={"stim_vs_ctrl": "conditionstim"},
+)
+result = limma_voom(cube, design)
+table = result.table("Monocytes", "stim_vs_ctrl")  # topTable's columns
 
-- **Samples are the unit of replication.** Cells are pooled into samples before any
-  test, and a cube records how many cells each pooled profile holds.
-- **Two required dependencies:** numpy and numba.
-- **Checked against the reference implementations.** Every method is compared with
-  the package that defined it. The comparisons live in [`validation/`](validation/),
-  and their results are reported with each change.
-- **Implemented from the literature.** Methods whose reference packages carry
-  copyleft licenses are written from their papers and documentation, never from their
-  source code, so CytePool can stay BSD-licensed.
+# Which pathways respond in the monocytes, from a GMT file of gene sets.
+hallmark = read_gmt("h.all.v2026.2.Hs.symbols.gmt")
+pathways = camera(result, hallmark, group="Monocytes", id_column="symbol")
+```
+
+The result keeps the cube's fingerprint, so that it can be traced to the profiles it
+was computed from. The [Quick start](https://docs.nygen.io/CytePool/quickstart) pools
+and tests a simulated study this way, and [Gene sets and
+pathways](https://docs.nygen.io/CytePool/guides/gene-sets) tests pathways.
+
+## What CytePool answers
+
+| Question | Start with |
+| --- | --- |
+| Which genes change in each cell type? | `limma_voom` |
+| Which genes change in bulk RNA-seq? | `limma_voom` on a cube from `from_bulk` |
+| Which genes change, with several samples of each donor? | `dream_voom` |
+| What drives the variation between samples? | `variance_partitioning` |
+| Which cell types expand or contract? | `propeller` |
+| Do the genes of a pathway respond to a contrast? | `camera` |
+| Do the genes of a pathway gather along a ranking? | `gsea` |
+| How active is a pathway in each sample? | `gsva` |
+| Which regulators and pathways are active? | `ulm` |
+| What do several studies say together? | `meta_analysis` |
+| Which changes replicate across studies? | `sumrank` |
+
+[Choosing a method](https://docs.nygen.io/CytePool/statistics/choosing-a-method) gives
+the alternatives for each question and what is not implemented yet, and
+[Validation](https://docs.nygen.io/CytePool/validation) how closely each method agrees
+with its reference.
 
 ## Documentation
 
-The documentation is published at <https://docs.nygen.io/CytePool/>. It has a quick
-start and guides, pages on how the statistics work, an API reference, a
-[capability matrix](docs/source/reference/capabilities.md) and a
-[Validation](docs/source/validation.md) page that reports, for every validation
-script, the reference, the measured differences, the tolerances and the outcome. Its
-sources are in [`docs/`](docs/); build it with
-`uv sync --extra test --group dev --group docs` and `make -C docs html` with Node.js
-20 or newer (CI uses Node.js 24), as
-[the installation page](docs/source/installation.md#build-this-documentation)
-describes.
+The documentation is at <https://docs.nygen.io/CytePool/>: a quick start, guides to
+building cubes, comparing conditions and combining studies, chapters on how each method
+works, the API reference and the Validation page. Its sources are in
+[`docs/`](https://github.com/NygenAnalytics/CytePool/tree/master/docs), and
+[Installation](https://docs.nygen.io/CytePool/installation#build-the-documentation)
+shows how to build it.
 
 ## Development
 
 ```bash
-uv sync --extra test --group dev
+uv sync --extra test --group dev --group docs
 uv run pytest
-uv run ruff check cytepool tests validation
-uv run ruff format --check cytepool tests validation
+uv run ruff check cytepool tests validation docs
+uv run ruff format --check cytepool tests validation docs
 uv run mypy cytepool
+make -C docs api
 ```
+
+[`AGENTS.md`](https://github.com/NygenAnalytics/CytePool/blob/master/AGENTS.md) gives
+the conventions of the code, its tests and its documentation.
 
 ## License
 
-BSD 3-Clause. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+BSD 3-Clause. See
+[LICENSE](https://github.com/NygenAnalytics/CytePool/blob/master/LICENSE) and
+[THIRD_PARTY_NOTICES.md](https://github.com/NygenAnalytics/CytePool/blob/master/THIRD_PARTY_NOTICES.md).

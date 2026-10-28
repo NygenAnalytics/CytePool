@@ -2,8 +2,9 @@
 
 :class:`cytepool.Cube`, :class:`cytepool.CubeCollection`, :func:`cytepool.from_cells`
 and :func:`cytepool.from_bulk` are documented at the top level; the modules
-:mod:`cytepool.cube.fingerprints` and :mod:`cytepool.cube.provenance` specify the
-fingerprints and provenance records of cube files.
+:mod:`cytepool.cube.fingerprints` and :mod:`cytepool.cube.provenance` compute the
+fingerprints and provenance records of cubes, which
+https://docs.nygen.io/CytePool/reference/cube-files specifies.
 """
 
 from .collection import CubeCollection as CubeCollection

@@ -606,7 +606,7 @@ def test_arguments_are_checked() -> None:
         gsva(values, sets, feature_ids=genes, kernel="Gaussian")
     with pytest.raises(ValueError, match="the Poisson kernel takes counts"):
         gsva(values, sets, feature_ids=genes, kernel="poisson")
-    with pytest.raises(ValueError, match="exponent must be finite and at least 0"):
+    with pytest.raises(ValueError, match="exponent must be non-negative"):
         ssgsea(values, sets, feature_ids=genes, exponent=-1.0)
     with pytest.raises(ValueError, match=r"max_size \(2\) is smaller than min_size"):
         plage(values, sets, feature_ids=genes, min_size=3, max_size=2)

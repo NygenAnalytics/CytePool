@@ -1,23 +1,21 @@
 """Named contrasts: linear combinations of design columns, written as expressions.
 
 A contrast weighs the coefficients of the design columns, as the contrasts of limma's
-linear models do (Smyth 2004). ``make_contrasts({"b_vs_a": "groupB - groupA",
-"mean_bc": "(groupB + groupC)/2 - groupA"}, columns)`` gives the weights of each
-contrast on the design columns, as limma's ``makeContrasts`` does (Ritchie et al.
-2015). Expressions may use ``+``, ``-``, ``*`` and ``/`` with numbers, parentheses,
+linear models do (Smyth 2004). :func:`~cytepool.design.make_contrasts` turns named
+expressions into a :class:`~cytepool.design.Contrasts`, the weights of each contrast on
+the design columns, as limma's ``makeContrasts`` does (Ritchie et al. 2015):
+``make_contrasts({"b_vs_a": "groupB - groupA", "mean_bc": "(groupB + groupC)/2 -
+groupA"}, columns)``.
+https://docs.nygen.io/CytePool/statistics/linear-models#contrasts explains contrasts.
+
+Expressions may use ``+``, ``-``, ``*`` and ``/`` with numbers, parentheses,
 and the design's column names written as they are, including names that are not
 syntactic in R such as ``(Intercept)`` or ``conditionstim:sexM``; a name can also be
 quoted with backticks. Where a name could be read more than one way, the longest
 column name that matches is used. A column name that starts or ends with a space
 (from a level label with stray spaces) must be quoted with backticks, so that
-``conditionctrl - conditionstim`` never reads the column ``conditionctrl `` by
-accident.
-
-Unlike ``makeContrasts``, which evaluates the expression in R and so returns a
-matrix for any expression, only linear combinations are accepted: an expression
-that multiplies or divides two columns, adds a constant (``groupB - 1``), uses a
-power or a function, or whose weights cancel to zero raises an error, and so does a
-name that is not a column.
+``conditionctrl - conditionstim`` never reads a column named ``"conditionctrl "``,
+with its trailing space, by accident.
 
 Weights that name the columns they refer to are matched to columns by name wherever
 they are used, never by position: the rows of a ``Contrasts`` are named by its
@@ -25,6 +23,13 @@ they are used, never by position: the rows of a ``Contrasts`` are named by its
 ``make_contrasts`` re-expresses contrasts made for another design with the same
 columns in another order, and how ``contrasts_fit`` matches contrasts to the
 coefficients of a fit.
+
+Differences from limma:
+    ``makeContrasts`` evaluates an expression in R, and so returns weights for any
+    expression. Only linear combinations are accepted here: an expression that
+    multiplies or divides two columns, adds a constant (``groupB - 1``), uses a power
+    or a function, or whose weights cancel to zero raises an error, and so does a
+    name that is not a column.
 
 References:
     Smyth GK (2004). Linear models and empirical Bayes methods for assessing

@@ -861,7 +861,7 @@ def test_prior_count_zero_gives_the_maximum_as_shrunk_coefficients() -> None:
         ({"library_sizes": np.r_[0.0, np.ones(5)]}, ValueError, "finite and positive"),
         ({"prior_count": -1.0}, ValueError, "prior_count must be non-negative"),
         ({"max_iterations": 0}, ValueError, "at least 1"),
-        ({"max_iterations": 2.5}, TypeError, "positive integer"),
+        ({"max_iterations": 2.5}, TypeError, "must be an integer, got float"),
         ({"coefficient_names": ["a"]}, ValueError, "2 entries"),
     ],
 )

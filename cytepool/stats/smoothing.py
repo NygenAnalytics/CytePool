@@ -20,12 +20,9 @@ fitted but interpolated linearly, and points tied with a fitted point share
 its value.
 
 :func:`choose_lowess_span` is limma's rule for the span of a LOWESS trend
-through n points (limma's ``chooseLowessSpan``): 1 for n up to ``small_n``
-points, and min_span + (1 - min_span) (small_n / n)^power for larger n. With
-limma's settings (``small_n`` = 50, ``min_span`` = 0.3, ``power`` = 1/3), the
-part of the span above 0.3 falls in proportion to n^(-1/3), as the width of a
-histogram's bins does in the rules of Scott (1979) and Freedman and Diaconis
-(1981): the span is 1 at 50 points, 0.65 at 400 and 0.395 at 20,000.
+through n points (limma's ``chooseLowessSpan``), with which
+:func:`~cytepool.stats.voom.voom` chooses its span
+(https://docs.nygen.io/CytePool/statistics/limma-voom#voom-span).
 
 :func:`natural_spline_basis` returns a basis of the natural cubic splines
 with given interior and boundary knots: cubic between the knots, twice
@@ -46,15 +43,8 @@ References:
     de Boor C (1978). A Practical Guide to Splines. Springer, New York.
     doi:10.1007/978-1-4612-6333-3
 
-    Freedman D, Diaconis P (1981). On the histogram as a density estimator: L2 theory.
-    Zeitschrift fuer Wahrscheinlichkeitstheorie und verwandte Gebiete 57, 453-476.
-    doi:10.1007/BF01025868
-
     Hastie TJ (1992). Generalized additive models. Chapter 7 of Statistical Models in S,
     eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole, Pacific Grove.
-
-    Scott DW (1979). On optimal and data-based histograms. Biometrika 66, 605-610.
-    doi:10.1093/biomet/66.3.605
 """
 
 import math
@@ -324,7 +314,9 @@ def natural_spline_basis(
             "x must not contain infinite values; NaN marks a missing value"
         )
     if not isinstance(intercept, (bool, np.bool_)):
-        raise TypeError(f"intercept must be a bool, got {type(intercept).__name__}")
+        raise TypeError(
+            f"intercept must be True or False, got {type(intercept).__name__}"
+        )
     with_intercept = bool(intercept)
     if df is not None:
         if isinstance(df, (bool, np.bool_)) or not isinstance(df, numbers.Integral):

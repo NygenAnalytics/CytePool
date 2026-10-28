@@ -56,7 +56,8 @@ class Design:
     estimated by any function yet. ``fit_linear_model`` fits one random intercept
     with a known correlation, given ``block=`` that groups the samples as the
     intercept does, and refuses a design whose random effects it would otherwise
-    drop.
+    drop. https://docs.nygen.io/CytePool/statistics/linear-models#designs-and-formulas
+    explains designs.
 
     Args:
         samples: The sample table: a ``Table``, a mapping of column name to 1-D
@@ -253,8 +254,11 @@ class Design:
         single sample, samples fitted exactly or nearly so, numeric columns that
         look like batch or plate codes, labels that look like missing values or
         differ only in case or spaces, contrasts that are not estimable, and random
-        effects whose variances cannot be estimated. See ``cytepool.design.checks``
-        for the list.
+        effects whose variances cannot be estimated. ``cytepool.design.checks``
+        lists every check, as the designs page of the API reference shows
+        (https://docs.nygen.io/CytePool/api/designs.html), and
+        https://docs.nygen.io/CytePool/statistics/linear-models#design-checks
+        explains them.
 
         Returns:
             The errors and warnings found, with the rank, the aliased columns and

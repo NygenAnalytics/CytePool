@@ -898,9 +898,9 @@ def test_contrasts_are_required_and_matched_by_name() -> None:
         ({"groups": ["T", "T"]}, ValueError, "'T' is listed more than once"),
         ({"groups": 3}, TypeError, "groups must be a group id"),
         ({"groups": []}, ValueError, "groups is empty"),
-        ({"min_cells": -1}, ValueError, "min_cells must be at least 0"),
+        ({"min_cells": -1}, ValueError, "min_cells must be non-negative"),
         ({"min_cells": 2.5}, TypeError, "min_cells must be a whole number"),
-        ({"min_cells": True}, TypeError, "not bool"),
+        ({"min_cells": True}, TypeError, "got bool"),
         (
             {"expression_filter": {"min_counts": 5}},
             ValueError,

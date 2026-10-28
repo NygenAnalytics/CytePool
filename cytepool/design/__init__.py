@@ -1,4 +1,14 @@
-"""Design matrices, contrasts and design checks."""
+"""Design matrices, contrasts and design checks.
+
+:class:`cytepool.Design` joins a sample table, an R formula of the fixed effects,
+random effects in lme4's notation and named contrasts, and its parts are here:
+:func:`model_matrix` codes a formula as a :class:`ModelMatrix`, :func:`parse_formula`
+and :func:`parse_random_effects` read formulas into :class:`FormulaTerms` and
+:class:`RandomEffect` terms, :func:`make_contrasts` turns expressions into
+:class:`Contrasts`, and ``Design.check`` returns a :class:`DesignReport` of
+:class:`DesignIssue` entries. https://docs.nygen.io/CytePool/statistics/linear-models
+explains designs, their contrasts and their checks.
+"""
 
 from .checks import DesignIssue, DesignReport
 from .contrasts import Contrasts, make_contrasts

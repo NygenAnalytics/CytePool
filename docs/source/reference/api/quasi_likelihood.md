@@ -1,21 +1,14 @@
 ---
 myst:
   html_meta:
-    description: edgeR's quasi-likelihood F-tests in CytePool, as glmQLFit and glmQLFTest compute them by default in edgeR 4, with bias-adjusted deviances, the common dispersion of the top genes, average log CPM and exact moments of the negative binomial unit deviance.
+    description: edgeR's quasi-likelihood F-tests in CytePool, as glmQLFit and glmQLFTest compute them by default in edgeR 4.4, with bias-adjusted deviances, the common dispersion of the top genes, average log CPM and exact moments of the negative binomial unit deviance.
 ---
 
 # Quasi-likelihood F-tests
 
-{func}`~cytepool.stats.quasi_likelihood.fit_quasi_likelihood` and
-{func}`~cytepool.stats.quasi_likelihood.quasi_likelihood_f_test` are edgeR's
-`glmQLFit` and `glmQLFTest` as edgeR 4 runs them by default: the negative binomial
-dispersion is the Cox-Reid common dispersion of the most highly expressed genes
-({func}`~cytepool.stats.quasi_likelihood.common_dispersion`), each gene's
-quasi-dispersion comes from deviances adjusted for small counts, and limma's prior for
-unequal degrees of freedom moderates them, towards a trend in the average log CPM
-({func}`~cytepool.stats.quasi_likelihood.average_log2_cpm`). The tests give edgeR's
-columns logFC, logCPM, F, PValue and FDR for coefficients or named contrasts of a
-design.
+edgeR's quasi-likelihood F-tests, as `glmQLFit` and `glmQLFTest` run them by default in
+edgeR 4.4; [edgeR and DESeq2](../statistics/count-models/#quasi-likelihood) explains
+them.
 
 ```python
 from cytepool import Design

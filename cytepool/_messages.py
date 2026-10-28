@@ -29,15 +29,22 @@ PACKAGE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "")
 so that a warning is attributed to the first caller outside the package."""
 
 
-def listing(items: Sequence[Any]) -> str:
-    """Items as "a, b and c", or the first few and how many more."""
-    shown = [str(item) for item in items[:LISTED]]
+def listing(items: Sequence[Any], separator: str = ", ", limit: int = LISTED) -> str:
+    """Items as "a, b and c", or the first ``limit`` and how many more, as "a, b, c
+    and 3 more".
+
+    Items that hold commas themselves, such as relations between columns, take
+    another separator, such as "; ", which then comes before the "and" of the last
+    item too: "a; b; and c".
+    """
+    shown = [str(item) for item in items[:limit]]
     more = len(items) - len(shown)
+    last = " and " if separator == ", " else f"{separator}and "
     if more:
-        return ", ".join(shown) + f" and {more} more"
+        return separator.join(shown) + f"{last}{more:,} more"
     if len(shown) <= 1:
         return "".join(shown)
-    return ", ".join(shown[:-1]) + " and " + shown[-1]
+    return separator.join(shown[:-1]) + last + shown[-1]
 
 
 def quoted(items: Sequence[Any]) -> str:

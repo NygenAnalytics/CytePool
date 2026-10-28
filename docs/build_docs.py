@@ -376,25 +376,39 @@ def html_fragment(contents: str, class_name: str) -> str:
 
 
 def include_api_navigation(site: Path) -> None:
+    """Give the API reference entry of the staged table of contents the pages of the
+    API index as its children, in the groups of the index's captioned tables of
+    contents; pages listed before any caption come first, ungrouped."""
     import yaml
 
     base_url = os.environ.get("BASE_URL", "").rstrip("/")
     source = DOCS / "build" / "api" / "index.html"
     navigation = html_fragment(source.read_text(), "docs-api-tree")
-    links = []
-    for href, title in re.findall(
-        r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>', navigation, re.DOTALL
+    links: list[dict[str, Any]] = []
+    group: list[dict[str, Any]] = links
+    for caption, href, title in re.findall(
+        r'<span\b[^>]*\bclass="caption-text"[^>]*>(.*?)</span>'
+        r'|<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>',
+        navigation,
+        re.DOTALL,
     ):
+        if caption:
+            group = []
+            links.append({"title": _plain_text(caption), "children": group})
+            continue
         href = unescape(href)
         if urlsplit(href).scheme or href.startswith("//") or not href.endswith(".html"):
             raise ValueError(f"Expected an API page link in {source}: {href}")
-        links.append(
+        group.append(
             {
-                "title": " ".join(unescape(re.sub(r"<[^>]+>", "", title)).split()),
+                "title": _plain_text(title),
                 "url": urljoin(f"{base_url}/api/", href),
                 "open_in_same_tab": True,
             }
         )
+    empty = [entry["title"] for entry in links if entry.get("children") == []]
+    if empty:
+        raise ValueError(f"API navigation groups without pages in {source}: {empty}")
     if not links:
         raise ValueError(f"No API navigation links in {source}")
     config = yaml.safe_load((site / "myst.yml").read_text())
@@ -791,6 +805,11 @@ def _figures(cell: dict[str, Any]) -> list[dict[str, Any]]:
         for output in cell.get("outputs", [])
         if any(kind.startswith("image/") for kind in output.get("data", {}))
     ]
+
+
+def _plain_text(html: str) -> str:
+    """The text of an HTML fragment, without tags, entities or runs of spaces."""
+    return " ".join(unescape(re.sub(r"<[^>]+>", "", html)).split())
 
 
 def _text(source: str | list[str]) -> str:
