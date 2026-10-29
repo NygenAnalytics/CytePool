@@ -5,14 +5,11 @@ These instructions apply to the whole repository.
 ## Layout
 
 - Package code is in `cytepool/`, tests in `tests/`, reference comparisons in `validation/`, and the test data those comparisons write in `tests/data/`.
-- Name modules, functions and files after what they compute, in terms a statistician or biologist would search for. Avoid project-internal labels.
 
 ## Conventions
 
-- Python 3.13 or newer. Use `uv` for every Python command and dependency change.
+- Python 3.13 or newer.
 - The package depends only on numpy and numba. Optional integrations go behind extras and are imported where they are used.
-- Use built-in generics and `X | None`. Do not add `typing.List`, `typing.Optional`, or `from __future__ import annotations`.
-- Validate arguments at the public boundary and raise errors that say what was wrong and what is expected.
 
 ## Writing
 
@@ -29,7 +26,7 @@ These rules apply to everything people read: pages, the README, docstrings, erro
 
 ## Documentation
 
-- Each fact has one home; other places give it in a clause and link to it. The chapters of "Understand the methods" (`docs/source/statistics/`) explain the methods; the Validation page gives the agreement with the reference tools, with the numbers the validation scripts print; docstrings define behaviour; the guides show tasks on data; and "Choosing a method" lists the questions, their defaults and what is not implemented yet.
+- The chapters of "Understand the methods" (`docs/source/statistics/`) explain the methods; the Validation page gives the agreement with the reference tools, with the numbers the validation scripts print; docstrings define behaviour; the guides show tasks on data; and "Choosing a method" lists the questions, their defaults and what is not implemented yet.
 - A change that adds, removes or limits a capability updates the summary of the Validation page and "Choosing a method".
 - Link a section by its label, `(name)=`, rather than by its heading, and give a docstring the address of the chapter section that explains it.
 
@@ -46,7 +43,6 @@ These rules apply to everything people read: pages, the README, docstrings, erro
 
 ## Tests and validation
 
-- Tests must be fast and must check results against something independent of the code under test: reference outputs saved by a validation script, values derived by hand, or invariants that a wrong implementation would break. A test that repeats the implementation's formula proves nothing.
 - Every public function has a check in `validation/` against its reference implementation. Each validation script is self-contained, prints its comparison table, and writes the small fixtures the tests use with `--write-fixtures`.
 
 ## Checks
