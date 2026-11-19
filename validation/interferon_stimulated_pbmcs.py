@@ -595,7 +595,9 @@ def write_fixtures(case, limma):
 def memory(restart=False):
     """This process's resident memory and its peak, in MiB, or NaN off Linux. With
     restart, the peak restarts from the resident memory first (Linux 4.0 or newer),
-    and both are NaN if it cannot."""
+    and both are NaN if it cannot. Where /proc keeps no peak, as in gVisor's sandbox,
+    the peak is the process's largest resident memory from getrusage, which cannot
+    restart."""
     try:
         if restart:
             Path("/proc/self/clear_refs").write_text("5")
@@ -603,6 +605,12 @@ def memory(restart=False):
     except OSError:
         return np.nan, np.nan
     fields = dict(line.split(":", 1) for line in status if ":" in line)
+    if "VmHWM" not in fields:
+        if restart:
+            return np.nan, np.nan
+        import resource  # Unix only, as /proc is
+
+        fields["VmHWM"] = f"{resource.getrusage(resource.RUSAGE_SELF).ru_maxrss} kB"
     return tuple(int(fields[key].split()[0]) / 1024 for key in ("VmRSS", "VmHWM"))
 
 
