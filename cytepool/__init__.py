@@ -29,6 +29,7 @@ question they answer, the default first:
   :func:`meta_analysis`, :class:`MetaAnalysisResult`; replication, :func:`sumrank`,
   :class:`SumRankResult`, :func:`replication`, :class:`ReplicationResult`,
   :func:`held_out_prediction`, :class:`HeldOutPrediction`.
+- Dose response: :class:`DoseAxis`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and
 mixed models, empirical Bayes moderation, voom, count models, multiple testing,
@@ -62,6 +63,7 @@ from .activity import Activities, mlm, ulm, weighted_aggregate  # noqa: E402
 from .composition import CompositionResult, propeller  # noqa: E402
 from .cube import Cube, CubeCollection, from_bulk, from_cells  # noqa: E402
 from .design import Design  # noqa: E402
+from .dose_axes import DoseAxis  # noqa: E402
 from .differential_expression import (  # noqa: E402
     DifferentialExpressionResult,
     GroupFit,
@@ -169,6 +171,8 @@ __all__ = [
     "ReplicationResult",
     "held_out_prediction",
     "HeldOutPrediction",
+    # Dose response.
+    "DoseAxis",
     # The version.
     "__version__",
 ]

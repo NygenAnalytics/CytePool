@@ -122,7 +122,8 @@ _CALL_HINTS = {
     "C": "factors are coded by treatment contrasts with the first level as the "
     "reference; use levels= to choose that level",
     "ns": "spline and polynomial bases are not built from formulas; add the basis "
-    "columns to the sample table and use their names",
+    "columns to the sample table and use their names, such as the columns that "
+    "DoseAxis.design_columns or cytepool.stats.smoothing.NaturalSplineBasis gives",
     "offset": "offsets are not columns of a design matrix; pass them to the model "
     "fitting function instead",
 }

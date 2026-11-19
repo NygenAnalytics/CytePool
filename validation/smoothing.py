@@ -1,8 +1,8 @@
-"""Check LOWESS and natural cubic spline bases against R.
+"""Check LOWESS and natural cubic spline bases against R, Hmisc and rms.
 
-Compares ``cytepool.stats.smoothing.lowess`` with R's ``stats::lowess`` and
-``natural_spline_basis`` with R's ``splines::ns`` on inputs generated from
-fixed seeds.
+Compares ``cytepool.stats.smoothing.lowess`` with R's ``stats::lowess``, and
+``natural_spline_basis`` and ``NaturalSplineBasis`` with R's ``splines::ns``, Hmisc's
+``rcspline.eval`` and rms's ``rcs``, on inputs generated from fixed seeds.
 
 LOWESS cases include mean-variance trends of 2,000 to 20,000 genes (as limma
 and voom smooth them), spans from 0.1 to above 1, 0 to 4 robustness
@@ -26,11 +26,38 @@ exact, at most 1e-10), their ranks and their rows of NaN. Cases for which R
 fails must fail in CytePool too. Deliberate deviations, where CytePool
 raises an error instead of returning what R returns, are listed as such.
 
+The knots that ``NaturalSplineBasis`` places must equal R's to the last bit
+(tolerance 0): with R's rule (``"quantiles"``), ``attr(ns(x, df), "knots")`` and
+``"Boundary.knots"`` of every spline case with ``df``, and of 11 seeded datasets (from
+30 to 2,000 values, dose ladders, ties) at df 2 to 8 with and without an intercept;
+with the rule on the distinct values (``"levels"``), ``attr(ns(unique(x), df),
+"knots")``. A basis evaluated at new points, inside the boundary knots, at the knots,
+beyond both boundary knots and at NaN, is compared with R's ``predict(basis, newx)``
+through least squares: random responses are fitted at x on either basis and
+predicted at the new points (tier exact, relative to the largest prediction), in
+the cases where the basis has full column rank.
+
+Harrell's rule (``"harrell"``) is compared with Hmisc's ``rcspline.eval(x, nk,
+knots.only = TRUE)`` for nk from 2 to 9 on 25 seeded datasets: samples of 6 to 200
+values, NaN, dose ladders and values tied at an extreme or between the extremes. Its
+knots must be identical; where Hmisc returns fewer knots than asked, switches to the
+method it uses for values tied at an extreme, or drops a repeated knot, CytePool
+raises an error instead (deliberate differences); where Hmisc fails, CytePool must
+fail too. The restricted cubic form is compared with ``rcspline.eval(x, knots,
+inclx = TRUE)`` for 3 to 8 knots at points from below the first to far beyond the
+last knot, column by column relative to each column's largest absolute value, with
+its first column plus the lower boundary knot against Hmisc's x (tier exact). The
+overall and non-linear F-statistics of ``anova(ols(y ~ rcs(x, nk)))`` (rms) are
+compared with those of least squares fits on an intercept and the restricted cubic
+columns, and the overall F with the B-spline form on the same knots (tier exact),
+and rms's knots with Harrell's rule (identical).
+
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root so that
     ``cytepool`` imports from the working tree.
-    R 4.4 or newer (the stats and splines packages ship with R). Set
-    ``RSCRIPT`` to the Rscript executable when it is not on PATH.
+    R 4.4 or newer (the stats and splines packages ship with R), with the CRAN
+    packages Hmisc and rms. Set ``RSCRIPT`` to the Rscript executable when it is not
+    on PATH.
 
 Usage:
     PYTHONPATH=. python validation/smoothing.py
@@ -46,7 +73,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool.stats.smoothing import lowess, natural_spline_basis
+from cytepool.stats.smoothing import NaturalSplineBasis, lowess, natural_spline_basis
 
 FIXTURE_DIRECTORY = Path(__file__).resolve().parents[1] / "tests" / "data" / "smoothing"
 CLOSE = 1e-6
@@ -54,10 +81,20 @@ EXACT = 1e-10
 LARGEST_FIXTURE = 300
 
 R_SCRIPT = r"""
+suppressPackageStartupMessages({library(splines); library(Hmisc); library(rms)})
 root <- commandArgs(trailingOnly = TRUE)[[1]]
 read_doubles <- function(path, n) readBin(path, "double", n = n, size = 8, endian = "little")
+read_all <- function(path) read_doubles(path, file.size(path) / 8)
 write_doubles <- function(x, path) writeBin(as.double(x), path, size = 8, endian = "little")
 numbers <- function(line) if (line == "none") numeric(0) else as.numeric(strsplit(line, ",")[[1]])
+# Hmisc prints a table of x when it fails; the comparison reads only the files.
+quietly <- function(expr) {
+  out <- NULL
+  invisible(capture.output(
+    out <- tryCatch(suppressWarnings(expr), error = function(e) NULL)
+  ))
+  out
+}
 for (case in readLines(file.path(root, "lowess.txt"))) {
   dir <- file.path(root, "lowess", case)
   p <- read.table(file.path(dir, "parameters.txt"), header = TRUE)
@@ -83,9 +120,76 @@ for (case in readLines(file.path(root, "ns.txt"))) {
   } else {
     write_doubles(dim(basis), file.path(dir, "r_dim.bin"))
     write_doubles(basis, file.path(dir, "r_basis.bin"))
+    write_doubles(attr(basis, "knots"), file.path(dir, "r_knots.bin"))
+    write_doubles(attr(basis, "Boundary.knots"), file.path(dir, "r_boundary.bin"))
+    # The new points, with the knots and boundary knots added.
+    newx <- read_all(file.path(dir, "newx.bin"))
+    newx[is.nan(newx)] <- NA
+    newx <- c(newx, attr(basis, "knots"), attr(basis, "Boundary.knots"))
+    write_doubles(newx, file.path(dir, "r_newx.bin"))
+    write_doubles(predict(basis, newx), file.path(dir, "r_predict.bin"))
+    # R's rule on the distinct values, where the rule places the knots.
+    if (p[2] != "default" && p[4] == "default") {
+      args$x <- unique(x)
+      levels <- tryCatch(suppressWarnings(do.call(splines::ns, args)), error = function(e) NULL)
+      if (!is.null(levels)) write_doubles(attr(levels, "knots"), file.path(dir, "r_levels.bin"))
+    }
   }
 }
-writeLines(paste("R", as.character(getRversion())), file.path(root, "versions.txt"))
+# R's knots on seeded datasets: ns(x, df) and ns(unique(x), df).
+for (case in readLines(file.path(root, "knots.txt"))) {
+  dir <- file.path(root, "knots", case)
+  x <- read_all(file.path(dir, "x.bin"))
+  for (df in 2:8) for (intercept in c(FALSE, TRUE)) {
+    label <- paste0("df", df, "_", as.integer(intercept))
+    basis <- tryCatch(suppressWarnings(ns(x, df = df, intercept = intercept)), error = function(e) NULL)
+    if (!is.null(basis)) {
+      write_doubles(attr(basis, "knots"), file.path(dir, paste0("knots_", label, ".bin")))
+      write_doubles(attr(basis, "Boundary.knots"), file.path(dir, paste0("boundary_", label, ".bin")))
+    }
+    levels <- tryCatch(suppressWarnings(ns(unique(x), df = df, intercept = intercept)), error = function(e) NULL)
+    if (!is.null(levels)) write_doubles(attr(levels, "knots"), file.path(dir, paste0("levels_", label, ".bin")))
+  }
+}
+# Hmisc's knots by Harrell's rule.
+for (case in readLines(file.path(root, "harrell.txt"))) {
+  dir <- file.path(root, "harrell", case)
+  x <- read_all(file.path(dir, "x.bin"))
+  x[is.nan(x)] <- NA
+  for (nk in 2:9) {
+    knots <- quietly(rcspline.eval(x, nk = nk, knots.only = TRUE))
+    if (!is.null(knots)) write_doubles(knots, file.path(dir, paste0("knots_nk", nk, ".bin")))
+  }
+}
+# Hmisc's restricted cubic columns, x first, at given knots.
+for (case in readLines(file.path(root, "rcs.txt"))) {
+  dir <- file.path(root, "rcs", case)
+  knots <- read_all(file.path(dir, "knots.bin"))
+  newx <- read_all(file.path(dir, "newx.bin"))
+  newx[is.nan(newx)] <- NA
+  basis <- quietly(rcspline.eval(newx, knots = knots, inclx = TRUE))
+  if (!is.null(basis)) {
+    write_doubles(dim(basis), file.path(dir, "r_dim.bin"))
+    write_doubles(basis, file.path(dir, "r_basis.bin"))
+  }
+}
+# rms: ols(y ~ rcs(x, nk)), its anova's overall and non-linear F, and its knots.
+for (case in readLines(file.path(root, "rms.txt"))) {
+  dir <- file.path(root, "rms", case)
+  x <- read_all(file.path(dir, "x.bin"))
+  x[is.nan(x)] <- NA
+  y <- read_all(file.path(dir, "y.bin"))
+  nk <- as.integer(readLines(file.path(dir, "nk.txt")))
+  data <- data.frame(x = x, y = y)
+  fit <- ols(y ~ rcs(x, nk), data = data)
+  table <- anova(fit)
+  write_doubles(c(table[1, "F"], table[2, "F"], table[1, "d.f."], table[2, "d.f."],
+                  table[nrow(table), "d.f."]), file.path(dir, "r_anova.bin"))
+  write_doubles(fit$Design$parms$x, file.path(dir, "r_knots.bin"))
+}
+version <- function(name) paste(name, packageDescription(name, fields = "Version"))
+writeLines(paste0("R ", as.character(getRversion()), " (stats::lowess, splines::ns), ",
+                  version("Hmisc"), ", ", version("rms")), file.path(root, "versions.txt"))
 """
 
 
@@ -244,29 +348,163 @@ def spline_cases() -> list[dict]:
         ("deviation_df_below_minimum", x, dict(df=1, **on)),
     ]
     defaults = dict(df=None, knots=None, intercept=False, boundary_knots=None)
-    return [
+    cases = [
         dict(name=name, x=np.asarray(a, float)) | defaults | options
         for name, a, options in specs
     ]
+    for case in cases:
+        case["newx"] = new_points(case["x"], case["boundary_knots"])
+    return cases
 
 
-def run_r(lowess_inputs: list[dict], spline_inputs: list[dict]) -> tuple[dict, str]:
+def new_points(x: np.ndarray, boundary_knots) -> np.ndarray:
+    """Where a basis is evaluated anew: 23 points from half the range below the lower
+    boundary knot to half the range above the upper one, and NaN; R adds the knots."""
+    observed = x[~np.isnan(x)]
+    if boundary_knots is None:
+        lower, upper = float(observed.min()), float(observed.max())
+    else:
+        lower, upper = sorted(float(b) for b in boundary_knots)
+    width = upper - lower
+    return np.r_[np.linspace(lower - 0.5 * width, upper + 0.5 * width, 23), np.nan]
+
+
+DOSES = np.log10([0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0])
+
+
+def knot_datasets() -> dict[str, np.ndarray]:
+    """Inputs for R's knots, ns(x, df) and ns(unique(x), df) at df 2 to 8."""
+    rng = np.random.default_rng(20261120)
+    ladder = np.repeat(DOSES, 3)
+    return {
+        "normal150": rng.normal(0.0, 1.0, 150),
+        "exponential99": rng.exponential(1.0, 99),
+        "uniform30": rng.uniform(0.0, 1.0, 30),
+        "normal2000": rng.normal(6.0, 2.5, 2000),
+        "ladder": ladder,
+        "ladder_unequal": np.repeat(DOSES, [3, 3, 2, 3, 3, 2, 3, 3]),
+        "ladder_offset": np.r_[np.full(4, np.log10(0.001)), ladder],
+        "ladder_nine": np.repeat(np.r_[DOSES, 2.0], [2, 3, 3, 3, 2, 3, 3, 3, 2]),
+        "half_log": np.repeat([0.0, 0.5, 1.0, 1.5, 2.0, 2.5], 4),
+        "integers": rng.integers(0, 10, 80).astype(float),
+        "rounded": np.round(rng.normal(0.0, 1.0, 500), 2),
+    }
+
+
+def harrell_datasets() -> dict[str, np.ndarray]:
+    """Inputs for Hmisc's knots by Harrell's rule, rcspline.eval(x, nk) at nk 2 to 9:
+    samples above and below 100 values, NaN, dose ladders, and values tied at an
+    extreme (at 5% and just below it) or between the extremes."""
+    rng = np.random.default_rng(20261121)
+    uniform = rng.uniform
+    return {
+        "normal150": rng.normal(0.0, 1.0, 150),
+        "exponential100": rng.exponential(1.0, 100),
+        "exponential99": rng.exponential(1.0, 99),
+        "normal60": rng.normal(0.0, 1.0, 60),
+        "uniform30": uniform(0.0, 1.0, 30),
+        "uniform12": uniform(0.0, 1.0, 12),
+        "uniform10": uniform(0.0, 1.0, 10),
+        "uniform9": uniform(0.0, 1.0, 9),
+        "uniform6": uniform(0.0, 1.0, 6),
+        "nan_in_x": np.r_[np.nan, np.nan, rng.exponential(1.0, 98)],
+        "ladder": np.repeat(DOSES, 3),
+        "ladder_unequal": np.repeat(DOSES, [3, 3, 2, 3, 3, 2, 3, 3]),
+        "ladder_offset": np.r_[np.full(4, np.log10(0.001)), np.repeat(DOSES, 3)],
+        "ladder_15_each": np.repeat(DOSES, 15),
+        "ladder_five": np.repeat([1.0, 2.0, 3.0, 4.0, 5.0], 4),
+        "four_values": np.repeat([1.0, 2.0, 3.0, 4.0], 10),
+        "ties_at_min_10pct": np.r_[np.zeros(10), uniform(0.0, 1.0, 90)],
+        "ties_at_min_5pct": np.r_[np.zeros(10), uniform(0.0, 1.0, 190)],
+        "ties_at_min_4.5pct": np.r_[np.zeros(9), uniform(0.0, 1.0, 191)],
+        "ties_at_max_10pct": np.r_[uniform(0.0, 1.0, 90), np.ones(10)],
+        "ties_at_both_ends": np.r_[np.zeros(10), uniform(0.0, 1.0, 80), np.ones(10)],
+        "ties_at_min_and_between": np.r_[
+            np.zeros(10), np.full(10, 0.5), uniform(0.0, 1.0, 80)
+        ],
+        "ties_at_min_n46": np.r_[np.zeros(6), uniform(0.0, 1.0, 40)],
+        "ties_at_min_few_values": np.r_[np.zeros(20), 1.0, 2.0, 3.0, 4.0, 5.0],
+        "ties_at_max_few_values": np.r_[1.0, 2.0, 3.0, 4.0, 5.0, np.full(20, 9.0)],
+        "ties_at_min_seven_values": np.r_[np.zeros(30), np.arange(1.0, 7.0)],
+    }
+
+
+def restricted_cubic_cases() -> list[dict]:
+    """Knots and points for Hmisc's restricted cubic columns, rcspline.eval(x, knots,
+    inclx = TRUE): 3 to 8 knots at random, and a dose ladder; points from below the
+    first knot to far beyond the last, the knots themselves, and NaN."""
+    rng = np.random.default_rng(20261122)
+    cases = []
+    for count in range(3, 9):
+        knots = np.sort(rng.uniform(-1.2, 1.5, count))
+        cases.append({"name": f"knots_{count}", "knots": knots})
+    cases.append({"name": "dose_ladder_knots_5", "knots": DOSES[[0, 2, 4, 6, 7]]})
+    # Hmisc drops a repeated knot; CytePool's restricted cubic form refuses it.
+    cases.append({"name": "repeated_knot", "knots": np.array([-1.2, 0.4, 0.4, 1.5])})
+    for case in cases:
+        knots = case["knots"]
+        case["newx"] = np.r_[np.linspace(-3.0, 3.0, 25), knots, 10.0, 50.0, np.nan]
+    return cases
+
+
+def rms_cases(harrell_inputs: dict[str, np.ndarray]) -> list[dict]:
+    """Responses for rms's ols(y ~ rcs(x, nk)) on datasets of harrell_datasets."""
+    rng = np.random.default_rng(20261123)
+    cases = []
+    for name, nk in (
+        ("normal150", 4),
+        ("normal150", 5),
+        ("exponential99", 5),
+        ("uniform30", 3),
+        ("ladder", 4),
+        ("nan_in_x", 4),
+    ):
+        x = harrell_inputs[name]
+        y = np.sin(2.0 * np.nan_to_num(x)) + rng.normal(0.0, 0.3, x.size)
+        cases.append({"name": f"{name}_nk{nk}", "x": x, "y": y, "nk": nk})
+    return cases
+
+
+def run_r(
+    lowess_inputs: list[dict],
+    spline_inputs: list[dict],
+    knot_inputs: dict[str, np.ndarray],
+    harrell_inputs: dict[str, np.ndarray],
+    rcs_inputs: list[dict],
+    rms_inputs: list[dict],
+) -> tuple[dict, str]:
     def text(values) -> str:
         values = np.atleast_1d(np.asarray(values, float))
         return ",".join(repr(float(v)) for v in values) if values.size else "none"
+
+    def write(path: Path, values) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(np.asarray(values, float).astype("<f8").tobytes())
+
+    def read(path: Path) -> np.ndarray | None:
+        if not path.exists():
+            return None
+        values = np.fromfile(path, "<f8")
+        values[np.isnan(values)] = np.nan  # R's NA is a signalling NaN
+        return values
+
+    def matrix(directory: Path, name: str, rows: int | None = None) -> np.ndarray:
+        values = read(directory / name)
+        if rows is None:
+            rows, columns = read(directory / "r_dim.bin").astype(int)
+        else:
+            columns = values.size // rows if rows else 0
+        return values.reshape(columns, rows).T.copy()
 
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         for kind, inputs in (("lowess", lowess_inputs), ("ns", spline_inputs)):
             (root / f"{kind}.txt").write_text("".join(c["name"] + "\n" for c in inputs))
             for case in inputs:
-                (root / kind / case["name"]).mkdir(parents=True)
-                (root / kind / case["name"] / "x.bin").write_bytes(
-                    case["x"].astype("<f8").tobytes()
-                )
+                write(root / kind / case["name"] / "x.bin", case["x"])
         for case in lowess_inputs:
             directory = root / "lowess" / case["name"]
-            (directory / "y.bin").write_bytes(case["y"].astype("<f8").tobytes())
+            write(directory / "y.bin", case["y"])
             delta = "NA" if case["delta"] is None else repr(float(case["delta"]))
             (directory / "parameters.txt").write_text(
                 f"n span iterations delta\n{case['x'].size} {float(case['span'])!r} "
@@ -282,8 +520,23 @@ def run_r(lowess_inputs: list[dict], spline_inputs: list[dict]) -> tuple[dict, s
                     for key in ("knots", "boundary_knots")
                 ),
             ]
-            path = root / "ns" / case["name"] / "parameters.txt"
-            path.write_text("\n".join(lines) + "\n")
+            directory = root / "ns" / case["name"]
+            (directory / "parameters.txt").write_text("\n".join(lines) + "\n")
+            write(directory / "newx.bin", case["newx"])
+        for kind, inputs in (("knots", knot_inputs), ("harrell", harrell_inputs)):
+            (root / f"{kind}.txt").write_text("".join(f"{name}\n" for name in inputs))
+            for name, x in inputs.items():
+                write(root / kind / name / "x.bin", x)
+        (root / "rcs.txt").write_text("".join(c["name"] + "\n" for c in rcs_inputs))
+        for case in rcs_inputs:
+            write(root / "rcs" / case["name"] / "knots.bin", case["knots"])
+            write(root / "rcs" / case["name"] / "newx.bin", case["newx"])
+        (root / "rms.txt").write_text("".join(c["name"] + "\n" for c in rms_inputs))
+        for case in rms_inputs:
+            directory = root / "rms" / case["name"]
+            write(directory / "x.bin", case["x"])
+            write(directory / "y.bin", case["y"])
+            (directory / "nk.txt").write_text(f"{case['nk']}\n")
         (root / "compare.R").write_text(R_SCRIPT)
         rscript = os.environ.get("RSCRIPT", "Rscript")
         command = [rscript, "--vanilla", str(root / "compare.R"), str(root)]
@@ -299,10 +552,43 @@ def run_r(lowess_inputs: list[dict], spline_inputs: list[dict]) -> tuple[dict, s
             if (directory / "error.txt").exists():
                 results["ns", case["name"]] = None
                 continue
-            rows, columns = np.fromfile(directory / "r_dim.bin", "<f8").astype(int)
-            basis = np.fromfile(directory / "r_basis.bin", "<f8").reshape(columns, rows)
-            basis[np.isnan(basis)] = np.nan  # R's NA is a signalling NaN
-            results["ns", case["name"]] = basis.T.copy()
+            basis = matrix(directory, "r_basis.bin")
+            results["ns", case["name"]] = basis
+            newx = read(directory / "r_newx.bin")
+            results["ns at new points", case["name"]] = {
+                "knots": read(directory / "r_knots.bin"),
+                "boundary_knots": read(directory / "r_boundary.bin"),
+                "newx": newx,
+                "basis": matrix(directory, "r_predict.bin", newx.size),
+                "levels": read(directory / "r_levels.bin"),
+            }
+        for name in knot_inputs:
+            directory = root / "knots" / name
+            results["knots", name] = {
+                (df, intercept): {
+                    key: read(directory / f"{key}_df{df}_{int(intercept)}.bin")
+                    for key in ("knots", "boundary", "levels")
+                }
+                for df in range(2, 9)
+                for intercept in (False, True)
+            }
+        for name in harrell_inputs:
+            directory = root / "harrell" / name
+            results["harrell", name] = {
+                nk: read(directory / f"knots_nk{nk}.bin") for nk in range(2, 10)
+            }
+        for case in rcs_inputs:
+            directory = root / "rcs" / case["name"]
+            failed = not (directory / "r_basis.bin").exists()
+            results["rcs", case["name"]] = (
+                None if failed else matrix(directory, "r_basis.bin")
+            )
+        for case in rms_inputs:
+            directory = root / "rms" / case["name"]
+            results["rms", case["name"]] = (
+                read(directory / "r_anova.bin"),
+                read(directory / "r_knots.bin"),
+            )
         return results, (root / "versions.txt").read_text().strip()
 
 
@@ -402,11 +688,285 @@ def compare_splines(cases: list[dict], results: dict, table: Table) -> None:
             table.add(check, "splines::ns", metric, float(difference), EXACT)
 
 
-def write_fixtures(lowess_inputs, spline_inputs, results) -> None:
+def placed_knots(basis: NaturalSplineBasis) -> np.ndarray:
+    """All the knots of a basis, the boundary knots included, in order."""
+    lower, upper = basis.boundary_knots
+    return np.array([lower, *basis.knots, upper])
+
+
+def compare_spline_knots(cases: list[dict], results: dict, table: Table) -> None:
+    """Knots of R's rule and of the rule on the distinct values, and bases at new
+    points, of the spline cases for which R returns a basis."""
+    rng = np.random.default_rng(11)
+    differ, levels_differ, placed, levels = [], [], 0, 0
+    for case in cases:
+        reference = results.get(("ns at new points", case["name"]))
+        if reference is None or case["name"].startswith("deviation"):
+            continue
+        keywords = {k: case[k] for k in ("intercept", "boundary_knots")}
+        given = case["knots"]
+        basis = NaturalSplineBasis(
+            case["x"],
+            case["df"],
+            knots="quantiles" if given is None else given,
+            **keywords,
+        )
+        if given is None and case["df"] is not None:
+            placed += 1
+            same = np.array_equal(
+                np.array(basis.knots), reference["knots"]
+            ) and np.array_equal(
+                np.array(basis.boundary_knots), reference["boundary_knots"]
+            )
+            if not same:
+                differ.append(case["name"])
+            if reference["levels"] is not None:
+                levels += 1
+                ours = NaturalSplineBasis(
+                    case["x"], case["df"], knots="levels", **keywords
+                )
+                if not np.array_equal(np.array(ours.knots), reference["levels"]):
+                    levels_differ.append(case["name"])
+        # Predictions at the new points of least squares fits at x on either basis.
+        train = results["ns", case["name"]]
+        ours_train = basis.matrix(case["x"])
+        complete = ~np.isnan(train).any(axis=1)
+        if np.linalg.matrix_rank(train[complete]) < train.shape[1]:
+            continue
+        responses = rng.normal(0.0, 1.0, (int(complete.sum()), 3))
+        r_coefficients = np.linalg.lstsq(train[complete], responses, rcond=None)[0]
+        coefficients = np.linalg.lstsq(ours_train[complete], responses, rcond=None)[0]
+        r_predicted = reference["basis"] @ r_coefficients
+        predicted = basis.matrix(reference["newx"]) @ coefficients
+        missing = np.isnan(r_predicted[:, 0])
+        difference = np.inf
+        if np.array_equal(missing, np.isnan(predicted[:, 0])):
+            scale = float(np.max(np.abs(r_predicted[~missing])))
+            difference = (
+                float(np.max(np.abs(predicted - r_predicted)[~missing])) / scale
+            )
+        check = f"ns {case['name']} at {reference['newx'].size} new points"
+        metric = "LS predictions: max diff / max abs"
+        table.add(check, "predict(ns)", metric, difference, EXACT)
+    check = f"knots of the {placed} spline cases whose knots R's rule places"
+    if differ:
+        check += f" ({', '.join(differ)})"
+    table.add(
+        check, "attr(ns(x, df))", "cases that differ", len(differ), 0, str(len(differ))
+    )
+    check = f"knots on the distinct values of the {levels} cases above"
+    if levels_differ:
+        check += f" ({', '.join(levels_differ)})"
+    shown = str(len(levels_differ))
+    table.add(
+        check, "ns(unique(x), df)", "cases that differ", len(levels_differ), 0, shown
+    )
+
+
+def compare_knot_datasets(datasets: dict, results: dict, table: Table) -> None:
+    """R's knots, with ns(x, df) and ns(unique(x), df), at df 2 to 8 with and without
+    an intercept: identical, and failing where R fails."""
+    for name, x in datasets.items():
+        for rule, key in (("quantiles", "knots"), ("levels", "levels")):
+            differ = 0
+            for (df, intercept), reference in results["knots", name].items():
+                try:
+                    basis = NaturalSplineBasis(x, df, knots=rule, intercept=intercept)
+                except ValueError:
+                    differ += int(reference[key] is not None)
+                    continue
+                if reference[key] is None:
+                    differ += 1
+                    continue
+                same = np.array_equal(np.array(basis.knots), reference[key])
+                if rule == "quantiles":
+                    same = same and np.array_equal(
+                        np.array(basis.boundary_knots), reference["boundary"]
+                    )
+                differ += not same
+            call = "ns(x, df)" if rule == "quantiles" else "ns(unique(x), df)"
+            check = f"knots by {rule!r}, {name} (n={x.size}), df 2 to 8, 14 cases"
+            table.add(check, call, "cases that differ", differ, 0, str(differ))
+
+
+HARRELL_DEPARTURES = {
+    "tie": "Hmisc switches to its method for values tied at an extreme",
+    "few": "Hmisc places fewer knots than asked",
+    "equal": "Hmisc drops a repeated knot and places fewer knots than asked",
+}
+
+
+def harrell_outcome(x: np.ndarray, nk: int, hmisc: np.ndarray | None) -> str:
+    """How CytePool's knots by Harrell's rule compare with Hmisc's: "identical",
+    "both fail", one of HARRELL_DEPARTURES (a deliberate difference), or "mismatch"."""
+    try:
+        basis = NaturalSplineBasis(x, nk - 1, knots="harrell")
+    except ValueError as error:
+        if hmisc is None:
+            return "both fail"
+        message = str(error)
+        if "tie at" in message:
+            return "tie"
+        if hmisc.size < nk and "distinct values" in message:
+            return "few"
+        if hmisc.size < nk and "two knots at" in message:
+            return "equal"
+        return "mismatch"
+    if hmisc is not None and np.array_equal(placed_knots(basis), hmisc):
+        return "identical"
+    return "mismatch"
+
+
+def compare_harrell(datasets: dict, results: dict, table: Table) -> None:
+    departures: dict[str, list[str]] = {kind: [] for kind in HARRELL_DEPARTURES}
+    for name, x in datasets.items():
+        outcomes = {
+            nk: harrell_outcome(x, nk, knots)
+            for nk, knots in results["harrell", name].items()
+        }
+        counts = {
+            kind: list(outcomes.values()).count(kind) for kind in set(outcomes.values())
+        }
+        for kind in HARRELL_DEPARTURES:
+            departures[kind] += [
+                f"{name} nk={nk}" for nk, o in outcomes.items() if o == kind
+            ]
+        mismatches = counts.get("mismatch", 0)
+        observed = x[~np.isnan(x)]
+        check = (
+            f"Harrell's knots, {name} (n={observed.size}, {np.unique(observed).size} "
+            f"distinct), nk 2 to 9: {counts.get('identical', 0)} identical, "
+            f"{counts.get('both fail', 0)} fail in both"
+        )
+        if mismatches:
+            check += f" ({', '.join(f'nk={nk}' for nk, o in outcomes.items() if o == 'mismatch')})"
+        metric = "cases with other knots or outcome"
+        table.add(check, "rcspline.eval", metric, mismatches, 0, str(mismatches))
+    for kind, description in HARRELL_DEPARTURES.items():
+        if departures[kind]:
+            check = f"{description}: {len(departures[kind])} cases"
+            table.info(
+                check, "rcspline.eval", "behaviour", "CytePool raises", "deviation"
+            )
+
+
+def compare_restricted_cubic(cases: list[dict], results: dict, table: Table) -> None:
+    for case in cases:
+        reference = results["rcs", case["name"]]
+        knots = case["knots"]
+        if case["name"] == "repeated_knot":
+            try:
+                NaturalSplineBasis(
+                    knots=knots[1:-1],
+                    boundary_knots=knots[[0, -1]],
+                    form="restricted_cubic",
+                )
+                outcome = "no deviation"
+            except ValueError:
+                outcome = (
+                    f"Hmisc drops the repeated knot and returns {reference.shape[1] - 1} "
+                    f"non-linear columns instead of {knots.size - 2}; CytePool raises"
+                )
+            table.info(
+                "restricted cubic columns with a repeated knot",
+                "rcspline.eval",
+                "behaviour",
+                outcome,
+                "deviation",
+            )
+            continue
+        basis = NaturalSplineBasis(
+            knots=knots[1:-1], boundary_knots=knots[[0, -1]], form="restricted_cubic"
+        )
+        ours = basis.matrix(case["newx"])
+        ours[:, 0] += knots[0]
+        missing = np.isnan(reference[:, 0])
+        difference = np.inf
+        if ours.shape == reference.shape and np.array_equal(
+            np.isnan(ours), np.isnan(reference)
+        ):
+            scale = np.max(np.abs(reference[~missing]), axis=0)
+            difference = float(np.max(np.abs(ours - reference)[~missing] / scale))
+        check = (
+            f"restricted cubic columns, {case['name']} ({knots.size} knots), "
+            f"{case['newx'].size} points to {np.nanmax(case['newx']):g} and NaN"
+        )
+        table.add(
+            check, "rcspline.eval", "max diff / column max abs", difference, EXACT
+        )
+
+
+def f_statistics(
+    design: np.ndarray, y: np.ndarray, tested: list[list[int]]
+) -> list[float]:
+    """F-statistics of least squares fits that drop each list of columns."""
+
+    def rss(columns: np.ndarray) -> float:
+        residuals = y - columns @ np.linalg.lstsq(columns, y, rcond=None)[0]
+        return float(residuals @ residuals)
+
+    full = rss(design)
+    df_residual = y.size - design.shape[1]
+    values = []
+    for dropped in tested:
+        kept = [j for j in range(design.shape[1]) if j not in dropped]
+        values.append(
+            ((rss(design[:, kept]) - full) / len(dropped)) / (full / df_residual)
+        )
+    return values
+
+
+def compare_rms(cases: list[dict], results: dict, table: Table) -> None:
+    for case in cases:
+        anova, rms_knots = results["rms", case["name"]]
+        complete = ~np.isnan(case["x"])
+        x, y, nk = case["x"][complete], case["y"][complete], case["nk"]
+        basis = NaturalSplineBasis(
+            case["x"], nk - 1, knots="harrell", form="restricted_cubic"
+        )
+        knots_differ = int(not np.array_equal(placed_knots(basis), rms_knots))
+        check = f"rms {case['name']}: knots of rcs(x, {nk})"
+        table.add(
+            check, "rms ols", "knots that differ", knots_differ, 0, str(knots_differ)
+        )
+        design = np.column_stack([np.ones(x.size), basis.matrix(x)])
+        overall, nonlinear = f_statistics(
+            design, y, [list(range(1, nk)), list(range(2, nk))]
+        )
+        b_spline = NaturalSplineBasis(
+            knots=basis.knots, boundary_knots=basis.boundary_knots
+        ).matrix(x)
+        (b_overall,) = f_statistics(
+            np.column_stack([np.ones(x.size), b_spline]), y, [list(range(1, nk))]
+        )
+        for label, ours, reference in (
+            ("overall F", overall, anova[0]),
+            ("non-linear F", nonlinear, anova[1]),
+            ("overall F of the B-spline form", b_overall, anova[0]),
+        ):
+            difference = abs(ours - reference) / abs(reference)
+            check = f"rms {case['name']} (n={x.size}): {label}"
+            table.add(
+                check, "anova(ols(y ~ rcs(x, nk)))", "relative diff", difference, EXACT
+            )
+
+
+def write_fixtures(
+    lowess_inputs,
+    spline_inputs,
+    knot_inputs,
+    harrell_inputs,
+    rcs_inputs,
+    rms_inputs,
+    results,
+) -> None:
     """Small cases: lowess.npz holds one (3, n) array of x, y and R's fitted
     values per case, with spans, iterations and delta (NaN: default) in
-    ``parameters``; natural_splines.npz holds x, the arguments and R's basis
-    (absent where R fails)."""
+    ``parameters``; natural_splines.npz holds x, the arguments, R's basis, knots,
+    boundary knots, knots on the distinct values, new points and basis there
+    (absent where R fails), and R's knots of the seeded datasets of up to 300 values;
+    restricted_cubic_splines.npz holds Hmisc's knots by Harrell's rule (absent where
+    Hmisc fails), its restricted cubic columns, and rms's F-statistics and knots."""
     FIXTURE_DIRECTORY.mkdir(parents=True, exist_ok=True)
     small = [c for c in lowess_inputs if c["x"].size <= LARGEST_FIXTURE]
     deltas = [np.nan if c["delta"] is None else c["delta"] for c in small]
@@ -434,8 +994,47 @@ def write_fixtures(lowess_inputs, spline_inputs, results) -> None:
                 arrays[f"{c['name']}__{key}"] = np.asarray(c[key], float)
         if results["ns", c["name"]] is not None:
             arrays[c["name"] + "__basis"] = results["ns", c["name"]]
+            reference = results["ns at new points", c["name"]]
+            for key in ("knots", "boundary_knots", "levels", "newx"):
+                if reference[key] is not None:
+                    arrays[f"{c['name']}__r_{key}"] = reference[key]
+            arrays[c["name"] + "__r_newx_basis"] = reference["basis"]
+    datasets = [name for name, x in knot_inputs.items() if x.size <= LARGEST_FIXTURE]
+    arrays["knot_datasets"] = np.array(datasets)
+    for name in datasets:
+        arrays[f"knots__{name}__x"] = knot_inputs[name]
+        for (df, intercept), reference in results["knots", name].items():
+            for key, values in reference.items():
+                if values is not None:
+                    arrays[f"knots__{name}__df{df}_{int(intercept)}__{key}"] = values
     np.savez_compressed(FIXTURE_DIRECTORY / "natural_splines.npz", **arrays)
-    print(f"wrote lowess.npz and natural_splines.npz to {FIXTURE_DIRECTORY}")
+    arrays = {"harrell_datasets": np.array(list(harrell_inputs))}
+    for name, x in harrell_inputs.items():
+        arrays[f"harrell__{name}__x"] = x
+        for nk, knots in results["harrell", name].items():
+            if knots is not None:
+                arrays[f"harrell__{name}__nk{nk}"] = knots
+    arrays["restricted_cubic_cases"] = np.array([c["name"] for c in rcs_inputs])
+    for case in rcs_inputs:
+        arrays[f"rcs__{case['name']}__knots"] = case["knots"]
+        arrays[f"rcs__{case['name']}__newx"] = case["newx"]
+        arrays[f"rcs__{case['name']}__basis"] = results["rcs", case["name"]]
+    arrays["rms_cases"] = np.array([c["name"] for c in rms_inputs])
+    for case in rms_inputs:
+        anova, knots = results["rms", case["name"]]
+        for key, value in (
+            ("x", case["x"]),
+            ("y", case["y"]),
+            ("nk", case["nk"]),
+            ("anova", anova),
+            ("knots", knots),
+        ):
+            arrays[f"rms__{case['name']}__{key}"] = np.asarray(value)
+    np.savez_compressed(FIXTURE_DIRECTORY / "restricted_cubic_splines.npz", **arrays)
+    print(
+        "wrote lowess.npz, natural_splines.npz and restricted_cubic_splines.npz to "
+        f"{FIXTURE_DIRECTORY}"
+    )
 
 
 def main() -> int:
@@ -443,17 +1042,32 @@ def main() -> int:
     parser.add_argument("--write-fixtures", action="store_true", help="write fixtures")
     arguments = parser.parse_args()
     lowess_inputs, spline_inputs = lowess_cases(), spline_cases()
-    results, version = run_r(lowess_inputs, spline_inputs)
-    print(f"Reference: {version} (stats::lowess, splines::ns)")
+    knot_inputs, harrell_inputs = knot_datasets(), harrell_datasets()
+    rcs_inputs, rms_inputs = restricted_cubic_cases(), rms_cases(harrell_inputs)
+    inputs = (
+        lowess_inputs,
+        spline_inputs,
+        knot_inputs,
+        harrell_inputs,
+        rcs_inputs,
+        rms_inputs,
+    )
+    results, version = run_r(*inputs)
+    print(f"Reference: {version}")
     table = Table()
     compare_lowess(lowess_inputs, results, table)
     compare_splines(spline_inputs, results, table)
+    compare_spline_knots(spline_inputs, results, table)
+    compare_knot_datasets(knot_inputs, results, table)
+    compare_harrell(harrell_inputs, results, table)
+    compare_restricted_cubic(rcs_inputs, results, table)
+    compare_rms(rms_inputs, results, table)
     table.print()
     if arguments.write_fixtures:
         if table.failures:
             print("not writing fixtures: some checks failed")
         else:
-            write_fixtures(lowess_inputs, spline_inputs, results)
+            write_fixtures(*inputs, results)
     print(f"{len(table.rows)} checks, {table.failures} failed")
     return 1 if table.failures else 0
 

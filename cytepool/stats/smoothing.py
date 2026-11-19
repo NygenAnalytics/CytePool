@@ -24,13 +24,40 @@ through n points (limma's ``chooseLowessSpan``), with which
 :func:`~cytepool.stats.voom.voom` chooses its span
 (https://docs.nygen.io/CytePool/statistics/limma-voom#voom-span).
 
-:func:`natural_spline_basis` returns a basis of the natural cubic splines
-with given interior and boundary knots: cubic between the knots, twice
-continuously differentiable at simple knots, and linear beyond the boundary
-knots. Its column space matches that of R's ``splines::ns``. The basis is
-built from the cubic B-splines on the knot sequence with each boundary knot
-repeated four times (de Boor 1978), restricted to the subspace with zero
-second derivative at both boundary knots.
+:class:`NaturalSplineBasis` is a basis of the natural cubic splines with given
+knots: cubic between the knots, twice continuously differentiable at simple knots,
+and linear beyond the two boundary knots. It keeps its knots, gives its columns at
+any points and records itself as plain values, in one of two forms that span the
+same curves, so that fits and the F-tests of all columns agree (Durrleman and Simon
+1989; Harrell 2015):
+
+- ``"b_spline"``, the columns of R's ``splines::ns`` up to a change of basis: the
+  cubic B-splines on the knot sequence with each boundary knot repeated four times
+  (de Boor 1978), continued linearly beyond the boundary knots, times an
+  orthonormal basis of the splines with zero second derivative at both boundary
+  knots.
+- ``"restricted_cubic"``, Harrell's restricted cubic spline: with all the knots
+  t_1 < ... < t_k, the boundary knots included, and u_+ = max(u, 0), the columns
+  x - t_1 and, for j = 1, ..., k - 2,
+  [(x - t_j)_+^3 - (x - t_(k-1))_+^3 (t_k - t_j) / (t_k - t_(k-1))
+  + (x - t_k)_+^3 (t_(k-1) - t_j) / (t_k - t_(k-1))] / (t_k - t_1)^2,
+  as Hmisc's ``rcspline.eval`` gives them with its default normalization (Harrell
+  2026), except that its first column is x itself. The first column is the linear
+  part, so that the F-test of the other columns tests departure from a straight
+  line (Desquilbet and Mariotti 2010).
+
+Without an intercept every column vanishes at the lower boundary knot, in both
+forms. The interior knots are given, or placed by one of three rules: R's rule for
+``ns``, the quantiles of x with probabilities k / (K + 1) for K interior knots; the
+same rule on the distinct values of x, each counted once; or Harrell's percentiles,
+as ``rcspline.eval`` places all k knots: probabilities from 0.10 to 0.90 for 3
+knots, 0.05 to 0.95 for 4 to 6 and 0.025 to 0.975 for more, equally spaced, with
+the 5th smallest and 5th largest values as the outer knots when x has fewer than
+100 values. Quantiles are R's type 7, computed in R's floating-point operations, so
+that the knots equal R's to the last bit (found by probing). Where Hmisc places
+fewer knots than asked or switches to another method, which its help page
+describes only in outline, Harrell's rule here raises an error instead.
+:func:`natural_spline_basis` gives the columns of the B-spline form at x.
 
 References:
     Cleveland WS (1979). Robust locally weighted regression and smoothing scatterplots.
@@ -43,12 +70,25 @@ References:
     de Boor C (1978). A Practical Guide to Splines. Springer, New York.
     doi:10.1007/978-1-4612-6333-3
 
+    Desquilbet L, Mariotti F (2010). Dose-response analyses using restricted cubic
+    spline functions in public health research. Statistics in Medicine 29,
+    1037-1057. doi:10.1002/sim.3841
+
+    Durrleman S, Simon R (1989). Flexible regression models with cubic splines.
+    Statistics in Medicine 8, 551-561. doi:10.1002/sim.4780080504
+
+    Harrell FE (2015). Regression Modeling Strategies, 2nd edition. Springer, Cham.
+    doi:10.1007/978-3-319-19425-7
+
+    Harrell FE (2026). Hmisc: Harrell Miscellaneous. R package version 5.3-1, help
+    page of rcspline.eval. https://cran.r-project.org/package=Hmisc
+
     Hastie TJ (1992). Generalized additive models. Chapter 7 of Statistical Models in S,
     eds Chambers JM and Hastie TJ. Wadsworth & Brooks/Cole, Pacific Grove.
 """
 
 import math
-import numbers
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -56,10 +96,20 @@ import numpy.typing as npt
 
 from cytepool._jit import jit
 from cytepool._masked_arrays import Missing, reject_masked, unmasked_array
-from cytepool._options import integral_number, real_number
+from cytepool._options import (
+    checked_choice,
+    checked_flag,
+    integral_number,
+    real_number,
+)
 from cytepool.stats._optimize import brent_minimum
 
-__all__ = ["choose_lowess_span", "lowess", "natural_spline_basis"]
+__all__ = [
+    "NaturalSplineBasis",
+    "choose_lowess_span",
+    "lowess",
+    "natural_spline_basis",
+]
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -88,6 +138,21 @@ _FLAT_WINDOW = 1e-7
 # does (found by probing).
 _KNOT_SHOVE = 0.125
 _CUBIC_ORDER = 4
+_FORMS = ("b_spline", "restricted_cubic")
+# The rules that place interior knots, and how messages name them.
+_RULES = {
+    "quantiles": "R's quantile rule",
+    "levels": "R's quantile rule on the distinct values",
+    "harrell": "Harrell's rule",
+}
+# Harrell's rule as the help page of Hmisc's rcspline.eval gives it: at least 3 knots;
+# the outer knots of samples smaller than _SMALL_SAMPLE are the _FIFTH smallest and
+# largest values; and when _TIED_SHARE of the values or more tie at an extreme, and no
+# value between the extremes ties as often, Hmisc switches to another method.
+_FEWEST_HARRELL_KNOTS = 3
+_SMALL_SAMPLE = 100
+_FIFTH = 5
+_TIED_SHARE = 0.05
 # R's smooth.spline(x, y, df = df), the smoother of qvalue's pi0est. Its help page
 # gives the fit, (X'WX + lambda Sigma) c = X'Wy for the B-splines X of a knot at every
 # distinct x scaled to [0, 1], lambda = r 256^(3 spar - 1), and the criterion of the
@@ -251,6 +316,243 @@ def choose_lowess_span(
     return lower + (1.0 - lower) * shrink
 
 
+@dataclass(frozen=True, init=False)
+class NaturalSplineBasis:
+    """A basis of natural cubic splines that keeps its knots.
+
+    The columns are cubic between the knots and linear beyond the two boundary knots.
+    The basis is built from values of x, which place the knots, and gives its columns
+    at any points with :meth:`matrix`: at the samples of a fit, or at new doses where
+    the fitted curve is drawn. In a model with an intercept the F-test of all its
+    columns tests any change along x; in the restricted cubic form, the F-test of the
+    columns after the first tests departure from a straight line
+    (https://docs.nygen.io/CytePool/statistics/linear-models#spline-bases).
+
+    Both forms span the same curves for the same knots: ``"b_spline"`` gives the
+    columns of R's ``splines::ns`` up to a change of basis, and
+    ``"restricted_cubic"`` those of Hmisc's ``rcspline.eval`` and rms's ``rcs``,
+    whose first column is x minus the lower boundary knot instead of x. The module
+    docstring gives the formulas. Without an intercept every column vanishes at the
+    lower boundary knot. :func:`natural_spline_basis` returns
+    ``NaturalSplineBasis(x, df, knots=..., ...).matrix(x)`` in the B-spline form.
+
+    The interior knots are given, or placed by a rule on the observed values of x
+    (NaN marks a missing value) within the boundary knots:
+
+    - ``"quantiles"``, R's rule for ``ns``: ``df - 1 - intercept`` knots at the
+      quantiles of x with probabilities k / (K + 1); ties in x can make knots
+      coincide, and a knot that falls on a boundary knot is moved inside by one
+      eighth of its distance to the nearest other knot, as R does.
+      ``attr(ns(x, df), "knots")`` gives the same knots.
+    - ``"levels"``, the same rule on the distinct values of x, each counted once,
+      so that a dose counts once whatever its number of replicates:
+      ``attr(ns(unique(x), df), "knots")``. These knots never coincide.
+    - ``"harrell"``, Harrell's percentiles, as ``rcspline.eval(x, nk = df + 1 -
+      intercept)`` and rms's ``rcs`` place all the knots, the outer ones included,
+      which become the boundary knots. It raises an error where Hmisc places fewer
+      knots than asked or switches to the method it uses when 5% of the values or
+      more tie at an extreme.
+
+    With a rule and no ``df``, there are no interior knots, as in R's ``ns(x)``.
+
+    Args:
+        x: ``(n,)`` real values that place the knots; NaN marks a missing value.
+            Needed by the rules, and for the boundary knots when they are not given.
+        df: Number of columns, ``len(knots) + 1 + intercept``, as in R's ``ns``;
+            needed by ``"harrell"``. With knots given, it must agree with them.
+        knots: A rule, ``"quantiles"``, ``"levels"`` or ``"harrell"``, or the
+            interior knots, strictly inside the boundary knots. The B-spline form
+            accepts repeated knots, which lower the smoothness there; the restricted
+            cubic form needs distinct knots.
+        intercept: Whether the columns span constant functions.
+        boundary_knots: The two knots beyond which the curves are linear, in either
+            order. Defaults to the range of the observed values of x; refused with
+            ``"harrell"``, which places them itself.
+        form: ``"b_spline"`` or ``"restricted_cubic"``.
+
+    Attributes:
+        knots: The interior knots, ascending, as a tuple of floats.
+        boundary_knots: The lower and upper boundary knots.
+        intercept: Whether the columns span constant functions.
+        form: ``"b_spline"`` or ``"restricted_cubic"``.
+
+    The basis is immutable and can be pickled. Two bases are equal when their knots,
+    boundary knots, intercept and form are, and ``NaturalSplineBasis(**basis.to_dict())``
+    rebuilds a basis whose columns are identical to the last bit.
+
+    Raises:
+        TypeError: If an input is not real-valued or is a numpy masked array, ``df``
+            is not an integer, ``intercept`` is not a bool, or ``knots`` is None.
+        ValueError: If ``x`` is not 1-D or has infinite values, ``df`` is too small,
+            ``knots`` names no rule, the rule or the boundary knots need ``x``, given
+            knots are not finite, disagree with ``df`` or are not strictly inside the
+            boundary knots, the boundary knots are not two distinct finite values,
+            the restricted cubic form gets repeated knots, or the values of x are too
+            few, or too tied, to place the knots by the rule.
+
+    Example:
+        >>> import numpy as np
+        >>> doses = np.log10(np.repeat([0.01, 0.1, 1.0, 10.0], 3))
+        >>> basis = NaturalSplineBasis(
+        ...     doses, df=2, knots="levels", form="restricted_cubic"
+        ... )
+        >>> basis.knots, basis.boundary_knots
+        ((-0.5,), (-2.0, 1.0))
+        >>> basis.matrix([-2.0, 1.0, 2.0]).round(4).tolist()
+        [[0.0, 0.0], [3.0, 2.25], [4.0, 3.75]]
+    """
+
+    knots: tuple[float, ...]
+    boundary_knots: tuple[float, float]
+    intercept: bool
+    form: str
+
+    def __init__(
+        self,
+        x: npt.ArrayLike | None = None,
+        df: int | None = None,
+        *,
+        knots: str | npt.ArrayLike = "quantiles",
+        intercept: bool = False,
+        boundary_knots: npt.ArrayLike | None = None,
+        form: str = "b_spline",
+    ) -> None:
+        # Searched before np.atleast_1d could turn numpy.ma.masked in a list into NaN.
+        reject_masked(knots, "knots")
+        reject_masked(boundary_knots, "boundary_knots")
+        chosen_form = checked_choice(form, "form", _FORMS)
+        with_intercept = checked_flag(intercept, "intercept")
+        columns = None if df is None else integral_number(df, "df")
+        smallest = 1 + with_intercept
+        if columns is not None and columns < smallest:
+            raise ValueError(
+                f"df must be at least {smallest} with intercept={with_intercept}, "
+                f"got {columns}"
+            )
+        if knots is None:
+            raise TypeError(
+                f"knots must be a rule, one of {', '.join(map(repr, _RULES))}, or "
+                "the interior knots, got None"
+            )
+        if isinstance(knots, str) and knots not in _RULES:
+            raise ValueError(
+                f"knots must be a rule, one of {', '.join(map(repr, _RULES))}, or the "
+                f"interior knots, got {knots!r}"
+            )
+        rule = knots if isinstance(knots, str) else None
+        observed = None
+        if x is not None:
+            values = _real_vector(x, "x", missing="NaN")
+            if np.isinf(values).any():
+                raise ValueError(
+                    "x must not contain infinite values; NaN marks a missing value"
+                )
+            observed = values[~np.isnan(values)]
+
+        if rule == "harrell":
+            if boundary_knots is not None:
+                raise ValueError(
+                    "Harrell's rule places the boundary knots itself, at percentiles "
+                    "of x; give the knots and boundary_knots without the rule instead"
+                )
+            if columns is None or observed is None:
+                raise ValueError(
+                    "knots='harrell' needs x, whose percentiles place the knots, and "
+                    "df, the number of columns, of which it places df + 1 - intercept "
+                    "knots"
+                )
+            count = columns + 1 - with_intercept
+            if count < _FEWEST_HARRELL_KNOTS:
+                raise ValueError(
+                    f"Harrell's rule places at least {_FEWEST_HARRELL_KNOTS} knots, so "
+                    f"df must be at least {_FEWEST_HARRELL_KNOTS - 1 + with_intercept} "
+                    f"with intercept={with_intercept}, got {columns}"
+                )
+            placed = _harrell_knots(observed, count)
+            interior = placed[1:-1]
+            lower, upper = float(placed[0]), float(placed[-1])
+        else:
+            lower, upper = _boundary_knots(boundary_knots, observed)
+            if rule is None:
+                interior = _given_knots(knots, columns, with_intercept, lower, upper)
+            elif columns is None:
+                interior = np.empty(0)
+            elif observed is None:
+                raise ValueError(
+                    f"{_RULES[rule]} places the knots on the values of x; give x"
+                )
+            else:
+                values = observed if rule == "quantiles" else np.unique(observed)
+                interior = _quantile_knots(
+                    values, columns - 1 - with_intercept, lower, upper
+                )
+        if chosen_form == "restricted_cubic":
+            repeated = interior[1:][np.diff(interior) == 0.0]
+            if repeated.size:
+                source = "the knots given" if rule is None else _RULES[rule]
+                raise ValueError(
+                    f"the restricted cubic form needs distinct knots, and {source} "
+                    f"repeats {float(repeated[0])!r}; use form='b_spline', which "
+                    "accepts repeated knots, or knots='levels', or give distinct knots"
+                )
+        object.__setattr__(self, "knots", tuple(float(knot) for knot in interior))
+        object.__setattr__(self, "boundary_knots", (lower, upper))
+        object.__setattr__(self, "intercept", with_intercept)
+        object.__setattr__(self, "form", chosen_form)
+
+    @property
+    def df(self) -> int:
+        """The number of columns, ``len(knots) + 1 + intercept``."""
+        return len(self.knots) + 1 + self.intercept
+
+    def matrix(self, x: npt.ArrayLike) -> FloatArray:
+        """The columns at x.
+
+        Args:
+            x: ``(n,)`` real values; NaN marks a missing value. Values beyond the
+                boundary knots lie on the straight lines that continue the curves.
+
+        Returns:
+            ``(n, df)`` float64 matrix, with a row of NaN for each NaN in ``x``.
+
+        Raises:
+            TypeError: If ``x`` is not real-valued or is a numpy masked array.
+            ValueError: If ``x`` is not 1-D or has infinite values.
+        """
+        points = _real_vector(x, "x", missing="NaN")
+        if np.isinf(points).any():
+            raise ValueError(
+                "x must not contain infinite values; NaN marks a missing value"
+            )
+        observed = ~np.isnan(points)
+        lower, upper = self.boundary_knots
+        interior = np.array(self.knots, dtype=np.float64)
+        columns = np.full((points.size, self.df), np.nan)
+        if self.form == "b_spline":
+            columns[observed] = _natural_bspline_columns(
+                points[observed], interior, lower, upper, self.intercept
+            )
+        else:
+            all_knots = np.concatenate([[lower], interior, [upper]])
+            columns[observed] = _restricted_cubic_columns(
+                points[observed], all_knots, self.intercept
+            )
+        return columns
+
+    def to_dict(self) -> dict[str, Any]:
+        """The basis as plain values that JSON stores: ``knots``, ``boundary_knots``
+        (lists of floats), ``intercept`` and ``form``.
+
+        ``NaturalSplineBasis(**basis.to_dict())`` rebuilds the basis.
+        """
+        return {
+            "knots": list(self.knots),
+            "boundary_knots": list(self.boundary_knots),
+            "intercept": self.intercept,
+            "form": self.form,
+        }
+
+
 def natural_spline_basis(
     x: npt.ArrayLike,
     df: int | None = None,
@@ -261,19 +563,22 @@ def natural_spline_basis(
 ) -> FloatArray:
     """Basis of natural cubic splines evaluated at x.
 
-    The columns span the same space as R's ``splines::ns(x, df=df,
-    knots=knots, intercept=intercept, Boundary.knots=boundary_knots)``, so a
-    least squares fit on either gives the same fitted values; the columns
-    themselves differ from R's. Without an intercept the splines are those
-    that vanish at the lower boundary knot, as in R.
+    ``NaturalSplineBasis(x, df, knots="quantiles" if knots is None else knots,
+    intercept=intercept, boundary_knots=boundary_knots).matrix(x)``: the B-spline form
+    of :class:`NaturalSplineBasis`, whose knots it places and keeps, and which gives
+    the columns at other points. The columns span the same space as R's
+    ``splines::ns(x, df=df, knots=knots, intercept=intercept,
+    Boundary.knots=boundary_knots)``, so a least squares fit on either gives the same
+    fitted values; the columns themselves differ from R's. Without an intercept the
+    splines are those that vanish at the lower boundary knot, as in R.
 
     With ``df``, the ``df - 1 - intercept`` interior knots are placed at
     quantiles of x (R's default type 7) with probabilities k / (K + 1),
-    k = 1, ..., K, over the values of x within the boundary knots. Ties in x
-    can make knots coincide, which lowers the smoothness there as for
-    repeated knots. A knot that falls on a boundary knot is moved inside, as
-    R's ``ns`` does, by one eighth of its distance to the nearest other knot
-    (first at the lower boundary, then at the upper one).
+    k = 1, ..., K, over the values of x within the boundary knots, equal to R's to
+    the last bit. Ties in x can make knots coincide, which lowers the smoothness
+    there as for repeated knots. A knot that falls on a boundary knot is moved
+    inside, as R's ``ns`` does, by one eighth of its distance to the nearest other
+    knot (first at the lower boundary, then at the upper one).
 
     NaN in x gives a row of NaN, as R's ``NA`` does; knots and boundary knots
     are computed from the other values. Where R's ``ns`` warns and increases a
@@ -288,7 +593,8 @@ def natural_spline_basis(
             must agree.
         knots: Interior knots (one or a sequence), strictly inside the
             boundary knots; repeated knots are allowed. Defaults to none, or
-            to quantiles when ``df`` is given.
+            to quantiles when ``df`` is given. The other rules of
+            :class:`NaturalSplineBasis` are not taken here.
         intercept: Whether the basis spans constant functions.
         boundary_knots: The two knots beyond which the splines are linear.
             Defaults to the range of the observed values of x; given in
@@ -299,77 +605,27 @@ def natural_spline_basis(
 
     Raises:
         TypeError: If an input is not real-valued or is a numpy masked array,
-            ``df`` is not an integer or ``intercept`` is not a bool.
+            ``knots`` names a rule, ``df`` is not an integer or ``intercept`` is not
+            a bool.
         ValueError: If ``x`` is not 1-D or has infinite values, ``df`` is
             too small, knots are not finite or not strictly inside the
             boundary knots, the boundary knots are not two distinct finite
             values, or there are too few values of x to place the knots.
     """
-    # Searched before np.atleast_1d could turn numpy.ma.masked in a list into NaN.
-    reject_masked(knots, "knots")
-    reject_masked(boundary_knots, "boundary_knots")
-    values = _real_vector(x, "x", missing="NaN")
-    if np.isinf(values).any():
-        raise ValueError(
-            "x must not contain infinite values; NaN marks a missing value"
-        )
-    if not isinstance(intercept, (bool, np.bool_)):
+    if isinstance(knots, str):
         raise TypeError(
-            f"intercept must be True or False, got {type(intercept).__name__}"
+            f"knots must be the interior knots, got the text {knots!r}; "
+            f"NaturalSplineBasis(x, df, knots={knots!r}) places knots by a rule and "
+            "keeps them, and its matrix(x) gives the columns"
         )
-    with_intercept = bool(intercept)
-    if df is not None:
-        if isinstance(df, (bool, np.bool_)) or not isinstance(df, numbers.Integral):
-            raise TypeError(f"df must be an integer, got {type(df).__name__}")
-        smallest = 1 + with_intercept
-        if df < smallest:
-            raise ValueError(
-                f"df must be at least {smallest} with intercept={with_intercept}, "
-                f"got {df}"
-            )
-    observed = ~np.isnan(values)
-    lower, upper = _boundary_knots(boundary_knots, values[observed])
-    if knots is not None:
-        interior = np.sort(_real_vector(np.atleast_1d(knots), "knots"))
-        if not np.isfinite(interior).all():
-            raise ValueError("knots must be finite")
-        if df is not None and df != interior.size + 1 + with_intercept:
-            raise ValueError(
-                f"df={df} disagrees with {interior.size} knots, which give "
-                f"{interior.size + 1 + with_intercept} columns; give one of them"
-            )
-        outside = (interior <= lower) | (interior >= upper)
-        if outside.any():
-            raise ValueError(
-                f"knots must lie strictly inside the boundary knots ({lower!r}, "
-                f"{upper!r}); got {interior[outside].tolist()}"
-            )
-    elif df is not None:
-        interior = _quantile_knots(
-            values[observed], int(df) - 1 - with_intercept, lower, upper
-        )
-    else:
-        interior = np.empty(0)
-
-    knot_sequence = np.concatenate(
-        [np.full(_CUBIC_ORDER, lower), interior, np.full(_CUBIC_ORDER, upper)]
+    basis = NaturalSplineBasis(
+        x,
+        df,
+        knots="quantiles" if knots is None else knots,
+        intercept=intercept,
+        boundary_knots=boundary_knots,
     )
-    bounds = np.array([lower, upper])
-    splines = _bspline_design(values[observed], knot_sequence, lower, upper)
-    constraints = _bspline_derivatives(bounds, knot_sequence, 2)
-    if not with_intercept:
-        # Every B-spline but the first vanishes at the lower boundary knot.
-        splines = splines[:, 1:]
-        constraints = constraints[:, 1:]
-    # The basis of the natural splines is the B-spline basis times an
-    # orthonormal basis of the null space of the two boundary conditions.
-    scale = np.abs(constraints).max(axis=1, keepdims=True)
-    q, _ = np.linalg.qr(
-        (constraints / np.where(scale > 0.0, scale, 1.0)).T, mode="complete"
-    )
-    basis = np.full((values.size, splines.shape[1] - 2), np.nan)
-    basis[observed] = splines @ q[:, 2:]
-    return basis
+    return basis.matrix(x)
 
 
 def _robust_lowess_sorted(
@@ -721,9 +977,15 @@ def _weighted_local_fit(
 
 
 def _boundary_knots(
-    boundary_knots: npt.ArrayLike | None, observed: FloatArray
+    boundary_knots: npt.ArrayLike | None, observed: FloatArray | None
 ) -> tuple[float, float]:
+    """The boundary knots given, or else the range of the observed values of x."""
     if boundary_knots is None:
+        if observed is None:
+            raise ValueError(
+                "the boundary knots are the range of x by default; give x or "
+                "boundary_knots"
+            )
         if observed.size == 0:
             raise ValueError(
                 "x has no observed (non-NaN) values; give boundary_knots and knots"
@@ -748,6 +1010,52 @@ def _boundary_knots(
     return lower, upper
 
 
+def _given_knots(
+    knots: npt.ArrayLike, df: int | None, intercept: bool, lower: float, upper: float
+) -> FloatArray:
+    """Interior knots given as values, sorted, checked against df and the boundary
+    knots."""
+    interior = np.sort(_real_vector(np.atleast_1d(knots), "knots"))
+    if not np.isfinite(interior).all():
+        raise ValueError("knots must be finite")
+    if df is not None and df != interior.size + 1 + intercept:
+        raise ValueError(
+            f"df={df} disagrees with {interior.size} knots, which give "
+            f"{interior.size + 1 + intercept} columns; give one of them"
+        )
+    outside = (interior <= lower) | (interior >= upper)
+    if outside.any():
+        raise ValueError(
+            f"knots must lie strictly inside the boundary knots ({lower!r}, "
+            f"{upper!r}); got {interior[outside].tolist()}"
+        )
+    return interior
+
+
+def _type7_quantiles(
+    ordered: FloatArray, probabilities: npt.NDArray[np.floating[Any]]
+) -> FloatArray:
+    """R's type 7 quantiles of sorted values, in R's floating-point operations.
+
+    The quantile at p lies at position i = 1 + (n - 1) p, counted from 1, with whole
+    part j and fraction h: it is the j-th value where h is 0 or the j-th and (j + 1)-th
+    values are equal, and (1 - h) x_j + h x_(j+1) otherwise, as R's help page writes
+    it (the order of the operations was found by probing; the position counted from 0
+    differs from R's in the last bit for some n and p).
+    """
+    position = 1.0 + (ordered.size - 1) * probabilities
+    whole = np.floor(position)
+    fraction = position - whole
+    below = whole.astype(np.int64) - 1
+    above = np.minimum(below + 1, ordered.size - 1)
+    quantiles = ordered[below].copy()
+    blend = (fraction > 0.0) & (ordered[above] != quantiles)
+    quantiles[blend] = (1.0 - fraction[blend]) * quantiles[blend] + fraction[
+        blend
+    ] * ordered[above[blend]]
+    return quantiles
+
+
 def _quantile_knots(
     observed: FloatArray, count: int, lower: float, upper: float
 ) -> FloatArray:
@@ -760,18 +1068,9 @@ def _quantile_knots(
             "no value of x lies within the boundary knots, so no knot can be "
             "placed at its quantiles; give knots"
         )
-    # Probabilities k / (count + 1) and R's type 7 quantiles, computed in the
-    # same floating point operations as R (found by probing).
+    # Probabilities k / (count + 1), computed as R computes them (found by probing).
     probabilities = np.arange(1, count + 1) * (1.0 / (count + 1))
-    position = (inside.size - 1) * probabilities
-    below = np.floor(position).astype(np.int64)
-    above = np.ceil(position).astype(np.int64)
-    fraction = position - below
-    knots = inside[below].copy()
-    blend = (position > below) & (inside[above] != knots)
-    knots[blend] = (1.0 - fraction[blend]) * knots[blend] + fraction[blend] * inside[
-        above[blend]
-    ]
+    knots = _type7_quantiles(inside, probabilities)
     at_lower = knots == lower
     if at_lower.any():
         if not (knots > lower).any():
@@ -798,6 +1097,125 @@ def _quantile_knots(
             "even after moving it inside; lower df or give knots"
         )
     return knots
+
+
+def _harrell_knots(observed: FloatArray, count: int) -> FloatArray:
+    """All ``count`` knots by Harrell's rule, as Hmisc's rcspline.eval places them.
+
+    The rule of its help page, with the conventions it leaves open found by probing
+    Hmisc 5.3-1: with exactly m - 2 knots for m distinct values, the distinct values
+    but the smallest and the largest; otherwise R's type 7 quantiles at probabilities
+    from ``lo`` to ``1 - lo``, computed as R's ``seq(lo, 1 - lo, length.out =
+    count)`` computes them, the outer two replaced by the 5th smallest and 5th
+    largest values in samples of fewer than 100, and sorted. Where Hmisc departs
+    from this rule, by placing fewer knots, by switching to the method it uses for
+    values tied at an extreme, or by dropping a repeated knot, this raises an error.
+    """
+    ordered = np.sort(observed)
+    distinct, counts = np.unique(ordered, return_counts=True)
+    m = distinct.size
+    if count > m - 2:
+        raise ValueError(
+            f"Harrell's rule places {count} knots strictly inside the range of x "
+            f"only among at least {count + 2} distinct values, and x has {m}; Hmisc "
+            f"would place {max(m - 2, 0)} knots, fewer than asked. Lower df, or use "
+            "knots='levels' or 'quantiles'"
+        )
+    if count == m - 2:
+        result: FloatArray = distinct[1:-1].astype(np.float64)
+        return result
+    shares = counts / ordered.size
+    if (shares[0] >= _TIED_SHARE or shares[-1] >= _TIED_SHARE) and not (
+        shares[1:-1] >= _TIED_SHARE
+    ).any():
+        end = 0 if shares[0] >= _TIED_SHARE else m - 1
+        raise ValueError(
+            f"{shares[end]:.1%} of the values of x tie at "
+            f"{'the smallest' if end == 0 else 'the largest'} value, "
+            f"{float(distinct[end])!r}, and no value between the extremes ties as "
+            f"often; Hmisc then places the knots by a method that its help page "
+            "describes only in outline. Use knots='levels' or 'quantiles', or give "
+            "the knots"
+        )
+    if count == _FEWEST_HARRELL_KNOTS:
+        outer = 0.1
+    elif count <= 6:
+        outer = 0.05
+    else:
+        outer = 0.025
+    probabilities = outer + np.arange(count) * (((1.0 - outer) - outer) / (count - 1))
+    knots = _type7_quantiles(ordered, probabilities)
+    if ordered.size < _SMALL_SAMPLE:
+        knots[0] = ordered[_FIFTH - 1]
+        knots[-1] = ordered[ordered.size - _FIFTH]
+    knots.sort()
+    repeated = knots[1:][np.diff(knots) == 0.0]
+    if repeated.size:
+        raise ValueError(
+            f"Harrell's rule places two knots at {float(repeated[0])!r}, where Hmisc "
+            "would drop one and place fewer knots than asked. Lower df, or use "
+            "knots='levels', or give the knots"
+        )
+    return knots
+
+
+def _natural_bspline_columns(
+    points: FloatArray,
+    interior: FloatArray,
+    lower: float,
+    upper: float,
+    intercept: bool,
+) -> FloatArray:
+    """The B-spline form: natural cubic splines at points, linear beyond the
+    boundary knots, as the module docstring describes them."""
+    knot_sequence = np.concatenate(
+        [np.full(_CUBIC_ORDER, lower), interior, np.full(_CUBIC_ORDER, upper)]
+    )
+    bounds = np.array([lower, upper])
+    splines = _bspline_design(points, knot_sequence, lower, upper)
+    constraints = _bspline_derivatives(bounds, knot_sequence, 2)
+    if not intercept:
+        # Every B-spline but the first vanishes at the lower boundary knot.
+        splines = splines[:, 1:]
+        constraints = constraints[:, 1:]
+    # The basis of the natural splines is the B-spline basis times an
+    # orthonormal basis of the null space of the two boundary conditions.
+    scale = np.abs(constraints).max(axis=1, keepdims=True)
+    q, _ = np.linalg.qr(
+        (constraints / np.where(scale > 0.0, scale, 1.0)).T, mode="complete"
+    )
+    columns: FloatArray = splines @ q[:, 2:]
+    return columns
+
+
+def _restricted_cubic_columns(
+    points: FloatArray, knots: FloatArray, intercept: bool
+) -> FloatArray:
+    """The restricted cubic form at points, for all the knots t_1 < ... < t_k.
+
+    x - t_1, and the terms of the module docstring computed from truncated cubes, as
+    Hmisc's rcspline.eval gives them with its default normalization by (t_k - t_1)^2;
+    a column of ones first with an intercept.
+    """
+    first, second_last, last = knots[0], knots[-2], knots[-1]
+    spread = (last - first) ** 2
+    gap = last - second_last
+    columns = [np.ones(points.size)] if intercept else []
+    columns.append(points - first)
+    for knot in knots[:-2]:
+        term = (
+            _truncated_cube(points - knot)
+            - _truncated_cube(points - second_last) * (last - knot) / gap
+            + _truncated_cube(points - last) * (second_last - knot) / gap
+        )
+        columns.append(term / spread)
+    return np.column_stack(columns)
+
+
+def _truncated_cube(u: FloatArray) -> FloatArray:
+    """max(u, 0)^3."""
+    cube: FloatArray = np.maximum(u, 0.0) ** 3
+    return cube
 
 
 def _bspline_design(

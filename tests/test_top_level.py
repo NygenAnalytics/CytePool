@@ -22,6 +22,7 @@ MODULES = {
     "cytepool.cube.cube": ("Cube",),
     "cytepool.cube.pool": ("from_bulk", "from_cells"),
     "cytepool.design.design": ("Design",),
+    "cytepool.dose_axes": ("DoseAxis",),
     "cytepool.differential_expression": (
         "DifferentialExpressionResult",
         "GroupFit",
@@ -66,8 +67,8 @@ OPTIONAL = ("anndata", "matplotlib", "mudata", "pandas")
 
 def test_the_top_level_lists_the_names_of_its_docstring() -> None:
     documented = re.findall(r":(?:class|func):`(\w+)`", cytepool.__doc__ or "")
-    assert len(documented) == len(set(documented)) == 56
-    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 57
+    assert len(documented) == len(set(documented)) == 57
+    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 58
     assert set(cytepool.__all__) == {*documented, "__version__"}
     assert isinstance(cytepool.__version__, str) and cytepool.__version__
 
