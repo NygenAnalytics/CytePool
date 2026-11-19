@@ -1277,6 +1277,8 @@ Run each script from the repository root, against the working tree, with `PYTHON
 REF=/path/to/reference
 export RSCRIPT=$REF/r/bin/Rscript PYTHONPATH=.
 export NUMBA_NUM_THREADS=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2
+export NPY_ENABLE_CPU_FEATURES="SSE SSE2 SSE3 SSSE3 SSE41 POPCNT SSE42 AVX F16C FMA3 AVX2"
+export OPENBLAS_CORETYPE=Haswell
 python validation/multiple_testing.py
 python validation/smoothing.py
 python validation/normalization.py
@@ -1336,73 +1338,82 @@ python validation/sumrank.py --benchmark
 
 Here `python` is `$REF/python/bin/python`, the environment below. With `--write-fixtures`, a script also rewrites the small inputs and reference outputs under `tests/data/` that the test suite compares against.
 
-The R environment holds R 4.4.3 with limma 3.62.1, edgeR 4.4.0 and DESeq2 1.46.0 (Bioconductor 3.20) and lme4 2.0-6 (CRAN). It was installed from conda-forge and bioconda:
+`NPY_ENABLE_CPU_FEATURES` and `OPENBLAS_CORETYPE` make numpy and OpenBLAS compute as on a processor without AVX-512, whatever the host: with AVX-512, numpy's float64 `log2` differs from glibc's in about 1 value in 2,000 and OpenBLAS picks other kernels, which moves the last digits of some printed values, such as the leverages of badly scaled designs in `design.py`.
+
+The runs used one container image that holds every environment below. micromamba 2.9.0 built the R environments from these specifications, which leave the dependencies of the pinned packages free, so these resolved as on 19 November 2026, when the image was built; uv 0.11.25 built the Python environments, resolved as on 27 October 2026 with `UV_EXCLUDE_NEWER`.
+
+The R environment holds R 4.4.3 with limma 3.62.1, edgeR 4.4.0 and DESeq2 1.46.0 (Bioconductor 3.20), and lme4 2.0-6 and ggplot2 4.0.3 (CRAN). It was installed from conda-forge and bioconda:
 
 ```bash
-conda create -p $REF/r -c conda-forge -c bioconda r-base=4.4.3 \
+conda create -p $REF/r --override-channels -c conda-forge -c bioconda r-base=4.4.3 \
     bioconductor-limma=3.62.1 bioconductor-edger=4.4.0 bioconductor-deseq2=1.46.0 \
-    r-lme4=2.0_6
+    r-lme4=2.0_6 r-ggplot2=4.0.3
 ```
 
 speckle 1.6.0 (Bioconductor 3.20), which `composition_tests.py` runs, has an R environment of its own, with R 4.4.3, limma 3.62.1 and jsonlite 2.0.0:
 
 ```bash
-conda create -p $REF/r-speckle -c conda-forge -c bioconda r-base=4.4.3 \
-    bioconductor-limma=3.62.1 bioconductor-speckle=1.6.0 r-jsonlite=2.0.0
+conda create -p $REF/r-speckle --override-channels -c conda-forge -c bioconda \
+    r-base=4.4.3 bioconductor-limma=3.62.1 bioconductor-speckle=1.6.0 r-jsonlite=2.0.0
 ```
 
 `mixed_models.py` needs lmerTest, which runs on the same lme4 2.0-6 in an R environment of its own: R 4.4.3, lme4 2.0-6, lmerTest 3.2-1, numDeriv 2016.8-1.1 and jsonlite 2.0.0, from conda-forge:
 
 ```bash
-conda create -p $REF/r-mixed -c conda-forge r-base=4.4.3 r-lme4=2.0_6 \
+conda create -p $REF/r-mixed --override-channels -c conda-forge r-base=4.4.3 r-lme4=2.0_6 \
     r-lmertest=3.2_1 r-numderiv=2016.8_1.1 r-jsonlite=2.0.0
 ```
 
 metap 1.1 (CRAN) and qvalue 2.38.0 (Bioconductor 3.20), which `combined_p_values_and_replication.py` runs, have an R environment of their own, with R 4.4.3 and jsonlite 2.0.0, from conda-forge and bioconda:
 
 ```bash
-conda create -p $REF/r-meta -c conda-forge -c bioconda r-base=4.4.3 r-metap=1.1 \
-    bioconductor-qvalue=2.38.0 r-jsonlite=2.0.0
+conda create -p $REF/r-meta --override-channels -c conda-forge -c bioconda r-base=4.4.3 \
+    r-metap=1.1 bioconductor-qvalue=2.38.0 r-jsonlite=2.0.0
 ```
 
 metafor 5.0-1 (CRAN), which `meta_analysis.py` and `combined_p_values_and_replication.py` run, has one too, with R 4.4.3 and jsonlite 2.0.0:
 
 ```bash
-conda create -p $REF/r-metafor -c conda-forge r-base=4.4.3 r-metafor=5.0.1 \
+conda create -p $REF/r-metafor --override-channels -c conda-forge r-base=4.4.3 r-metafor=5.0_1 \
     r-jsonlite=2.0.0
 ```
 
 `dream.py` runs variancePartition 1.36.2 (Bioconductor 3.20) with limma 3.62.1, in an R environment of its own on lme4 1.1-38, as variancePartition 1.36.2's `dream` fails for every gene with lme4 2.0 ("Unable to extract deviance function from model fit"): R 4.4.3, lme4 1.1-38, lmerTest 3.1-3, pbkrtest 0.5.3, Matrix 1.7-4, RcppEigen 0.3.4.0.2, minqa 1.2.8, nloptr 2.2.1, BiocParallel 1.40.0, jsonlite 2.0.0 and ggplot2 4.0.3 (which variancePartition's figures use), from conda-forge and bioconda. lme4 1.1-35.5's conda build crashed in `lmer` with these versions of Matrix and RcppEigen:
 
 ```bash
-conda create -p $REF/r-dream -c conda-forge -c bioconda r-base=4.4.3 \
+conda create -p $REF/r-dream --override-channels -c conda-forge -c bioconda r-base=4.4.3 \
     bioconductor-variancepartition=1.36.2 bioconductor-limma=3.62.1 r-lme4=1.1_38 \
     r-lmertest=3.1_3 r-pbkrtest=0.5.3 r-matrix=1.7_4 r-rcppeigen=0.3.4.0.2 \
-    r-minqa=1.2.8 r-nloptr=2.2.1 r-jsonlite=2.0.0
+    r-minqa=1.2.8 r-nloptr=2.2.1 r-jsonlite=2.0.0 bioconductor-biocparallel=1.40.0 \
+    r-ggplot2=4.0.3
 ```
 
 fgsea 1.32.2 (Bioconductor 3.20), which `gsea.py` runs, and GSVA 2.0.0 (Bioconductor 3.20), which `pathway_scores.py` runs, have an R environment of their own, with R 4.4.3, limma 3.62.1, GSVA 2.0.0, BiocParallel 1.40.0, data.table 1.18.6.1 and jsonlite 2.0.0, from conda-forge and bioconda:
 
 ```bash
-conda create -p $REF/r-gsea -c conda-forge -c bioconda r-base=4.4.3 \
+conda create -p $REF/r-gsea --override-channels -c conda-forge -c bioconda r-base=4.4.3 \
     bioconductor-fgsea=1.32.2 bioconductor-gsva=2.0.0 bioconductor-limma=3.62.1 \
-    r-data.table=1.18.6.1 r-jsonlite=2.0.0
+    r-data.table=1.18.6.1 r-jsonlite=2.0.0 bioconductor-biocparallel=1.40.0
 ```
 
 progeny 1.28.0 (Bioconductor 3.20), which `activity.py` runs for PROGENy's weights, has one too, with R 4.4.3 and jsonlite 2.0.0:
 
 ```bash
-conda create -p $REF/r-progeny -c conda-forge -c bioconda r-base=4.4.3 \
-    bioconductor-progeny=1.28.0 r-jsonlite=2.0.0
+conda create -p $REF/r-progeny --override-channels -c conda-forge -c bioconda \
+    r-base=4.4.3 bioconductor-progeny=1.28.0 r-jsonlite=2.0.0
 ```
 
-The Python environments use Python 3.13.12. scanpy has its own environment, and `cube_files.py` ran CytePool on Python 3.14.4 for the zstd cases:
+The Python environments use Python 3.13.12. The main one also holds PyDESeq2, which `deseq2_tests.py` runs, and scikit-learn, which `sumrank.py` imports, added with the versions above kept; scanpy has its own environment, and `cube_files.py` ran CytePool on Python 3.14.4 for the zstd cases:
 
 ```bash
+export UV_EXCLUDE_NEWER=2026-10-27T00:00:00Z
 uv venv $REF/python --python 3.13.12
 uv pip install --python $REF/python/bin/python numpy==2.5.4 numba==0.68.0 \
     scipy==1.18.1 mpmath==1.3.0 zarr==3.4.1 numcodecs==0.17.1 pandas==3.1.0 \
     anndata==0.13.4 decoupler==2.2.0 matplotlib==3.11.2
+uv pip install --python $REF/python/bin/python pydeseq2==0.5.4 scikit-learn==1.9.1 \
+    numpy==2.5.4 numba==0.68.0 scipy==1.18.1 mpmath==1.3.0 zarr==3.4.1 \
+    numcodecs==0.17.1 pandas==3.1.0 anndata==0.13.4 decoupler==2.2.0 matplotlib==3.11.2
 uv venv $REF/python-scanpy --python 3.13.12
 uv pip install --python $REF/python-scanpy/bin/python scanpy==1.12.4 \
     numpy==2.5.4 numba==0.68.0 scipy==1.18.1 pandas==3.1.0 anndata==0.13.4
