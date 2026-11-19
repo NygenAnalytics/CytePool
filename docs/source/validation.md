@@ -7,7 +7,7 @@ description: How closely each method in CytePool agrees with the tool that defin
 
 Every area of CytePool has a script in [`validation/`](https://github.com/NygenAnalytics/CytePool/tree/master/validation) that compares it with an independent reference: the package that defined the method, run as a black box, or a high-precision computation. A script generates its inputs from fixed random seeds, or reads published data, runs the reference as a separate program on the same inputs, exchanging data through files in a temporary directory (float64 values as binary, so they compare bit for bit), runs CytePool, prints a table with one row per check, and exits with an error when any check falls outside its tolerance.
 
-This page summarizes the tables the scripts printed in their last runs, with the reference versions given in each section. Each section gives the date of its script's run, and [](#reproduce-validation) says where a digest of the code that each run checked is recorded. Every script exited without a failure. In the table of each section, a row is a family of checks: it gives the number of printed checks it covers and the largest difference among them. Run a script to see every check.
+This page summarizes the tables the scripts printed in their last runs, with the reference versions given in each section. Each section gives the date of its script's run, and [](#reproduce-validation) says where a digest of the code that each run checked is recorded. Before a release, every script whose checked code has changed since its run is run again. Every script exited without a failure. In the table of each section, a row is a family of checks: it gives the number of printed checks it covers and the largest difference among them. Run a script to see every check.
 
 ## Summary
 
@@ -381,7 +381,7 @@ The script printed 89 checks (83 pass and 6 deliberate differences) on 2026-11-1
 | Reports: the genes with missing values that REML leaves out (the same number), and an early stop of REML | `arrayWeights` | both report | n/a | 2 pass |
 | voom with prior weights: E | `voom` | 0 | 1e-10 | 5 pass |
 | voom with prior weights: the weights times the prior weights, the trend saved with `save.plot = TRUE`, and the chosen span | `voom` | 1.2e-13 | 1e-10 | 11 pass |
-| voom with prior weights: moderated t and p after `lmFit` with the weights and `eBayes` | limma | 3.2e-13 | 1e-10 | 5 pass |
+| voom with prior weights: moderated t and p after `lmFit` with the weights and `eBayes` | limma | 2.3e-12 | 1e-10 | 5 pass |
 | voom with quality weights: E and the chosen span | `voomWithQualityWeights` | 0 | 1e-10 | 11 pass |
 | voom with quality weights: sample weights | `voomWithQualityWeights` | 7.2e-15 | 1e-6 | 8 pass |
 | voom with quality weights: weights | `voomWithQualityWeights` | 9.8e-14 | 1e-6 | 8 pass |
