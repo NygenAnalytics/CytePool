@@ -131,7 +131,7 @@ from cytepool.stats._mixed_model_designs import (
     maximum_likelihood,
     mixed_design,
 )
-from cytepool.stats._moderation import standardized_f_statistics
+from cytepool.stats._moderation import LOG_TAIL_BELOW, standardized_f_statistics
 from cytepool.stats.distributions import (
     f_sf,
     norm_isf,
@@ -151,10 +151,6 @@ __all__ = [
 ]
 
 FloatArray = npt.NDArray[np.float64]
-
-# topTable floors the p-values at this value to compute z.std (found by probing);
-# below it, the z-statistics here come from the logarithm of the tail probability.
-_SMALLEST_P_VALUE = 1e-300
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -594,7 +590,7 @@ def _signed_z(t: FloatArray, df: FloatArray, p_value: FloatArray) -> FloatArray:
     """
     with np.errstate(invalid="ignore", divide="ignore"):
         z = np.asarray(norm_isf(p_value / 2.0), dtype=np.float64)
-        tiny = p_value < _SMALLEST_P_VALUE
+        tiny = p_value < LOG_TAIL_BELOW
     if tiny.any():
         log_tail = np.asarray(t_logsf(np.abs(t[tiny]), df[tiny]), dtype=np.float64)
         z[tiny] = [_normal_upper_quantile_of_log(value) for value in log_tail]

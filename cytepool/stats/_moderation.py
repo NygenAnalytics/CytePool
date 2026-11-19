@@ -44,12 +44,15 @@ LIKELIHOOD_MIN_DF = 0.01
 estimate of the prior (limma's fitFDistUnequalDF1, the estimator of Chen et al. 2025;
 found by probing limma 3.62.1)."""
 
+LOG_TAIL_BELOW = 1e-300
+"""Below this p-value, a statistic with the same p-value on other degrees of freedom
+(the standardized F-statistic, dream's z-statistic) comes from the logarithm of the
+tail probability, which stays exact where the p-value underflows to zero. topTable
+floors p-values at this value to compute z.std (found by probing)."""
+
 # Eigenvalues of the correlation matrix of the coefficients at or below this fraction
 # of the largest do not count towards the rank of an F-test (found by probing).
 _F_RANK_TOLERANCE = 1e-8
-# Below this p-value, the standardized F-statistic comes from the logarithm of the
-# tail probability, which stays exact where the p-value underflows to zero.
-_LOG_TAIL_BELOW = 1e-300
 
 
 def posterior_variances(
@@ -206,18 +209,17 @@ def standardized_f_statistics(
     p-values, so that F-tests on different denominator degrees of freedom compare.
 
     variancePartition's ``F.std``: the upper quantile of F(df1, infinity) at the
-    p-value. Below p-values of 1e-300 it comes from the logarithm of the tail
-    probability of ``f_value`` on (df1, df2), which stays exact where the p-value
-    underflows to zero: an F-statistic on infinite denominator degrees of freedom is
-    its own standardized F-statistic, however large.
+    p-value, which is the F-statistic itself where ``df2`` is infinite. Below p-values
+    of 1e-300 it comes from the logarithm of the tail probability of ``f_value`` on
+    (df1, df2), which stays exact where the p-value underflows to zero.
     """
-    with np.errstate(invalid="ignore"):
-        standardized = np.asarray(f_isf(p_value, float(df1), np.inf), dtype=np.float64)
-        tiny = p_value < _LOG_TAIL_BELOW
+    standardized = np.array(f_value, dtype=np.float64)
+    finite = ~np.isinf(df2)  # NaN df2 give NaN p-values, and so NaN
+    standardized[finite] = f_isf(p_value[finite], float(df1), np.inf)
+    tiny = finite & (p_value < LOG_TAIL_BELOW)
     if tiny.any():
-        df = np.broadcast_to(df2, np.shape(f_value))
         log_tails = np.asarray(
-            f_logsf(f_value[tiny], float(df1), df[tiny]), dtype=np.float64
+            f_logsf(f_value[tiny], float(df1), df2[tiny]), dtype=np.float64
         )
         standardized[tiny] = [_upper_quantile(value, float(df1)) for value in log_tails]
     return standardized
