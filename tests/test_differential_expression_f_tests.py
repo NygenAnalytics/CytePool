@@ -640,10 +640,11 @@ def test_the_result_keeps_its_f_tests_in_records_repr_and_pickles() -> None:
         single.table("T", "stimulations")
 
 
-def test_a_record_without_the_f_test_setting_is_refused_by_every_reader() -> None:
-    # Results recorded before limma_voom took F-tests have no "f_tests" setting:
-    # what reads the setting fails alike, without a compatibility rule.
-    result = analysis("limma_voom")
+def test_a_record_without_the_f_test_setting_reads_as_no_f_tests() -> None:
+    # limma_voom results recorded before it took F-tests, such as those pickled with
+    # CytePool 0.1.0, have no "f_tests" setting: they read, refit and pickle as
+    # results without F-tests, as they did then.
+    result = METHODS["limma_voom"](cells_cube(), design())
     provenance = result.provenance
     del provenance["settings"]["f_tests"]
     old = DifferentialExpressionResult(
@@ -656,10 +657,16 @@ def test_a_record_without_the_f_test_setting_is_refused_by_every_reader() -> Non
         cube=result.cube,
         design=result.design,
     )
-    readers = (lambda: old.f_tests, lambda: old.table("T"), lambda: old.fit("T"))
-    for read in readers:
-        with pytest.raises(KeyError, match="f_tests"):
-            read()
+    assert "f_tests" not in old.settings
+    assert old.f_tests == {}
+    assert "F-test" not in repr(old)
+    contrast = result.contrasts.names[0]
+    assert old.table("T", contrast).columns == result.table("T", contrast).columns
+    refit = old.fit("T").moderated
+    np.testing.assert_array_equal(refit.t, result.fit("T").moderated.t)
+    assert pickle.loads(pickle.dumps(old)).f_tests == {}
+    with pytest.raises(KeyError, match="no contrast 'dose' was"):
+        old.table("T", "dose")
 
 
 # Arguments.

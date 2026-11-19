@@ -579,7 +579,7 @@ class DifferentialExpressionResult:
     def f_tests(self) -> dict[str, tuple[str, ...]]:
         """The F-tests, each with the contrasts it tests at once, as a new dict;
         empty without F-tests."""
-        tests = json.loads(self._record)["settings"]["f_tests"] or {}
+        tests = json.loads(self._record)["settings"].get("f_tests") or {}
         return {name: tuple(members) for name, members in tests.items()}
 
     @property
@@ -1340,7 +1340,7 @@ def _analyse(
     check_sample_groups(settings, design.samples)
     cube_rows, order = _matched(cube, design)
     tested = _contrasts_to_test(design, contrasts, method)
-    if settings["f_tests"]:
+    if settings.get("f_tests"):
         _check_f_tests(settings["f_tests"], tested)
     positions = group_positions(cube, groups)
     inputs = GroupInputs(method, cube, order, cube_rows, tested, settings)
@@ -1356,7 +1356,7 @@ def _analyse(
             )
         fits.append(fit)
     if settings["adjust_across_groups"]:
-        _adjust_across_groups(fits, [*tested.names, *(settings["f_tests"] or {})])
+        _adjust_across_groups(fits, [*tested.names, *(settings.get("f_tests") or {})])
     sample_ids = cube.samples["sample_id"][cube_rows]
     dream = method == "dream_voom"
     return DifferentialExpressionResult(
@@ -1596,7 +1596,7 @@ def _fit_group(
         )
     _add_f_tests(
         fit,
-        settings["f_tests"],
+        settings.get("f_tests"),
         names,
         identity,
         contrast_fit.coefficients,
@@ -1704,7 +1704,7 @@ def _fit_dream_group(
 
     _add_f_tests(
         fit,
-        settings["f_tests"],
+        settings.get("f_tests"),
         names,
         identity,
         tests.estimate,
