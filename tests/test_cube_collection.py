@@ -31,6 +31,7 @@ from cytepool import (
     read_cube,
     write_cube,
 )
+from cytepool.cube import collection as collection_module
 
 DATA = Path(__file__).parent / "data" / "cube_collection"
 FORMULAS = {
@@ -724,7 +725,16 @@ def test_provenance_records_each_cube_and_the_alignment() -> None:
     }  # fmt: skip
 
 
-def test_a_stacked_cube_records_the_studies_it_stacks() -> None:
+# Versions as a release, a commit after it and an uncommitted tree name them. The
+# first line of a history names the version, so its length moves the line breaks.
+VERSIONS = ["1.0", "0.1.1.dev1+g14404a07c", "0.1.1.dev123+g05c7e2ab3.d20261119"]
+
+
+@pytest.mark.parametrize("version", VERSIONS)
+def test_a_stacked_cube_records_the_studies_it_stacks(
+    version: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collection_module, "__version__", version)
     a, b = study_a(), study_b()
     stacked = CubeCollection({"A": a, "B": b}, within_study="donor").stack()
     construction = stacked.provenance["construction"]
@@ -739,9 +749,11 @@ def test_a_stacked_cube_records_the_studies_it_stacks() -> None:
     assert construction["within_study"] == ["donor"]
     assert construction["layers"] == ["counts"]
     history = stacked.history()
-    assert "from 2 studies" in history
+    # Phrases are read with the lines joined, wherever the version moves the breaks.
+    joined = " ".join(history.split())
+    assert f"stack (CytePool {version}) from 2 studies:" in joined
     # Lines of at most 80 characters: a fingerprint goes on a line of its own.
-    assert f"study 'B': the cube {b.fingerprint()}" in " ".join(history.split())
+    assert f"study 'B': the cube {b.fingerprint()}" in joined
     assert max(map(len, history.splitlines())) <= 80
     assert "    CL:2: CD4 + CD8" in history
     assert "sample columns written study::value: donor" in history

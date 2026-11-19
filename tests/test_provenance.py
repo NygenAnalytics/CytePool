@@ -11,6 +11,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 
 import cytepool
 from cytepool import Cube, from_bulk, from_cells, read_cube, write_cube
+from cytepool.cube import pool as pool_module
 from cytepool.cube.provenance import describe_provenance
 
 SAMPLES = {
@@ -49,8 +50,7 @@ def cells() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return counts, samples, groups
 
 
-@pytest.fixture(scope="module")
-def cube(cells: tuple[np.ndarray, np.ndarray, np.ndarray]) -> Cube:
+def build_cube(cells: tuple[np.ndarray, np.ndarray, np.ndarray]) -> Cube:
     counts, samples, groups = cells
     return from_cells(
         counts,
@@ -61,6 +61,11 @@ def cube(cells: tuple[np.ndarray, np.ndarray, np.ndarray]) -> Cube:
         features=FEATURES,
         source=SOURCE,
     )
+
+
+@pytest.fixture(scope="module")
+def cube(cells: tuple[np.ndarray, np.ndarray, np.ndarray]) -> Cube:
+    return build_cube(cells)
 
 
 # How a cube was built.
@@ -397,7 +402,13 @@ def test_text_that_is_not_valid_unicode_is_refused(source: Any, subject: str) ->
 # Reading a record back.
 
 
-def test_history_reads_the_chain_in_plain_terms(cube: Cube) -> None:
+def test_history_reads_the_chain_in_plain_terms(
+    cells: tuple[np.ndarray, np.ndarray, np.ndarray], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The history names the version that built the cube, and a longer version moves
+    # the line breaks, so the cube records a fixed version for the layout below.
+    monkeypatch.setattr(pool_module, "__version__", "0.1.1.dev1+g0123456789")
+    cube = build_cube(cells)
     regrouped = cube.regroup({"T": ["T8", "T4"]})
     collapsed = regrouped.collapse_samples("donor")
     selected = collapsed.select(groups=["T", "B"], features=FEATURES[::-1])
@@ -408,7 +419,7 @@ def test_history_reads_the_chain_in_plain_terms(cube: Cube) -> None:
         '  dataset: "simulated PBMC"',
         '  artifacts: {"membership": "membership.parquet#sha256:5e1f"}',
         '  exporter: {"name": "a cell store", "version": "2.1", "min_genes": 200}',
-        f"Built by from_cells (CytePool {cytepool.__version__}) from 400 cells:",
+        "Built by from_cells (CytePool 0.1.1.dev1+g0123456789) from 400 cells:",
         "  samples: the rows of the sample table given",
         "  groups: the rows of the group table given",
         "  features: ids given as a sequence",
