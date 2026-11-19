@@ -7,7 +7,7 @@ description: How closely each method in CytePool agrees with the tool that defin
 
 Every area of CytePool has a script in [`validation/`](https://github.com/NygenAnalytics/CytePool/tree/master/validation) that compares it with an independent reference: the package that defined the method, run as a black box, or a high-precision computation. A script generates its inputs from fixed random seeds, or reads published data, runs the reference as a separate program on the same inputs, exchanging data through files in a temporary directory (float64 values as binary, so they compare bit for bit), runs CytePool, prints a table with one row per check, and exits with an error when any check falls outside its tolerance.
 
-This page summarizes the tables the scripts printed in their last runs, with the reference versions given in each section. Each section gives the date of its script's run, and [](#reproduce-validation) says where the code that each run checked is recorded. Every script exited without a failure. In the table of each section, a row is a family of checks: it gives the number of printed checks it covers and the largest difference among them. Run a script to see every check.
+This page summarizes the tables the scripts printed in their last runs, with the reference versions given in each section. Each section gives the date of its script's run, and [](#reproduce-validation) says where a digest of the code that each run checked is recorded. Every script exited without a failure. In the table of each section, a row is a family of checks: it gives the number of printed checks it covers and the largest difference among them. Run a script to see every check.
 
 ## Summary
 
@@ -1338,9 +1338,9 @@ python validation/sumrank.py --benchmark
 
 Here `python` is `$REF/python/bin/python`, the environment below. With `--write-fixtures`, a script also rewrites the small inputs and reference outputs under `tests/data/` that the test suite compares against.
 
-`NPY_ENABLE_CPU_FEATURES` and `OPENBLAS_CORETYPE` make numpy and OpenBLAS compute as on a processor without AVX-512, whatever the host: with AVX-512, numpy's float64 `log2` differs from glibc's in about 1 value in 2,000 and OpenBLAS picks other kernels, which moves the last digits of some printed values, such as the leverages of badly scaled designs in `design.py`.
+`NPY_ENABLE_CPU_FEATURES` and `OPENBLAS_CORETYPE` make numpy and OpenBLAS compute as on a processor without AVX-512, on any x86-64 host with AVX2. With AVX-512, numpy's float64 `log2` differs from glibc's in about 1 value in 2,000 and OpenBLAS picks other kernels, which moves the last digits of some printed values: E in `voom.py` is then identical to limma's in 14 of 26 cases instead of 26, and the leverages of badly scaled designs in `design.py` differ too. On other processors, such as ARM, the two settings change nothing, and last digits can differ as well.
 
-Each section gives the date of its script's last run, `docs/validation_runs.toml` records a digest of the code that run checked (the script and the modules of CytePool it imports, read without comments, docstrings or layout), and `uv run python docs/changed_since_run.py` lists the scripts whose checked code has changed since.
+Each section gives the date of its script's last run, and `docs/validation_runs.toml` records which code that run checked; [`validation/README.md`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/README.md) says when to run a script again and how to update its record.
 
 The runs used one container image that holds every environment below. micromamba 2.9.0 built the R environments from these specifications, which leave the dependencies of the pinned packages free, so these resolved as on 19 November 2026, when the image was built; uv 0.11.25 built the Python environments, resolved as on 27 October 2026 with `UV_EXCLUDE_NEWER`.
 
@@ -1390,7 +1390,7 @@ conda create -p $REF/r-dream --override-channels -c conda-forge -c bioconda r-ba
     r-ggplot2=4.0.3
 ```
 
-`dream.py`, `kenward_roger_and_f_tests.py` and `variance_partitioning.py` ran in this environment with dreamlet 1.4.1 (Bioconductor 3.20) added for the checks of dose response. The install kept every package above at its version (`--freeze-installed`), and dreamlet was built from its source, since conda has no build of it for R 4.4:
+`dream.py`, `kenward_roger_and_f_tests.py` and `variance_partitioning.py` ran in this environment after dreamlet 1.4.1 (Bioconductor 3.20) and its dependencies were added to it. The install kept every package above at its version (`--freeze-installed`), and dreamlet was built from its source, since conda has no build of it for R 4.4:
 
 ```bash
 conda install -p $REF/r-dream --freeze-installed --override-channels -c conda-forge \
@@ -1403,7 +1403,7 @@ conda install -p $REF/r-dream --freeze-installed --override-channels -c conda-fo
     bioconductor-iranges bioconductor-s4vectors bioconductor-biocgenerics \
     bioconductor-matrixgenerics gcc_linux-64 gxx_linux-64 gfortran_linux-64 make
 curl -fsSLO https://bioconductor.org/packages/3.20/bioc/src/contrib/dreamlet_1.4.1.tar.gz
-$REF/r-dream/bin/R CMD INSTALL dreamlet_1.4.1.tar.gz
+conda run -p $REF/r-dream R CMD INSTALL dreamlet_1.4.1.tar.gz
 ```
 
 fgsea 1.32.2 (Bioconductor 3.20), which `gsea.py` runs, and GSVA 2.0.0 (Bioconductor 3.20), which `pathway_scores.py` runs, have an R environment of their own, with R 4.4.3, limma 3.62.1, GSVA 2.0.0, BiocParallel 1.40.0, data.table 1.18.6.1 and jsonlite 2.0.0, from conda-forge and bioconda:

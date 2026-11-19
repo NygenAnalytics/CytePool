@@ -1,8 +1,6 @@
-# The digest of the code that each validation script checked in its last recorded run:
-# the script and the modules of CytePool it imports, read without comments, docstrings
-# or layout. docs/changed_since_run.py computes the digests of the working tree and
-# lists the scripts whose code has changed since their run; the Validation page gives
-# the date of each run.
+# The digest of the code that each validation script's last recorded run checked.
+# docs/changed_since_run.py says what a digest covers and prints the digests of the
+# working tree; validation/README.md says when to update this file.
 
 "activity.py" = "5dad4d8ecee6"
 "anndata_conversion.py" = "e9b15d968c7c"

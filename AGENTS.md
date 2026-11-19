@@ -44,6 +44,7 @@ These rules apply to everything people read: pages, the README, docstrings, erro
 ## Tests and validation
 
 - Every public function has a check in `validation/` against its reference implementation. Each validation script is self-contained, prints its comparison table, and writes the small fixtures the tests use with `--write-fixtures`.
+- After running a validation script, update its section of the Validation page and its digest in `docs/validation_runs.toml`, as `validation/README.md` describes.
 
 ## Checks
 

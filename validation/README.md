@@ -28,7 +28,7 @@ PYTHONPATH=. python validation/<script>.py
 PYTHONPATH=. python validation/<script>.py --write-fixtures
 ```
 
-The Validation page gives the date of each script's last run, and `docs/validation_runs.toml` a digest of the code that run checked: the script and the modules of CytePool it imports. After running a script, update its section and its digest; `uv run python docs/changed_since_run.py` lists the scripts whose checked code has changed since their recorded run, with the digest of the code now.
+The Validation page gives the date of each script's last run, and `docs/validation_runs.toml` a digest of the code that run checked: the script and the modules of CytePool it imports. `uv run python docs/changed_since_run.py` lists the scripts whose checked code has changed since their recorded run, with the digest of the code now. After running a script, update the date and numbers of its section on the page and its digest in the file. A pull request runs the scripts it adds and those whose results it changes on purpose, and names in its description the other scripts that the helper lists; a release runs every script that the helper lists.
 
 ## How reference packages are used
 
