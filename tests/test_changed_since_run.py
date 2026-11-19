@@ -213,6 +213,18 @@ def test_names_are_followed_through_several_packages(tmp_path: Path) -> None:
     assert _checked(tmp_path, files) == ["cytepool/sub/y.py", "validation/check.py"]
 
 
+def test_the_last_binding_of_a_name_in_a_package_counts(tmp_path: Path) -> None:
+    # As when Python runs the __init__.py: the second import binds f again.
+    files = {
+        "cytepool/__init__.py": "from .old import f\nfrom .new import f\n",
+        "cytepool/old.py": "def f():\n    return 1\n",
+        "cytepool/new.py": "def f():\n    return 2\n",
+        "validation/check.py": "from cytepool import f\n",
+    }
+
+    assert _checked(tmp_path, files) == ["cytepool/new.py", "validation/check.py"]
+
+
 def test_relative_imports_are_resolved_by_their_level(tmp_path: Path) -> None:
     # sub/top.py and n.py are decoys that a wrong level would reach instead.
     files = {
