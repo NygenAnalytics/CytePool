@@ -360,12 +360,14 @@ class DifferentialExpressionResult:
 
     - ``feature_id`` and, when the cube's feature table has one, ``symbol``;
     - ``log2_fold_change_<contrast>`` for each of its contrasts, in the order given,
-      as in the contrasts' own tables;
+      as in the contrasts' own tables; for the columns of a spline these are the
+      coefficients of the columns, which mean nothing one by one and change with
+      the basis;
     - ``average_log2_cpm``;
     - ``f_statistic``: the moderated F-statistic (``topTable``'s ``F``);
     - ``df``: its denominator degrees of freedom; the numerator degrees of freedom,
-      the number of linearly independent contrasts, are in the group's record
-      (``f_test_df1``);
+      the number of linearly independent contrasts, are in the group's entry of
+      ``provenance["groups"]`` (``f_test_df1``, by F-test name);
     - ``p_value``, ``adjusted_p_value`` (Benjamini-Hochberg over the group's tested
       features) and, with ``adjust_across_groups``,
       ``adjusted_p_value_across_groups``;
@@ -577,7 +579,7 @@ class DifferentialExpressionResult:
     def f_tests(self) -> dict[str, tuple[str, ...]]:
         """The F-tests, each with the contrasts it tests at once, as a new dict;
         empty without F-tests."""
-        tests = json.loads(self._record)["settings"].get("f_tests") or {}
+        tests = json.loads(self._record)["settings"]["f_tests"] or {}
         return {name: tuple(members) for name, members in tests.items()}
 
     @property
@@ -653,8 +655,9 @@ class DifferentialExpressionResult:
             )
         f_tests = list(self.f_tests)
         if contrast not in self._contrasts.names and contrast not in f_tests:
+            kind = "contrast or F-test" if f_tests else "contrast"
             raise KeyError(
-                f"no contrast {contrast!r} was tested; contrasts are: "
+                f"no {kind} {contrast!r} was tested; contrasts are: "
                 f"{listing(list(self._contrasts.names))}"
                 + (f"; F-tests are: {listing(f_tests)}" if f_tests else "")
             )
@@ -863,9 +866,11 @@ def limma_voom(
             columns by name, such as ``{"stim_vs_ctrl": "conditionstim"}``. By
             default, the design's named contrasts.
         f_tests: A mapping of an F-test's name to the names of the contrasts it
-            tests at once, among those tested, such as ``{"dose": ["dose_s1",
-            "dose_s2", "dose_s3"]}``; None for none. A name must differ from every
-            contrast's.
+            tests at once, among those tested; None for none. A name must differ
+            from every contrast's. ``f_tests={"dose": ["dose_s1", "dose_s2",
+            "dose_s3"]}`` with ``contrasts=["dose_s1", "dose_s2", "dose_s3"]`` tests
+            three columns of the design together, as a contrast named after a
+            design column tests that column.
         min_cells: The fewest cells a sample needs in a group to enter its fit.
             Ignored when the cube does not record cell numbers (bulk data), where
             only samples without counts are left out.
@@ -910,8 +915,9 @@ def limma_voom(
             the approximation of limma's ``contrasts.fit``. They differ only for
             contrasts that combine correlated coefficients (see
             :func:`~cytepool.stats.linear_models.contrasts_fit`). The option also
-            sets the correlation of the contrasts in the F-tests: each feature's
-            own, or limma's, from the design without weights.
+            sets the correlation of the contrasts in the F-tests, each feature's
+            own or limma's from the design without weights, and under voom's
+            weights these differ for any F-test of several contrasts.
         adjust_across_groups: Whether to add the column
             ``adjusted_p_value_across_groups`` to every table: each contrast's and
             F-test's p-values adjusted by Benjamini-Hochberg over every group that
@@ -1334,7 +1340,7 @@ def _analyse(
     check_sample_groups(settings, design.samples)
     cube_rows, order = _matched(cube, design)
     tested = _contrasts_to_test(design, contrasts, method)
-    if settings.get("f_tests"):
+    if settings["f_tests"]:
         _check_f_tests(settings["f_tests"], tested)
     positions = group_positions(cube, groups)
     inputs = GroupInputs(method, cube, order, cube_rows, tested, settings)
@@ -1350,7 +1356,7 @@ def _analyse(
             )
         fits.append(fit)
     if settings["adjust_across_groups"]:
-        _adjust_across_groups(fits, [*tested.names, *(settings.get("f_tests") or {})])
+        _adjust_across_groups(fits, [*tested.names, *(settings["f_tests"] or {})])
     sample_ids = cube.samples["sample_id"][cube_rows]
     dream = method == "dream_voom"
     return DifferentialExpressionResult(

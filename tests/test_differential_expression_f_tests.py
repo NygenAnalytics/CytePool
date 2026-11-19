@@ -9,10 +9,12 @@ columns; ``validation/differential_expression.py`` writes both files. The other
 tests check what a wrong implementation would break: the exact F-statistic against
 nested fits computed here, its invariance to how a set of contrasts is written, the
 rank of dependent contrasts, the F-test of one contrast against its t-test, the
-closed form of F(2, infinity), the adjustment across cell types against scipy's, and
-identical columns in the three methods.
+closed forms of F(2, d) and F(2, infinity), the adjustment across cell types against
+scipy's, and identical columns in the three methods. ``test_moderation.py`` tests the
+F-test code that the three methods share.
 """
 
+import dataclasses
 import pickle
 from functools import cache
 from pathlib import Path
@@ -22,7 +24,7 @@ import numpy as np
 import pytest
 from scipy import stats
 from test_differential_expression import (
-    CLOSE,
+    ANALYSES,
     EXACT,
     cells_cube,
     fixture,
@@ -33,6 +35,7 @@ from test_differential_expression import (
 from test_kenward_roger_and_f_tests import cube_and_design, cube_result
 
 from cytepool import (
+    Cube,
     Design,
     DifferentialExpressionResult,
     Table,
@@ -41,8 +44,9 @@ from cytepool import (
     limma_trend,
     limma_voom,
 )
-from cytepool.stats._moderation import standardized_f_statistics
-from cytepool.stats.distributions import f_sf
+from cytepool.differential_expression import _limma_f_test
+from cytepool.stats.empirical_bayes import moderated_statistics
+from cytepool.stats.linear_models import fit_linear_model
 from cytepool.stats.smoothing import natural_spline_basis
 
 DATA = Path(__file__).parent / "data" / "differential_expression"
@@ -54,9 +58,10 @@ CONTRASTS = {
     "D3_vs_D1": "donorD3",
     "D3_vs_D2": "donorD3 - donorD2",
 }
-# The F-tests of the validation script: the stimulation together with a donor
-# difference that the NK cells can estimate without donor D1, and two donor
-# differences, one of which they cannot.
+# The F-tests of the fixture, as the validation script names them: the stimulation
+# together with a donor difference that the NK cells can estimate without donor D1,
+# and two donor differences, one of which (D2_vs_D1) they cannot. limma refuses both
+# in the NK cells, as each holds D2_vs_D4, which weighs the aliased column donorD4.
 F_TESTS = {
     "condition_and_donor": ["stim_vs_ctrl", "D2_vs_D4"],
     "donors": ["D2_vs_D1", "D2_vs_D4"],
@@ -75,27 +80,6 @@ F_COLUMNS = (
 METHODS = {
     "limma_voom": limma_voom,
     "limma_trend": limma_trend,
-}
-LIMMA_ERRORS = {"contrast_standard_errors": "limma"}
-# The analyses of the fixture, as the validation script ran them, with the tier of
-# each: limma's standard errors, so that limma-voom's F-tests are limma's; the robust
-# prior, which limma solves for only to a tolerance; and the robust trend, whose prior
-# df are infinite for most features and finite for some.
-ANALYSES = {
-    "voom": (limma_voom, LIMMA_ERRORS, EXACT),
-    "robust": (limma_voom, LIMMA_ERRORS | {"robust": True, "span": 0.5}, CLOSE),
-    "trend": (
-        limma_trend,
-        {"expression_filter": False, "normalization": None, "robust": True},
-        EXACT,
-    ),
-}
-# The fixture's F-tests over its three contrasts; without donor D1 the NK cells
-# cannot estimate D2_vs_D1, and limma refuses D2_vs_D4, which weighs the aliased
-# column donorD4.
-FIXTURE_F_TESTS = {
-    "condition_and_donor": ["stim_vs_ctrl", "D2_vs_D4"],
-    "donors": ["D2_vs_D1", "D2_vs_D4"],
 }
 # The rows of limma's F-test fixtures after the logFC of each contrast: topTable's
 # AveExpr, F, P.Value and adj.P.Val, and classifyTestsF's df2.
@@ -167,12 +151,10 @@ def assert_f_test_matches(
 def test_f_tests_match_limma(analysis: str) -> None:
     function, options, tolerance = ANALYSES[analysis]
     cube = cells_cube()
-    result = function(
-        cube, paired_design(cube.samples), f_tests=FIXTURE_F_TESTS, **options
-    )
+    result = function(cube, paired_design(cube.samples), f_tests=F_TESTS, **options)
     limma = fixture("limma")
     t_cells = result.provenance["groups"][result.groups.index("T")]
-    for name, members in FIXTURE_F_TESTS.items():
+    for name, members in F_TESTS.items():
         reference = limma[f"{analysis} T F {name}"]
         assert_f_test_matches(result.table("T", name), reference, members, tolerance)
         assert t_cells["f_test_df1"][name] == int(limma[f"{analysis} T F {name} df1"])
@@ -194,17 +176,13 @@ def test_rank_deficient_f_tests_differ_from_limma_only_where_limma_is_wrong(
     # donors, whose D2_vs_D1 the NK cells cannot estimate.
     function, options, tolerance = ANALYSES[analysis]
     cube = cells_cube()
-    result = function(
-        cube, paired_design(cube.samples), f_tests=FIXTURE_F_TESTS, **options
-    )
+    result = function(cube, paired_design(cube.samples), f_tests=F_TESTS, **options)
     limma = fixture("limma")
-    for name in FIXTURE_F_TESTS:
+    for name in F_TESTS:
         assert "non-estimable" in str(limma[f"{analysis} NK F {name} error"])
     reading = limma[f"{analysis} NK F condition_and_donor as limma reads it"]
     table = result.table("NK", "condition_and_donor")
-    assert_f_test_matches(
-        table, reading, FIXTURE_F_TESTS["condition_and_donor"], tolerance
-    )
+    assert_f_test_matches(table, reading, F_TESTS["condition_and_donor"], tolerance)
     nk = result.provenance["groups"][result.groups.index("NK")]
     assert nk["f_test_df1"] == {"condition_and_donor": 2}
     expected_df1 = limma[f"{analysis} NK F condition_and_donor as limma reads it df1"]
@@ -219,13 +197,11 @@ def test_the_default_matches_nested_weighted_fits_in_r(analysis: str) -> None:
     _, options, tolerance = ANALYSES[analysis]
     exact = {k: v for k, v in options.items() if k != "contrast_standard_errors"}
     cube = cells_cube()
-    result = limma_voom(
-        cube, paired_design(cube.samples), f_tests=FIXTURE_F_TESTS, **exact
-    )
+    result = limma_voom(cube, paired_design(cube.samples), f_tests=F_TESTS, **exact)
     limma = fixture("limma")
     compared = 0
     for (group, name), table in result.tables.items():
-        if name not in FIXTURE_F_TESTS:
+        if name not in F_TESTS:
             continue
         f_value, p_value = limma[f"{analysis} {group} F {name} nested"]
         assert scaled_difference(table["f_statistic"], f_value, False) <= tolerance
@@ -332,6 +308,9 @@ def test_dependent_contrasts_count_once(method: str) -> None:
     dependent, pair = result.table("T", "dependent"), result.table("T", "pair")
     f = scaled_difference(dependent["f_statistic"], pair["f_statistic"], False)
     assert f <= EXACT
+    # The same F on the same numerator and denominator df has the same p-value.
+    np.testing.assert_array_equal(dependent["df"], pair["df"])
+    np.testing.assert_allclose(dependent["p_value"], pair["p_value"], rtol=1e-12)
     # F(2, infinity) is a chi-squared on 2 df over 2, whose upper tail is exp(-x):
     # the standardized F-statistic x has the test's p-value exp(-x).
     np.testing.assert_allclose(
@@ -377,17 +356,6 @@ def test_an_f_test_of_every_contrast_is_ebayes_f() -> None:
 # The denominator degrees of freedom and the standardized F-statistic.
 
 
-def test_the_denominator_df_are_the_residual_and_prior_df_uncapped() -> None:
-    result = analysis(
-        "limma_trend", expression_filter=False, normalization=None, robust=True
-    )
-    moderated = result.fit("T").moderated
-    df = result.table("T", "condition_and_donor")["df"]
-    np.testing.assert_array_equal(df, moderated.fit.df_residual + moderated.df_prior)
-    # Infinite for most features and finite for some: the robust prior's.
-    assert np.isinf(df).sum() >= 10 and np.isfinite(df).sum() >= 5
-
-
 def test_on_infinite_df_the_standardized_f_statistic_is_the_f_statistic() -> None:
     result = analysis(
         "limma_trend", expression_filter=False, normalization=None, robust=True
@@ -399,30 +367,26 @@ def test_on_infinite_df_the_standardized_f_statistic_is_the_f_statistic() -> Non
     )
 
 
-def test_the_standardized_f_statistic_stays_exact_where_p_underflows() -> None:
-    # F on (2, d) has the upper tail (1 + 2x / d)^(-d / 2), and F on (2, infinity)
-    # exp(-x), so the standardized F-statistic is (d / 2) log(1 + 2x / d), and x
-    # itself on infinite d; the p-values of the larger values underflow.
-    f_value = np.array([3.0, 40.0, 1e9, 1e70, 3.0, 700.0, 1_000.0, 1e7])
-    df2 = np.array([10.0, 10.0, 100.0, 10.0, np.inf, np.inf, np.inf, np.inf])
-    p_value = np.asarray(f_sf(f_value, 2.0, df2))
-    # 700 on infinite df has the p-value 9.9e-305; the four above it underflow.
-    assert (p_value < 1e-300).sum() == 5 and (p_value == 0.0).sum() == 4
-    expected = f_value.copy()
-    finite = np.isfinite(df2)
-    expected[finite] = df2[finite] / 2.0 * np.log1p(2.0 * f_value[finite] / df2[finite])
+def test_limma_f_tests_standardize_on_each_features_df() -> None:
+    # One feature with a large effect, whose p-value underflows on the 9 residual
+    # df plus 1,000 prior df: the standardized F-statistic comes from the log of the
+    # tail probability on those df, where F on (2, d) gives (d / 2) log(1 + 2F / d).
+    rng = np.random.default_rng(1)
+    groups = np.repeat(np.eye(3), 4, axis=0)
+    x = np.column_stack([np.ones(12), groups[:, 1:]])
+    effects = np.zeros((30, 3))
+    effects[:, 0] = 5.0
+    effects[0, 1:] = [40.0, -30.0]
+    effects[1:, 1] = 0.1 * rng.normal(size=29)
+    values = x @ effects.T + rng.normal(0.0, 0.05, (12, 30))
+    moderated = moderated_statistics(fit_linear_model(values, x))
+    finite = dataclasses.replace(moderated, df_prior=np.full(30, 1_000.0))
+    test = _limma_f_test(finite, [1, 2])
+    d, f = test.df2[0], test.f_statistic[0]
+    assert d == 1_009.0 and test.p_value[0] == 0.0
     np.testing.assert_allclose(
-        standardized_f_statistics(f_value, 2, df2, p_value), expected, rtol=1e-12
+        test.standardized_f_statistic[0], d / 2.0 * np.log1p(2.0 * f / d), rtol=1e-12
     )
-
-
-def test_the_standardized_f_statistic_of_a_missing_or_infinite_f() -> None:
-    f_value = np.array([np.nan, np.inf, 2.0])
-    df2 = np.array([5.0, 5.0, 5.0])
-    p_value = np.asarray(f_sf(f_value, 3.0, df2))
-    standardized = standardized_f_statistics(f_value, 3, df2, p_value)
-    assert np.isnan(standardized[0]) and standardized[1] == np.inf
-    assert np.isfinite(standardized[2])
 
 
 # Columns, tables and records shared by the three methods.
@@ -430,6 +394,17 @@ def test_the_standardized_f_statistic_of_a_missing_or_infinite_f() -> None:
 
 def test_the_three_methods_give_f_tests_the_same_columns() -> None:
     cube, mixed = cube_and_design()
+    # Gene symbols, as real cubes usually have, join the identity columns.
+    named = Cube(
+        {"counts": cube.layer("counts")},
+        samples=cube.samples,
+        groups=cube.groups,
+        features={
+            "feature_id": cube.features["feature_id"],
+            "symbol": [f"SYM_{f}" for f in cube.features["feature_id"]],
+        },
+        n_cells=cube.n_cells,
+    )
     fixed = Design(
         cube.samples,
         "~ time + age",
@@ -444,19 +419,19 @@ def test_the_three_methods_give_f_tests_the_same_columns() -> None:
     for adjust in (False, True):
         results = {
             "limma_voom": limma_voom(
-                cube, fixed, f_tests=tests, adjust_across_groups=adjust
+                named, fixed, f_tests=tests, adjust_across_groups=adjust
             ),
             "limma_trend": limma_trend(
-                cube, fixed, f_tests=tests, adjust_across_groups=adjust
+                named, fixed, f_tests=tests, adjust_across_groups=adjust
             ),
             "dream_voom": dream_voom(
-                cube, mixed, f_tests=tests, span=0.5, adjust_across_groups=adjust
+                named, mixed, f_tests=tests, span=0.5, adjust_across_groups=adjust
             ),
         }
         columns = {result.table("small", "time").columns for result in results.values()}
         assert len(columns) == 1
         (found,) = columns
-        assert found[:2] == ("feature_id", "log2_fold_change_t1_vs_t0")
+        assert found[:3] == ("feature_id", "symbol", "log2_fold_change_t1_vs_t0")
         assert (ACROSS in found) == adjust
         for result in results.values():
             f_table = result.table("small", "time")
@@ -465,10 +440,8 @@ def test_the_three_methods_give_f_tests_the_same_columns() -> None:
                 np.testing.assert_array_equal(
                     f_table[f"log2_fold_change_{member}"], contrast["log2_fold_change"]
                 )
-            np.testing.assert_array_equal(f_table["feature_id"], contrast["feature_id"])
-            np.testing.assert_array_equal(
-                f_table["average_log2_cpm"], contrast["average_log2_cpm"]
-            )
+            for column in ("feature_id", "symbol", "average_log2_cpm"):
+                np.testing.assert_array_equal(f_table[column], contrast[column])
     # dream's tables are those of the analysis without the adjustment.
     dream = cube_result().table("small", "time")
     assert dream.equals(
@@ -559,13 +532,18 @@ def test_an_f_test_no_group_can_run_leaves_a_reason_and_no_table() -> None:
         cube,
         design(),
         groups="NK",
-        f_tests={"donors": F_TESTS["donors"]},
+        f_tests={"donors": F_TESTS["donors"], "from_d1": ["D2_vs_D1", "D3_vs_D1"]},
         adjust_across_groups=True,
     )
     assert ("NK", "donors") not in result.tables
     record = result.provenance["groups"][0]
     assert (
         record["f_test_df1"] == {} and "D2_vs_D1" in record["not_estimable"]["donors"]
+    )
+    # Without donor D1, neither of from_d1's contrasts.
+    assert record["not_estimable"]["from_d1"] == (
+        "the samples of this group cannot estimate its contrasts 'D2_vs_D1' and "
+        "'D3_vs_D1'"
     )
 
 
@@ -658,6 +636,30 @@ def test_the_result_keeps_its_f_tests_in_records_repr_and_pickles() -> None:
     assert single.table("T", "stimulation").columns[1] == (
         "log2_fold_change_conditionstim"
     )
+    with pytest.raises(KeyError, match="no contrast or F-test 'stimulations' was"):
+        single.table("T", "stimulations")
+
+
+def test_a_record_without_the_f_test_setting_is_refused_by_every_reader() -> None:
+    # Results recorded before limma_voom took F-tests have no "f_tests" setting:
+    # what reads the setting fails alike, without a compatibility rule.
+    result = analysis("limma_voom")
+    provenance = result.provenance
+    del provenance["settings"]["f_tests"]
+    old = DifferentialExpressionResult(
+        result.method,
+        result.contrasts,
+        result.summary,
+        result.samples,
+        result.tables,
+        provenance,
+        cube=result.cube,
+        design=result.design,
+    )
+    readers = (lambda: old.f_tests, lambda: old.table("T"), lambda: old.fit("T"))
+    for read in readers:
+        with pytest.raises(KeyError, match="f_tests"):
+            read()
 
 
 # Arguments.
