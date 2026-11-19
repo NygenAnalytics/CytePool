@@ -37,8 +37,8 @@ def _checked(root: Path, files: dict[str, str]) -> list[str]:
 
 
 def _same_code(first: str, second: str) -> bool:
-    identity = helper.code_identity
-    return identity(textwrap.dedent(first).encode()) == identity(
+    code = helper.normalized_code
+    return code(textwrap.dedent(first).encode()) == code(
         textwrap.dedent(second).encode()
     )
 
@@ -48,6 +48,9 @@ def test_code_ignores_comments_docstrings_and_layout() -> None:
         """A module."""
 
         import numpy as np
+
+        LIMIT = 3
+        """The largest count."""
 
 
         class Fit:
@@ -71,6 +74,8 @@ def test_code_ignores_comments_docstrings_and_layout() -> None:
         """
         # A comment above the imports.
         import numpy as np
+        LIMIT = 3  # an attribute docstring follows
+        """The most counts that a row may hold."""
         class Fit:
             """Another description."""
             def mean(self, values):
@@ -81,6 +86,7 @@ def test_code_ignores_comments_docstrings_and_layout() -> None:
             "One line."
 
             if timeout <= 0:  # nothing to wait for
+                "A timeout that cannot pass is refused."
                 raise ValueError(
                     "timeout must be positive"
                 )
@@ -97,23 +103,31 @@ def test_code_ignores_comments_docstrings_and_layout() -> None:
     )
 
 
-def test_a_body_of_only_a_docstring_reads_as_pass() -> None:
-    # Both bodies do nothing; ast.unparse fails on an empty body.
+def test_a_body_of_only_strings_reads_as_pass() -> None:
+    # Each pair does the same; ast.unparse writes no statement for an empty body.
     assert _same_code('def f():\n    "Nothing."\n', "def f():\n    pass\n")
     assert _same_code('class C:\n    "Nothing."\n', "class C:\n    pass\n")
     assert _same_code('"""Only a docstring."""\n', "")
+    assert _same_code(
+        'if x:\n    "Nothing."\n    "Still nothing."\n', "if x:\n    pass\n"
+    )
+    assert _same_code('if x:\n    y()\nelse:\n    "Nothing."\n', "if x:\n    y()\n")
     assert not _same_code('def f():\n    "Nothing."\n', "def f():\n    return None\n")
 
 
-def test_strings_that_are_not_docstrings_count() -> None:
-    # Python takes as a docstring only a str constant that opens a body: an f-string,
-    # bytes, or a later string are code.
+def test_strings_that_python_evaluates_count() -> None:
+    # Python runs nothing for a statement that is only a string, wherever it stands,
+    # but it formats an f-string, and a string as a value is used.
     assert not _same_code('def f(x):\n    f"{x}"\n', "def f(x):\n    pass\n")
     assert not _same_code('def f():\n    b"bytes"\n', "def f():\n    pass\n")
-    assert not _same_code('x = 1\n"A note."\n', "x = 1\n")
-    assert not _same_code(
-        'def f():\n    "Doc."\n    "Second."\n', 'def f():\n    "Doc."\n'
-    )
+    assert not _same_code('x = "a"\n', 'x = "b"\n')
+    assert not _same_code('print("a")\n"A note."\n', 'print("b")\n"A note."\n')
+
+
+def test_sources_are_read_as_python_reads_them() -> None:
+    # As bytes, so that a coding line counts, as it does when Python runs the file.
+    latin = b"# -*- coding: latin-1 -*-\nx = '\xe9'\n"
+    assert helper.normalized_code(latin) == helper.normalized_code("x = 'é'\n".encode())
 
 
 SOURCE = '''\
@@ -169,9 +183,9 @@ def test_the_code_of_a_fixed_source_keeps_its_saved_digest(tmp_path: Path) -> No
     # Saved under Python 3.13 and checked under 3.14 and 3.15: a change of
     # ast.unparse in a new Python fails here, before it changes every record.
     _write(tmp_path, {"cytepool/fit.py": SOURCE})
-    identity = helper.code_identity(SOURCE.encode())
+    code = helper.normalized_code(SOURCE.encode())
 
-    assert '"""' not in identity and "Sum the values" not in identity
+    assert '"""' not in code and "Sum the values" not in code
     assert (
         helper.code_digest([tmp_path / "cytepool/fit.py"], tmp_path) == "94662e984101"
     )
@@ -288,58 +302,15 @@ def test_a_cycle_of_imports_ends(tmp_path: Path) -> None:
 
 def test_init_files_are_neither_checked_nor_followed(tmp_path: Path) -> None:
     # The script reaches the package's __init__.py, which imports e.py for nothing
-    # the script uses.
+    # the script uses; special names, such as __version__ and __file__, hold no code.
     files = {
         "cytepool/__init__.py": "from .a import f\nfrom .e import E\n__version__ = '1'\n",
         "cytepool/a.py": "def f():\n    return 1\n",
         "cytepool/e.py": "E = 2\n",
-        "validation/check.py": "import cytepool\n\nprint(cytepool.f(), cytepool.__version__)\n",
+        "validation/check.py": "from cytepool import __file__, __version__, f\n",
     }
 
     assert _checked(tmp_path, files) == ["cytepool/a.py", "validation/check.py"]
-
-
-def test_names_a_package_binds_by_import_def_or_class(tmp_path: Path) -> None:
-    package = {
-        "cytepool/__init__.py": (
-            "import numpy\nimport numpy as np\nimport cytepool.sub.x as x\n\n"
-            "def helper():\n    return 1\n\nclass Label:\n    pass\n"
-        ),
-        "cytepool/sub/__init__.py": "",
-        "cytepool/sub/x.py": "def go():\n    return 2\n",
-    }
-    script = "from cytepool import x\n\nx.go()\n"
-
-    assert _checked(tmp_path, {**package, "validation/check.py": script}) == [
-        "cytepool/sub/x.py",
-        "validation/check.py",
-    ]
-    # Names that the __init__.py defines itself, or binds from outside CytePool.
-    script = "from cytepool import Label, helper, np, numpy\n"
-    found = _checked(tmp_path, {**package, "validation/check.py": script})
-    assert found == ["validation/check.py"]
-
-
-def test_packages_imported_as_names_are_read_through_attributes(tmp_path: Path) -> None:
-    package = {
-        "cytepool/__init__.py": "from .a import f\n",
-        "cytepool/a.py": "def f():\n    return 1\n",
-        "cytepool/sub/__init__.py": "",
-        "cytepool/sub/x.py": "def go():\n    return 2\n",
-        "cytepool/sub/w.py": "def stay():\n    return 3\n",
-    }
-    scripts = {
-        "import cytepool as cp\ncp.f()\n": ["cytepool/a.py"],
-        # The dotted import binds the name cytepool, as Python does.
-        "import cytepool.sub.x\ncytepool.sub.x.go()\n": ["cytepool/sub/x.py"],
-        "import cytepool.sub.x\ncytepool.f()\n": ["cytepool/a.py", "cytepool/sub/x.py"],
-        "from cytepool import sub\nsub.w.stay()\n": ["cytepool/sub/w.py"],
-        "import cytepool.sub as s\nprint(s.x.go)\n": ["cytepool/sub/x.py"],
-    }
-
-    for script, expected in scripts.items():
-        found = _checked(tmp_path, {**package, "validation/check.py": script})
-        assert found == [*expected, "validation/check.py"], script
 
 
 def test_a_module_imported_as_a_name_is_checked_whole(tmp_path: Path) -> None:
@@ -352,12 +323,29 @@ def test_a_module_imported_as_a_name_is_checked_whole(tmp_path: Path) -> None:
     assert _checked(tmp_path, files) == ["cytepool/m.py", "validation/check.py"]
 
 
+PACKAGE_FILES = {
+    "cytepool/__init__.py": (
+        "import numpy as np\nfrom .a import f\n\ndef helper():\n    return 1\n\n"
+        "class Label:\n    pass\n\nALPHA = 0.05\n"
+    ),
+    "cytepool/a.py": "def f():\n    return 1\n",
+    "cytepool/sub/__init__.py": "",
+    "cytepool/sub/x.py": "def go():\n    return 2\n",
+}
+
+
 @pytest.mark.parametrize(
     ("files", "message"),
     [
         (
             {"validation/check.py": 'CODE = """\nfrom cytepool import f\n"""\n'},
-            "check.py, line 1: a string imports cytepool",
+            "^validation/check.py, line 1: a string imports cytepool",
+        ),
+        (
+            {
+                "validation/check.py": 'CODE = "import numpy\\nfrom cytepool import f\\n"\n'
+            },
+            "a string imports cytepool",
         ),
         (
             {"validation/check.py": 'run(f"""\n    import cytepool\n    {x}""")\n'},
@@ -369,23 +357,23 @@ def test_a_module_imported_as_a_name_is_checked_whole(tmp_path: Path) -> None:
                 "cytepool/b.py": "x = 1\n",
                 "validation/check.py": "from cytepool.a import x\n",
             },
-            "a.py, line 1: a star import from cytepool.b",
+            "^cytepool/a.py, line 1: a star import from cytepool.b",
         ),
         (
             {"validation/check.py": "from cytepool.missing import f\n"},
             "check.py, line 1: no module cytepool.missing",
         ),
         (
-            {"validation/check.py": "import cytepool.missing\n"},
+            {"validation/check.py": "import cytepool.missing as m\n"},
             "check.py, line 1: no module cytepool.missing",
         ),
         (
             {"validation/check.py": "from cytepool import nothing\n"},
-            "check.py, line 1: .*does not bind nothing, which cytepool.nothing names",
+            "check.py, line 1: cytepool has no name nothing that its __init__.py",
         ),
         (
             {"validation/check.py": "from . import helpers\n"},
-            "check.py, line 1: a relative import in a script",
+            r"check.py, line 1: no package specified for '\.' \(required for relative",
         ),
         (
             {
@@ -396,11 +384,10 @@ def test_a_module_imported_as_a_name_is_checked_whole(tmp_path: Path) -> None:
         ),
         (
             {
-                "cytepool/__init__.py": "from .a import f\n",
-                "cytepool/a.py": "f = 1\n",
-                "validation/check.py": "import cytepool as cp\n\ngetattr(cp, 'f')\n",
+                "cytepool/__init__.py": "from ...x import y\n",
+                "validation/check.py": "from cytepool import y\n",
             },
-            "check.py, line 3: the package cytepool is used as a value",
+            "^validation/check.py, line 1: cytepool/__init__.py, line 1: attempted",
         ),
     ],
 )
@@ -411,10 +398,53 @@ def test_code_the_helper_cannot_follow_is_refused(
         _checked(tmp_path, files)
 
 
-def test_a_docstring_may_show_imports_of_cytepool(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "script",
+    [
+        "from cytepool import helper\n",
+        "from cytepool import Label\n",
+        "from cytepool import ALPHA\n",
+        "from cytepool import np\n",
+    ],
+)
+def test_names_a_package_defines_itself_are_refused(
+    tmp_path: Path, script: str
+) -> None:
+    # Code in an __init__.py is not read, so a name defined there, or bound other
+    # than by a from import, cannot be followed to its code.
+    name = script.split()[-1]
+    with pytest.raises(ValueError, match=f"cytepool has no name {name} that its"):
+        _checked(tmp_path, {**PACKAGE_FILES, "validation/check.py": script})
+
+
+@pytest.mark.parametrize(
+    ("script", "package"),
+    [
+        ("import cytepool\n", "cytepool"),
+        ("import cytepool as cp\ncp.f()\n", "cytepool"),
+        # The dotted import binds the name cytepool, as Python does.
+        ("import cytepool.sub.x\ncytepool.sub.x.go()\n", "cytepool"),
+        ("import cytepool.sub as s\n", "cytepool.sub"),
+        ("from cytepool import sub\n", "cytepool.sub"),
+        ("from cytepool import sub as s\ns.x.go()\n", "cytepool.sub"),
+    ],
+)
+def test_packages_imported_as_names_are_refused(
+    tmp_path: Path, script: str, package: str
+) -> None:
+    # Their uses, such as cp.f() or getattr(cp, name), would have to be read.
+    with pytest.raises(ValueError, match=f"the package {package} is imported as a"):
+        _checked(tmp_path, {**PACKAGE_FILES, "validation/check.py": script})
+
+
+def test_strings_of_their_own_may_show_imports_of_cytepool(tmp_path: Path) -> None:
+    # A docstring, or a string after it, is a statement for which Python runs nothing.
     files = {
         "cytepool/a.py": "def f():\n    return 1\n",
-        "validation/check.py": '"""Run it:\n\n    from cytepool.a import f\n"""\n\nfrom cytepool.a import f\n',
+        "validation/check.py": (
+            '"""Run it:\n\n    from cytepool.a import f\n"""\n\n'
+            'from cytepool.a import f\n"""Or: import cytepool.a as a"""\n'
+        ),
     }
 
     assert _checked(tmp_path, files) == ["cytepool/a.py", "validation/check.py"]
@@ -435,6 +465,8 @@ def test_the_digest_follows_only_the_checked_code(tmp_path: Path) -> None:
         return helper.code_digest(helper.checked_files(script, tmp_path), tmp_path)
 
     first = digest()
+    found = helper.checked_files(script, tmp_path)
+    assert helper.code_digest(found[::-1], tmp_path) == first  # in the order of paths
     _write(tmp_path, {"cytepool/e.py": "def unused():\n    return 1\n"})
     _write(tmp_path, {"cytepool/b.py": files["cytepool/b.py"].replace("B.", "Bee.")})
     assert digest() == first
@@ -479,6 +511,17 @@ def test_the_scripts_check_the_package_modules_they_import() -> None:
 # The records.
 
 
+def test_every_validation_script_has_a_recorded_digest() -> None:
+    recorded = sorted(helper.recorded_digests(helper.RECORDS))
+    scripts = sorted(path.name for path in (ROOT / "validation").glob("*.py"))
+
+    assert recorded == scripts, (
+        "docs/validation_runs.toml needs one line for each script in validation/, "
+        '"<script>.py" = "<digest>", with the digest that '
+        "uv run python docs/changed_since_run.py prints after the script's run"
+    )
+
+
 def test_recorded_digests_read_the_file_and_refuse_malformed_digests(
     tmp_path: Path,
 ) -> None:
@@ -493,21 +536,24 @@ def test_recorded_digests_read_the_file_and_refuse_malformed_digests(
     }
     for line in [
         '"voom.py" = "0f3a9c21b7d"',  # 11 digits
+        '"voom.py" = "0f3a9c21b7d4a"',  # 13 digits
         '"voom.py" = "0F3A9C21B7D4"',  # upper case
         '"voom.py" = "0f3a9c21b7dz"',  # not hexadecimal
         '"voom.py" = 123456789012',  # not a string
         'voom.py = "0f3a9c21b7d4"',  # a dotted key, read as a table
+        '"voom.py" = 0f3a9c21b7d4',  # without quotes, not TOML
     ]:
         path.write_text(line + "\n")
-        with pytest.raises(ValueError, match="12 lowercase hexadecimal digits"):
+        with pytest.raises(ValueError, match="runs.toml: .*12 lowercase hexadecimal"):
             helper.recorded_digests(path)
 
 
 def test_changed_since_run_lists_changed_and_unrecorded_scripts() -> None:
+    # Given in reverse order, listed in the order of the names.
     current = {
-        "s1.py": "111111111111",
-        "s2.py": "222222222222",
         "s3.py": "333333333333",
+        "s2.py": "222222222222",
+        "s1.py": "111111111111",
     }
     recorded = {"s1.py": "111111111111", "s2.py": "000000000000"}
 
