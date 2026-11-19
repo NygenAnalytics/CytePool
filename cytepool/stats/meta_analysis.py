@@ -35,7 +35,7 @@ The REML estimate:
     v_i, so Newton's method from the lower end converges to it from below.
 
 Matching metafor:
-    The results match metafor 5.0.1 run to convergence, with
+    The results match metafor 5.0-1 run to convergence, with
     ``control = list(threshold = 1e-13)`` for REML and
     ``control = list(tol = 1e-14)`` for Paule-Mandel: by default metafor stops REML
     when tau^2 changes by less than 1e-5 from one step to the next, and Paule-Mandel

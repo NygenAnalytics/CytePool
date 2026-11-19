@@ -259,7 +259,7 @@ def test_random_effects_must_be_a_string() -> None:
     ("random", "groups"),
     [
         # lme4 names every grouping of a nesting in reverse order of appearance and
-        # keeps a plain interaction as written (found by probing lme4 2.0.6).
+        # keeps a plain interaction as written (found by probing lme4 2.0-6).
         ("(1 | a:b/c)", ["b:a", "c:b:a"]),
         ("(1 | a/b:c)", ["a", "c:b:a"]),
         ("(1 | c:b/a)", ["b:c", "a:b:c"]),

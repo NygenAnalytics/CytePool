@@ -125,7 +125,7 @@ where a random effect $k$ contributes its variance component $\hat\sigma^2_k$; a
 
 The fits and tests are compared with lme4, lmerTest, pbkrtest and variancePartition 1.36.2, run as separate programs, gene by gene:
 
-- REML fits and Satterthwaite's t-tests against lmerTest 3.2.1 on lme4 2.0.6: close (1e-6; 1e-5 for Satterthwaite's degrees of freedom, which lmerTest differentiates numerically) ([Validation](#validation-mixed-models)).
+- REML fits and Satterthwaite's t-tests against lmerTest 3.2-1 on lme4 2.0-6: close (1e-6; 1e-5 for Satterthwaite's degrees of freedom, which lmerTest differentiates numerically) ([Validation](#validation-mixed-models)).
 - Kenward-Roger's t-tests and F-tests, and Satterthwaite's F-tests, against pbkrtest 0.5.3 and lmerTest 3.1-3, on lme4 1.1-38 with variancePartition: exact (1e-10) at given estimates, and 1e-5 for the degrees of freedom and p-values of Satterthwaite's F-tests, which lmerTest differentiates numerically; dream's choice of degrees of freedom and its F-tests against variancePartition: close (1e-6) ([Validation](#validation-kenward-roger-and-f-tests)).
 - dream's weights, fits and moderated tests, and dream_voom on a cube, against variancePartition and limma 3.62.1: close (1e-6; 1e-5 for Satterthwaite's degrees of freedom and what uses them) ([Validation](#validation-dream)).
 - Variance partitioning and its figures against variancePartition: close (1e-6), exact at given estimates ([Validation](#validation-variance-partitioning)).

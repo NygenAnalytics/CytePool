@@ -21,7 +21,7 @@ Weights:
     with it.
 
 Matching lme4, lmerTest and pbkrtest:
-    The results match lme4 2.0.6 and lmerTest 3.2.1, and pbkrtest 0.5.3 with lmerTest
+    The results match lme4 2.0-6 and lmerTest 3.2-1, and pbkrtest 0.5.3 with lmerTest
     3.1-3 and lme4 1.1-38: their documentation gives the methods, and running them on
     chosen inputs settled the conventions it leaves open.
 
