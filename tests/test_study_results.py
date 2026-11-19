@@ -133,6 +133,41 @@ def test_the_table_lines_up_each_study_and_the_matrix_takes_one_column() -> None
                 assert_array_equal(matrix[row], expected)
 
 
+def test_the_table_lines_up_the_f_tests_of_each_study() -> None:
+    contrasts = CONTRASTS | {"D2_vs_D1": "donorD2"}
+    results = analyse_each_study(
+        pair(),
+        FORMULA,
+        levels=LEVELS,
+        contrasts=contrasts,
+        f_tests={"stim_and_donor": ["stim", "D2_vs_D1"]},
+    )
+    collection = pair()
+    features = collection.features["feature_id"].tolist()
+    for group in collection.groups["group_id"].tolist():
+        table = results.table(group, "stim_and_donor")
+        assert table.columns[-8:] == (
+            "log2_fold_change_stim",
+            "log2_fold_change_D2_vs_D1",
+            "average_log2_cpm",
+            "f_statistic",
+            "df",
+            "p_value",
+            "adjusted_p_value",
+            "standardized_f_statistic",
+        )
+        for column in ("f_statistic", "df", "p_value"):
+            matrix = results.matrix(column, group, "stim_and_donor")
+            # Each study's own F table, placed at its features; NaN elsewhere.
+            for row, study in enumerate(collection.studies):
+                expected = np.full(len(features), np.nan)
+                if (group, "stim_and_donor") in results[study].tables:
+                    own = results[study].table(group, "stim_and_donor")
+                    positions = [features.index(f) for f in own["feature_id"].tolist()]
+                    expected[positions] = own[column]
+                assert_array_equal(matrix[row], expected)
+
+
 def test_the_keys_may_be_left_out_when_the_studies_analysed_one() -> None:
     results = voom_results()
     groups = pair().groups["group_id"].tolist()

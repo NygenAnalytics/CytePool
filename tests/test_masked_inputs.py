@@ -1966,9 +1966,15 @@ ENTRY_POINTS: dict[str, Entry] = {
     # Differential expression. min_cells and n_threads go through operator.index,
     # which reads a 0-d masked integer.
     "cytepool.differential_expression.limma_voom": Entry(
-        lambda c: {**_differential_expression(c), "span": 0.6, "n_threads": 1},
+        lambda c: {
+            **_differential_expression(c),
+            "f_tests": {"both": ["stim"]},
+            "span": 0.6,
+            "n_threads": 1,
+        },
         {
             "contrasts": None,
+            "f_tests": None,
             "groups": None,
             "min_cells": None,
             "expression_filter": None,
@@ -1986,6 +1992,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         objects=("cube", "design"),
         keys={
             "contrasts": "stim",
+            "f_tests": "both",
             "expression_filter": "min_count",
             "quality_weights": "prior_n",
         },
@@ -2027,9 +2034,10 @@ ENTRY_POINTS: dict[str, Entry] = {
         _dream_by_cells, {}, options=("prior_weights",)
     ),
     "cytepool.differential_expression.limma_trend": Entry(
-        _differential_expression,
+        lambda c: {**_differential_expression(c), "f_tests": {"both": ["stim"]}},
         {
             "contrasts": None,
+            "f_tests": None,
             "groups": None,
             "min_cells": None,
             "expression_filter": None,
@@ -2045,6 +2053,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         objects=("cube", "design"),
         keys={
             "contrasts": "stim",
+            "f_tests": "both",
             "expression_filter": "min_count",
             "quality_weights": "prior_n",
         },

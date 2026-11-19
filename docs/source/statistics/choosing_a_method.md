@@ -22,7 +22,7 @@ Use the table below to pick a starting function, see its R or Python equivalent,
 
 ## Which genes change in each cell type?
 
-Use {api}`limma_voom` to test contrasts across every cell type in a cube using voom precision weights [@law2014]. Switch to:
+Use {api}`limma_voom` to test contrasts across every cell type in a cube using voom precision weights [@law2014]. To test several contrasts at once, such as every dose against the vehicle or the columns of a spline of dose, name them in `f_tests` ([F-tests of several contrasts](limma_voom.md#limma-f-tests)). Switch to:
 
 - {api}`limma_trend` when library sizes vary by less than about threefold;
 - {api}`dream_voom` when donors contribute multiple samples ([below](#several-samples-of-each-donor)).
@@ -31,7 +31,7 @@ See [limma-voom and limma-trend](limma_voom.md) for the methods, and [Genes that
 
 ## Which genes change in bulk RNA-seq?
 
-Pass a bulk count matrix to {api}`from_bulk` and run {api}`limma_voom`. Switch to:
+Pass a bulk count matrix to {api}`from_bulk` and run {api}`limma_voom`, with `f_tests` to test several coefficients at once. Switch to:
 
 - edgeR's quasi-likelihood F-tests ({api}`fit_quasi_likelihood` and {api}`quasi_likelihood_f_test`) or DESeq2 ({api}`fit_deseq2` and {api}`deseq2_wald_test`) to fit negative binomial models directly to counts [@chen2025; @love2014];
 - {api}`quasi_likelihood_f_test` or {api}`deseq2_likelihood_ratio_test` to test multiple coefficients at once (such as all levels of a factor or time course);
@@ -102,6 +102,7 @@ See [Replication](replication.md) and [Replication across studies](../guides/rep
 
 Each chapter's *Limits and differences* section documents how CytePool differs from the reference packages:
 
+- **Dose response:** tests of each dose against the vehicle and of ordered doses, such as Dunnett's many-to-one comparisons and Williams' test (as in multcomp), and MCP-Mod's tests of candidate curve shapes (as in DoseFinding); fitted dose-response curves and EC50s (as in drc); and benchmark doses with the rule sets of the National Toxicology Program (2018) and of EPA's Transcriptomic Assessment Products (ETAP, 2024), as in BMDS and BMDExpress. Dose-group and spline F-tests run in every cell type through `f_tests` ([F-tests of several contrasts](limma_voom.md#limma-f-tests)).
 - **Differential expression:** edgeR and DESeq2 run on one matrix at a time rather than all cell types of a cube; edgeR's `voomLmFit`, `glmLRT` and gene-wise `estimateDisp`; DESeq2's `lfcShrink`, outlier replacement, `glmGamPoi` and local dispersion trends, and gene-specific normalization factors; limma's `duplicateCorrelation` and block correlations in voom.
 - **Mixed models and composition:** random slopes `(tissue + 0 | donor)`, generalized linear mixed models, sample quality weights in dream, and bootstrap intervals (`varPartConfInf`); precision-weighted mixed models of composition (crumblr, @hoffman2026b) and Bayesian count models (scCODA, @buttner2021; sccomp, @mangiola2023).
 - **Gene sets and activities:** gene-set tests on {api}`dream_voom` fits or with block correlations; gene length or abundance trends in over-representation (`kegga`, `goana`); gene weights in fry and exact z-scores in roast; decoupler's VIPER (whose reference implementation is licensed for academic use only).

@@ -148,6 +148,7 @@ _LARGEST = 1.7976931348623157e308
 _LOG_LARGEST = 709.782712893384  # log of the largest double
 _EXACT_INTEGERS = 9007199254740992.0  # 2^53
 _SMALLEST_POSITIVE = 5e-324  # the smallest subnormal double
+_LOG_SMALLEST_POSITIVE = -744.4400719213812  # its logarithm
 _SUBNORMAL_SLACK = 2e-323  # four units of the smallest subnormal double
 _MAX_TERMS = 10_000_000  # step limit of the hypergeometric tail sums
 
@@ -719,8 +720,20 @@ def _f_tail_quantile(log_p: float, upper: bool, dfn: float, dfd: float) -> float
         x = 1.0
     h, step = _f_quantile_residual(x, dfn, dfd, upper, target)
     if dfd == _INF:
+        log_tail_start = _NAN
         if upper:
-            log_tail_start = _NAN
+            # Where p is below the doubles, Paulson's approximation gives no start, and
+            # P(F > x) ~ (a x)^(a - 1) exp(-a x) / Gamma(a) as x -> inf gives one: two
+            # steps towards its fixed point z = a x, where its terms decrease (z > a).
+            # Beyond 2^53 the expansion is exact to double precision, and the doubles
+            # near log P(F > x) are too far apart for Newton's step.
+            z = -(target + math.lgamma(a))
+            if target < _LOG_SMALLEST_POSITIVE and z > a:
+                for _ in range(2):
+                    z = -(target + math.lgamma(a)) + (a - 1.0) * math.log(z)
+                if z >= _EXACT_INTEGERS:
+                    return z / a
+                log_tail_start = math.log(z / a)
         else:  # P(X <= x) ~ (a x)^a / Gamma(a + 1) as x -> 0
             log_tail_start = (target + math.lgamma(a + 1.0)) / a - math.log(a)
     else:

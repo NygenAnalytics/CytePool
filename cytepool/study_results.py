@@ -244,9 +244,8 @@ class StudyResults(Mapping[str, DifferentialExpressionResult]):
         Args:
             group: An aligned group id; it may be left out when the studies analysed
                 one group.
-            contrast: A contrast name, or the name of an F-test of
-                :func:`~cytepool.dream_voom`; it may be left out when the studies tested
-                one.
+            contrast: A contrast name, or the name of an F-test; it may be left out
+                when the studies tested one.
 
         Returns:
             A table of ``collection.n_studies * collection.n_features`` rows.

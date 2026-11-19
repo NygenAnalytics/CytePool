@@ -5,9 +5,10 @@ al. 2014) and limma-trend, the limma workflows for RNA-seq counts (Ritchie et al
 2015), on the pseudobulk counts of each group of a cube, and
 :func:`~cytepool.dream_voom` runs variancePartition's dream (Hoffman and Roussos 2021),
 which adds random effects to limma-voom's models, for designs such as several samples
-of each donor. Each tests the named contrasts of a :class:`~cytepool.Design` and
-returns a :class:`~cytepool.DifferentialExpressionResult`: for every group and
-contrast, a table of the tested features with ``topTable``'s statistics, together
+of each donor. Each tests the named contrasts of a :class:`~cytepool.Design`, and any
+sets of them at once by moderated F-tests (``f_tests``), and returns a
+:class:`~cytepool.DifferentialExpressionResult`: for every group and contrast or
+F-test, a table of the tested features with ``topTable``'s statistics, together
 with a summary, the samples of every fit and a provenance record. The functions list
 their steps;
 https://docs.nygen.io/CytePool/statistics/limma-voom explains limma-voom and
@@ -79,14 +80,16 @@ P-values adjusted across groups:
     ``adjusted_p_value_across_groups`` adjusts each contrast's p-values by
     Benjamini-Hochberg over every test of that contrast in the analysis: every
     feature tested in every group that was fitted and can estimate the contrast,
-    stacked into one family. Each contrast is a family of its own, and groups left
-    out of ``groups`` are not in it.
+    stacked into one family. Each contrast, and each F-test, is a family of its own,
+    and groups left out of ``groups`` are not in it.
 
 Differences from limma:
     https://docs.nygen.io/CytePool/statistics/linear-models#estimable-contrasts says
     what limma's ``contrasts.fit`` does with a group whose design lost rank, and
     https://docs.nygen.io/CytePool/statistics/linear-models#contrasts why the standard
-    errors of contrasts are exact by default (``contrast_standard_errors``);
+    errors of contrasts are exact by default (``contrast_standard_errors``), which
+    makes the F-tests of limma-voom exact too
+    (https://docs.nygen.io/CytePool/statistics/empirical-bayes#moderated-f-statistics);
     ``validation/differential_expression.py`` reports each difference.
 
 Memory:
@@ -157,10 +160,10 @@ References:
 
 import json
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal, NamedTuple, cast
 
 import numpy as np
 
@@ -215,8 +218,9 @@ from .stats._fixed_effect_inference import (
 )
 from .stats._mean_variance_trend import scaled_prior_weights, trend_span, voom_inputs
 from .stats._mixed_model_designs import random_intercepts
+from .stats._moderation import moderated_f_tests, standardized_f_statistics
 from .stats.dream import _dream_weights, _moderated_tests
-from .stats.empirical_bayes import moderated_statistics
+from .stats.empirical_bayes import ModeratedFit, moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
 from .stats.mixed_models import FixedEffectTests, MixedModelFit
 from .stats.mixed_models import _fit as _fit_mixed_model
@@ -348,8 +352,28 @@ class DifferentialExpressionResult:
     test (Satterthwaite's or Kenward-Roger's plus the prior's, ``df.total``),
     after ``t``, and ``z_statistic``, the z-statistic with the test's p-value
     (``topTable``'s ``z.std``), after ``log_odds``; a feature whose mixed model has
-    no minimum has NaN statistics. Its F-tests have tables of their own, whose
-    columns :func:`dream_voom` lists.
+    no minimum has NaN statistics.
+
+    An F-test (``f_tests``) tests several contrasts at once. Its table, keyed by
+    (group id, F-test name), has the same columns in all three methods, one row per
+    tested feature in the cube's feature order:
+
+    - ``feature_id`` and, when the cube's feature table has one, ``symbol``;
+    - ``log2_fold_change_<contrast>`` for each of its contrasts, in the order given,
+      as in the contrasts' own tables; for the columns of a spline these are the
+      coefficients of the columns, which mean nothing one by one and change with
+      the basis;
+    - ``average_log2_cpm``;
+    - ``f_statistic``: the moderated F-statistic (``topTable``'s ``F``);
+    - ``df``: its denominator degrees of freedom; the numerator degrees of freedom,
+      the number of linearly independent contrasts, are in the group's entry of
+      ``provenance["groups"]`` (``f_test_df1``, by F-test name);
+    - ``p_value``, ``adjusted_p_value`` (Benjamini-Hochberg over the group's tested
+      features) and, with ``adjust_across_groups``,
+      ``adjusted_p_value_across_groups``;
+    - ``standardized_f_statistic``: the F-statistic on infinite denominator degrees
+      of freedom with the same p-value (variancePartition's ``F.std``), so that
+      F-tests on different degrees of freedom compare.
 
     The summary has one row per group: ``group_id``; ``status``, ``"fitted"`` or why
     the group was not fitted (``"no_samples"``, ``"no_residual_df"``,
@@ -553,8 +577,8 @@ class DifferentialExpressionResult:
 
     @property
     def f_tests(self) -> dict[str, tuple[str, ...]]:
-        """The F-tests of :func:`dream_voom`, each with the contrasts it tests at
-        once, as a new dict; empty for the other methods or without F-tests."""
+        """The F-tests, each with the contrasts it tests at once, as a new dict;
+        empty without F-tests."""
         tests = json.loads(self._record)["settings"].get("f_tests") or {}
         return {name: tuple(members) for name, members in tests.items()}
 
@@ -582,10 +606,10 @@ class DifferentialExpressionResult:
         minimum (``features_not_fitted``) and of those whose REML fit stopped
         without converging (``features_not_converged``; their tests use the
         estimates where it stopped), the degrees of freedom of its tests
-        (``df_method``), the number of features whose Kenward-Roger tests fell back
-        to Satterthwaite's (``features_satterthwaite_fallback``) and the numerator
-        degrees of freedom of each F-test (``f_test_df1``), the sample weights its
-        fit used, in the order of its samples
+        (``df_method``) and the number of features whose Kenward-Roger tests fell
+        back to Satterthwaite's (``features_satterthwaite_fallback``), the
+        numerator degrees of freedom of each F-test it ran (``f_test_df1``), the
+        sample weights its fit used, in the order of its samples
         (``prior_weights`` with ``prior_weights``, ``quality_weights`` with
         ``quality_weights``; null where the group was not fitted), and the warnings
         that the estimation of its sample quality weights gave (``warnings``, such as
@@ -604,14 +628,14 @@ class DifferentialExpressionResult:
 
         Args:
             group: A group id; it may be left out when the result has one group.
-            contrast: A contrast name, or the name of an F-test of
-                :func:`dream_voom`; it may be left out when the result tests one
-                contrast and no F-test.
+            contrast: A contrast name, or the name of an F-test; it may be left out
+                when the result tests one contrast and no F-test.
 
         Raises:
             ValueError: If a key is left out and the result has several.
-            KeyError: If the group or contrast was not analysed, or the group was
-                not fitted or cannot estimate the contrast; the message says why.
+            KeyError: If the group, contrast or F-test was not analysed, or the
+                group was not fitted or cannot estimate the contrast or every
+                contrast of the F-test; the message says why.
         """
         group = only_key(group, list(self.groups), "group", "groups")
         contrast = only_key(
@@ -631,8 +655,9 @@ class DifferentialExpressionResult:
             )
         f_tests = list(self.f_tests)
         if contrast not in self._contrasts.names and contrast not in f_tests:
+            kind = "contrast or F-test" if f_tests else "contrast"
             raise KeyError(
-                f"no contrast {contrast!r} was tested; contrasts are: "
+                f"no {kind} {contrast!r} was tested; contrasts are: "
                 f"{listing(list(self._contrasts.names))}"
                 + (f"; F-tests are: {listing(f_tests)}" if f_tests else "")
             )
@@ -641,8 +666,9 @@ class DifferentialExpressionResult:
             raise KeyError(
                 f"group {group!r} was not fitted ({entry['status']}): {entry['reason']}"
             )
+        kind = "F-test" if contrast in f_tests else "contrast"
         raise KeyError(
-            f"contrast {contrast!r} was not tested in group {group!r}: "
+            f"{kind} {contrast!r} was not tested in group {group!r}: "
             f"{entry['not_estimable'][contrast]}"
         )
 
@@ -713,13 +739,20 @@ class DifferentialExpressionResult:
     def __repr__(self) -> str:
         statuses = self._summary["status"].tolist()
         fitted = statuses.count(FITTED)
-        lines = [
+        header = (
             f"DifferentialExpressionResult ({self._method}): {len(statuses):,} "
             f"group{'' if len(statuses) == 1 else 's'}, {fitted:,} fitted; "
             f"{len(self._contrasts):,} contrast"
             f"{'' if len(self._contrasts) == 1 else 's'}: "
-            + ", ".join(self._contrasts.names),
-        ]
+            + ", ".join(self._contrasts.names)
+        )
+        f_tests = list(self.f_tests)
+        if f_tests:
+            header += (
+                f"; {len(f_tests):,} F-test{'' if len(f_tests) == 1 else 's'}: "
+                + ", ".join(f_tests)
+            )
+        lines = [header]
         for row in range(len(statuses)):
             group = self._summary["group_id"][row]
             if statuses[row] != FITTED:
@@ -741,6 +774,7 @@ def limma_voom(
     *,
     groups: str | Sequence[str] | None = None,
     contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
+    f_tests: Mapping[str, Sequence[str]] | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
     expression_filter: bool | Mapping[str, Any] = True,
@@ -790,6 +824,20 @@ def limma_voom(
     https://docs.nygen.io/CytePool/statistics/limma-voom explains the method and
     when to choose each option.
 
+    F-tests:
+        ``f_tests`` names sets of contrasts to test at once, such as each dose
+        against the vehicle, or the columns of a spline of dose: each is tested by
+        limma's moderated F-statistic (Smyth 2004), which ``topTable(coef = ...)``
+        gives for several contrasts, in every group that can estimate all its
+        contrasts. The F-statistic is read from the group's moderated contrasts,
+        so it needs no second fit; by default it uses each feature's own
+        correlation of the contrasts, the exact F-statistic under voom's weights,
+        and with ``contrast_standard_errors="limma"`` limma's, from the design
+        without weights. :class:`DifferentialExpressionResult` lists the columns
+        of its table, and
+        https://docs.nygen.io/CytePool/statistics/limma-voom#limma-f-tests explains
+        the tests.
+
     Provenance:
         The result records the cube's fingerprint, the digests it is built from and
         the cube's provenance (``Cube.fingerprint``, ``Cube.digests``,
@@ -817,6 +865,12 @@ def limma_voom(
             :func:`~cytepool.design.make_contrasts` and matched to the design's
             columns by name, such as ``{"stim_vs_ctrl": "conditionstim"}``. By
             default, the design's named contrasts.
+        f_tests: A mapping of an F-test's name to the names of the contrasts it
+            tests at once, among those tested; None for none. A name must differ
+            from every contrast's. ``f_tests={"dose": ["dose_s1", "dose_s2",
+            "dose_s3"]}`` with ``contrasts=["dose_s1", "dose_s2", "dose_s3"]`` tests
+            three columns of the design together, as a contrast named after a
+            design column tests that column.
         min_cells: The fewest cells a sample needs in a group to enter its fit.
             Ignored when the cube does not record cell numbers (bulk data), where
             only samples without counts are left out.
@@ -860,11 +914,15 @@ def limma_voom(
             contrast from each feature's own weighted fit; ``"limma"`` reproduces
             the approximation of limma's ``contrasts.fit``. They differ only for
             contrasts that combine correlated coefficients (see
-            :func:`~cytepool.stats.linear_models.contrasts_fit`).
+            :func:`~cytepool.stats.linear_models.contrasts_fit`). The option also
+            sets the correlation of the contrasts in the F-tests, each feature's
+            own or limma's from the design without weights, and under voom's
+            weights these differ for any F-test of several contrasts.
         adjust_across_groups: Whether to add the column
-            ``adjusted_p_value_across_groups`` to every table: each contrast's
-            p-values adjusted by Benjamini-Hochberg over every group that tests
-            it, besides ``adjusted_p_value``, which adjusts them within the group.
+            ``adjusted_p_value_across_groups`` to every table: each contrast's and
+            F-test's p-values adjusted by Benjamini-Hochberg over every group that
+            tests it, besides ``adjusted_p_value``, which adjusts them within the
+            group.
         n_threads: The most threads for the weighted least-squares fits of the
             features, which run in parallel (numba's threads; see
             ``numba.set_num_threads`` and
@@ -874,8 +932,9 @@ def limma_voom(
             threads can fit at once.
 
     Returns:
-        The tables of every group and estimable contrast, a summary of every group,
-        the samples used and left out, the settings and a provenance record.
+        The tables of every group and estimable contrast, and of every F-test, a
+        summary of every group, the samples used and left out, the settings and a
+        provenance record.
 
     Warns:
         RuntimeWarning: If sample quality weights cannot be estimated in a group,
@@ -885,15 +944,16 @@ def limma_voom(
 
     Raises:
         TypeError: If ``cube`` is not a Cube, ``design`` not a Design, an option has
-            the wrong type, or ``contrasts``, ``groups``, ``min_cells``,
-            ``expression_filter``, ``quality_weights`` or ``n_threads`` is or holds
-            a numpy masked array.
+            the wrong type, or ``contrasts``, ``f_tests``, ``groups``,
+            ``min_cells``, ``expression_filter``, ``quality_weights`` or
+            ``n_threads`` is or holds a numpy masked array.
         ValueError: If the design has random effects or no ``sample_id`` column,
             names samples the cube does not have or names a sample twice, if there
-            are no contrasts to test, an option is invalid, ``prior_weights`` and
-            ``quality_weights`` are both given, ``prior_weights`` is ``"n_cells"``
-            and the cube does not record cell numbers, or the column of
-            ``"sample_groups"`` is missing for a sample.
+            are no contrasts to test, an option is invalid, an F-test names a
+            contrast that is not tested or shares a contrast's name,
+            ``prior_weights`` and ``quality_weights`` are both given,
+            ``prior_weights`` is ``"n_cells"`` and the cube does not record cell
+            numbers, or the column of ``"sample_groups"`` is missing for a sample.
         KeyError: If a group is not in the cube, or the design's samples have no
             column of ``"sample_groups"``.
     """
@@ -913,6 +973,7 @@ def limma_voom(
             "normalization": normalization_setting(normalization),
             "span": span_setting(span),
             **_sample_weight_settings(prior_weights, quality_weights, "limma_voom"),
+            "f_tests": _f_test_setting(f_tests),
             "robust": checked_flag(robust, "robust"),
             "contrast_standard_errors": standard_errors,
             "adjust_across_groups": checked_flag(
@@ -929,6 +990,7 @@ def limma_trend(
     *,
     groups: str | Sequence[str] | None = None,
     contrasts: Mapping[str, Any] | Sequence[str] | str | None = None,
+    f_tests: Mapping[str, Sequence[str]] | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
     expression_filter: bool | Mapping[str, Any] = True,
@@ -949,8 +1011,9 @@ def limma_trend(
     (``eBayes(trend = TRUE)``). The options for pseudobulk data are those of
     :func:`limma_voom`; sample weights (prior or quality weights) enter ``lmFit`` as
     sample weights, and the standard errors of contrasts are exact, as limma's are
-    then. The result records the cube's fingerprint and digests, at the cost
-    "Provenance" in :func:`limma_voom` gives.
+    then. F-tests run as in :func:`limma_voom`, on one correlation of the contrasts
+    shared by every feature, as limma's are then. The result records the cube's
+    fingerprint and digests, at the cost "Provenance" in :func:`limma_voom` gives.
     https://docs.nygen.io/CytePool/statistics/limma-voom#limma-trend says when to
     choose limma-trend over limma-voom.
 
@@ -960,6 +1023,9 @@ def limma_trend(
             ``sample_id``, as for :func:`limma_voom`.
         groups: A group id or a list of them; all groups by default.
         contrasts: The contrasts to test; by default the design's named contrasts.
+        f_tests: A mapping of an F-test's name to the names of the contrasts it
+            tests at once, among those tested, as for :func:`limma_voom`; None for
+            none.
         min_cells: The fewest cells a sample needs in a group to enter its fit;
             ignored for cubes without cell numbers.
         min_counts: The fewest counts a sample needs in a group, over every
@@ -987,17 +1053,18 @@ def limma_trend(
             ``adjusted_p_value_across_groups``, as for :func:`limma_voom`.
 
     Returns:
-        The tables of every group and estimable contrast, a summary of every group,
-        the samples used and left out, the settings and a provenance record.
+        The tables of every group and estimable contrast, and of every F-test, a
+        summary of every group, the samples used and left out, the settings and a
+        provenance record.
 
     Warns:
         RuntimeWarning: As for :func:`limma_voom`.
 
     Raises:
         TypeError: If ``cube`` is not a Cube, ``design`` not a Design, an option has
-            the wrong type, or ``contrasts``, ``groups``, ``min_cells``,
-            ``expression_filter`` or ``quality_weights`` is or holds a numpy masked
-            array.
+            the wrong type, or ``contrasts``, ``f_tests``, ``groups``,
+            ``min_cells``, ``expression_filter`` or ``quality_weights`` is or holds
+            a numpy masked array.
         ValueError: As for :func:`limma_voom`, or if ``prior_count`` is not
             positive.
         KeyError: If a group is not in the cube.
@@ -1021,6 +1088,7 @@ def limma_trend(
             "normalization": normalization_setting(normalization),
             "prior_count": count,
             **_sample_weight_settings(prior_weights, quality_weights, "limma_trend"),
+            "f_tests": _f_test_setting(f_tests),
             "robust": checked_flag(robust, "robust"),
             "adjust_across_groups": checked_flag(
                 adjust_across_groups, "adjust_across_groups"
@@ -1098,14 +1166,9 @@ def dream_voom(
         difference among three time points: each is tested by dream's moderated
         F-statistic, which ``topTable`` gives for several coefficients (see
         :class:`~cytepool.stats.dream.ModeratedFixedEffectTests`), in every group
-        that can estimate all its contrasts. Its table has, for every tested
-        feature, ``feature_id`` (and ``symbol``), ``log2_fold_change_<contrast>``
-        for each contrast, ``average_log2_cpm``, ``f_statistic``, ``df`` (the
-        denominator degrees of freedom), ``p_value``, ``adjusted_p_value`` (and
-        ``adjusted_p_value_across_groups``), and ``standardized_f_statistic``, the
-        F-statistic on infinite denominator degrees of freedom with the same
-        p-value (``F.std``). The numerator degrees of freedom are the number of
-        linearly independent contrasts, which the group's record gives.
+        that can estimate all its contrasts, with the table that
+        :class:`DifferentialExpressionResult` describes. Its denominator degrees of
+        freedom combine those of its contrasts, feature by feature.
 
     Args:
         cube: A cube with a ``counts`` layer.
@@ -1215,11 +1278,21 @@ class _GroupFit(GroupRecord):
     tables: dict[str, Table] = field(default_factory=dict)
     df_method: str = ""  # dream: the degrees of freedom of the group's tests
     features_satterthwaite_fallback: int = 0  # dream: Kenward-Roger tests not used
-    f_test_df1: dict[str, int] = field(default_factory=dict)  # dream: per F-test
+    f_test_df1: dict[str, int] = field(default_factory=dict)  # per F-test run
     values: np.ndarray | None = None  # kept: the log2 CPM fitted
     weights: np.ndarray | None = None  # kept: their weights
     voom: VoomResult | None = None  # kept: voom's result
     moderated: Any = None  # kept: the moderated tests
+
+
+class _FTest(NamedTuple):
+    """The statistics of one F-test of a group, feature by feature."""
+
+    f_statistic: np.ndarray
+    df1: int
+    df2: np.ndarray
+    p_value: np.ndarray
+    standardized_f_statistic: np.ndarray
 
 
 def _analyse(
@@ -1507,7 +1580,8 @@ def _fit_group(
     errors = (
         contrast_fit.stdev_unscaled * np.sqrt(moderated.posterior_variance)[:, None]
     )
-    for column, name in enumerate(contrast_fit.coefficient_names):
+    names = contrast_fit.coefficient_names
+    for column, name in enumerate(names):
         fit.tables[name] = Table(
             {
                 **identity,
@@ -1520,6 +1594,15 @@ def _fit_group(
                 "log_odds": moderated.log_odds[:, column],
             }
         )
+    _add_f_tests(
+        fit,
+        settings.get("f_tests"),
+        names,
+        identity,
+        contrast_fit.coefficients,
+        model.mean_expression,
+        lambda columns: _limma_f_test(moderated, columns),
+    )
     return fit
 
 
@@ -1602,37 +1685,32 @@ def _fit_dream_group(
                 "z_statistic": moderated.z[:, column],
             }
         )
-    for f_name, members in (settings["f_tests"] or {}).items():
-        missing = [member for member in members if member not in names]
-        if missing:
-            fit.not_estimable[f_name] = (
-                "not tested: the samples of this group cannot estimate its "
-                f"contrast{'' if len(missing) == 1 else 's'} {quoted(missing)}"
-            )
-            continue
-        columns = [names.index(member) for member in members]
+
+    def f_test(columns: list[int]) -> _FTest:
+        # dream's F-test of these contrasts, from their own moderated tests.
         subset = _contrast_tests(
-            model, matrix[:, columns], tuple(members), parts, average
+            model, matrix[:, columns], tuple(names[c] for c in columns), parts, average
         )
-        f_moderated = _moderated_tests(
+        found = _moderated_tests(
             subset, parts, robust=settings["robust"], trend=settings["trend"]
         )
-        fit.f_test_df1[f_name] = f_moderated.f_df1
-        fit.tables[f_name] = Table(
-            {
-                **identity,
-                **{
-                    f"log2_fold_change_{member}": tests.estimate[:, column]
-                    for member, column in zip(members, columns, strict=True)
-                },
-                "average_log2_cpm": model.mean_expression,
-                "f_statistic": f_moderated.f_statistic,
-                "df": f_moderated.f_df2,
-                "p_value": f_moderated.f_p_value,
-                "adjusted_p_value": adjust_p_values(f_moderated.f_p_value, "bh"),
-                "standardized_f_statistic": f_moderated.standardized_f_statistic,
-            }
+        return _FTest(
+            found.f_statistic,
+            found.f_df1,
+            found.f_df2,
+            found.f_p_value,
+            found.standardized_f_statistic,
         )
+
+    _add_f_tests(
+        fit,
+        settings.get("f_tests"),
+        names,
+        identity,
+        tests.estimate,
+        model.mean_expression,
+        f_test,
+    )
     return fit
 
 
@@ -1697,6 +1775,67 @@ def _contrast_tests(
         p_value=p_value,
         covariance=(covariance + np.swapaxes(covariance, 1, 2)) / 2.0,
     )
+
+
+def _limma_f_test(moderated: ModeratedFit, columns: list[int]) -> _FTest:
+    """limma's moderated F-test of some contrasts of a group's moderated fit: the
+    F-statistic of those columns of its t-statistics, on the posterior variances
+    that every contrast shares, so that nothing is fitted or moderated again."""
+    fit = moderated.fit
+    per_feature = fit.cov_coefficients_per_feature
+    f_value, df1, df2, p_value = moderated_f_tests(
+        moderated.t[:, columns],
+        fit.cov_coefficients[np.ix_(columns, columns)],
+        None if per_feature is None else per_feature[:, columns][:, :, columns],
+        moderated.df_prior,
+        fit.df_residual,
+    )
+    standardized = standardized_f_statistics(f_value, df1, df2, p_value)
+    return _FTest(f_value, df1, df2, p_value, standardized)
+
+
+def _add_f_tests(
+    fit: _GroupFit,
+    f_tests: Mapping[str, Sequence[str]] | None,
+    names: Sequence[str],
+    identity: Mapping[str, np.ndarray],
+    estimates: np.ndarray,
+    mean_expression: np.ndarray,
+    f_test: Callable[[list[int]], _FTest],
+) -> None:
+    """Add to a group's record the table of every F-test it can run, and why it
+    cannot run the others.
+
+    A group runs an F-test when it estimates all its contrasts: ``names`` are those
+    it estimates, in the columns of ``estimates``, and ``f_test`` computes the
+    method's F-test of the columns given.
+    """
+    for name, members in (f_tests or {}).items():
+        missing = [member for member in members if member not in names]
+        if missing:
+            fit.not_estimable[name] = (
+                "the samples of this group cannot estimate its contrast"
+                f"{'' if len(missing) == 1 else 's'} {quoted(missing)}"
+            )
+            continue
+        columns = [names.index(member) for member in members]
+        test = f_test(columns)
+        fit.f_test_df1[name] = test.df1
+        fit.tables[name] = Table(
+            {
+                **identity,
+                **{
+                    f"log2_fold_change_{member}": estimates[:, column]
+                    for member, column in zip(members, columns, strict=True)
+                },
+                "average_log2_cpm": mean_expression,
+                "f_statistic": test.f_statistic,
+                "df": test.df2,
+                "p_value": test.p_value,
+                "adjusted_p_value": adjust_p_values(test.p_value, "bh"),
+                "standardized_f_statistic": test.standardized_f_statistic,
+            }
+        )
 
 
 def _voom_weights(
@@ -1969,14 +2108,15 @@ def _group_record(
         record["features_not_converged"] = (
             fit.features_not_converged if fitted else None
         )
-        # The degrees of freedom of the tests, the features whose Kenward-Roger
-        # tests fell back to Satterthwaite's, and the numerator degrees of freedom
-        # of each F-test; null when the group was not fitted.
+        # The degrees of freedom of the tests and the features whose Kenward-Roger
+        # tests fell back to Satterthwaite's; null when the group was not fitted.
         record["df_method"] = fit.df_method if fitted else None
         record["features_satterthwaite_fallback"] = (
             fit.features_satterthwaite_fallback if fitted else None
         )
-        record["f_test_df1"] = dict(fit.f_test_df1) if fitted else None
+    # The numerator degrees of freedom of each F-test the group ran; null when the
+    # group was not fitted.
+    record["f_test_df1"] = dict(fit.f_test_df1) if fitted else None
     # The sample weights of the fit, in the order of "samples"; null when not fitted.
     for key in ("prior_weights", "quality_weights"):
         if settings.get(key) is not None:

@@ -669,6 +669,20 @@ def test_f_and_chi2_quantile_closed_forms() -> None:
     )
 
 
+def test_upper_f_quantiles_of_log_tails_below_the_doubles_on_infinite_df() -> None:
+    # The standardized F-statistic of an F-test whose p-value underflows inverts a
+    # log tail far below the smallest double, here from -745 to -1e305: the quantile
+    # must give back that log tail, to a few units of rounding.
+    log_p = -np.geomspace(745.0, 1e305, 2000)
+    for dfn in (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 8.0, 12.0, 20.0, 50.0, 200.0):
+        x = np.array([dist._f_tail_quantile(lp, True, dfn, INF) for lp in log_p])
+        back = np.asarray(dist.f_logsf(x, dfn, INF))
+        assert np.max(np.abs(back / log_p - 1.0)) <= 1e-15, dfn
+    # On 2 df the tail is exp(-x), so the quantile is -log p itself.
+    x = np.array([dist._f_tail_quantile(lp, True, 2.0, INF) for lp in log_p])
+    np.testing.assert_allclose(x, -log_p, rtol=1e-15)
+
+
 def test_f_and_chi2_quantiles_at_the_ends_and_outside_the_domain() -> None:
     assert dist.f_isf(0.0, 2.0, 3.0) == INF and dist.f_isf(1.0, 2.0, 3.0) == 0.0
     assert dist.f_ppf(0.0, 2.0, 3.0) == 0.0 and dist.f_ppf(1.0, 2.0, 3.0) == INF

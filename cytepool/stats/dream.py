@@ -131,8 +131,8 @@ from cytepool.stats._mixed_model_designs import (
     maximum_likelihood,
     mixed_design,
 )
+from cytepool.stats._moderation import LOG_TAIL_BELOW, standardized_f_statistics
 from cytepool.stats.distributions import (
-    f_isf,
     f_sf,
     norm_isf,
     norm_logsf,
@@ -151,10 +151,6 @@ __all__ = [
 ]
 
 FloatArray = npt.NDArray[np.float64]
-
-# topTable floors the p-values at this value to compute z.std (found by probing);
-# below it, the z-statistics here come from the logarithm of the tail probability.
-_SMALLEST_P_VALUE = 1e-300
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -216,6 +212,8 @@ class ModeratedFixedEffectTests:
             and infinite degrees of freedom with the same p-value (``topTable``'s
             ``F.std``, which takes the number of coefficients where it differs from
             their rank), so that tests on different degrees of freedom compare.
+            Below p-values of 1e-300 it comes from the log of the tail probability,
+            so it stays finite where the p-value underflows to zero.
     """
 
     tests: FixedEffectTests
@@ -475,9 +473,7 @@ def _moderated_tests(
     f_value, f_df1, f_df2 = _moderated_f(t, tests, parts, df_prior)
     with np.errstate(invalid="ignore"):
         f_p_value = np.asarray(f_sf(f_value, float(f_df1), f_df2), dtype=np.float64)
-        standardized = np.asarray(
-            f_isf(f_p_value, float(f_df1), np.inf), dtype=np.float64
-        )
+    standardized = standardized_f_statistics(f_value, f_df1, f_df2, f_p_value)
     return ModeratedFixedEffectTests(
         tests=tests,
         residual_variance_at_mean_weight=_frozen(variance),
@@ -594,7 +590,7 @@ def _signed_z(t: FloatArray, df: FloatArray, p_value: FloatArray) -> FloatArray:
     """
     with np.errstate(invalid="ignore", divide="ignore"):
         z = np.asarray(norm_isf(p_value / 2.0), dtype=np.float64)
-        tiny = p_value < _SMALLEST_P_VALUE
+        tiny = p_value < LOG_TAIL_BELOW
     if tiny.any():
         log_tail = np.asarray(t_logsf(np.abs(t[tiny]), df[tiny]), dtype=np.float64)
         z[tiny] = [_normal_upper_quantile_of_log(value) for value in log_tail]

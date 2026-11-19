@@ -63,7 +63,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cytepool._jit import jit
-from cytepool._linear_algebra import column_space, correlation_matrix
+from cytepool._linear_algebra import column_space
 from cytepool._masked_arrays import real_array, unmasked_array
 from cytepool._messages import PACKAGE_DIRECTORY, value_range
 from cytepool._options import checked_flag, real_number
@@ -74,6 +74,7 @@ from cytepool.stats._moderation import (
     LIKELIHOOD_MIN_DF,
     coefficient_prior_variance,
     log_odds,
+    moderated_f_tests,
     posterior_variances,
 )
 from cytepool.stats._optimize import brent_minimum
@@ -139,9 +140,6 @@ _TREND_ITERATIONS = 3
 # (Phipson et al. 2016, section 10.5; the count was found by probing).
 _OUTLIER_ITERATIONS = 2
 _QUADRATURE_NODES, _QUADRATURE_WEIGHTS = np.polynomial.legendre.leggauss(128)
-# Eigenvalues of the coefficient correlation matrix at or below this fraction of the
-# largest do not count towards the rank of the F-test (found by probing).
-_F_RANK_TOLERANCE = 1e-8
 _EPS = float(np.finfo(np.float64).eps)
 # The likelihood estimator (limma's fitFDistUnequalDF1), all found by probing limma
 # 3.62.1: variances on fewer degrees of freedom than LIKELIHOOD_MIN_DF take no part in
@@ -818,11 +816,13 @@ def moderated_statistics(
         with np.errstate(divide="ignore"):
             v0[failed] = np.reciprocal(prior_variance[0])
     lods = log_odds(t, fit.stdev_unscaled, df_total, infinite, v0, p)
-    f_value, f_df1 = _f_statistics(t, fit, exact)
-    # limma caps the df of the t-tests at the total residual df, but not those of
-    # the F-tests (found by probing).
-    f_df2 = df_prior + fit.df_residual
-    f_p_value = _as_array(f_sf(f_value, float(f_df1), f_df2))
+    f_value, f_df1, _, f_p_value = moderated_f_tests(
+        t,
+        fit.cov_coefficients,
+        fit.cov_coefficients_per_feature if exact else None,
+        df_prior,
+        fit.df_residual,
+    )
     return ModeratedFit(
         fit=fit,
         prior_variance=_frozen(squeezed.prior_variance),
@@ -1684,41 +1684,6 @@ def _moderate(
     df_prior = np.broadcast_to(squeezed.df_prior, df.shape)
     df_total = np.minimum(df + df_prior, float(df.sum()))
     return squeezed, df_total, estimator
-
-
-def _f_statistics(
-    t: FloatArray, fit: LinearModelFit, exact: bool
-) -> tuple[FloatArray, int]:
-    """Moderated F-statistics and their numerator degrees of freedom."""
-    n_features, k = t.shape
-    correlation = correlation_matrix(fit.cov_coefficients, unit_diagonal=True)
-    eigenvalues, eigenvectors = np.linalg.eigh(correlation)
-    keep = eigenvalues > _F_RANK_TOLERANCE * eigenvalues.max()
-    rank = int(keep.sum())
-    per_feature = fit.cov_coefficients_per_feature
-    if not exact or per_feature is None:
-        with np.errstate(invalid="ignore"):
-            q = (t @ eigenvectors[:, keep]) / np.sqrt(eigenvalues[keep])
-            f_value: FloatArray = np.sum(q * q, axis=1) / rank
-        return f_value, rank
-    f_value = np.full(n_features, np.nan)
-    complete = np.isfinite(t).all(axis=1)
-    if complete.any():
-        covariances = per_feature[complete]
-        scale = np.sqrt(np.diagonal(covariances, axis1=1, axis2=2))
-        with np.errstate(invalid="ignore", divide="ignore"):
-            correlations = covariances / (
-                scale[:, :, np.newaxis] * scale[:, np.newaxis, :]
-            )
-        values, vectors = np.linalg.eigh(correlations)
-        # The rank largest eigenpairs; eigh sorts eigenvalues in increasing order.
-        values, vectors = values[:, k - rank :], vectors[:, :, k - rank :]
-        q = np.einsum("gk,gkr->gr", t[complete], vectors)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            statistic = np.sum(q * q / values, axis=1) / rank
-        degenerate = values[:, 0] <= _F_RANK_TOLERANCE * values[:, -1]
-        f_value[complete] = np.where(degenerate, np.nan, statistic)
-    return f_value, rank
 
 
 # ---------------------------------------------------------------------------------------
