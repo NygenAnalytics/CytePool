@@ -36,7 +36,7 @@ def test_each_features_own_correlation_gives_its_f_statistic() -> None:
     np.testing.assert_allclose(
         p_value[[0, 2]], stats.f.sf(f_value[[0, 2]], 2, 10), rtol=1e-12
     )
-    # One correlation for every feature: feature 0's F is then t't / 2.
+    # Without the features' own covariances, the identity serves all three: t't / 2.
     shared, *_ = moderated_f_tests(t, np.eye(2), None, 4.0, np.full(3, 6.0))
     np.testing.assert_allclose(shared, np.sum(t * t, axis=1) / 2, rtol=1e-13)
 
