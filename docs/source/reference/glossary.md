@@ -78,6 +78,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **LOWESS span.** The share of the genes that each local fit of a LOWESS trend uses, which voom chooses from the number of genes. [The span](../statistics/limma_voom.md#voom-span)
 
+**Moderated F-statistic.** A test that several coefficients or contrasts of a gene are all zero at once, from their moderated t-statistics and the correlation of their estimates, on the number of independent contrasts and the gene's residual plus prior degrees of freedom. [Moderated F-statistics](../statistics/empirical_bayes.md#moderated-f-statistics)
+
 **Moderated t-statistic.** A coefficient or contrast divided by a standard error that uses the gene's moderated variance, tested on the gene's residual degrees of freedom plus the prior's. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
 
 **Multidimensional scaling (MDS) plot.** limma's plot of the samples, placed so that their distances approximate the leading log2 fold changes between them. [Samples at a glance](../statistics/normalization_and_filtering.md#samples-at-a-glance)

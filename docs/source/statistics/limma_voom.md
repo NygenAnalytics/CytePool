@@ -15,7 +15,7 @@ Each cell type is fitted on its own, with its own samples, genes, normalization 
 2. **Genes.** edgeR's `filterByExpr`, given that design matrix, keeps the genes with enough counts, and the library sizes become the totals over the genes kept ([Filtering by expression](#filtering-by-expression)).
 3. **Normalization.** TMM factors scale the library sizes ([Normalization factors and size factors](#normalization-and-size-factors)).
 4. **voom.** voom turns the counts into log-CPM values with a precision weight for each value ([below](#voom)), and a weighted linear model is fitted to every gene ([Designs, linear models and contrasts](linear_models.md)).
-5. **Tests.** Each contrast is estimated from the fit ([Contrasts](#contrasts)), each gene's residual variance is moderated by empirical Bayes ([Empirical Bayes moderation](empirical_bayes.md)), and the p-values of each contrast are adjusted by Benjamini and Hochberg's method over the genes of the cell type ([Multiple testing](#adjusting-across-cell-types)).
+5. **Tests.** Each contrast is estimated from the fit ([Contrasts](#contrasts)), each gene's residual variance is moderated by empirical Bayes ([Empirical Bayes moderation](empirical_bayes.md)), sets of contrasts are tested together where asked ([F-tests of several contrasts](#limma-f-tests)), and the p-values of each contrast and F-test are adjusted by Benjamini and Hochberg's method over the genes of the cell type ([Multiple testing](#adjusting-across-cell-types)).
 
 In R these are `filterByExpr` and `calcNormFactors` of edgeR, then `voom`, `lmFit`, `contrasts.fit`, `eBayes` and `topTable` of limma, and the results agree with theirs ([Checks and further reading](#limma-voom-checks)).
 
@@ -78,6 +78,18 @@ where the log variance factors $u = Z\gamma$ are common to all genes and sum to 
 
 In a design that pairs two samples per donor, such as `~ donor + condition`, the two samples of a donor have equal and opposite residuals (up to voom's precision weights), so an outlying sample pulls its partner's weight down with it: limma-trend gives both samples the same weight, and limma-voom gives them similar ones.
 
+(limma-f-tests)=
+## F-tests of several contrasts
+
+Does a gene change at any dose, or anywhere along a curve of dose? A contrast asks about one difference, while a dose factor or a spline of dose has several coefficients to test together. `f_tests` tests a set of contrasts at once by limma's moderated F-statistic ([Moderated F-statistics](empirical_bayes.md#moderated-f-statistics)), as limma's `topTable(coef = ...)` does: `f_tests={"dose": ["dose_s1", "dose_s2", "dose_s3"]}` names an F-test and its contrasts, among those tested. Each cell type runs the F-tests whose contrasts its samples can all estimate, and the result lists the others with the reason, as it does for contrasts. An F-test's table holds each contrast's log fold change, the F-statistic, its denominator degrees of freedom (`df`), p-values adjusted within the cell type, and across cell types with `adjust_across_groups=True`, and the F-statistic on infinite denominator degrees of freedom with the same p-value, which puts tests on different degrees of freedom on one scale; {api}`DifferentialExpressionResult` lists the columns.
+
+Two designs answer the dose question:
+
+- **Every dose against the vehicle.** With the dose as a factor whose reference level is the vehicle, the contrasts are the dose columns, and their F-test asks whether a gene's mean differs from the vehicle's at any dose. A contrast that combines others, such as one dose against another, does not change the test: the numerator degrees of freedom count the linearly independent contrasts.
+- **A natural spline of dose.** The columns of {api}`natural_spline_basis`, computed from the doses of every sample and added to the sample table, enter the design as covariates, `~ dose_s1 + dose_s2 + dose_s3`, and their F-test asks whether expression changes anywhere along a smooth curve of dose, as the limma User's Guide tests a spline of time (section 9.6.2). The curve is smooth in the values given, so log doses give a curve in log dose; the knots lie at quantiles of those values, and a spline of `df` columns needs at least `df + 1` distinct doses, the vehicle included.
+
+An F-test reads the cell type's moderated fit, so it needs no second fit. Its denominator degrees of freedom are each gene's residual plus prior degrees of freedom, as limma's `eBayes` gives them. With limma-trend the prior degrees of freedom are often infinite, and the F-statistic is then referred to a chi-squared distribution on the numerator degrees of freedom, divided by them. Under voom's weights the default F-statistic uses each gene's own correlation of the contrasts, which makes it exact, and `contrast_standard_errors="limma"` gives limma's ([Moderated F-statistics](empirical_bayes.md#moderated-f-statistics)).
+
 (limma-voom-defaults)=
 ## Defaults and choices
 
@@ -88,7 +100,8 @@ The defaults follow limma's workflow for RNA-seq, with two additions: samples wi
 - **The span**, of {api}`limma_voom`: chosen in each cell type by default ([The span](#voom-span)); `span=0.5` reproduces limma's voom before limma 3.66.
 - **Sample weights.** `quality_weights=True` estimates a weight for each sample from the data, and a mapping changes the settings of the estimate, such as `{"method": "reml"}`; `prior_weights="n_cells"` takes the weights from the numbers of cells. The two are alternatives: limma's `voomWithQualityWeights` takes no prior weights, and edgeR's `voomLmFit` refuses prior weights together with estimated sample weights, as {api}`limma_voom` and {api}`limma_trend` do.
 - **Hypervariable genes.** `robust=True` estimates the prior robustly, so that genes with outlying variances do not distort it [@phipson2016] ([Estimating the prior](#estimating-the-prior)).
-- **Contrasts of several coefficients.** Their standard errors are exact by default; in {api}`limma_voom`, `contrast_standard_errors="limma"` reproduces limma's approximation ([Contrasts](#contrasts)). In limma-trend the two agree.
+- **Contrasts of several coefficients.** Their standard errors are exact by default; in {api}`limma_voom`, `contrast_standard_errors="limma"` reproduces limma's approximation, for the standard errors and for the correlations of the F-tests ([Contrasts](#contrasts)). In limma-trend the two agree.
+- **Several contrasts at once.** `f_tests` names sets of contrasts to test together, by F-tests that are exact under voom's weights by default ([F-tests of several contrasts](#limma-f-tests)).
 - **Many cell types.** p-values are adjusted within each cell type and contrast; `adjust_across_groups=True` adds a column adjusted over every cell type ([Multiple testing](#adjusting-across-cell-types)).
 
 (limma-voom-limits)=
@@ -98,7 +111,8 @@ The defaults follow limma's workflow for RNA-seq, with two additions: samples wi
 - **No voomLmFit.** limma's documentation now recommends edgeR's `voomLmFit` over `voom`, in particular to estimate a correlation within blocks or for sparse counts with many zeros (voom's help page); `voomLmFit` is not implemented.
 - **Normalization.** Normalization factors are TMM factors or none; voom's microarray-style normalization of log-CPM values (`normalize.method`) is not offered.
 - **Groups of samples.** {api}`limma_voom` and {api}`limma_trend` give each sample a weight of its own. limma's variance models for groups of samples (`var.group`, `var.design`) are offered by {api}`sample_quality_weights` and {api}`voom_with_quality_weights`, on one matrix.
-- **Rank-deficient cell types.** Every contrast that a cell type's samples can estimate is tested, where limma's `contrasts.fit` refuses some and changes the meaning of others ([Designs that cannot answer the question](#estimable-contrasts)).
+- **Rank-deficient cell types.** Every contrast that a cell type's samples can estimate is tested, and so is every F-test of such contrasts, where limma's `contrasts.fit` refuses some contrasts and changes the meaning of others ([Designs that cannot answer the question](#estimable-contrasts)) and limma's `eBayes` computes no F-statistic once the design has lost a column (found by probing).
+- **F-tests.** Under voom's weights the default F-statistic is exact, where limma's uses the correlation of the design without weights ([Moderated F-statistics](empirical_bayes.md#moderated-f-statistics)). Each gene's F-test takes its own denominator degrees of freedom, as `eBayes`'s `F.p.value` does; after a robust fit whose first gene has infinite prior degrees of freedom, limma's `topTable(coef = ...)` of some of a fit's columns refers every gene to infinite degrees of freedom instead (found by probing limma 3.62.1).
 - **Values without meaning are refused.** {api}`voom` raises an error where limma's voom returns values without meaning: for a sample whose library size is zero, or where the trend is not positive at a fitted value.
 - **Designs of full rank.** {api}`voom` needs a design of full column rank, where limma's drops the aliased columns; {api}`limma_voom` fits each cell type on the columns it keeps.
 - **Prior weights in voom's weights.** With prior weights, {api}`voom` returns the product of the trend's weights and the prior weights, the weights that a fit needs; limma's `voom` returns only the trend's weights, which its help page says modify the prior weights.
@@ -111,7 +125,7 @@ Each step is compared with limma 3.62.1 and edgeR 4.4.0, run as separate program
 
 - voom and its span: exact (1e-10), and close (1e-6) on rarefied counts ([Validation](#validation-voom)).
 - Sample quality weights, alone and with voom: close (1e-6), the tier of iterative estimates ([Validation](#validation-sample-quality-weights)).
-- {api}`limma_voom` and {api}`limma_trend` on simulated cubes, with rank-deficient cell types: exact, and close with robust moderation ([Validation](#validation-differential-expression)); with sample quality weights, prior weights, `min_counts` and adjustment across cell types: exact, and close with sample quality weights ([Validation](#validation-differential-expression-options)).
+- {api}`limma_voom` and {api}`limma_trend` on simulated cubes, with rank-deficient cell types: exact, and close with robust moderation, also for F-tests against limma's `topTable(coef = ...)` and `classifyTestsF`, for the exact default against nested weighted least-squares fits, and for a natural spline against R's `ns()` ([Validation](#validation-differential-expression)); with sample quality weights, prior weights, `min_counts` and adjustment across cell types: exact, and close with sample quality weights ([Validation](#validation-differential-expression-options)).
 - {api}`limma_voom` on the published data of @kang2018, from the cells to the tables of 8 cell types: exact ([Validation](#validation-interferon-stimulated-pbmcs)).
 
 Further reading:

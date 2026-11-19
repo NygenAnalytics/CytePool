@@ -22,7 +22,7 @@ Use the table below to pick a starting function, see its R or Python equivalent,
 
 ## Which genes change in each cell type?
 
-Use {api}`limma_voom` to test contrasts across every cell type in a cube using voom precision weights [@law2014]. Switch to:
+Use {api}`limma_voom` to test contrasts across every cell type in a cube using voom precision weights [@law2014]. To test several contrasts at once, such as every dose against the vehicle or the columns of a spline of dose, name them in `f_tests` ([F-tests of several contrasts](limma_voom.md#limma-f-tests)). Switch to:
 
 - {api}`limma_trend` when library sizes vary by less than about threefold;
 - {api}`dream_voom` when donors contribute multiple samples ([below](#several-samples-of-each-donor)).
@@ -34,7 +34,7 @@ See [limma-voom and limma-trend](limma_voom.md) for the methods, and [Genes that
 Pass a bulk count matrix to {api}`from_bulk` and run {api}`limma_voom`. Switch to:
 
 - edgeR's quasi-likelihood F-tests ({api}`fit_quasi_likelihood` and {api}`quasi_likelihood_f_test`) or DESeq2 ({api}`fit_deseq2` and {api}`deseq2_wald_test`) to fit negative binomial models directly to counts [@chen2025; @love2014];
-- {api}`quasi_likelihood_f_test` or {api}`deseq2_likelihood_ratio_test` to test multiple coefficients at once (such as all levels of a factor or time course);
+- `f_tests` of {api}`limma_voom`, {api}`quasi_likelihood_f_test` or {api}`deseq2_likelihood_ratio_test` to test multiple coefficients at once (such as all levels of a factor or time course);
 - the step-by-step limma functions ({api}`voom`, {api}`fit_linear_model`, {api}`contrasts_fit`, {api}`moderated_statistics`), or {api}`treat` to test against a minimum log-fold-change threshold [@mccarthy2009].
 
 edgeR and DESeq2 operate on a single count matrix (or one cell type extracted from a cube). See [edgeR and DESeq2](count_models.md) and [Bulk RNA-seq](../guides/bulk_rna_seq.ipynb).
@@ -102,6 +102,7 @@ See [Replication](replication.md) and [Replication across studies](../guides/rep
 
 Each chapter's *Limits and differences* section documents how CytePool differs from the reference packages:
 
+- **Dose response:** tests over ordered doses, such as Dunnett's and Williams' tests and MCP-Mod (as in multcomp and DoseFinding); fitted dose-response curves and EC50s (as in drc); and benchmark doses with the NTP and ETAP rule sets (as in BMDS and BMDExpress). Dose-group and spline F-tests run in every cell type through `f_tests` ([F-tests of several contrasts](limma_voom.md#limma-f-tests)).
 - **Differential expression:** edgeR and DESeq2 run on one matrix at a time rather than all cell types of a cube; edgeR's `voomLmFit`, `glmLRT` and gene-wise `estimateDisp`; DESeq2's `lfcShrink`, outlier replacement, `glmGamPoi` and local dispersion trends, and gene-specific normalization factors; limma's `duplicateCorrelation` and block correlations in voom.
 - **Mixed models and composition:** random slopes `(tissue + 0 | donor)`, generalized linear mixed models, sample quality weights in dream, and bootstrap intervals (`varPartConfInf`); precision-weighted mixed models of composition (crumblr, @hoffman2026b) and Bayesian count models (scCODA, @buttner2021; sccomp, @mangiola2023).
 - **Gene sets and activities:** gene-set tests on {api}`dream_voom` fits or with block correlations; gene length or abundance trends in over-representation (`kegga`, `goana`); gene weights in fry and exact z-scores in roast; decoupler's VIPER (whose reference implementation is licensed for academic use only).
