@@ -101,7 +101,7 @@ By default $\pi_0$ is estimated at $\lambda = 0.5$, which suits the few dozen p-
 (replication-checks)=
 ## Checks and further reading
 
-- Combined p-values and partial conjunctions are compared with scipy 1.18.1, metap 1.1 and 400-digit arithmetic, the proportion of true nulls with qvalue 2.38.0, and the replication tables with metap, qvalue and metafor 5.0.1: exact (1e-10; close, 1e-6, for REML) ([Validation](#validation-combined-p-values-and-replication)).
+- Combined p-values and partial conjunctions are compared with scipy 1.18.1, metap 1.1 and 400-digit arithmetic, the proportion of true nulls with qvalue 2.38.0, and the replication tables with metap, qvalue and metafor 5.0-1: exact (1e-10; close, 1e-6, for REML) ([Validation](#validation-combined-p-values-and-replication)).
 - SumRank and held-out prediction are compared with the authors' code (Apache-2.0, commit 46392f66), with 200-digit arithmetic for the Irwin-Hall distribution, and with scipy 1.18.1 and scikit-learn 1.9.1 for the scores and AUCs: exact (1e-12), and calibrated for p-values from random permutations ([Validation](#validation-sumrank)).
 
 Further reading:

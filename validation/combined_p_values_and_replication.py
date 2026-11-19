@@ -20,7 +20,7 @@ References, each run as a separate program on files in a temporary directory:
   ``pi0.method = "bootstrap"``, one lambda and three other grids, on five sets of
   p-values (one rounded to 0.01, so that p-values equal values of lambda), and its
   behaviour where CytePool differs.
-- metafor 5.0.1: ``rma.uni`` for the heterogeneity of every gene, REML (with
+- metafor 5.0-1: ``rma.uni`` for the heterogeneity of every gene, REML (with
   ``control = list(threshold = 1e-13, maxiter = 10000)``) or DerSimonian-Laird.
 
 Cases (seed ``SEED``): p-values of 2, 5 and 20 studies for 300, 400 and 200 features,

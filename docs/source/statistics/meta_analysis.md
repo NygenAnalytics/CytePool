@@ -62,7 +62,7 @@ Each study's standard errors are those of its moderated t-statistics, from limma
 (meta-analysis-checks)=
 ## Checks and further reading
 
-{api}`fit_meta_analysis` is compared with metafor 5.0.1's `rma.uni`, feature by feature, in ten cases from 2 to 30 studies, and {api}`meta_analysis` with metafor and R's `p.adjust` on the limma-voom tables of three simulated studies: exact (1e-10) for the fixed effect and DerSimonian-Laird, and close (1e-6) for REML and Paule-Mandel, run in metafor to convergence ([Validation](#validation-meta-analysis)).
+{api}`fit_meta_analysis` is compared with metafor 5.0-1's `rma.uni`, feature by feature, in ten cases from 2 to 30 studies, and {api}`meta_analysis` with metafor and R's `p.adjust` on the limma-voom tables of three simulated studies: exact (1e-10) for the fixed effect and DerSimonian-Laird, and close (1e-6) for REML and Paule-Mandel, run in metafor to convergence ([Validation](#validation-meta-analysis)).
 
 Further reading:
 

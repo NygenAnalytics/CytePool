@@ -79,7 +79,7 @@ Most problems of a design can be found before anything is fitted. {api}`Design.c
 
 Designs and fits are compared with R and limma, run as separate programs on the same data:
 
-- Model matrices, R's terms, the rank and aliased columns of designs, leverages and the estimability of contrasts: R 4.4.3, exact (identical, and 1e-10; 1e-8 absolute for the leverages of badly scaled designs); named contrasts: limma 3.62.1; random-effect terms: lme4 2.0.6 ([Validation](#validation-design)).
+- Model matrices, R's terms, the rank and aliased columns of designs, leverages and the estimability of contrasts: R 4.4.3, exact (identical, and 1e-10; 1e-8 absolute for the leverages of badly scaled designs); named contrasts: limma 3.62.1; random-effect terms: lme4 2.0-6 ([Validation](#validation-design)).
 - {api}`fit_linear_model` and {api}`contrasts_fit`: `lmFit` and `contrasts.fit` of limma 3.62.1, exact (1e-10) ([Validation](#validation-linear-models)).
 
 Further reading:
