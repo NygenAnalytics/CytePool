@@ -131,8 +131,8 @@ from cytepool.stats._mixed_model_designs import (
     maximum_likelihood,
     mixed_design,
 )
+from cytepool.stats._moderation import standardized_f_statistics
 from cytepool.stats.distributions import (
-    f_isf,
     f_sf,
     norm_isf,
     norm_logsf,
@@ -216,6 +216,8 @@ class ModeratedFixedEffectTests:
             and infinite degrees of freedom with the same p-value (``topTable``'s
             ``F.std``, which takes the number of coefficients where it differs from
             their rank), so that tests on different degrees of freedom compare.
+            Below p-values of 1e-300 it comes from the log of the tail probability,
+            so it stays finite where the p-value underflows to zero.
     """
 
     tests: FixedEffectTests
@@ -475,9 +477,7 @@ def _moderated_tests(
     f_value, f_df1, f_df2 = _moderated_f(t, tests, parts, df_prior)
     with np.errstate(invalid="ignore"):
         f_p_value = np.asarray(f_sf(f_value, float(f_df1), f_df2), dtype=np.float64)
-        standardized = np.asarray(
-            f_isf(f_p_value, float(f_df1), np.inf), dtype=np.float64
-        )
+    standardized = standardized_f_statistics(f_value, f_df1, f_df2, f_p_value)
     return ModeratedFixedEffectTests(
         tests=tests,
         residual_variance_at_mean_weight=_frozen(variance),
