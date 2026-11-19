@@ -366,8 +366,7 @@ def voom_span(result, group):
 def run_limma(cases):
     """Run the R workflow on each case, {label: (cube, design, result)}, with the
     min_cells and the voom span of every group of the CytePool result; return R's
-    outputs and seconds per case, the versions, and R's peak resident memory in
-    MiB."""
+    outputs and seconds per case, and the versions."""
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         for k, (cube, design, result) in enumerate(cases.values()):
@@ -403,7 +402,6 @@ def run_limma(cases):
         sys.stdout.flush()  # R's lines after this program's
         command = [rscript, "--vanilla", str(root / "workflow.R"), str(root)]
         subprocess.run(command, check=True)
-        peak = peak_memory(resource.RUSAGE_CHILDREN)  # R is the only child process
         outputs = {}
         for k, (label, (cube, *_)) in enumerate(cases.items()):
             directory, groups = root / f"case{k}", []
@@ -418,7 +416,7 @@ def run_limma(cases):
                 groups.append(read)
             outputs[label] = groups, float((directory / "seconds.txt").read_text())
         versions = (root / "versions.txt").read_text().split("\n")
-        return outputs, versions[:3], peak
+        return outputs, versions[:3]
 
 
 def difference(ours, reference, p_value=False):
@@ -591,12 +589,11 @@ def write_fixtures(case, limma):
     print(f"wrote limma.npz to {FIXTURE}")
 
 
-def peak_memory(who=resource.RUSAGE_SELF):
-    """The largest resident memory of this process, or with RUSAGE_CHILDREN of its
-    largest child process that has ended, in MiB; NaN off Linux."""
+def peak_memory():
+    """The largest resident memory of this process so far, in MiB; NaN off Linux."""
     if sys.platform != "linux":
         return np.nan
-    return resource.getrusage(who).ru_maxrss / 1024
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
 
 def allocated(function, *arguments):
@@ -679,7 +676,7 @@ def main():
     clock = time.perf_counter()
     splits, calls = negative_control(cube, result)
     seconds["limma_voom, negative control"] = time.perf_counter() - clock
-    limma, versions, r_peak = run_limma(cases)
+    limma, versions = run_limma(cases)
     seconds["R, limma workflow, 8 cell types"] = limma[""][1]
 
     print("Reference: " + ", ".join(versions))
@@ -715,7 +712,7 @@ def main():
     print(
         f"Peak memory, MiB: this process {loading:,.0f} while reading and pooling the "
         f"cells; limma_voom on the 8 cell types {analysis:,.0f} more, as tracemalloc "
-        f"traced it; R {r_peak:,.0f}"
+        "traced it"
     )
     if arguments.write_fixtures and failures:
         print("not writing fixtures: some checks failed")
