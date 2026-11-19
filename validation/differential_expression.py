@@ -56,7 +56,9 @@ and for p-values by max(p, 1e-300) max(1, |log p|). Tiers: exact (1e-10); close
 with ``contrast_standard_errors="limma"`` against ``topTable``, except where the
 contrasts are single coefficients, for which the default exact standard errors are
 limma's; with the default, its F-tests use each gene's own correlation of the
-contrasts, which limma does not, and are compared with the nested fits.
+contrasts, which limma does not, and are compared with the nested fits, and with
+limma's F-tests for information, one row per F-test: the largest relative difference of
+F, and the calls at FDR 5% that differ, of the genes that either program calls.
 
 Deliberate differences, in the NK cells: limma's ``contrasts.fit`` refuses
 ``D2_vs_D6`` (``donorD2 - donorD6``), which is estimable but weighs the aliased
@@ -121,6 +123,7 @@ F_COLUMNS = {
 DOSES = (0.0, 0.1, 0.3, 1.0, 3.0)
 SPLINE = ["dose_s1", "dose_s2", "dose_s3"]
 LIMMA = "contrast_standard_errors"
+PASSED = {True: "pass", False: "FAIL"}
 
 R_SCRIPT = r"""
 suppressPackageStartupMessages({library(limma); library(edgeR); library(splines)})
@@ -544,8 +547,8 @@ def dose_cases(rng):
 
 
 def fixture_cases(rng, spline_rng):
-    """The small study whose cells the tests pool, its three analyses, and the dose
-    series of the spline fixture with its two."""
+    """The small study whose cells the tests pool and its three analyses, and the dose
+    series that the spline tests rebuild and its two analyses."""
     cells = {"T": rng.integers(15, 30, 8), "NK": rng.integers(12, 25, 8)}
     cells["T"][5] = 4  # D3_stim
     cells["NK"][[0, 1]] = [3, 5]  # both samples of D1
@@ -571,6 +574,11 @@ def fixture_cases(rng, spline_rng):
         150,
         simulate_dose_cells,
     )
+    series = {
+        "counts": np.asarray(spline_cube.layer("counts", "hepatocyte")),
+        "sample_id": np.asarray(spline_cube.samples["sample_id"], dtype=str),
+        "dose": np.asarray(spline_cube.samples["dose"], dtype=float),
+    }
     spline = spline_design(spline_cube)
     on_ns = {
         "f_tests": {"dose": SPLINE},
@@ -578,10 +586,12 @@ def fixture_cases(rng, spline_rng):
         "r_contrasts": {},
         "r_f_tests": {"dose": ("coefficients", [2, 3, 4])},
     }
-    return inputs, {
+    paired = {
         "fixture voom": Case(cube, design, limma_voom, limma, **tests),
         "fixture robust": Case(cube, design, limma_voom, robust, **tests),
         "fixture trend": Case(cube, design, limma_trend, unfiltered, **tests),
+    }
+    splines = {
         "fixture dose spline, limma-trend": Case(
             spline_cube, spline, limma_trend, {}, **on_ns
         ),
@@ -589,6 +599,7 @@ def fixture_cases(rng, spline_rng):
             spline_cube, spline, limma_voom, {}, f_against_limma=False, **on_ns
         ),
     }
+    return inputs, paired, series, splines
 
 
 def run_limma(cases):
@@ -746,7 +757,6 @@ def compare(name, case, result, limma):
     """Rows of (check, reference, metric, value, tolerance, result) for one case."""
     cube, pairs = case.cube, case.pairs
     tolerance = case.tolerance
-    passed = {True: "pass", False: "FAIL"}
     rows = []
     for k, group in enumerate(cube.groups["group_id"]):
         theirs, record = limma[k], result.provenance["groups"][k]
@@ -759,7 +769,7 @@ def compare(name, case, result, limma):
             same = refused and np.array_equal(used, theirs["used"].astype(bool))
             first = errors[0].strip() if refused else "values"
             value = f"limma: {first}; CytePool: {record['status']}"
-            rows.append((label, "limma", "behaviour", value, "n/a", passed[same]))
+            rows.append((label, "limma", "behaviour", value, "n/a", PASSED[same]))
             continue
         tables = {
             c: t
@@ -799,7 +809,7 @@ def compare(name, case, result, limma):
                 f"{label}: samples, features, aliased columns, contrasts, span, df",
                 "limma",
             )
-            + ("mismatches", str(mismatches), "0", passed[mismatches == 0])
+            + ("mismatches", str(mismatches), "0", PASSED[mismatches == 0])
         )
         # limma-voom's exact standard errors are limma's for a contrast of one
         # coefficient; contrasts of several are compared where it runs with limma's.
@@ -815,7 +825,7 @@ def compare(name, case, result, limma):
             rows.append(
                 (f"{label}: {len(both)} contrast{'s' * (len(both) > 1)}", "topTable")
                 + ("max scaled difference", f"{value:.1e}", f"{tolerance:.0e}")
-                + (passed[value <= tolerance],)
+                + (PASSED[value <= tolerance],)
             )
         for (where, contrast), meant in pairs.items():
             if where == group:
@@ -829,7 +839,6 @@ def compare_f_tests(name, case, result, default, limma):
     """Rows for the F-tests of one case: against limma's, against the nested fits for
     limma-voom's default (``default``, the case run with exact standard errors), and
     the deliberate differences."""
-    passed = {True: "pass", False: "FAIL"}
     tolerance = case.tolerance
     # The programs test the same contrasts unless R fits a design of its own.
     estimates = case.r_formula is None
@@ -846,16 +855,16 @@ def compare_f_tests(name, case, result, default, limma):
         # The deliberate differences: F-tests that limma refuses and CytePool runs,
         # and, in the same group, those that limma runs from contrasts it misreads.
         paired = {f for (where, f) in case.f_pairs if where == group}
-        deliberate = paired | (
+        expected_differences = paired | (
             {f for f in case.f_tests if f in record["not_estimable"]}
             if paired
             else set()
         )
-        mismatches = len((set(ours) ^ computed) - deliberate)
+        mismatches = len((set(ours) ^ computed) - expected_differences)
         mismatches += sum(record["f_test_df1"][f] != theirs["df1"][f] for f in both)
         rows.append(
             (f"{label}: F-tests run, numerator df", "classifyTestsF", "mismatches")
-            + (str(mismatches), "0", passed[mismatches == 0])
+            + (str(mismatches), "0", PASSED[mismatches == 0])
         )
         if both and case.f_against_limma:
             value = max(
@@ -867,34 +876,41 @@ def compare_f_tests(name, case, result, default, limma):
             rows.append(
                 (f"{label}: F-tests {', '.join(both)}", "topTable, classifyTestsF")
                 + ("max scaled difference", f"{value:.1e}", f"{tolerance:.0e}")
-                + (passed[value <= tolerance],)
+                + (PASSED[value <= tolerance],)
             )
         elif both and estimates:
-            # The default against limma's F-statistics on the same columns, which take
-            # the correlation of the design without weights for every gene.
-            gap, changed, calls = 0.0, 0, 0
-            for f in both:
-                table, m = result.table(group, f), len(case.f_tests[f])
-                gap = max(gap, _relative(table["f_statistic"], r_tests[f][m + 1]))
-                ours_called = table["adjusted_p_value"] < 0.05
-                changed += int(np.sum(ours_called != (r_tests[f][m + 3] < 0.05)))
-                calls += len(table)
-            rows.append(
-                (f"{label}: F-tests {', '.join(both)} by default", "topTable")
-                + ("max rel. difference of F; calls at FDR 5% that differ",)
-                + (f"{gap:.2g}; {changed} of {calls}", "n/a", "information")
-            )
+            rows += [
+                information_row(label, f, case, result.table(group, f), r_tests[f])
+                for f in both
+            ]
         if case.function is limma_voom:
             rows.append(nested_row(label, case, default, group, theirs, tolerance))
         for where, f_name in case.f_pairs:
             if where == group:
-                rows += f_deliberate(label, group, f_name, case, result, theirs)
+                rows += f_deliberate(label, group, f_name, case, result, record, theirs)
     return rows
+
+
+def information_row(label, f_name, case, table, reference):
+    """The row of limma-voom's default F-test against limma's F-statistics on the same
+    columns, which take the correlation of the design without weights for every gene:
+    the largest relative difference of F, and the calls at FDR 5% that differ among
+    the genes that either program calls."""
+    m = len(case.f_tests[f_name])
+    gap = _relative(table["f_statistic"], reference[m + 1])
+    ours = np.asarray(table["adjusted_p_value"]) < 0.05
+    theirs = reference[m + 3] < 0.05
+    changed, calls = int(np.sum(ours != theirs)), int(np.sum(ours | theirs))
+    metric = (
+        "max rel. difference of F; calls at FDR 5% that differ, of the genes "
+        "either calls"
+    )
+    row = (f"{label}: F-test {f_name} by default", "topTable", metric)
+    return row + (f"{gap:.2g}; {changed} of {calls}", "n/a", "information")
 
 
 def nested_row(label, case, default, group, theirs, tolerance):
     """The row of limma-voom's default F-tests against the nested weighted fits."""
-    passed = {True: "pass", False: "FAIL"}
     tested = [f for f in case.f_tests if (group, f) in default.tables]
     value = np.inf
     if tested and all(not isinstance(theirs["nested"].get(f, ""), str) for f in tested):
@@ -914,7 +930,7 @@ def nested_row(label, case, default, group, theirs, tolerance):
     return (
         (f"{label}: F-tests {', '.join(tested)} by default: F, p", "lm.wfit, eBayes")
         + ("max scaled difference", f"{value:.1e}", f"{tolerance:.0e}")
-        + (passed[value <= tolerance],)
+        + (PASSED[value <= tolerance],)
     )
 
 
@@ -946,7 +962,7 @@ def deliberate(label, contrast, meant, tables, theirs, record, tolerance):
     return [
         (f"{label}: {contrast}, against limma's {meant}", "topTable")
         + ("max scaled difference", f"{value:.1e}", f"{tolerance:.0e}")
-        + ("pass" if value <= tolerance else "FAIL",),
+        + (PASSED[value <= tolerance],),
         (f"{label}: {contrast} (estimable, weighs an aliased column)", "limma")
         + ("behaviour", f"limma: {refusal}; CytePool: values", "n/a", outcome),
         (f"{label}: {meant} (not estimable without donor D1)", "limma", "behaviour")
@@ -955,14 +971,13 @@ def deliberate(label, contrast, meant, tables, theirs, record, tolerance):
     ]
 
 
-def f_deliberate(label, group, f_name, case, result, theirs):
+def f_deliberate(label, group, f_name, case, result, record, theirs):
     """The rows of a group where limma refuses an F-test that CytePool runs, compared
     with limma's F-test of the contrasts it reads in their place, and of each F-test
     that limma runs from contrasts CytePool finds not estimable."""
     tolerance = case.tolerance
     reading = f"{f_name} as limma reads it"
     refused, read = theirs["f_tests"].get(f_name), theirs["f_tests"].get(reading)
-    record = result.provenance["groups"][list(result.groups).index(group)]
     expected = (
         isinstance(refused, str)
         and "non-estimable" in refused
@@ -979,7 +994,7 @@ def f_deliberate(label, group, f_name, case, result, theirs):
     rows = [
         (f"{label}: F-test {f_name}, against limma's of {instead}", "classifyTestsF")
         + ("max scaled difference", f"{value:.1e}", f"{tolerance:.0e}")
-        + ("pass" if value <= tolerance else "FAIL",),
+        + (PASSED[value <= tolerance],),
         (f"{label}: F-test {f_name} (its contrasts are estimable)", "limma")
         + ("behaviour", f"limma: {refusal}; CytePool: values", "n/a")
         + ("deliberate difference" if expected else "FAIL",),
@@ -999,53 +1014,60 @@ def f_deliberate(label, group, f_name, case, result, theirs):
     return rows
 
 
-def write_fixtures(inputs, cases, limma, results):
-    """Write the cells, and limma's outputs for the fixture analyses: the F-tests that
-    CytePool runs, limma's F-tests in place of those it refuses, its refusals, and the
-    nested fits of limma-voom's F-tests."""
+def write_fixtures(inputs, paired, series, splines, limma, results):
+    """Write the cells and limma's outputs for the paired analyses to ``cells.npz``
+    and ``limma.npz``, and the dose series and limma's outputs for the spline analyses
+    to ``dose_spline.npz``."""
     FIXTURE_DIRECTORY.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(FIXTURE_DIRECTORY / "cells.npz", **inputs)
-    arrays, spline = {}, {}
-    for name, case in cases.items():
-        cube = case.cube
-        key_of = name.removeprefix("fixture ")
-        target = spline if "spline" in name else arrays
-        for k, group in enumerate(cube.groups["group_id"]):
-            out = limma[name][k]
-            key = key_of if "spline" in name else f"{key_of} {group}"
-            target[f"{key} used"] = out["used"].astype(bool)
-            target[f"{key} keep"] = out["keep"].astype(bool)
-            target[f"{key} aliased"] = np.array(out["not_estimable"], dtype=str)
-            target[f"{key} df_prior"] = out["df_prior"]
-            if "span" in out:
-                target[f"{key} span"] = out["span"]
-            for contrast, values in out["contrasts"].items():
-                if isinstance(values, str):
-                    target[f"{key} {contrast} error"] = np.array(values.strip())
-                else:
-                    target[f"{key} {contrast}"] = values
-            run = {f for g, f in results[name].tables if g == group}
-            readings = {
-                f"{f} as limma reads it" for where, f in case.f_pairs if where == group
-            }
-            for f_name, values in out["f_tests"].items():
-                if isinstance(values, str):
-                    if f_name in case.f_tests:
-                        target[f"{key} F {f_name} error"] = np.array(values.strip())
-                elif (f_name in run and case.f_against_limma) or f_name in readings:
-                    target[f"{key} F {f_name}"] = values
-                    target[f"{key} F {f_name} df1"] = np.array(out["df1"][f_name])
-            for f_name, values in out["nested"].items():
-                if f_name in run and not isinstance(values, str):
-                    target[f"{key} F {f_name} nested"] = values
-        if "spline" in name:
-            # The counts and doses of the one cell type, as the tests rebuild it.
-            spline["counts"] = np.asarray(cube.layer("counts", "hepatocyte"))
-            spline["sample_id"] = np.asarray(cube.samples["sample_id"], dtype=str)
-            spline["dose"] = np.asarray(cube.samples["dose"], dtype=float)
+    arrays = {}
+    for name, case in paired.items():
+        label = name.removeprefix("fixture ")
+        for k, group in enumerate(case.cube.groups["group_id"]):
+            out, result = limma[name][k], results[name]
+            arrays |= _fixture_arrays(f"{label} {group}", out, case, group, result)
     np.savez_compressed(FIXTURE_DIRECTORY / "limma.npz", **arrays)
-    np.savez_compressed(FIXTURE_DIRECTORY / "dose_spline.npz", **spline)
+    arrays = dict(series)
+    for name, case in splines.items():
+        # The dose series has one cell type, so its keys leave the group out.
+        group = case.cube.groups["group_id"][0]
+        label = name.removeprefix("fixture ")
+        arrays |= _fixture_arrays(label, limma[name][0], case, group, results[name])
+    np.savez_compressed(FIXTURE_DIRECTORY / "dose_spline.npz", **arrays)
     print(f"wrote cells.npz, limma.npz and dose_spline.npz to {FIXTURE_DIRECTORY}")
+
+
+def _fixture_arrays(prefix, out, case, group, result):
+    """limma's outputs for one group of a fixture analysis, under keys that start with
+    ``prefix``: what the group fitted, every contrast, the F-tests that CytePool runs,
+    limma's F-tests in place of those it refuses, its refusals, and the nested fits of
+    limma-voom's F-tests."""
+    arrays = {
+        f"{prefix} used": out["used"].astype(bool),
+        f"{prefix} keep": out["keep"].astype(bool),
+        f"{prefix} aliased": np.array(out["not_estimable"], dtype=str),
+        f"{prefix} df_prior": out["df_prior"],
+    }
+    if "span" in out:
+        arrays[f"{prefix} span"] = out["span"]
+    for contrast, values in out["contrasts"].items():
+        if isinstance(values, str):
+            arrays[f"{prefix} {contrast} error"] = np.array(values.strip())
+        else:
+            arrays[f"{prefix} {contrast}"] = values
+    run = {f for g, f in result.tables if g == group}
+    readings = {f"{f} as limma reads it" for where, f in case.f_pairs if where == group}
+    for f_name, values in out["f_tests"].items():
+        if isinstance(values, str):
+            if f_name in case.f_tests:
+                arrays[f"{prefix} F {f_name} error"] = np.array(values.strip())
+        elif (f_name in run and case.f_against_limma) or f_name in readings:
+            arrays[f"{prefix} F {f_name}"] = values
+            arrays[f"{prefix} F {f_name} df1"] = np.array(out["df1"][f_name])
+    for f_name, values in out["nested"].items():
+        if f_name in run and not isinstance(values, str):
+            arrays[f"{prefix} F {f_name} nested"] = values
+    return arrays
 
 
 def main():
@@ -1055,11 +1077,11 @@ def main():
     )
     arguments = parser.parse_args()
     cases = make_cases(np.random.default_rng(20261025), np.random.default_rng(20261119))
-    inputs, fixtures = fixture_cases(
+    inputs, paired, series, splines = fixture_cases(
         np.random.default_rng(20261026), np.random.default_rng(20261120)
     )
     if arguments.write_fixtures:
-        cases |= fixtures
+        cases |= paired | splines
     limma, versions = run_limma(cases)
     print("Reference: " + ", ".join(versions))
     print(
@@ -1078,7 +1100,7 @@ def main():
             exact = {k: v for k, v in case.options.items() if k != LIMMA}
             default = (
                 case.function(case.cube, case.design, f_tests=case.f_tests, **exact)
-                if case.function is limma_voom
+                if case.options.get(LIMMA) == "limma"
                 else result
             )
             table += compare_f_tests(name, case, result, default, limma[name])
@@ -1091,7 +1113,7 @@ def main():
     if arguments.write_fixtures and failures:
         print("not writing fixtures: some checks failed")
     elif arguments.write_fixtures:
-        write_fixtures(inputs, fixtures, limma, results)
+        write_fixtures(inputs, paired, series, splines, limma, results)
     return 1 if failures else 0
 
 
