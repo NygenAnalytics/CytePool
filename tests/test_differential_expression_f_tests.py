@@ -1,10 +1,16 @@
 """Tests for the F-tests of limma_voom, limma_trend and dream_voom on a cube.
 
-The tests check what a wrong implementation would break: the exact F-statistic
-against nested weighted least-squares fits computed here, its invariance to how a set
-of contrasts is written, the rank of dependent contrasts, the F-test of one contrast
-against its t-test, the closed form of F(2, infinity), the adjustment across cell
-types against scipy's, and identical columns in the three methods.
+Reference values in ``tests/data/differential_expression`` come from limma 3.62.1 and
+edgeR 4.4.0, run on the pseudobulk counts of the cells in ``cells.npz`` and of a
+simulated dose series in ``dose_spline.npz``: ``topTable(coef = ...)`` and
+``classifyTestsF`` of each F-test's contrasts, the F-statistics of nested weighted
+least-squares fits with limma's posterior variances, and limma-trend on R's ``ns()``
+columns; ``validation/differential_expression.py`` writes both files. The other
+tests check what a wrong implementation would break: the exact F-statistic against
+nested fits computed here, its invariance to how a set of contrasts is written, the
+rank of dependent contrasts, the F-test of one contrast against its t-test, the
+closed form of F(2, infinity), the adjustment across cell types against scipy's, and
+identical columns in the three methods.
 """
 
 import pickle
@@ -16,8 +22,10 @@ import numpy as np
 import pytest
 from scipy import stats
 from test_differential_expression import (
+    CLOSE,
     EXACT,
     cells_cube,
+    fixture,
     paired_design,
     scaled_difference,
     simulated_cube,
@@ -27,12 +35,15 @@ from test_kenward_roger_and_f_tests import cube_and_design, cube_result
 from cytepool import (
     Design,
     DifferentialExpressionResult,
+    Table,
     dream_voom,
+    from_bulk,
     limma_trend,
     limma_voom,
 )
 from cytepool.stats._moderation import standardized_f_statistics
 from cytepool.stats.distributions import f_sf
+from cytepool.stats.smoothing import natural_spline_basis
 
 DATA = Path(__file__).parent / "data" / "differential_expression"
 ACROSS = "adjusted_p_value_across_groups"
@@ -65,6 +76,30 @@ METHODS = {
     "limma_voom": limma_voom,
     "limma_trend": limma_trend,
 }
+LIMMA_ERRORS = {"contrast_standard_errors": "limma"}
+# The analyses of the fixture, as the validation script ran them, with the tier of
+# each: limma's standard errors, so that limma-voom's F-tests are limma's; the robust
+# prior, which limma solves for only to a tolerance; and the robust trend, whose prior
+# df are infinite for most features and finite for some.
+ANALYSES = {
+    "voom": (limma_voom, LIMMA_ERRORS, EXACT),
+    "robust": (limma_voom, LIMMA_ERRORS | {"robust": True, "span": 0.5}, CLOSE),
+    "trend": (
+        limma_trend,
+        {"expression_filter": False, "normalization": None, "robust": True},
+        EXACT,
+    ),
+}
+# The fixture's F-tests over its three contrasts; without donor D1 the NK cells
+# cannot estimate D2_vs_D1, and limma refuses D2_vs_D4, which weighs the aliased
+# column donorD4.
+FIXTURE_F_TESTS = {
+    "condition_and_donor": ["stim_vs_ctrl", "D2_vs_D4"],
+    "donors": ["D2_vs_D1", "D2_vs_D4"],
+}
+# The rows of limma's F-test fixtures after the logFC of each contrast: topTable's
+# AveExpr, F, P.Value and adj.P.Val, and classifyTestsF's df2.
+F_ROWS = ("average_log2_cpm", "f_statistic", "p_value", "adjusted_p_value", "df")
 
 
 def design(**options: Any) -> Design:
@@ -100,6 +135,141 @@ def nested_f(result: DifferentialExpressionResult, group: str, members: list[str
     f_value = (residual[1] - residual[0]) / (rank * fit.moderated.posterior_variance)
     df2 = linear.df_residual + fit.moderated.df_prior
     return f_value, stats.f.sf(f_value, rank, df2)
+
+
+def assert_f_test_matches(
+    table: Table, reference: np.ndarray, members: list[str], tolerance: float
+) -> None:
+    """An F-test's table against limma's: the logFC of each contrast (when given),
+    then AveExpr, F, P.Value, adj.P.Val and df2, scaled as the validation scales
+    them; infinite df must be infinite in both."""
+    for i, member in enumerate(members):
+        found = scaled_difference(
+            table[f"log2_fold_change_{member}"], reference[i], False
+        )
+        assert found <= tolerance, (member, found)
+    rows = reference[len(reference) - len(F_ROWS) :]
+    for column, expected in zip(F_ROWS, rows, strict=True):
+        ours = np.asarray(table[column], dtype=float)
+        if column == "df":
+            np.testing.assert_array_equal(np.isinf(ours), np.isinf(expected))
+            ours, expected = ours[np.isfinite(ours)], expected[np.isfinite(expected)]
+            if not ours.size:
+                continue
+        found = scaled_difference(ours, expected, column.endswith("p_value"))
+        assert found <= tolerance, (column, found)
+
+
+# Against limma, from cells to F-tests.
+
+
+@pytest.mark.parametrize("analysis", ANALYSES)
+def test_f_tests_match_limma(analysis: str) -> None:
+    function, options, tolerance = ANALYSES[analysis]
+    cube = cells_cube()
+    result = function(
+        cube, paired_design(cube.samples), f_tests=FIXTURE_F_TESTS, **options
+    )
+    limma = fixture("limma")
+    t_cells = result.provenance["groups"][result.groups.index("T")]
+    for name, members in FIXTURE_F_TESTS.items():
+        reference = limma[f"{analysis} T F {name}"]
+        assert_f_test_matches(result.table("T", name), reference, members, tolerance)
+        assert t_cells["f_test_df1"][name] == int(limma[f"{analysis} T F {name} df1"])
+    if analysis == "trend":
+        # limma's df2 per feature: infinite where the robust prior df are, and
+        # finite for the outlying features, the case where each feature's own df2
+        # matter.
+        df2 = limma["trend T F condition_and_donor"][-1]
+        assert np.isinf(df2).sum() >= 10 and np.isfinite(df2).sum() >= 5
+
+
+@pytest.mark.parametrize("analysis", ANALYSES)
+def test_rank_deficient_f_tests_differ_from_limma_only_where_limma_is_wrong(
+    analysis: str,
+) -> None:
+    # In the NK cells limma refuses both F-tests, as each holds D2_vs_D4. Its
+    # F-test of stim_vs_ctrl and D2_vs_D1 tests what condition_and_donor tests, as
+    # donorD2 there means D2 against D4; CytePool runs condition_and_donor and not
+    # donors, whose D2_vs_D1 the NK cells cannot estimate.
+    function, options, tolerance = ANALYSES[analysis]
+    cube = cells_cube()
+    result = function(
+        cube, paired_design(cube.samples), f_tests=FIXTURE_F_TESTS, **options
+    )
+    limma = fixture("limma")
+    for name in FIXTURE_F_TESTS:
+        assert "non-estimable" in str(limma[f"{analysis} NK F {name} error"])
+    reading = limma[f"{analysis} NK F condition_and_donor as limma reads it"]
+    table = result.table("NK", "condition_and_donor")
+    assert_f_test_matches(
+        table, reading, FIXTURE_F_TESTS["condition_and_donor"], tolerance
+    )
+    nk = result.provenance["groups"][result.groups.index("NK")]
+    assert nk["f_test_df1"] == {"condition_and_donor": 2}
+    expected_df1 = limma[f"{analysis} NK F condition_and_donor as limma reads it df1"]
+    assert int(expected_df1) == 2
+    assert ("NK", "donors") not in result.tables
+
+
+@pytest.mark.parametrize("analysis", ["voom", "robust"])
+def test_the_default_matches_nested_weighted_fits_in_r(analysis: str) -> None:
+    """R's lm.wfit of the full and the restricted design, with voom's weights and
+    limma's posterior variances: the exact F-statistic, which limma does not give."""
+    _, options, tolerance = ANALYSES[analysis]
+    exact = {k: v for k, v in options.items() if k != "contrast_standard_errors"}
+    cube = cells_cube()
+    result = limma_voom(
+        cube, paired_design(cube.samples), f_tests=FIXTURE_F_TESTS, **exact
+    )
+    limma = fixture("limma")
+    compared = 0
+    for (group, name), table in result.tables.items():
+        if name not in FIXTURE_F_TESTS:
+            continue
+        f_value, p_value = limma[f"{analysis} {group} F {name} nested"]
+        assert scaled_difference(table["f_statistic"], f_value, False) <= tolerance
+        assert scaled_difference(table["p_value"], p_value, True) <= tolerance
+        compared += 1
+    assert compared == 3  # both F-tests in the T cells, one in the NK cells
+
+
+@cache
+def spline_study() -> tuple[Any, Design, dict[str, np.ndarray]]:
+    """The dose series of dose_spline.npz: one cell type, the vehicle and four doses
+    in duplicate, and the design of natural_spline_basis(dose, df=3)."""
+    data = fixture("dose_spline")
+    samples = {"sample_id": data["sample_id"], "dose": data["dose"]}
+    cube = from_bulk(data["counts"], samples=samples)
+    basis = natural_spline_basis(data["dose"], df=3)
+    names = ["dose_s1", "dose_s2", "dose_s3"]
+    columns = cube.samples.with_columns(dict(zip(names, basis.T, strict=True)))
+    return cube, Design(columns, "~ " + " + ".join(names), contrasts=names), data
+
+
+def test_a_spline_f_test_is_limmas_on_r_ns_columns() -> None:
+    """limma-trend's F-test of the columns of natural_spline_basis is limma's
+    topTable(coef = 2:4) on R's ~ ns(dose, df = 3): the two bases span the same
+    curves, so the F-test, unlike the coefficients, is the same."""
+    cube, design, data = spline_study()
+    names = list(design.contrasts.names)
+    result = limma_trend(cube, design, f_tests={"dose": names})
+    key = "dose spline, limma-trend"
+    tested = cube.features["feature_id"][data[f"{key} keep"]]
+    table = result.table("bulk", "dose")
+    assert table["feature_id"].tolist() == tested.tolist()
+    assert_f_test_matches(table, data[f"{key} F dose"], [], EXACT)
+    assert result.provenance["groups"][0]["f_test_df1"] == {"dose": 3}
+    assert int(data[f"{key} F dose df1"]) == 3
+
+
+def test_a_spline_f_test_by_default_matches_nested_fits_on_r_ns_columns() -> None:
+    cube, design, data = spline_study()
+    result = limma_voom(cube, design, f_tests={"dose": list(design.contrasts.names)})
+    table = result.table("bulk", "dose")
+    f_value, p_value = data["dose spline, limma-voom F dose nested"]
+    assert scaled_difference(table["f_statistic"], f_value, False) <= EXACT
+    assert scaled_difference(table["p_value"], p_value, True) <= EXACT
 
 
 # The exact F-statistic and limma's.
