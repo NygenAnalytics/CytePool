@@ -1390,6 +1390,22 @@ conda create -p $REF/r-dream --override-channels -c conda-forge -c bioconda r-ba
     r-ggplot2=4.0.3
 ```
 
+`dream.py`, `kenward_roger_and_f_tests.py` and `variance_partitioning.py` ran in this environment with dreamlet 1.4.1 (Bioconductor 3.20) added for the checks of dose response. The install kept every package above at its version (`--freeze-installed`), and dreamlet was built from its source, since conda has no build of it for R 4.4:
+
+```bash
+conda install -p $REF/r-dream --freeze-installed --override-channels -c conda-forge \
+    -c bioconda bioconductor-zenith r-mashr r-ashr bioconductor-delayedmatrixstats \
+    bioconductor-sparsematrixstats bioconductor-gseabase r-remacor r-broom r-tidyr r-gtools \
+    r-reshape2 r-ggrepel r-scattermore r-ggbeeswarm r-irlba r-metafor r-purrr r-dplyr \
+    r-data.table r-rlang r-rcpp r-rdpack r-mass bioconductor-singlecellexperiment \
+    bioconductor-summarizedexperiment bioconductor-edger bioconductor-beachmat \
+    bioconductor-s4arrays bioconductor-sparsearray bioconductor-delayedarray \
+    bioconductor-iranges bioconductor-s4vectors bioconductor-biocgenerics \
+    bioconductor-matrixgenerics gcc_linux-64 gxx_linux-64 gfortran_linux-64 make
+curl -fsSLO https://bioconductor.org/packages/3.20/bioc/src/contrib/dreamlet_1.4.1.tar.gz
+$REF/r-dream/bin/R CMD INSTALL dreamlet_1.4.1.tar.gz
+```
+
 fgsea 1.32.2 (Bioconductor 3.20), which `gsea.py` runs, and GSVA 2.0.0 (Bioconductor 3.20), which `pathway_scores.py` runs, have an R environment of their own, with R 4.4.3, limma 3.62.1, GSVA 2.0.0, BiocParallel 1.40.0, data.table 1.18.6.1 and jsonlite 2.0.0, from conda-forge and bioconda:
 
 ```bash
