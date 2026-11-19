@@ -456,5 +456,5 @@ def main(root: Path = ROOT, records: Path = RECORDS) -> int:
     return 1 if changes else 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - the command line, which runs main()
     sys.exit(main())

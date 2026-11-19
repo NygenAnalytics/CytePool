@@ -299,6 +299,27 @@ def test_init_files_are_neither_checked_nor_followed(tmp_path: Path) -> None:
     assert _checked(tmp_path, files) == ["cytepool/a.py", "validation/check.py"]
 
 
+def test_names_a_package_binds_by_import_def_or_class(tmp_path: Path) -> None:
+    package = {
+        "cytepool/__init__.py": (
+            "import numpy\nimport numpy as np\nimport cytepool.sub.x as x\n\n"
+            "def helper():\n    return 1\n\nclass Label:\n    pass\n"
+        ),
+        "cytepool/sub/__init__.py": "",
+        "cytepool/sub/x.py": "def go():\n    return 2\n",
+    }
+    script = "from cytepool import x\n\nx.go()\n"
+
+    assert _checked(tmp_path, {**package, "validation/check.py": script}) == [
+        "cytepool/sub/x.py",
+        "validation/check.py",
+    ]
+    # Names that the __init__.py defines itself, or binds from outside CytePool.
+    script = "from cytepool import Label, helper, np, numpy\n"
+    found = _checked(tmp_path, {**package, "validation/check.py": script})
+    assert found == ["validation/check.py"]
+
+
 def test_packages_imported_as_names_are_read_through_attributes(tmp_path: Path) -> None:
     package = {
         "cytepool/__init__.py": "from .a import f\n",
