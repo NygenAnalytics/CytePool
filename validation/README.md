@@ -28,6 +28,8 @@ PYTHONPATH=. python validation/<script>.py
 PYTHONPATH=. python validation/<script>.py --write-fixtures
 ```
 
+The Validation page gives the date of each script's last run, and `docs/validation_runs.toml` a digest of the code that run checked: the script and the modules of CytePool it imports. After running a script, update its section and its digest; `uv run python docs/changed_since_run.py` lists the scripts whose checked code has changed since their recorded run, with the digest of the code now.
+
 ## How reference packages are used
 
 Reference packages run as separate programs that produce outputs to compare against. Methods are implemented from their papers and documentation; the source code of a package under a copyleft licence is not read, and what is adapted from permissively licensed packages, such as fgsea and decoupler, `THIRD_PARTY_NOTICES.md` records.
