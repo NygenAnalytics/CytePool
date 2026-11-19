@@ -1,9 +1,10 @@
 """Check DoseAxis against R: positions, spline columns, designs, F-tests and curves.
 
-Three designs from fixed seeds (``designs``): a ladder like the TCDD liver series, the
+Four designs from fixed seeds (``designs``): a ladder like the TCDD liver series, the
 vehicle (4 samples) and eight doses from 0.01 to 30 ug/kg with 2 or 3 samples each;
 an in vitro half-log series, 6 vehicle wells and four doses from 0.1 to 3.16 uM in
-duplicate; and 24 distinct measured exposures with 6 zeros. Each design is read on
+duplicate; an unbalanced ladder, the vehicle (4) and 0.01, 0.1, 1 and 10 mg/kg with
+2, 10, 2 and 2 samples; and 24 distinct measured exposures with 6 zeros. Each design is read on
 four axes: the vehicle in a group of its own, on the log10 and on the linear scale;
 and the vehicle on the axis, on the log10 scale at an offset added to every dose and
 on the linear scale. On each axis, both forms of the spline, with knots by R's rule
@@ -211,6 +212,14 @@ def designs() -> dict[str, dict]:
             "metric": "nominal",
             "offset": 0.03,
             "given": [0.5],
+        },
+        # One dose with many replicates: R's rule places two knots at it.
+        "unbalanced_ladder": {
+            "doses": np.repeat([0.0, 0.01, 0.1, 1.0, 10.0], [4, 2, 10, 2, 2]),
+            "unit": "mg/kg",
+            "metric": "administered",
+            "offset": 0.003,
+            "given": [0.3],
         },
         "exposures": {
             "doses": np.r_[np.zeros(6), exposures],
@@ -543,7 +552,7 @@ ROWS = {
     "curves": "curves on the grid",
 }
 REFERENCES = {
-    "positions": "log10",
+    "positions": "log10(dose), dose",
     "treated": "dose > 0",
     "knots": "ns, rcspline.eval",
     "restricted cubic columns": "rcspline.eval",
