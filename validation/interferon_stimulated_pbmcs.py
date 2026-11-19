@@ -61,12 +61,14 @@ import itertools
 import json
 import os
 import platform
+import resource
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
+import tracemalloc
 import urllib.request
 from collections import Counter
 from pathlib import Path
@@ -77,8 +79,8 @@ import scipy
 import scipy.io
 import scipy.sparse
 
-import cytepool
 from cytepool import Design, from_cells, limma_voom
+from cytepool import __version__ as cytepool_version
 
 SOURCE = "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE96nnn/GSE96583/suppl/"
 FILES = {  # bytes and SHA-256, as downloaded on 2026-10-25
@@ -202,11 +204,8 @@ for (case in readLines(file.path(root, "cases.txt"))) {
     writeLines(out[[g]]$aliased, file.path(dir, sprintf("group%d_aliased.txt", g - 1)))
   }
 }
-# The peak resident memory of this process (Linux).
-status <- if (file.exists("/proc/self/status")) readLines("/proc/self/status")
 writeLines(c(paste("R", getRversion()), paste("limma", packageVersion("limma")),
-             paste("edgeR", packageVersion("edgeR")),
-             grep("^VmHWM", status, value = TRUE)), file.path(root, "versions.txt"))
+             paste("edgeR", packageVersion("edgeR"))), file.path(root, "versions.txt"))
 """
 
 
@@ -404,6 +403,7 @@ def run_limma(cases):
         sys.stdout.flush()  # R's lines after this program's
         command = [rscript, "--vanilla", str(root / "workflow.R"), str(root)]
         subprocess.run(command, check=True)
+        peak = peak_memory(resource.RUSAGE_CHILDREN)  # R is the only child process
         outputs = {}
         for k, (label, (cube, *_)) in enumerate(cases.items()):
             directory, groups = root / f"case{k}", []
@@ -418,7 +418,6 @@ def run_limma(cases):
                 groups.append(read)
             outputs[label] = groups, float((directory / "seconds.txt").read_text())
         versions = (root / "versions.txt").read_text().split("\n")
-        peak = int(versions[3].split()[1]) / 1024 if versions[3] else np.nan
         return outputs, versions[:3], peak
 
 
@@ -592,26 +591,23 @@ def write_fixtures(case, limma):
     print(f"wrote limma.npz to {FIXTURE}")
 
 
-def memory(restart=False):
-    """This process's resident memory and its peak, in MiB, or NaN off Linux. With
-    restart, the peak restarts from the resident memory first (Linux 4.0 or newer),
-    and both are NaN if it cannot. Where /proc keeps no peak, as in gVisor's sandbox,
-    the peak is the process's largest resident memory from getrusage, which cannot
-    restart."""
-    try:
-        if restart:
-            Path("/proc/self/clear_refs").write_text("5")
-        status = Path("/proc/self/status").read_text().splitlines()
-    except OSError:
-        return np.nan, np.nan
-    fields = dict(line.split(":", 1) for line in status if ":" in line)
-    if "VmHWM" not in fields:
-        if restart:
-            return np.nan, np.nan
-        import resource  # Unix only, as /proc is
+def peak_memory(who=resource.RUSAGE_SELF):
+    """The largest resident memory of this process, or with RUSAGE_CHILDREN of its
+    largest child process that has ended, in MiB; NaN off Linux."""
+    if sys.platform != "linux":
+        return np.nan
+    return resource.getrusage(who).ru_maxrss / 1024
 
-        fields["VmHWM"] = f"{resource.getrusage(resource.RUSAGE_SELF).ru_maxrss} kB"
-    return tuple(int(fields[key].split()[0]) / 1024 for key in ("VmRSS", "VmHWM"))
+
+def allocated(function, *arguments):
+    """The most memory that a call held at once beyond what existed before it, in MiB,
+    as Python's tracemalloc traces it, numpy's and numba's arrays included."""
+    tracemalloc.start()
+    try:
+        function(*arguments)
+        return tracemalloc.get_traced_memory()[1] / 2**20
+    finally:
+        tracemalloc.stop()
 
 
 def machine():
@@ -669,14 +665,13 @@ def main():
         f"Y-chromosome genes {', '.join(Y_GENES)} have {y.sum()} counts"
     )
 
-    loading, start = memory()[1], memory(restart=True)[0]
-    restarted = not np.isnan(start)
+    loading = peak_memory()
     design = paired_design(cube)
     for call in ("first", "second"):
         clock = time.perf_counter()
         result = limma_voom(cube, design)
         seconds[f"limma_voom, 8 cell types, {call} call"] = time.perf_counter() - clock
-    during = memory()[1] if restarted else np.nan
+    analysis = allocated(limma_voom, cube, design)  # a third call, untimed
     print(f"limma_voom settings: {json.dumps(result.settings)}")
     cases = {"": (cube, design, result)}
     if arguments.write_fixtures:
@@ -686,11 +681,10 @@ def main():
     seconds["limma_voom, negative control"] = time.perf_counter() - clock
     limma, versions, r_peak = run_limma(cases)
     seconds["R, limma workflow, 8 cell types"] = limma[""][1]
-    later = memory()[1] if restarted else np.nan
 
     print("Reference: " + ", ".join(versions))
     print(
-        f"CytePool {cytepool.__version__}, Python {platform.python_version()}, numpy "
+        f"CytePool {cytepool_version}, Python {platform.python_version()}, numpy "
         f"{np.__version__}, numba {numba.__version__}, scipy {scipy.__version__}"
     )
     print(f"Machine: {machine()}")
@@ -719,9 +713,9 @@ def main():
     for step, value in seconds.items():
         print(f"| {step} | {value:.2f} |")
     print(
-        f"Peak resident memory, MiB: this process {loading:,.0f} while reading and "
-        f"pooling the cells; {during:,.0f} while limma_voom ran (from {start:,.0f} at "
-        f"its start) and {later:,.0f} from then to the end; R {r_peak:,.0f}"
+        f"Peak memory, MiB: this process {loading:,.0f} while reading and pooling the "
+        f"cells; limma_voom on the 8 cell types {analysis:,.0f} more, as tracemalloc "
+        f"traced it; R {r_peak:,.0f}"
     )
     if arguments.write_fixtures and failures:
         print("not writing fixtures: some checks failed")
