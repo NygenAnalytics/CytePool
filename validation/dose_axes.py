@@ -39,7 +39,11 @@ largest fit), since they differ from ``ns()``'s by a change of basis; the design
 matrices against ``model.matrix`` (element by element, and through the column space
 for the B-spline form); the F-statistics (relative); and the curves on the grid
 (relative to the largest absolute value). Tier exact, 1e-10 throughout, except
-``treated`` (identical): R's and numpy's ``log10`` can differ in the last bit. Cases
+``treated`` (identical): R's and numpy's ``log10`` can differ in the last bit.
+F-statistics and curves are compared where the design's condition number is at most
+1e5, so that rounding stays below the tier; the cases above it, restricted cubic
+columns on a linear axis over doses that span decades, are counted with their largest
+condition number and the cases where R's ``lm`` drops a column as aliased. Cases
 where one program places knots and the other fails count as outcomes that differ
 (tolerance 0), except the deliberate differences: where R's rule places two knots at
 one dose of a replicated design, ``ns`` returns a basis with a repeated knot and
@@ -74,6 +78,12 @@ FIXTURE_DIRECTORY = Path(__file__).resolve().parents[1] / "tests" / "data" / "do
 EXACT = 1e-10
 GENES = 4
 LARGEST_DF = 8
+# F-statistics and curves are compared at the exact tier where the design's condition
+# number is at most this: their rounding errors, about the condition number times
+# 1e-16, then stay below 1e-10. Above it, as for restricted cubic columns on a linear
+# axis over doses that span decades, they depend on how each program solves the least
+# squares problem, and R's lm can drop columns as aliased.
+CONDITION_LIMIT = 1e5
 
 R_SCRIPT = r"""
 suppressPackageStartupMessages({library(splines); library(Hmisc)})
@@ -169,6 +179,7 @@ for (case in readLines(file.path(root, "cases.txt"))) {
     }
     curves <- cbind(curves, predict(fit, grid_data))
   }
+  write_doubles(fit$rank, file.path(dir, "r_rank.bin"))
   write_doubles(f, file.path(dir, "r_f.bin"))
   writeLines(names(reduced), file.path(dir, "r_tests.txt"))
   write_doubles(curves, file.path(dir, "r_curves.bin"))
@@ -338,6 +349,7 @@ def run_r(inputs: list[dict]) -> tuple[dict, str]:
                     "curves": read(directory / "r_curves.bin")
                     .reshape(GENES, grid)
                     .T.copy(),
+                    "rank": int(read(directory / "r_rank.bin")[0]),
                 }
             results[case["name"]] = result
         return results, (root / "versions.txt").read_text().strip()
@@ -351,6 +363,8 @@ class Checks:
         self.largest: dict[str, float] = {}
         self.counts: dict[str, int] = {}
         self.differing: list[str] = []
+        # Condition numbers above CONDITION_LIMIT, and whether R's lm lost rank.
+        self.ill_conditioned: list[tuple[float, bool]] = []
 
     def record(self, kind: str, value: float) -> None:
         self.largest[kind] = max(self.largest.get(kind, 0.0), value)
@@ -491,6 +505,13 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict]:
             found.record("design matrices", by_column(design, reference["design"]))
         else:
             found.record("design matrices", column_space(design, reference["design"]))
+        condition = float(np.linalg.cond(design))
+        if condition > CONDITION_LIMIT:
+            found.ill_conditioned.append(
+                (condition, reference["rank"] < design.shape[1])
+            )
+            found.record("cases", 0.0)
+            continue
         position = {name: j for j, name in enumerate(["(Intercept)", *names])}
         dropped = {
             "any_dose": list(range(1, len(names) + 1)),
@@ -555,6 +576,16 @@ def table(checks: dict, departures: dict) -> tuple[list[tuple[str, ...]], int]:
                     "pass" if passed else "FAIL",
                 )
             )
+        if found.ill_conditioned:
+            largest = max(condition for condition, _ in found.ill_conditioned)
+            lost = sum(rank_lost for _, rank_lost in found.ill_conditioned)
+            check = (
+                f"{design}, {axis}: F-statistics and curves of "
+                f"{len(found.ill_conditioned)} cases whose design has a condition "
+                f"number above {CONDITION_LIMIT:g}, up to {largest:.1e}; R's lm drops a "
+                f"column as aliased in {lost}"
+            )
+            rows.append((check, "lm", "not compared", "n/a", "info"))
         differing = len(found.differing)
         failures += differing > 0
         check = f"{design}, {axis}: outcomes that differ ({cases} cases compared)"

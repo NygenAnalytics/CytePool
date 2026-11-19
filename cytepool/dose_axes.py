@@ -286,7 +286,12 @@ class DoseAxis:
                 f"{self._dose_text(levels)}{self._which_doses()}; lower df to at most "
                 f"{levels.size - 1}"
             )
-        placed = NaturalSplineBasis(positions[on_axis], columns, knots=placing)
+        try:
+            placed = NaturalSplineBasis(positions[on_axis], columns, knots=placing)
+        except ValueError as error:
+            raise ValueError(
+                f"{error} (on this axis, x is {self._position_text()})"
+            ) from error
         interior = np.array(placed.knots)
         repeated = interior[1:][np.diff(interior) == 0.0]
         if repeated.size:
@@ -431,6 +436,15 @@ class DoseAxis:
                 "the dose, as a conversion of units can leave one dose as two; round "
                 "the dose column first, for example with numpy.round"
             )
+
+    def _position_text(self) -> str:
+        """What a position on the axis is, for messages."""
+        doses = "the treated doses" if self.vehicle == "own_group" else "the doses"
+        if self.scale == "linear":
+            return f"{doses} in {self.unit}"
+        if self.offset is None:
+            return f"log10 of {doses} in {self.unit}"
+        return f"log10 of {doses} plus {self.offset:g} {self.unit}"
 
     def _which_doses(self) -> str:
         """Which doses are on the axis, for messages."""
