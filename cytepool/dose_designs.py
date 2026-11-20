@@ -542,7 +542,7 @@ class _Inputs:
     level_of: IntArray  # the dose group of each design sample
     batch: str | None  # the batch column
     batches: list[str] | None  # the batch of each, as a label
-    batch_modelled: bool  # a random intercept of the design groups the samples so
+    batch_modelled: bool  # a random intercept groups the samples as the batch does
     sexes: list[str] | None  # the sex of each, as a label
     min_cells: int
     min_counts: float
