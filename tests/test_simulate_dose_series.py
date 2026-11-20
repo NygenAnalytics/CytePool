@@ -615,6 +615,12 @@ def test_the_cube_reads_as_a_dose_series() -> None:
     basis = axis.spline_basis(cube.samples, df=2)
     columns = axis.design_columns(cube.samples, basis)
     assert_array_equal(columns["dose_treated"], [0, 0, 0, 1, 1, 1, 1, 1])
+    # A 0-d array is one value for every dose or cell type.
+    zero_d, _ = simulate_dose_series(
+        [0, 1, 10], replicates=np.array(2), cells=np.float64(40.0), n_genes=3, rng=1
+    )
+    assert zero_d.n_samples == 6
+    assert zero_d.provenance["construction"]["cells"] == [40.0, 40.0]
     # Dose groups and replicates padded with zeros sort in dose order.
     ladder = [0.0, *np.geomspace(0.001, 100.0, 11).round(6)]
     wide, _ = simulate_dose_series(
@@ -694,6 +700,8 @@ def test_a_truth_survives_its_tables() -> None:
     assert (unpickled.doses, unpickled.unit) == (truth.doses, truth.unit)
     with pytest.raises(AttributeError, match="immutable"):
         truth.unit = "mg/kg"  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="immutable"):
+        del truth.unit  # type: ignore[misc]
     assert " ".join(repr(truth).split()) == (
         "DoseTruth: 2 cell types ('cell_type_1' and 'cell_type_2') x 300 genes; 6 "
         "doses from 0 to 30 ug/kg (administered)"

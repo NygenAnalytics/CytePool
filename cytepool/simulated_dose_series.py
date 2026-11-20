@@ -6,14 +6,15 @@ and the dose at which it starts can only be checked on data whose truth is known
 one published single-cell dose benchmark set the means of its responsive genes from
 the benchmark-dose equations of the US EPA, added the variation of 3 individuals per
 dose and compared tests on cells, without curves (Nault et al. 2022).
-:func:`simulate_dose_series` draws what the dose methods read, the counts of each
-replicate (an animal, or one donor's cells in a well) in each cell type, with the
-effects of each replicate that muscat's and scDesign3's simulations also give (Crowell
-et al. 2020; Song et al. 2024); :class:`DoseTruth` holds each gene's true curve, EC50
-and benchmark doses. The curves include shapes inside and outside the model sets of
-BMDS (US EPA 2026), drc (Ritz et al. 2015) and DRomics (Delignette-Muller et al.
-2023), so that a method is not checked only on curves of its own form; Hill, sigmoid
-Emax and four-parameter log-logistic curves are one family (Kappenberg et al. 2023)
+:func:`~cytepool.simulate_dose_series` draws what the dose methods read, the counts
+of each replicate (an animal, or one donor's cells in a well) in each cell type, with
+the effects of each replicate that muscat's and scDesign3's simulations also give
+(Crowell et al. 2020; Song et al. 2024); :class:`~cytepool.DoseTruth` holds each
+gene's true curve, EC50 and benchmark doses. The curves include shapes inside and
+outside the model sets of BMDS (US EPA 2026), drc (Ritz et al. 2015) and DRomics
+(Delignette-Muller et al. 2023), so that a method is not checked only on curves of
+its own form; Hill, sigmoid Emax and four-parameter log-logistic curves are one
+family (Kappenberg et al. 2023)
 (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
 
 References:
@@ -394,7 +395,8 @@ class DoseTruth:
 
     @property
     def metric(self) -> str:
-        """What the doses measure: administered, nominal, measured or internal."""
+        """What the doses measure, one of administered, nominal, measured and
+        internal."""
         return self._metric
 
     @property
