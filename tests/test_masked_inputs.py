@@ -371,6 +371,7 @@ def _dose_response(context: Context) -> dict[str, Any]:
         "min_cells": 10,
         "min_counts": 1,
         "rng": 1,
+        "gate": {"test": "dose_groups", "fdr": 0.1},
         # An option of the analysis, which dose_response passes on.
         "expression_filter": {"min_count": 5},
     }
@@ -2257,7 +2258,13 @@ ENTRY_POINTS: dict[str, Entry] = {
     # check_dose_design takes them; a curve's genes and doses.
     "cytepool.dose_responses.dose_response": Entry(
         _dose_response,
-        {"groups": None, "min_cells": None, "tests": None, "expression_filter": None},
+        {
+            "groups": None,
+            "min_cells": None,
+            "tests": None,
+            "gate": None,
+            "expression_filter": None,
+        },
         options=("spline_df", "batch", "min_counts", "rng"),
         objects=("cube", "design", "dose", "candidates", "analysis"),
     ),
@@ -3246,9 +3253,10 @@ NO_ARRAY_INPUT = {
         "settings kept as JSON, which cannot hold an array",
     ),
     "cytepool.dose_responses.DoseResponseResult": (
-        ("summary", "tables", "fits", "design_report", "provenance"),
-        "Tables, the analysis's results and a DoseDesignReport, which were checked "
-        "when they were built, and a record kept as JSON, which cannot hold an array",
+        ("summary", "tables", "fits", "design_report", "provenance", "cube", "design"),
+        "Tables, the analysis's results, a DoseDesignReport, a Cube and a Design, which "
+        "were checked when they were built, and a record kept as JSON, which cannot "
+        "hold an array",
     ),
     "cytepool.dose_responses.DoseResponseResult.table": (
         ("group", "name"),
@@ -3259,8 +3267,8 @@ NO_ARRAY_INPUT = {
         "a cell type, looked up",
     ),
     "cytepool.dose_responses.DoseResponseResult.lowest_effective_doses": (
-        ("group", "screen", "alpha"),
-        "a cell type and a test, looked up, and a level",
+        ("group",),
+        "a cell type, looked up",
     ),
     "cytepool.dose_designs.DoseDesignReport.status": (
         ("group",),
