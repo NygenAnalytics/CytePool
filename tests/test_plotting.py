@@ -1477,6 +1477,9 @@ def test_plot_dose_response_refuses_what_it_cannot_draw() -> None:
         plotting.plot_dose_response(object(), None, genes[:1], ax=axes())  # type: ignore[arg-type]
     with pytest.raises(KeyError, match="was not tested"):
         plotting.plot_dose_response(result, None, ["nope"], ax=axes())
+    # One gene, by its id alone.
+    one = plotting.plot_dose_response(result, None, genes[0], ax=axes())
+    assert len(artists(one, "curve")) == 1
     # A cell type that was not tested: every sample has 3 cells.
     cube, _ = simulate_dose_series(
         [0.0, 0.1, 1.0], replicates=2, cell_types=1, cells=3.0, n_genes=50, rng=1

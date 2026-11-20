@@ -413,6 +413,21 @@ def test_tests_follow_the_design(
         assert ran(named) == [t for t in TESTS if t in [*tests, *not_run]]
 
 
+def test_a_test_named_alone_is_the_same_test() -> None:
+    # The non-linearity test without the spline's test beside it: the same
+    # contrasts, so the same F-statistics.
+    alone = run((0, 0.1, 1, 10, 30, 100), tests="nonlinearity")
+    every = run((0, 0.1, 1, 10, 30, 100))
+    assert ran(alone) == ["nonlinearity"]
+    assert_allclose(
+        alone.table("cell_type_1", "nonlinearity")["f_statistic"],
+        every.table("cell_type_1", "nonlinearity")["f_statistic"],
+        rtol=1e-12,
+    )
+    assert alone.tests == ("nonlinearity",)
+    assert alone.settings["tests"] == ["nonlinearity"]
+
+
 def test_named_tests_the_design_cannot_support_are_refused() -> None:
     with pytest.raises(ValueError, match="need two doses on it, and the design has 1"):
         run((0, 10), tests=["slope"])
@@ -468,13 +483,14 @@ def recelled(cube: Cube, cells: dict[str, list[int]]) -> Cube:
 
 @functools.cache
 def mixed_cube() -> Cube:
-    """Four cell types of one series of the vehicle and 5 doses x 3: one keeps every
+    """Five cell types of one series of the vehicle and 5 doses x 3: one keeps every
     sample, one keeps one sample per treated dose (descriptive), one no vehicle
-    sample (refused), and one only the vehicle and the two lowest doses."""
+    sample (refused), one only the vehicle and the two lowest doses, and one only the
+    vehicle and the lowest dose."""
     cube, _ = simulate_dose_series(
         [0, 0.1, 0.3, 1, 3, 10],
         replicates=3,
-        cell_types=["all", "single", "no_vehicle", "low"],
+        cell_types=["all", "single", "no_vehicle", "low", "one_dose"],
         cells=300.0,
         n_genes=150,
         rng=11,
@@ -485,6 +501,7 @@ def mixed_cube() -> Cube:
             "single": [300] * 3 + [300, 5, 5] * 5,
             "no_vehicle": [5] * 3 + [300] * 15,
             "low": [300] * 9 + [5] * 9,
+            "one_dose": [300] * 6 + [5] * 12,
         },
     )
 
@@ -507,9 +524,10 @@ def test_descriptive_and_refused_cell_types_are_not_tested() -> None:
             "descriptive",
             "refused",
             "inferential",
+            "inferential",
         ]
     )
-    assert summary["tested"].tolist() == [True, False, False, True]
+    assert summary["tested"].tolist() == [True, False, False, True, True]
     assert summary["reason"].tolist()[1:3] == report.summary["reason"].tolist()[1:3]
     assert summary["n_features_tested"].tolist()[1:3] == [0, 0]
     assert np.isnan(summary["df_residual"][1]) and np.isnan(summary["df_prior"][2])
@@ -544,6 +562,55 @@ def test_a_cell_type_whose_doses_cannot_estimate_the_spline() -> None:
         rtol=1e-14,
     )
     assert result.summary["tests_not_run"].tolist()[3] == "spline, nonlinearity"
+    assert "low: 3 dose groups" in repr(result)
+    assert "not run: spline, nonlinearity\n" in repr(result) + "\n"
+    # "one_dose" keeps the vehicle and 0.1 ug/kg: with the vehicle in a group of its
+    # own the slope runs along the treated doses, and one cannot place a line.
+    entry = result.provenance["groups"][4]
+    assert entry["doses"] == [0.0, 0.1]
+    reason = entry["tests_not_run"]["slope"]
+    assert "slope runs along the treated doses" in reason and "compares one" in reason
+    assert entry["f_test_df1"] == {"dose_groups": 1}
+
+
+def test_doses_below_the_second_knot_cannot_estimate_a_larger_spline() -> None:
+    # 12 treated doses and 3 columns: the second interior knot falls above the 4
+    # lowest doses, where the spline's last column vanishes, so a cell type that keeps
+    # the vehicle and those 4 doses has enough dose groups, 5, and still cannot
+    # estimate the spline.
+    doses = [0.0, *np.round(np.geomspace(0.01, 100.0, 12), 6).tolist()]
+    cube, _ = simulate_dose_series(
+        doses, replicates=2, cell_types=["all", "low"], cells=300.0, n_genes=150, rng=4
+    )
+    cube = recelled(cube, {"low": [300] * 10 + [5] * 16})
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, spline_df=3)
+    entry = result.provenance["groups"][1]
+    assert len(entry["doses"]) == 5
+    reason = entry["tests_not_run"]["spline"]
+    assert reason.startswith("the spline's columns are linearly dependent at the doses")
+    assert "slope" in entry["f_test_df1"]
+
+
+def test_no_spline_with_one_treated_dose() -> None:
+    result = run((0, 10))
+    assert result.spline_basis is None
+    assert "no spline (one dose on the axis)" in repr(result)
+    with pytest.raises(ValueError, match="a spline needs two doses on the axis"):
+        result.curve("cell_type_1", at=[10.0])
+
+
+def test_the_options_are_recorded_as_plain_values() -> None:
+    cube = fixture_cube()
+    design = Design(cube.samples, "~ 1")
+    result = dose_response(
+        cube, design, dose=AXIS, groups="full", n_threads=np.int64(1)
+    )
+    assert result.settings["options"] == {"n_threads": 1}
+    # A value JSON cannot write is refused before anything is fitted.
+    with pytest.raises(TypeError, match="numbers, strings, lists and mappings"):
+        dose_response(
+            cube, design, dose=AXIS, expression_filter={"min_count": object()}
+        )
 
 
 def test_adjusted_across_groups() -> None:

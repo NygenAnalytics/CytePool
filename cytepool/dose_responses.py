@@ -822,6 +822,8 @@ def _check_options(method: str, options: Mapping[str, Any]) -> None:
     before anything runs."""
     for name, value in options.items():
         reject_masked(value, name)
+    # The record keeps the options as given, so they must be values JSON can write.
+    json.dumps(dict(options), default=_plain)
     accepted = [
         name
         for name, parameter in inspect.signature(_ANALYSES[method]).parameters.items()
@@ -1330,7 +1332,8 @@ def _plain(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     raise TypeError(
-        f"the options must hold values that JSON can write, got {type(value).__name__}"
+        "the options must hold numbers, strings, lists and mappings, which the record "
+        f"keeps, got {type(value).__name__}"
     )
 
 
