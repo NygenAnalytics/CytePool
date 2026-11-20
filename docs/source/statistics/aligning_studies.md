@@ -62,7 +62,7 @@ A joint model suits studies made alike, with one protocol and platform, that are
 (aligning-studies-checks)=
 ## Checks and further reading
 
-The alignment of three simulated studies, with repeated donor ids, merged cell types, genes filled with zeros and marked as not measured, is compared with anndata 0.13.4's `concat` and pandas 3.1.0, and limma-voom on each aligned study and on the stack with limma 3.62.1 and edgeR 4.4.0 run on the studies' own counts: exact, with identical samples, genes and layers, and limma's tables within 3.8e-13 ([Validation](#validation-cube-collection)). A control shows why donor ids are written with their study: taken for one person, donor `D1` of two studies changes the fit of every gene.
+The alignment of three simulated studies, with repeated donor ids, merged cell types, genes filled with zeros and marked as not measured, is compared with anndata 0.13.4's `concat` and pandas 3.1.0, and limma-voom on each aligned study and on the stack with limma 3.62.1 and edgeR 4.4.0 run on the studies' own counts: exact, with identical samples, genes and layers, and limma's tables within 1e-10 ([Validation](#validation-cube-collection)). A control shows why donor ids are written with their study: taken for one person, donor `D1` of two studies changes the fit of every gene.
 
 Further reading:
 

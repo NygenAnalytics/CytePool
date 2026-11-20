@@ -21,8 +21,9 @@ import sys
 import textwrap
 import tokenize
 import urllib.parse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
+from datetime import UTC, date, datetime, timedelta
 from functools import cache
 from html.parser import HTMLParser
 from pathlib import Path
@@ -564,14 +565,21 @@ def test_every_api_page_is_in_the_api_index() -> None:
     ]
 
 
-def _validation_sections() -> dict[str, str]:
-    """The sections of the Validation page by label, each up to the next label or
-    heading of its level or above."""
-    page = (SOURCE / "validation.md").read_text()
+def _validation_sections(page: str) -> dict[str, str]:
+    """The sections of the text of the Validation page by label, each up to the next
+    label or heading of its level or above."""
     parts = re.split(r"(?m)^\(([\w-]+)\)=\n", page)
     return {
         label: re.split(r"(?m)^##? ", body)[0] if body.startswith("###") else body
         for label, body in zip(parts[1::2], parts[2::2], strict=True)
+    }
+
+
+def _script_labels() -> dict[str, str]:
+    """The label of each validation script's section, by the script's file name."""
+    return {
+        path.name: "validation-" + path.stem.replace("_", "-")
+        for path in sorted((ROOT / "validation").glob("*.py"))
     }
 
 
@@ -580,15 +588,14 @@ def test_every_validation_script_is_listed_on_the_validation_page() -> None:
     linked = re.findall(
         re.escape(REPOSITORY) + r"blob/master/validation/(\w+\.py)\)", page
     )
-    scripts = {path.name for path in (ROOT / "validation").glob("*.py")}
-    sections = _validation_sections()
+    labels = _script_labels()
+    sections = _validation_sections(page)
     summary = page.split("## Summary", 1)[1].split("\n## ", 1)[0]
 
-    assert set(linked) == scripts
+    assert set(linked) == set(labels)
     # Each script has a section of its own, labelled after it, so that chapters can
     # link it, which links the script and is linked from the summary.
-    for script in scripts:
-        label = "validation-" + script.removesuffix(".py").replace("_", "-")
+    for script, label in labels.items():
         assert label in sections, script
         assert f"validation/{script})" in sections[label], script
         assert f"](#{label})" in summary, script
@@ -2084,8 +2091,9 @@ def _table_rows(text: str, header: str) -> list[list[str]]:
 
 
 def test_the_validation_summary_agrees_with_its_sections() -> None:
-    sections = _validation_sections()
-    rows = _table_rows((SOURCE / "validation.md").read_text(), "| Method |")
+    page = (SOURCE / "validation.md").read_text()
+    sections = _validation_sections(page)
+    rows = _table_rows(page, "| Method |")
     problems = []
     for method, functions, checked, tier, where in rows:
         labels = re.findall(r"\]\(#([\w-]+)\)", where)
@@ -2108,11 +2116,143 @@ def test_the_validation_summary_agrees_with_its_sections() -> None:
     assert problems == []
     # Every section of a script is in the summary.
     linked = {label for row in rows for label in re.findall(r"#([\w-]+)\)", row[4])}
-    scripts = {
-        "validation-" + path.stem.replace("_", "-")
-        for path in (ROOT / "validation").glob("*.py")
-    }
-    assert sorted(scripts - linked) == []
+    assert sorted(set(_script_labels().values()) - linked) == []
+
+
+# The runs of the validation scripts: each section opens with what its run printed and
+# the run's date. tests/test_changed_since_run.py checks the record of each run.
+
+OPENING = re.compile(
+    r"The script printed (?P<checks>[\d,]+) checks \((?P<outcomes>[^)]*)\)"
+    r"(?: on (?P<date>\d{4}-\d{2}-\d{2}),)? in "
+)
+OPENING_FORM = "The script printed N checks (...) on YYYY-MM-DD, in ..."
+OUTCOME = re.compile(
+    r"(?P<count>[\d,]+) (?P<kind>pass|information|deliberate differences?|controls?)\b"
+)
+TOTAL = re.compile(
+    r"^In all, the scripts printed (?P<checks>[\d,]+) checks: (?P<outcomes>.*)$", re.M
+)
+
+
+def _outcomes(text: str) -> Counter[str]:
+    """The outcomes of a list such as "46 pass, 3 deliberate differences and 1
+    control", by kind, in the plural."""
+    found: Counter[str] = Counter()
+    for match in OUTCOME.finditer(text):
+        kind = re.sub(r"(difference|control)$", r"\1s", match["kind"])
+        found[kind] += int(match["count"].replace(",", ""))
+    return found
+
+
+def _total_problems(page: str) -> list[str]:
+    """Where the checks of a section, or of the page, do not add up."""
+    sections, problems = _validation_sections(page), []
+    checks, outcomes = 0, Counter[str]()
+    for script, label in _script_labels().items():
+        opening = OPENING.search(sections.get(label, ""))
+        if opening is None:
+            problems.append(f'{script}: the section must open with "{OPENING_FORM}"')
+            continue
+        count, found = int(opening["checks"].replace(",", "")), _outcomes(opening[0])
+        if found.total() != count:
+            problems.append(f"{script}: {found.total()} outcomes for {count} checks")
+        checks, outcomes = checks + count, outcomes + found
+    total = TOTAL.search(page)
+    if total is None:
+        return [*problems, "the page gives no total of the checks"]
+    if int(total["checks"].replace(",", "")) != checks:
+        problems.append(
+            f"the total is {total['checks']} checks; the sections add to {checks:,}"
+        )
+    if _outcomes(total["outcomes"]) != outcomes or "none failed" not in total[0]:
+        problems.append(f"the total's outcomes are not {dict(outcomes)}, none failed")
+    return problems
+
+
+def _date_problems(page: str, today: date) -> list[str]:
+    """The scripts whose section gives no date of its run, or a date after ``today``."""
+    sections, problems = _validation_sections(page), []
+    for script, label in _script_labels().items():
+        opening = OPENING.search(sections.get(label, ""))
+        if opening is None or opening["date"] is None:
+            problems.append(
+                f'{script}: the section must open with "{OPENING_FORM}", with the '
+                "date of the run"
+            )
+        elif date.fromisoformat(opening["date"]) > today:
+            problems.append(
+                f"{script}: the run is dated {opening['date']}, after today"
+            )
+    return problems
+
+
+def _voom_opening(page: str) -> re.Match[str]:
+    """The opening sentence of voom.py's section, which the checks' tests change."""
+    opening = OPENING.search(_validation_sections(page)["validation-voom"])
+    assert opening is not None and opening["date"] is not None
+    assert page.count(opening[0]) == 1
+    return opening
+
+
+def test_the_checks_of_the_validation_page_add_up() -> None:
+    assert _total_problems((SOURCE / "validation.md").read_text()) == []
+
+
+def test_every_validation_section_gives_the_date_of_its_run() -> None:
+    # Today in UTC, as the runs are dated, so that a run of the evening is not after
+    # today west of Greenwich.
+    page = (SOURCE / "validation.md").read_text()
+
+    assert _date_problems(page, datetime.now(UTC).date()) == []
+
+
+def test_the_check_of_totals_finds_what_is_wrong() -> None:
+    page = (SOURCE / "validation.md").read_text()
+    sentence, count = (opening := _voom_opening(page))[0], opening["checks"]
+    checks = int(count.replace(",", ""))
+
+    more = sentence.replace(f"{count} checks", f"{checks + 1} checks")
+    assert f"voom.py: {checks} outcomes for {checks + 1} checks" in _total_problems(
+        page.replace(sentence, more)
+    )
+    unsaid = _total_problems(page.replace(sentence, ""))
+    assert unsaid[0] == f'voom.py: the section must open with "{OPENING_FORM}"'
+    total = TOTAL.search(page)
+    assert total is not None
+    larger = page.replace(total[0], total[0].replace(total["checks"], "9,999"))
+    assert _total_problems(larger) == [
+        f"the total is 9,999 checks; the sections add to {total['checks']}"
+    ]
+    passes = _outcomes(total["outcomes"])["pass"]
+    shifted = total[0].replace(f"{passes:,} pass", f"{passes + 1:,} pass")
+    problems = _total_problems(page.replace(total[0], shifted))
+    assert len(problems) == 1 and problems[0].startswith("the total's outcomes are not")
+    failed = total[0].replace("none failed", "1 failed")
+    assert _total_problems(page.replace(total[0], failed)) == problems
+    assert _total_problems(page.replace(total[0], "")) == [
+        "the page gives no total of the checks"
+    ]
+
+
+def test_the_check_of_dates_finds_what_is_wrong() -> None:
+    page = (SOURCE / "validation.md").read_text()
+    today = datetime.now(UTC).date()
+    sentence, day = (opening := _voom_opening(page))[0], opening["date"]
+
+    def dated(words: str) -> str:
+        return page.replace(sentence, sentence.replace(f" on {day},", words))
+
+    assert _date_problems(dated(""), today) == [
+        f'voom.py: the section must open with "{OPENING_FORM}", with the date of the '
+        "run"
+    ]
+    # A run of today is not after today.
+    assert _date_problems(dated(f" on {today},"), today) == []
+    tomorrow = today + timedelta(days=1)
+    assert _date_problems(dated(f" on {tomorrow},"), today) == [
+        f"voom.py: the run is dated {tomorrow}, after today"
+    ]
 
 
 @pytest.mark.parametrize("base_url", ["", "/CytePool"])
