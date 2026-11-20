@@ -655,12 +655,11 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict, dict]:
     # among the treated doses must agree.
     for (design_name, axis_name, *_), forms in moderated.items():
         if len(forms) == 2:
-            found = checks[design_name, axis_name]
-            for name in forms["b_spline"]:
-                found.record(
-                    "forms",
-                    relative(forms["restricted_cubic"][name], forms["b_spline"][name]),
-                )
+            differences = [
+                relative(forms["restricted_cubic"][name], forms["b_spline"][name])
+                for name in forms["b_spline"]
+            ]
+            checks[design_name, axis_name].record("forms", max(differences))
     return checks, departures, conditions
 
 
@@ -679,7 +678,7 @@ ROWS = {
     "moderated F, restricted_cubic": "moderated F-statistics of the restricted cubic "
     "form",
     "moderated F df": "numerator degrees of freedom of the moderated F-tests",
-    "forms": "moderated F-statistics of the two forms on the same knots",
+    "forms": "moderated F-statistics of the two forms on the same knots, by pair",
 }
 REFERENCES = {
     "positions": "log10(dose), dose",
