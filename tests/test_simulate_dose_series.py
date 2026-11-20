@@ -131,6 +131,22 @@ def test_ec50_and_benchmark_doses_match_mpmath_roots() -> None:
     assert_allclose(found[reached], data["root"][reached], rtol=1e-10)
     # Some changes are never reached, and some are reached at |max_log2_change| itself.
     assert 0 < np.isnan(data["root"]).sum() < reached.sum()
+    # The tables' bmd_fold_change is the root at a change of log2(1.1).
+    column = np.full(data["root"].size, np.nan)
+    for truth, members in truths.values():
+        values = truth.table("liver")["bmd_fold_change"]
+        for position, case in enumerate(members):
+            column[data["root_case"] == case] = values[position]
+    at_fold_change = data["root_change"] == FOLD_CHANGE
+    assert at_fold_change.sum() >= 90
+    assert_array_equal(
+        np.isnan(column[at_fold_change]), np.isnan(data["root"][at_fold_change])
+    )
+    assert_allclose(
+        column[at_fold_change & reached],
+        data["root"][at_fold_change & reached],
+        rtol=1e-10,
+    )
 
 
 def test_benchmark_doses_by_hand() -> None:
@@ -219,6 +235,13 @@ def test_every_benchmark_dose_is_the_lowest_crossing() -> None:
             assert np.all(np.abs(at[steps]) >= change)
             assert np.all(np.abs(before) < change)
             assert reached.size >= 500
+        # The table's bmd_expression_sd is the benchmark dose at each gene's
+        # expression_sd.
+        table = truth.table(cell_type)
+        assert_array_equal(
+            table["bmd_expression_sd"],
+            truth.benchmark_doses(cell_type, log2_change=table["expression_sd"]),
+        )
 
 
 # The moments of the count model.
