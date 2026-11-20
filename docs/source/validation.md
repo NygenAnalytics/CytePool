@@ -1194,7 +1194,7 @@ Deliberate differences: where R's `ns` warns and increases a `df` below 1 plus t
 (validation-timings)=
 ## Timings
 
-Each script ran twice, one run after the other, in one container on Modal with 4 CPU cores and 8 GiB of memory, on an AMD Zen 3 processor, and the sections and the timings below give the second run. numba, OpenMP, OpenBLAS and MKL were limited to 2 threads (`NUMBA_NUM_THREADS=2` and so on), and numpy and OpenBLAS to the instructions of a processor without AVX-512 ([](#reproduce-validation)). The hosts were shared with other work, so timings are indicative.
+Each script ran twice, one run after the other, in one container on Modal with 4 CPU cores and 8 GiB of memory, on an AMD Zen 3 processor, and the sections and the timings below give the second run. numba, OpenMP, OpenBLAS and MKL were limited to 2 threads (`NUMBA_NUM_THREADS=2` and so on), and numpy and OpenBLAS to the instructions of a processor without AVX-512 ([](#reproduce-validation)). The host was shared with other work, so timings are indicative.
 
 `from_cells` on the 29,068 cells x 2,000 genes of `pool_cells.py`, best of three after a first run, building all five layers:
 
