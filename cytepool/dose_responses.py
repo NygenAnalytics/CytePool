@@ -1038,11 +1038,10 @@ def dose_response(
             ``candidates`` are given without ``"mcp"`` or with a ``beta_scale``
             below the top dose; a multiple contrast test is named with
             ``contrast_standard_errors="limma"``; ``rng`` is a negative seed; the
-            design names
-            contrasts, has random intercepts with an analysis of limma or none with
-            ``dream_voom``; the sample table already holds a column of the name of a
-            dose group's indicator; or as :func:`~cytepool.check_dose_design` and the
-            analysis raise.
+            design names contrasts, has random intercepts with an analysis of limma
+            or none with ``dream_voom``; the sample table already holds a column of
+            the name of a dose group's indicator; or as
+            :func:`~cytepool.check_dose_design` and the analysis raise.
         KeyError: If a group is not in the cube.
     """
     given = _tests_setting(tests)
