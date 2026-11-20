@@ -211,7 +211,9 @@ def product_box(lam, limits, df, two_sided) -> tuple[float, float]:
     for the correlation lam_i lam_j (i != j), each computed on its own side: Dunnett's
     (1955) integral over the shared normal factor x by 400-node Gauss-Legendre, and,
     for finite df, over S by 200-node Gauss-Legendre on (0, 4] with its density
-    (df S^2 is chi-squared on df degrees of freedom); scipy's normal tails."""
+    (df S^2 is chi-squared on df degrees of freedom); scipy's normal tails. For the
+    moderate limits of these tests: deep tails at small df put the mass of S near 0,
+    which these nodes miss (limits near 1e4 at df 2.5 come out 12% to 24% high)."""
     lam = np.asarray(lam, float)[:, None]
     limits = np.asarray(limits, float)[:, None]
     spread = np.sqrt(1.0 - lam**2)

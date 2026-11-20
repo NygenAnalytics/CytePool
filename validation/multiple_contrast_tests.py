@@ -24,7 +24,9 @@ References for the probabilities of boxes, P(T in box) and its complement:
   checks this reference against Ding's at 30 digits on two-coordinate cases, and
   against mpmath's one-dimensional integral over the factor for the normal. In that
   check, scipy's ``quad`` warns of rounding in 4 of the 48 two-coordinate cases, tail
-  orthants, whose values still agree with Ding's to 2.7e-14.
+  orthants, whose values still agree with Ding's to 2.7e-14; it warns too for 9 of the
+  96 cases with a limit per coordinate, seven of which agree with Gauss-Legendre in S
+  to 5e-10 and two, tails near 7e-10 at df 2.5, with CytePool within its errors.
 - Rank-two correlations, such as all pairwise contrasts of three groups (Tukey's), with
   mixed signs: R_ij = cos(theta_i - theta_j), so that T = Z / S with Z = A u for the
   unit vectors a_i of the angles theta_i and u standard normal in the plane; the
