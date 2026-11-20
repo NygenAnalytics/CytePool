@@ -4,59 +4,68 @@ Four designs from fixed seeds (``designs``): a ladder like the TCDD liver series
 vehicle (4 samples) and eight doses from 0.01 to 30 ug/kg with 2 or 3 samples each;
 an in vitro half-log series, 6 vehicle wells and four doses from 0.1 to 3.16 uM in
 duplicate; an unbalanced ladder, the vehicle (4) and 0.01, 0.1, 1 and 10 mg/kg with
-2, 10, 2 and 2 samples; and 24 distinct measured exposures with 6 zeros. Each design is read on
-four axes: the vehicle in a group of its own, on the log10 and on the linear scale;
-and the vehicle on the axis, on the log10 scale at an offset added to every dose and
-on the linear scale. On each axis, both forms of the spline, with knots by R's rule
-on the distinct doses (``"levels"``) and on the samples (``"quantiles"``) at every df
-from 1 to the number of distinct doses on the axis minus one (at most 8), by
-Harrell's rule (``"harrell"``) at df 2 to that number minus 3 (at most 8), and given
-as doses.
+2, 10, 2 and 2 samples; and 24 distinct measured exposures with 6 zeros. Each design is
+read on four axes: the vehicle in a group of its own, on the log10 and on the linear
+scale; and the vehicle on the axis, on the log10 scale at an offset added to every
+dose and on the linear scale. On each axis, both forms of the spline, with knots by
+R's rule on the distinct doses (``"levels"``) and on the samples (``"quantiles"``) at
+every df from 1 to the number of distinct doses on the axis minus one (at most 8), and
+given as doses.
 
 R computes, from the doses alone: the positions (``log10(dose)``, ``log10(dose +
 offset)`` or the dose, ``NA`` for the vehicle in its own group); ``treated``,
 ``as.numeric(dose > 0)``; the knots with R's own functions,
-``attr(ns(unique(x), df), "knots")``, ``attr(ns(x, df), "knots")``,
-``rcspline.eval(x, nk = df + 1, knots.only = TRUE)`` (Hmisc) or the positions of the
-given doses, with the range of the positions as the boundary knots except under
-Harrell's rule; the spline columns, ``ns(x, knots, Boundary.knots)`` or
-``rcspline.eval(x, knots, inclx = TRUE)`` with the lower boundary knot subtracted from
-its first column (``x`` minus it with two knots), 0 for the vehicle in its own group;
-``model.matrix`` of ``~ dose_treated + dose_s1 + ...`` (``~ dose_s1 + ...`` with the
-vehicle on the axis); the F-statistics of nested ``lm`` fits of four seeded responses
-(``anova``): any dose (every column but the intercept), among the treated doses (the
-spline columns, with the vehicle in its own group) and departure from a straight line
-(the restricted cubic columns after the first, from df 2); and ``predict`` of the full
-fit on a grid of doses: 0, each dose, the geometric mean of each pair of neighbouring
-doses, and twice the highest.
+``attr(ns(unique(x), df), "knots")``, ``attr(ns(x, df), "knots")`` or the positions of
+the given doses, with the range of the positions as the boundary knots; the spline
+columns, ``ns(x, knots, Boundary.knots)`` or Hmisc's ``rcspline.eval(x, knots, inclx =
+TRUE)`` with the lower boundary knot subtracted from its first column (``x`` minus it
+with two knots), 0 for the vehicle in its own group; ``model.matrix`` of
+``~ dose_treated + dose_s1 + ...`` (``~ dose_s1 + ...`` with the vehicle on the axis);
+the F-statistics of nested ``lm`` fits of four seeded responses (``anova``): any dose
+(every column but the intercept), among the treated doses (the spline columns, with
+the vehicle in its own group) and departure from a straight line (the restricted cubic
+columns after the first, from df 2); ``predict`` of the full fit on a grid of doses:
+0, each dose, the geometric mean of each pair of neighbouring doses, and twice the
+highest; and limma's moderated F-tests of the same columns on seeded counts of 200
+genes, as limma-trend runs them (``cpm(DGEList(counts), log = TRUE, prior.count =
+3)``, ``lmFit``, ``eBayes(trend = TRUE)`` and ``classifyTestsF``, which ``topTable``
+of several columns calls), with their numerator degrees of freedom.
 
 CytePool computes the same with ``DoseAxis.positions``, ``DoseAxis.spline_basis``,
-``DoseAxis.design_columns`` and ``Design``, and the F-statistics and predictions by
-least squares on its own columns. Rows per design and axis: positions; treated
-(identical); the knots; the restricted cubic columns, element by element relative to
-each column's largest absolute value; the B-spline columns through their column space
-(least squares fits of random responses on the spline columns alone, relative to the
-largest fit), since they differ from ``ns()``'s by a change of basis; the design
-matrices against ``model.matrix`` (element by element, and through the column space
-for the B-spline form); the F-statistics (relative); and the curves on the grid
-(relative to the largest absolute value). Tier exact, 1e-10 throughout, except
-``treated`` (identical): R's and numpy's ``log10`` can differ in the last bit.
-F-statistics and curves are compared where the design's condition number is at most
-1e5, so that rounding stays below the tier; the cases above it, restricted cubic
-columns on a linear axis over doses that span decades, are counted with their largest
-condition number and the cases where R's ``lm`` drops a column as aliased. Cases
-where one program places knots and the other fails count as outcomes that differ
-(tolerance 0), except the deliberate differences: where R's rule places two knots at
-one dose of a replicated design, ``ns`` returns a basis with a repeated knot and
-DoseAxis raises; where Hmisc's ``rcspline.eval`` switches to its method for values tied
-at an extreme (the 6 zeros of the exposures on an axis with the vehicle), drops a
-repeated knot or places fewer knots than asked, Hmisc returns knots and DoseAxis
+``DoseAxis.design_columns`` and ``Design``, the F-statistics and predictions by least
+squares on its own columns, and the moderated F-tests with ``limma_trend`` (no
+expression filter, no TMM, prior count 3). Rows per design and axis: positions;
+treated (identical); the knots; the spline columns, through their column space (least
+squares fits of random responses on the spline columns alone, relative to the largest
+fit) for the B-spline form, which differs from ``ns()``'s by a change of basis, and
+for the restricted cubic form the first column element by element and Hmisc's columns
+as combinations of CytePool's (the largest residual relative to each column's largest
+absolute value), since CytePool's columns after the first differ from Hmisc's by a
+change of basis that keeps them well conditioned; the design matrices against
+``model.matrix`` in the same ways; the F-statistics (relative); the curves on the grid
+(relative to the largest absolute value); the moderated F-statistics (relative); their
+numerator degrees of freedom, which must count every column tested (identical); and
+the moderated F-statistics of the two forms on the same knots, which span the same
+curves (relative). Tier exact, 1e-10 throughout, except ``treated`` and the degrees of
+freedom (identical): R's and numpy's ``log10`` can differ in the last bit.
+F-statistics, curves and moderated F-tests are compared with R's where R's design has
+a condition number of at most 1e5, so that rounding stays below the tier; above it, as
+for Hmisc's columns on a linear axis over doses that span decades, the cases are
+counted with their largest condition number and the cases where R's ``lm`` drops a
+column as aliased. Where limma's F-tests of Hmisc's columns count fewer degrees of
+freedom than columns, because the correlation of their coefficients has an eigenvalue
+below 1e-8 of the largest, the case is listed as a deliberate difference. The largest
+condition number of the designs of each axis and form is printed for both programs.
+Cases where one program places knots and the other fails count as outcomes that differ
+(tolerance 0), except the deliberate difference where R's rule places two knots at one
+dose of a replicated design: ``ns`` returns a basis with a repeated knot and DoseAxis
 raises.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root so that
     ``cytepool`` imports from the working tree.
-    R 4.4 or newer with the CRAN package Hmisc (the splines package ships with R).
+    R 4.4 or newer with the CRAN package Hmisc and the Bioconductor packages limma
+    and edgeR (the splines package ships with R).
     Set ``RSCRIPT`` to the Rscript executable when it is not on PATH.
 
 Usage:
@@ -73,11 +82,14 @@ from pathlib import Path
 
 import numpy as np
 
-from cytepool import Design, DoseAxis, Table
+from cytepool import Design, DoseAxis, Table, from_bulk, limma_trend
 
 FIXTURE_DIRECTORY = Path(__file__).resolve().parents[1] / "tests" / "data" / "dose_axes"
 EXACT = 1e-10
 GENES = 4
+# Genes of the counts on which the moderated F-tests run.
+COUNTED_GENES = 200
+PRIOR_COUNT = 3.0
 LARGEST_DF = 8
 # F-statistics and curves are compared at the exact tier where the design's condition
 # number is at most this: their rounding errors, about the condition number times
@@ -87,7 +99,9 @@ LARGEST_DF = 8
 CONDITION_LIMIT = 1e5
 
 R_SCRIPT = r"""
-suppressPackageStartupMessages({library(splines); library(Hmisc)})
+suppressPackageStartupMessages({
+  library(splines); library(Hmisc); library(limma); library(edgeR)
+})
 root <- commandArgs(trailingOnly = TRUE)[[1]]
 read_all <- function(path) readBin(path, "double", n = file.size(path) / 8, size = 8,
                                    endian = "little")
@@ -125,7 +139,6 @@ for (case in readLines(file.path(root, "cases.txt"))) {
   knots <- quietly(switch(rule,
     levels = with_boundary(ns(unique(xs), df = df)),
     quantiles = with_boundary(ns(xs, df = df)),
-    harrell = rcspline.eval(xs, nk = df + 1, knots.only = TRUE),
     given = c(min(xs), position(read_all(file.path(dir, "given.bin"))), max(xs))))
   if (is.null(knots)) next
   write_doubles(knots, file.path(dir, "r_knots.bin"))
@@ -184,11 +197,27 @@ for (case in readLines(file.path(root, "cases.txt"))) {
   write_doubles(f, file.path(dir, "r_f.bin"))
   writeLines(names(reduced), file.path(dir, "r_tests.txt"))
   write_doubles(curves, file.path(dir, "r_curves.bin"))
+  # limma-trend's moderated F-tests of the tested columns, and their numerator df.
+  counts <- matrix(read_all(file.path(dir, "counts.bin")), ncol = length(dose))
+  moderated <- quietly({
+    E <- cpm(DGEList(counts), log = TRUE, prior.count = PRIOR_COUNT)
+    trend <- eBayes(lmFit(E, design), trend = TRUE)
+    lapply(names(reduced), function(name) {
+      tested <- which(!colnames(design) %in% c("(Intercept)", reduced[[name]]))
+      classifyTestsF(trend[, tested], fstat.only = TRUE)
+    })
+  })
+  if (!is.null(moderated)) {
+    write_doubles(do.call(cbind, lapply(moderated, as.numeric)),
+                  file.path(dir, "r_moderated_f.bin"))
+    write_doubles(sapply(moderated, attr, "df1"), file.path(dir, "r_moderated_df1.bin"))
+  }
 }
 version <- function(name) paste(name, packageDescription(name, fields = "Version"))
 writeLines(paste0("R ", as.character(getRversion()), " (splines::ns, stats::lm), ",
-                  version("Hmisc")), file.path(root, "versions.txt"))
-"""
+                  version("Hmisc"), ", ", version("limma"), ", ", version("edgeR")),
+           file.path(root, "versions.txt"))
+""".replace("PRIOR_COUNT", repr(PRIOR_COUNT))
 
 
 def designs() -> dict[str, dict]:
@@ -241,8 +270,10 @@ FORMS = ("restricted_cubic", "b_spline")
 
 
 def cases() -> list[dict]:
-    """Every design x axis x form x rule x df, with responses and a grid of doses."""
+    """Every design x axis x form x rule x df, with responses, counts and a grid of
+    doses."""
     rng = np.random.default_rng(20261125)
+    counts_rng = np.random.default_rng(20261126)
     found = []
     for design_name, design in designs().items():
         doses = design["doses"]
@@ -258,6 +289,14 @@ def cases() -> list[dict]:
             + np.outer(shape, rng.normal(0.0, 1.5, GENES))
             + rng.normal(0.0, 0.3, (doses.size, GENES))
         )
+        # Counts, samples x genes, of which a fifth follow the shape on the log scale.
+        responding = COUNTED_GENES // 5
+        effects = np.r_[
+            counts_rng.normal(0.0, 1.0, responding),
+            np.zeros(COUNTED_GENES - responding),
+        ]
+        means = counts_rng.uniform(20.0, 500.0, COUNTED_GENES)
+        counts = counts_rng.poisson(means * np.exp(np.outer(shape, effects)))
         for axis_name, options in AXES.items():
             offset = (
                 design["offset"]
@@ -275,7 +314,6 @@ def cases() -> list[dict]:
             plans = [
                 *(("levels", df) for df in range(1, min(m - 1, LARGEST_DF) + 1)),
                 *(("quantiles", df) for df in range(1, min(m - 1, LARGEST_DF) + 1)),
-                *(("harrell", df) for df in range(2, min(m - 3, LARGEST_DF) + 1)),
                 ("given", len(design["given"]) + 1),
             ]
             for form in FORMS:
@@ -288,6 +326,7 @@ def cases() -> list[dict]:
                             "axis": axis,
                             "doses": doses,
                             "y": y,
+                            "counts": counts,
                             "grid": grid,
                             "rule": rule,
                             "df": df,
@@ -329,6 +368,7 @@ def run_r(inputs: list[dict]) -> tuple[dict, str]:
             (directory / "parameters.txt").write_text("\n".join(parameters) + "\n")
             write(directory / "doses.bin", case["doses"])
             write(directory / "y.bin", case["y"].T.ravel())
+            write(directory / "counts.bin", case["counts"])
             write(directory / "grid.bin", case["grid"])
             write(directory / "given.bin", case["given"])
         (root / "compare.R").write_text(R_SCRIPT)
@@ -360,6 +400,13 @@ def run_r(inputs: list[dict]) -> tuple[dict, str]:
                     .T.copy(),
                     "rank": int(read(directory / "r_rank.bin")[0]),
                 }
+                moderated = read(directory / "r_moderated_f.bin")
+                if moderated is not None:
+                    tests = len(result["tests"])
+                    result |= {
+                        "moderated_f": moderated.reshape(tests, -1).T.copy(),
+                        "moderated_df1": read(directory / "r_moderated_df1.bin"),
+                    }
             results[case["name"]] = result
         return results, (root / "versions.txt").read_text().strip()
 
@@ -372,7 +419,8 @@ class Checks:
         self.largest: dict[str, float] = {}
         self.counts: dict[str, int] = {}
         self.differing: list[str] = []
-        # Condition numbers above CONDITION_LIMIT, and whether R's lm lost rank.
+        # Condition numbers of R's designs above CONDITION_LIMIT, and whether R's lm
+        # lost rank.
         self.ill_conditioned: list[tuple[float, bool]] = []
 
     def record(self, kind: str, value: float) -> None:
@@ -395,14 +443,6 @@ def relative(ours: np.ndarray, reference: np.ndarray) -> float:
     return float(np.max(np.abs(ours - reference)[present])) / scale
 
 
-def by_column(ours: np.ndarray, reference: np.ndarray) -> float:
-    """Largest difference of each column relative to its largest absolute value."""
-    if ours.shape != reference.shape:
-        return np.inf
-    scale = np.maximum(np.max(np.abs(reference), axis=0), np.finfo(float).tiny)
-    return float(np.max(np.abs(ours - reference) / scale))
-
-
 def column_space(ours: np.ndarray, reference: np.ndarray) -> float:
     """Least squares fits of random responses on either matrix, relative to the
     largest fit; infinite when the shapes or ranks differ."""
@@ -420,6 +460,21 @@ def column_space(ours: np.ndarray, reference: np.ndarray) -> float:
     if ours_rank != rank:
         return np.inf
     return relative(ours_fits, reference_fits)
+
+
+def combinations(ours: np.ndarray, reference: np.ndarray) -> float:
+    """The reference's columns regressed on ours: the largest residual relative to each
+    column's largest absolute value; infinite when the shapes differ or the
+    combinations lose rank, so that the column spaces differ. Regressing on
+    well-conditioned columns keeps rounding small where the reference's columns are
+    nearly collinear, as Hmisc's truncated cubes are when doses crowd."""
+    if ours.shape != reference.shape:
+        return np.inf
+    weights = np.linalg.lstsq(ours, reference, rcond=None)[0]
+    if np.linalg.matrix_rank(weights) < reference.shape[1]:
+        return np.inf
+    residuals = np.max(np.abs(reference - ours @ weights), axis=0)
+    return float(np.max(residuals / np.max(np.abs(reference), axis=0)))
 
 
 def f_statistics(
@@ -443,7 +498,13 @@ def f_statistics(
     return np.column_stack(statistics)
 
 
-def departure(case: dict, reference: dict, message: str) -> str | None:
+def tested_columns(names: list[str]) -> dict[str, list[str]]:
+    """The columns of each F-test: any dose, among the treated doses, non-linear."""
+    splines = [name for name in names if name.startswith("dose_s")]
+    return {"any_dose": names, "among_doses": splines, "nonlinear": splines[1:]}
+
+
+def departure(case: dict, reference: dict) -> str | None:
     """The deliberate difference that explains why DoseAxis raises where R placed
     knots, or None."""
     knots = reference["knots"]
@@ -451,18 +512,24 @@ def departure(case: dict, reference: dict, message: str) -> str | None:
         return None
     if case["rule"] == "quantiles" and np.unique(knots).size < knots.size:
         return "R's rule places two knots at one dose: ns() takes them, DoseAxis raises"
-    if case["rule"] == "harrell":
-        if "tie at" in message:
-            return "Hmisc switches to its method for values tied at an extreme"
-        if knots.size < case["df"] + 1:
-            return "Hmisc drops a repeated knot or places fewer knots than asked"
     return None
 
 
-def compare(inputs: list[dict], results: dict) -> tuple[dict, dict]:
-    """Per design and axis, the largest differences; and the deliberate differences."""
+DROPPED_DIMENSION = (
+    "limma's F-tests of Hmisc's columns count fewer degrees of freedom than columns, "
+    "and CytePool's count every column"
+)
+
+
+def compare(inputs: list[dict], results: dict) -> tuple[dict, dict, dict]:
+    """Per design and axis, the largest differences; the deliberate differences; and
+    per axis and form, the largest condition numbers of CytePool's and R's designs."""
     checks: dict[tuple[str, str], Checks] = {}
     departures: dict[str, list[str]] = {}
+    conditions: dict[tuple[str, str], list[float]] = {}
+    cubes: dict[str, object] = {}
+    # (design, axis, rule, df) -> form -> F-test -> CytePool's moderated F-statistics.
+    moderated: dict[tuple, dict[str, dict[str, np.ndarray]]] = {}
     for case in inputs:
         reference = results[case["name"]]
         found = checks.setdefault((case["design"], case["axis_name"]), Checks())
@@ -479,7 +546,7 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict]:
                 samples, case["df"], knots=knots, form=case["form"]
             )
         except ValueError as error:
-            explained = departure(case, reference, str(error))
+            explained = departure(case, reference)
             if explained is not None:
                 departures.setdefault(explained, []).append(case["name"])
             elif reference["knots"] is not None:
@@ -500,21 +567,54 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict]:
         names = list(columns)
         ours = np.column_stack([columns[name] for name in names])
         spline = slice(1, None) if "dose_treated" in columns else slice(None)
+        design = Design(samples.with_columns(columns), "~ " + " + ".join(names)).matrix
         if case["form"] == "restricted_cubic":
+            first = ours[:, spline][:, 0]
             found.record(
-                "restricted cubic columns", by_column(ours, reference["columns"])
+                "first restricted cubic column",
+                relative(first, reference["columns"][:, spline][:, 0]),
             )
+            found.record(
+                "restricted cubic columns",
+                combinations(ours[:, spline], reference["columns"][:, spline]),
+            )
+            found.record("design matrices", combinations(design, reference["design"]))
         else:
             found.record(
                 "B-spline columns",
                 column_space(ours[:, spline], reference["columns"][:, spline]),
             )
-        design = Design(samples.with_columns(columns), "~ " + " + ".join(names)).matrix
-        if case["form"] == "restricted_cubic":
-            found.record("design matrices", by_column(design, reference["design"]))
-        else:
             found.record("design matrices", column_space(design, reference["design"]))
-        condition = float(np.linalg.cond(design))
+        condition = float(np.linalg.cond(reference["design"]))
+        conditions.setdefault((case["axis_name"], case["form"]), []).append(
+            float(np.linalg.cond(design))
+        )
+        conditions.setdefault((case["axis_name"], "R " + case["form"]), []).append(
+            condition
+        )
+        members = tested_columns(names)
+        tests = {name: members[name] for name in reference["tests"]}
+        # CytePool's moderated F-tests, as users run them.
+        if case["design"] not in cubes:
+            cubes[case["design"]] = from_bulk(case["counts"], samples=samples)
+        result = limma_trend(
+            cubes[case["design"]],
+            Design(samples.with_columns(columns), "~ " + " + ".join(names)),
+            contrasts=names,
+            f_tests=tests,
+            expression_filter=False,
+            normalization=None,
+            prior_count=PRIOR_COUNT,
+        )
+        (group,) = result.provenance["groups"]
+        wrong_df = sum(group["f_test_df1"][name] != len(m) for name, m in tests.items())
+        found.record("moderated F df", 0.0 if wrong_df == 0 else np.inf)
+        statistics = {
+            name: np.asarray(result.table("bulk", name)["f_statistic"], float)
+            for name in tests
+        }
+        key = (case["design"], case["axis_name"], case["rule"], case["df"])
+        moderated.setdefault(key, {})[case["form"]] = statistics
         if condition > CONDITION_LIMIT:
             found.ill_conditioned.append(
                 (condition, reference["rank"] < design.shape[1])
@@ -522,12 +622,8 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict]:
             found.record("cases", 0.0)
             continue
         position = {name: j for j, name in enumerate(["(Intercept)", *names])}
-        dropped = {
-            "any_dose": list(range(1, len(names) + 1)),
-            "among_doses": [position[n] for n in names if n.startswith("dose_s")],
-            "nonlinear": [position[n] for n in names if n.startswith("dose_s")][1:],
-        }
-        f = f_statistics(design, case["y"], [dropped[t] for t in reference["tests"]])
+        dropped = [[position[n] for n in tests[t]] for t in reference["tests"]]
+        f = f_statistics(design, case["y"], dropped)
         found.record("F-statistics", relative(f, reference["f"]))
         grid_columns = axis.design_columns({"dose": case["grid"]}, basis)
         grid_design = np.column_stack(
@@ -537,33 +633,63 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict]:
         found.record(
             "curves", relative(grid_design @ coefficients, reference["curves"])
         )
+        if reference.get("moderated_f") is None:
+            found.differing.append(f"{case['name']}: limma's F-tests failed")
+        elif np.any(reference["moderated_df1"] < [len(m) for m in tests.values()]):
+            departures.setdefault(DROPPED_DIMENSION, []).append(case["name"])
+        else:
+            ours_f = np.column_stack([statistics[name] for name in reference["tests"]])
+            found.record("moderated F", relative(ours_f, reference["moderated_f"]))
         found.record("cases", 0.0)
-    return checks, departures
+    # The two forms on the same knots span the same curves: the F-tests of any dose and
+    # among the treated doses must agree.
+    for (design_name, axis_name, *_), forms in moderated.items():
+        if len(forms) == 2:
+            found = checks[design_name, axis_name]
+            for name in forms["b_spline"]:
+                found.record(
+                    "forms",
+                    relative(forms["restricted_cubic"][name], forms["b_spline"][name]),
+                )
+    return checks, departures, conditions
 
 
 ROWS = {
     "positions": "positions",
     "treated": "dose_treated",
     "knots": "knots and boundary knots",
-    "restricted cubic columns": "restricted cubic columns",
+    "first restricted cubic column": "first restricted cubic column",
+    "restricted cubic columns": "Hmisc's columns as combinations of the restricted "
+    "cubic columns",
     "B-spline columns": "B-spline columns (column space)",
     "design matrices": "design matrices",
     "F-statistics": "F-statistics",
     "curves": "curves on the grid",
+    "moderated F": "moderated F-statistics",
+    "moderated F df": "numerator degrees of freedom of the moderated F-tests",
+    "forms": "moderated F-statistics of the two forms on the same knots",
 }
 REFERENCES = {
     "positions": "log10(dose), dose",
     "treated": "dose > 0",
-    "knots": "ns, rcspline.eval",
+    "knots": "ns",
+    "first restricted cubic column": "rcspline.eval",
     "restricted cubic columns": "rcspline.eval",
     "B-spline columns": "ns",
     "design matrices": "model.matrix",
     "F-statistics": "anova(lm)",
     "curves": "predict(lm)",
+    "moderated F": "limma classifyTestsF",
+    "moderated F df": "columns tested",
+    "forms": "B-spline form",
 }
+# Checks that count mismatches, with tolerance 0.
+IDENTICAL = ("treated", "moderated F df")
 
 
-def table(checks: dict, departures: dict) -> tuple[list[tuple[str, ...]], int]:
+def table(
+    checks: dict, departures: dict, conditions: dict
+) -> tuple[list[tuple[str, ...]], int]:
     rows, failures = [], 0
     for (design, axis), found in checks.items():
         cases = found.counts.get("cases", 0)
@@ -571,10 +697,10 @@ def table(checks: dict, departures: dict) -> tuple[list[tuple[str, ...]], int]:
             if kind not in found.largest:
                 continue
             value = found.largest[kind]
-            tolerance = 0.0 if kind == "treated" else EXACT
+            tolerance = 0.0 if kind in IDENTICAL else EXACT
             passed = value <= tolerance
             failures += not passed
-            shown = "0 mismatches" if kind == "treated" and passed else f"{value:.1e}"
+            shown = "0 mismatches" if kind in IDENTICAL and passed else f"{value:.1e}"
             check = f"{design}, {axis}: {label} ({found.counts[kind]} cases)"
             rows.append(
                 (
@@ -589,8 +715,8 @@ def table(checks: dict, departures: dict) -> tuple[list[tuple[str, ...]], int]:
             largest = max(condition for condition, _ in found.ill_conditioned)
             lost = sum(rank_lost for _, rank_lost in found.ill_conditioned)
             check = (
-                f"{design}, {axis}: F-statistics and curves of "
-                f"{len(found.ill_conditioned)} cases whose design has a condition "
+                f"{design}, {axis}: F-statistics, curves and moderated F-tests of "
+                f"{len(found.ill_conditioned)} cases whose R design has a condition "
                 f"number above {CONDITION_LIMIT:g}, up to {largest:.1e}; R's lm drops a "
                 f"column as aliased in {lost}"
             )
@@ -603,15 +729,20 @@ def table(checks: dict, departures: dict) -> tuple[list[tuple[str, ...]], int]:
         )
         for line in found.differing:
             print(f"differs: {line}")
-    for description, names in departures.items():
-        rows.append(
-            (
-                f"{description}: {len(names)} cases",
-                "R",
-                "DoseAxis raises",
-                "n/a",
-                "deviation",
+    for axis in AXES:
+        for form in FORMS:
+            ours, theirs = conditions[axis, form], conditions[axis, "R " + form]
+            check = (
+                f"{axis}, {form}: largest condition number of the designs of "
+                f"{len(ours)} cases"
             )
+            shown = f"{max(ours):.1e}; R's {max(theirs):.1e}"
+            rows.append((check, "model.matrix", shown, "n/a", "info"))
+    for description, names in departures.items():
+        dropped = description == DROPPED_DIMENSION
+        outcome = "limma tests fewer dimensions" if dropped else "DoseAxis raises"
+        rows.append(
+            (f"{description}: {len(names)} cases", "R", outcome, "n/a", "deviation")
         )
     return rows, failures
 
@@ -622,17 +753,22 @@ FIXTURE_CASES = (
     "tcdd_ladder | own group, log10 | b_spline | levels | df 7",
     "tcdd_ladder | own group, log10 | b_spline | quantiles | df 3",
     "tcdd_ladder | own group, log10 | b_spline | given | df 3",
+    "tcdd_ladder | on axis, log10 with offset | b_spline | given | df 3",
+    # Hmisc's columns on a linear axis: R's design is ill conditioned.
+    "tcdd_ladder | own group, linear | restricted_cubic | levels | df 5",
+    "half_log_wells | own group, log10 | restricted_cubic | levels | df 1",
     "half_log_wells | on axis, log10 with offset | restricted_cubic | levels | df 2",
     "half_log_wells | on axis, linear | b_spline | levels | df 4",
-    "exposures | own group, linear | restricted_cubic | harrell | df 4",
-    "exposures | on axis, log10 with offset | restricted_cubic | harrell | df 4",
+    "exposures | own group, linear | restricted_cubic | given | df 3",
+    "exposures | on axis, log10 with offset | restricted_cubic | quantiles | df 4",
 )
 
 
 def write_fixtures(inputs: list[dict], results: dict, departures: dict) -> None:
     """A few cases: the axis, doses, responses, grid, rule, df, form and given knots,
-    and R's positions, treated, knots, columns, design matrix, F-statistics (with the
-    names of the tests) and curves; and a case of each deliberate difference."""
+    and R's positions, treated, knots, columns, design matrix, its rank, F-statistics
+    (with the names of the tests) and curves; and a case of R's rule placing two knots
+    at one dose."""
     tied = [n for d, names in departures.items() if d.startswith("R's") for n in names]
     chosen = [*FIXTURE_CASES, *tied[:1]]
     by_name = {case["name"]: case for case in inputs}
@@ -653,7 +789,11 @@ def write_fixtures(inputs: list[dict], results: dict, departures: dict) -> None:
             "y": case["y"],
             "grid": case["grid"],
             "given": case["given"],
-            **{key: value for key, value in reference.items() if value is not None},
+            **{
+                key: value
+                for key, value in reference.items()
+                if value is not None and not key.startswith("moderated")
+            },
         }
         for key, value in record.items():
             arrays[f"case{i}__{key}"] = np.asarray(value)
@@ -669,8 +809,8 @@ def main() -> int:
     inputs = cases()
     results, version = run_r(inputs)
     print(f"Reference: {version}")
-    checks, departures = compare(inputs, results)
-    rows, failures = table(checks, departures)
+    checks, departures, conditions = compare(inputs, results)
+    rows, failures = table(checks, departures, conditions)
     print("| check | reference | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- |")
     for row in rows:

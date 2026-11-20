@@ -43,14 +43,21 @@ values, NaN, dose ladders and values tied at an extreme or between the extremes.
 knots must be identical; where Hmisc returns fewer knots than asked, switches to the
 method it uses for values tied at an extreme, or drops a repeated knot, CytePool
 raises an error instead (deliberate differences); where Hmisc fails, CytePool must
-fail too. The restricted cubic form is compared with ``rcspline.eval(x, knots,
-inclx = TRUE)`` for 3 to 8 knots at points from below the first to far beyond the
-last knot, column by column relative to each column's largest absolute value, with
-its first column plus the lower boundary knot against Hmisc's x (tier exact). The
-overall and non-linear F-statistics of ``anova(ols(y ~ rcs(x, nk)))`` (rms) are
-compared with those of least squares fits on an intercept and the restricted cubic
-columns, and the overall F with the B-spline form on the same knots (tier exact),
-and rms's knots with Harrell's rule (identical).
+fail too. A case counts as Hmisc's method for ties only where Hmisc's knots differ
+from the percentiles that its help page gives, computed here without CytePool; a
+refusal for ties where Hmisc kept the percentiles counts as a mismatch. The
+restricted cubic form is compared with ``rcspline.eval(x, knots, inclx = TRUE)`` for
+3 to 8 knots at points from below the first to far beyond the last knot: its first
+column plus the lower boundary knot against Hmisc's x, relative to the largest
+absolute value, and Hmisc's columns, with an intercept, as combinations of
+CytePool's, by the largest residual relative to each column's largest absolute value
+(tier exact). CytePool's columns after the first differ from Hmisc's truncated cubes
+by a change of basis that keeps them well conditioned, and regressing Hmisc's columns
+on them keeps rounding small where Hmisc's are nearly collinear. The overall and
+non-linear F-statistics of ``anova(ols(y ~ rcs(x, nk)))`` (rms) are compared with
+those of least squares fits on an intercept and the restricted cubic columns, and the
+overall F with the B-spline form on the same knots (tier exact), and rms's knots with
+Harrell's rule (identical).
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root so that
@@ -796,6 +803,19 @@ HARRELL_DEPARTURES = {
 }
 
 
+def percentile_knots(x: np.ndarray, nk: int) -> np.ndarray:
+    """Harrell's percentiles as the help page of rcspline.eval gives them, without its
+    method for ties: quantiles of type 7 at nk equally spaced probabilities from lo to
+    1 - lo, lo 0.1 for 3 knots, 0.05 for 4 to 6 and 0.025 for more, the outer two
+    replaced by the 5th smallest and largest values below 100 values, sorted."""
+    values = np.sort(x[~np.isnan(x)])
+    outer = 0.1 if nk == 3 else 0.05 if nk <= 6 else 0.025
+    knots = np.quantile(values, np.linspace(outer, 1.0 - outer, nk))
+    if values.size < 100:
+        knots[0], knots[-1] = values[4], values[-5]
+    return np.sort(knots)
+
+
 def harrell_outcome(x: np.ndarray, nk: int, hmisc: np.ndarray | None) -> str:
     """How CytePool's knots by Harrell's rule compare with Hmisc's: "identical",
     "both fail", one of HARRELL_DEPARTURES (a deliberate difference), or "mismatch"."""
@@ -806,7 +826,11 @@ def harrell_outcome(x: np.ndarray, nk: int, hmisc: np.ndarray | None) -> str:
             return "both fail"
         message = str(error)
         if "tie at" in message:
-            return "tie"
+            # Hmisc's method for ties only where Hmisc left the percentiles.
+            kept = hmisc.size == nk and np.allclose(
+                percentile_knots(x, nk), hmisc, rtol=1e-12, atol=0.0
+            )
+            return "mismatch" if kept else "tie"
         if hmisc.size < nk and "distinct values" in message:
             return "few"
         if hmisc.size < nk and "two knots at" in message:
@@ -879,21 +903,48 @@ def compare_restricted_cubic(cases: list[dict], results: dict, table: Table) -> 
             knots=knots[1:-1], boundary_knots=knots[[0, -1]], form="restricted_cubic"
         )
         ours = basis.matrix(case["newx"])
-        ours[:, 0] += knots[0]
-        missing = np.isnan(reference[:, 0])
-        difference = np.inf
-        if ours.shape == reference.shape and np.array_equal(
-            np.isnan(ours), np.isnan(reference)
-        ):
-            scale = np.max(np.abs(reference[~missing]), axis=0)
-            difference = float(np.max(np.abs(ours - reference)[~missing] / scale))
-        check = (
+        label = (
             f"restricted cubic columns, {case['name']} ({knots.size} knots), "
             f"{case['newx'].size} points to {np.nanmax(case['newx']):g} and NaN"
         )
+        first = combined = np.inf
+        if ours.shape == reference.shape and np.array_equal(
+            np.isnan(ours), np.isnan(reference)
+        ):
+            present = ~np.isnan(reference[:, 0])
+            first = float(
+                np.max(np.abs(ours[present, 0] + knots[0] - reference[present, 0]))
+                / np.max(np.abs(reference[present, 0]))
+            )
+            ones = np.ones((int(present.sum()), 1))
+            combined = combinations(
+                np.hstack([ones, ours[present]]), np.hstack([ones, reference[present]])
+            )
         table.add(
-            check, "rcspline.eval", "max diff / column max abs", difference, EXACT
+            f"{label}: first column plus the lower knot",
+            "rcspline.eval",
+            "max diff / max abs",
+            first,
+            EXACT,
         )
+        table.add(
+            f"{label}: Hmisc's columns as combinations of CytePool's",
+            "rcspline.eval",
+            "max residual / column max abs",
+            combined,
+            EXACT,
+        )
+
+
+def combinations(ours: np.ndarray, reference: np.ndarray) -> float:
+    """The reference's columns regressed on ours: the largest residual relative to each
+    column's largest absolute value; infinite when the combinations lose rank, so that
+    the column spaces differ."""
+    weights = np.linalg.lstsq(ours, reference, rcond=None)[0]
+    if np.linalg.matrix_rank(weights) < reference.shape[1]:
+        return np.inf
+    residuals = np.max(np.abs(reference - ours @ weights), axis=0)
+    return float(np.max(residuals / np.max(np.abs(reference), axis=0)))
 
 
 def f_statistics(

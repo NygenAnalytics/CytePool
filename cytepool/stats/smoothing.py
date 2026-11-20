@@ -36,15 +36,17 @@ same curves, so that fits and the F-tests of all columns agree (Durrleman and Si
   (de Boor 1978), continued linearly beyond the boundary knots, times an
   orthonormal basis of the splines with zero second derivative at both boundary
   knots.
-- ``"restricted_cubic"``, Harrell's restricted cubic spline: with all the knots
-  t_1 < ... < t_k, the boundary knots included, and u_+ = max(u, 0), the columns
-  x - t_1 and, for j = 1, ..., k - 2,
-  [(x - t_j)_+^3 - (x - t_(k-1))_+^3 (t_k - t_j) / (t_k - t_(k-1))
-  + (x - t_k)_+^3 (t_(k-1) - t_j) / (t_k - t_(k-1))] / (t_k - t_1)^2,
-  as Hmisc's ``rcspline.eval`` gives them with its default normalization (Harrell
-  2026), except that its first column is x itself. The first column is the linear
-  part, so that the F-test of the other columns tests departure from a straight
-  line (Desquilbet and Mariotti 2010).
+- ``"restricted_cubic"``, Harrell's restricted cubic spline with its linear part as
+  the first column: x - t_1, for the lower boundary knot t_1, and then natural
+  splines whose B-spline coefficients are orthonormal and orthogonal to those of
+  x - t_1, which are the averages of three consecutive knots of the sequence minus
+  t_1 (de Boor 1978). The F-test of the columns after the first tests departure from
+  a straight line (Desquilbet and Mariotti 2010). The columns span the curves of
+  Hmisc's ``rcspline.eval`` and rms's ``rcs`` with the same knots (Harrell 2026), so
+  fits and these F-tests are rms's; their truncated-power terms become nearly
+  collinear when knots crowd, enough for the F-tests of limma, which drop
+  dimensions whose eigenvalue is below 1e-8 of the largest, to test fewer
+  dimensions, and these columns do not.
 
 Without an intercept every column vanishes at the lower boundary knot, in both
 forms. The interior knots are given, or placed by one of three rules: R's rule for
@@ -88,7 +90,7 @@ References:
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
@@ -321,20 +323,24 @@ class NaturalSplineBasis:
     """A basis of natural cubic splines that keeps its knots.
 
     The columns are cubic between the knots and linear beyond the two boundary knots.
-    The basis is built from values of x, which place the knots, and gives its columns
-    at any points with :meth:`matrix`: at the samples of a fit, or at new doses where
-    the fitted curve is drawn. In a model with an intercept the F-test of all its
-    columns tests any change along x; in the restricted cubic form, the F-test of the
-    columns after the first tests departure from a straight line
+    The basis is built from values of x, which place the knots, and :meth:`matrix`
+    gives its columns at any values of the same kind: at the samples of a fit, or on
+    a grid where the fitted curve is drawn. A basis from
+    :meth:`~cytepool.DoseAxis.spline_basis` is built on positions on the dose axis,
+    such as log10 doses, and :meth:`~cytepool.DoseAxis.design_columns` gives its
+    columns at doses. In a model with an intercept the F-test of all its columns
+    tests any change along x; in the restricted cubic form, the F-test of the columns
+    after the first tests departure from a straight line
     (https://docs.nygen.io/CytePool/statistics/linear-models#spline-bases).
 
     Both forms span the same curves for the same knots: ``"b_spline"`` gives the
     columns of R's ``splines::ns`` up to a change of basis, and
-    ``"restricted_cubic"`` those of Hmisc's ``rcspline.eval`` and rms's ``rcs``,
-    whose first column is x minus the lower boundary knot instead of x. The module
-    docstring gives the formulas. Without an intercept every column vanishes at the
-    lower boundary knot. :func:`natural_spline_basis` returns
-    ``NaturalSplineBasis(x, df, knots=..., ...).matrix(x)`` in the B-spline form.
+    ``"restricted_cubic"`` the curves of Hmisc's ``rcspline.eval`` and rms's ``rcs``,
+    with x minus the lower boundary knot as its first column and columns after it
+    that stay well conditioned when knots crowd, as the module docstring describes.
+    Without an intercept every column vanishes at the lower boundary knot.
+    :func:`natural_spline_basis` returns ``NaturalSplineBasis(x, df, knots=...,
+    ...).matrix(x)`` in the B-spline form.
 
     The interior knots are given, or placed by a rule on the observed values of x
     (NaN marks a missing value) within the boundary knots:
@@ -346,7 +352,8 @@ class NaturalSplineBasis:
       ``attr(ns(x, df), "knots")`` gives the same knots.
     - ``"levels"``, the same rule on the distinct values of x, each counted once,
       so that a dose counts once whatever its number of replicates:
-      ``attr(ns(unique(x), df), "knots")``. These knots never coincide.
+      ``attr(ns(unique(x), df), "knots")``. These knots never coincide when two or
+      more distinct values lie within the boundary knots.
     - ``"harrell"``, Harrell's percentiles, as ``rcspline.eval(x, nk = df + 1 -
       intercept)`` and rms's ``rcs`` place all the knots, the outer ones included,
       which become the boundary knots. It raises an error where Hmisc places fewer
@@ -363,7 +370,7 @@ class NaturalSplineBasis:
         knots: A rule, ``"quantiles"``, ``"levels"`` or ``"harrell"``, or the
             interior knots, strictly inside the boundary knots. The B-spline form
             accepts repeated knots, which lower the smoothness there; the restricted
-            cubic form needs distinct knots.
+            cubic form, like Harrell's, takes distinct knots only.
         intercept: Whether the columns span constant functions.
         boundary_knots: The two knots beyond which the curves are linear, in either
             order. Defaults to the range of the observed values of x; refused with
@@ -392,14 +399,15 @@ class NaturalSplineBasis:
 
     Example:
         >>> import numpy as np
-        >>> doses = np.log10(np.repeat([0.01, 0.1, 1.0, 10.0], 3))
+        >>> log_doses = np.log10(np.repeat([0.01, 0.1, 1.0, 10.0], 3))
         >>> basis = NaturalSplineBasis(
-        ...     doses, df=2, knots="levels", form="restricted_cubic"
+        ...     log_doses, df=2, knots="levels", form="restricted_cubic"
         ... )
         >>> basis.knots, basis.boundary_knots
         ((-0.5,), (-2.0, 1.0))
+        >>> # 2.0 lies beyond the upper boundary knot, where the columns are lines.
         >>> basis.matrix([-2.0, 1.0, 2.0]).round(4).tolist()
-        [[0.0, 0.0], [3.0, 2.25], [4.0, 3.75]]
+        [[0.0, 0.0], [3.0, 0.453], [4.0, 1.3187]]
     """
 
     knots: tuple[float, ...]
@@ -429,24 +437,15 @@ class NaturalSplineBasis:
                 f"df must be at least {smallest} with intercept={with_intercept}, "
                 f"got {columns}"
             )
-        if knots is None:
-            raise TypeError(
-                f"knots must be a rule, one of {', '.join(map(repr, _RULES))}, or "
-                "the interior knots, got None"
-            )
-        if isinstance(knots, str) and knots not in _RULES:
-            raise ValueError(
+        if knots is None or (isinstance(knots, str) and knots not in _RULES):
+            raise (TypeError if knots is None else ValueError)(
                 f"knots must be a rule, one of {', '.join(map(repr, _RULES))}, or the "
                 f"interior knots, got {knots!r}"
             )
         rule = knots if isinstance(knots, str) else None
         observed = None
         if x is not None:
-            values = _real_vector(x, "x", missing="NaN")
-            if np.isinf(values).any():
-                raise ValueError(
-                    "x must not contain infinite values; NaN marks a missing value"
-                )
+            values = _points(x)
             observed = values[~np.isnan(values)]
 
         if rule == "harrell":
@@ -491,10 +490,11 @@ class NaturalSplineBasis:
             repeated = interior[1:][np.diff(interior) == 0.0]
             if repeated.size:
                 source = "the knots given" if rule is None else _RULES[rule]
+                levels = "" if rule == "levels" else "knots='levels', or "
                 raise ValueError(
-                    f"the restricted cubic form needs distinct knots, and {source} "
+                    f"the restricted cubic form takes distinct knots, and {source} "
                     f"repeats {float(repeated[0])!r}; use form='b_spline', which "
-                    "accepts repeated knots, or knots='levels', or give distinct knots"
+                    f"accepts repeated knots, or {levels}give distinct knots"
                 )
         object.__setattr__(self, "knots", tuple(float(knot) for knot in interior))
         object.__setattr__(self, "boundary_knots", (lower, upper))
@@ -510,8 +510,11 @@ class NaturalSplineBasis:
         """The columns at x.
 
         Args:
-            x: ``(n,)`` real values; NaN marks a missing value. Values beyond the
-                boundary knots lie on the straight lines that continue the curves.
+            x: ``(n,)`` real values of the kind that placed the knots, such as
+                positions on the dose axis for a basis of
+                :meth:`~cytepool.DoseAxis.spline_basis`; NaN marks a missing value.
+                Values beyond the boundary knots lie on the straight lines that
+                continue the curves.
 
         Returns:
             ``(n, df)`` float64 matrix, with a row of NaN for each NaN in ``x``.
@@ -520,38 +523,28 @@ class NaturalSplineBasis:
             TypeError: If ``x`` is not real-valued or is a numpy masked array.
             ValueError: If ``x`` is not 1-D or has infinite values.
         """
-        points = _real_vector(x, "x", missing="NaN")
-        if np.isinf(points).any():
-            raise ValueError(
-                "x must not contain infinite values; NaN marks a missing value"
-            )
+        points = _points(x)
         observed = ~np.isnan(points)
         lower, upper = self.boundary_knots
         interior = np.array(self.knots, dtype=np.float64)
         columns = np.full((points.size, self.df), np.nan)
-        if self.form == "b_spline":
-            columns[observed] = _natural_bspline_columns(
-                points[observed], interior, lower, upper, self.intercept
-            )
-        else:
-            all_knots = np.concatenate([[lower], interior, [upper]])
-            columns[observed] = _restricted_cubic_columns(
-                points[observed], all_knots, self.intercept
-            )
+        build = (
+            _natural_bspline_columns
+            if self.form == "b_spline"
+            else _restricted_cubic_columns
+        )
+        columns[observed] = build(
+            points[observed], interior, lower, upper, self.intercept
+        )
         return columns
 
     def to_dict(self) -> dict[str, Any]:
         """The basis as plain values that JSON stores: ``knots``, ``boundary_knots``
-        (lists of floats), ``intercept`` and ``form``.
+        (tuples of floats, which JSON stores as lists), ``intercept`` and ``form``.
 
         ``NaturalSplineBasis(**basis.to_dict())`` rebuilds the basis.
         """
-        return {
-            "knots": list(self.knots),
-            "boundary_knots": list(self.boundary_knots),
-            "intercept": self.intercept,
-            "form": self.form,
-        }
+        return asdict(self)
 
 
 def natural_spline_basis(
@@ -1172,51 +1165,50 @@ def _natural_bspline_columns(
     knot_sequence = np.concatenate(
         [np.full(_CUBIC_ORDER, lower), interior, np.full(_CUBIC_ORDER, upper)]
     )
-    bounds = np.array([lower, upper])
     splines = _bspline_design(points, knot_sequence, lower, upper)
-    constraints = _bspline_derivatives(bounds, knot_sequence, 2)
+    constraints = _bspline_derivatives(np.array([lower, upper]), knot_sequence, 2)
     if not intercept:
         # Every B-spline but the first vanishes at the lower boundary knot.
         splines = splines[:, 1:]
         constraints = constraints[:, 1:]
-    # The basis of the natural splines is the B-spline basis times an
-    # orthonormal basis of the null space of the two boundary conditions.
-    scale = np.abs(constraints).max(axis=1, keepdims=True)
-    q, _ = np.linalg.qr(
-        (constraints / np.where(scale > 0.0, scale, 1.0)).T, mode="complete"
-    )
-    columns: FloatArray = splines @ q[:, 2:]
+    columns: FloatArray = splines @ _null_space(constraints)
     return columns
 
 
 def _restricted_cubic_columns(
-    points: FloatArray, knots: FloatArray, intercept: bool
+    points: FloatArray,
+    interior: FloatArray,
+    lower: float,
+    upper: float,
+    intercept: bool,
 ) -> FloatArray:
-    """The restricted cubic form at points, for all the knots t_1 < ... < t_k.
-
-    x - t_1, and the terms of the module docstring computed from truncated cubes, as
-    Hmisc's rcspline.eval gives them with its default normalization by (t_k - t_1)^2;
-    a column of ones first with an intercept.
+    """The restricted cubic form at points, as the module docstring describes it: a
+    column of ones with an intercept, x - t_1, and the natural splines that vanish at
+    t_1 whose B-spline coefficients are orthonormal and orthogonal to those of x - t_1.
     """
-    first, second_last, last = knots[0], knots[-2], knots[-1]
-    spread = (last - first) ** 2
-    gap = last - second_last
-    columns = [np.ones(points.size)] if intercept else []
-    columns.append(points - first)
-    for knot in knots[:-2]:
-        term = (
-            _truncated_cube(points - knot)
-            - _truncated_cube(points - second_last) * (last - knot) / gap
-            + _truncated_cube(points - last) * (second_last - knot) / gap
-        )
-        columns.append(term / spread)
-    return np.column_stack(columns)
+    knot_sequence = np.concatenate(
+        [np.full(_CUBIC_ORDER, lower), interior, np.full(_CUBIC_ORDER, upper)]
+    )
+    # Every B-spline but the first vanishes at the lower boundary knot.
+    splines = _bspline_design(points, knot_sequence, lower, upper)[:, 1:]
+    constraints = _bspline_derivatives(np.array([lower, upper]), knot_sequence, 2)
+    # The coefficient of x on each B-spline is the average of the three inner knots of
+    # its support (de Boor 1978).
+    line = (knot_sequence[2:-3] + knot_sequence[3:-2] + knot_sequence[4:-1]) / 3.0
+    conditions = np.vstack([constraints[:, 1:], line - lower])
+    nonlinear = splines @ _null_space(conditions)
+    ones = [np.ones(points.size)] if intercept else []
+    return np.column_stack([*ones, points - lower, nonlinear])
 
 
-def _truncated_cube(u: FloatArray) -> FloatArray:
-    """max(u, 0)^3."""
-    cube: FloatArray = np.maximum(u, 0.0) ** 3
-    return cube
+def _null_space(rows: FloatArray) -> FloatArray:
+    """An orthonormal basis of the vectors that every row maps to 0, from the QR
+    decomposition of the rows, each scaled by its largest absolute value; the rows
+    must be linearly independent."""
+    scale = np.abs(rows).max(axis=1, keepdims=True)
+    q, _ = np.linalg.qr((rows / np.where(scale > 0.0, scale, 1.0)).T, mode="complete")
+    basis: FloatArray = q[:, rows.shape[0] :]
+    return basis
 
 
 def _bspline_design(
@@ -1423,6 +1415,17 @@ def _penalized_fit(
             trace += solved[j] * solved[j]
         fitted[i] = value
     return trace
+
+
+def _points(x: Any) -> FloatArray:
+    """Values of x as float64: a 1-D array of real numbers, NaN for a missing value,
+    none infinite."""
+    points = _real_vector(x, "x", missing="NaN")
+    if np.isinf(points).any():
+        raise ValueError(
+            "x must not contain infinite values; NaN marks a missing value"
+        )
+    return points
 
 
 def _real_vector(values: Any, name: str, *, missing: Missing = None) -> FloatArray:

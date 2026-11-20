@@ -11,8 +11,8 @@ DoseFinding's model ``log(dose + off)`` does (Bornkamp et al. 2026). sci-Plex-Gx
 added 0.001 to every dose, a pseudocount chosen from experiments whose data are not
 shown (McFaline-Figueroa et al. 2024); the offset decides where the vehicle sits and
 the slope at the low end, which is why it is recorded rather than built in. The axis
-also records the unit and the kind of dose, administered, nominal, measured or
-internal, so that knots and curves print in the dose's own terms
+also records the unit and the metric, what the dose measures (administered, nominal,
+measured or internal), so that knots and curves print in the dose's own terms
 (https://docs.nygen.io/CytePool/statistics/linear-models#dose-axes).
 
 References:
@@ -36,9 +36,10 @@ import numpy as np
 import numpy.typing as npt
 
 from ._columns import is_data_frame
-from ._masked_arrays import reject_masked, unmasked_array
+from ._masked_arrays import Missing, reject_masked, unmasked_array
 from ._messages import close_matches, listing
 from ._options import checked_choice, positive_finite_number, positive_integer
+from .cube import Cube
 from .stats.smoothing import NaturalSplineBasis
 from .table import Table
 
@@ -49,12 +50,8 @@ FloatArray = npt.NDArray[np.float64]
 METRICS = ("administered", "nominal", "measured", "internal")
 SCALES = ("log10", "linear")
 VEHICLES = ("own_group", "on_axis")
-# How messages name the rules of NaturalSplineBasis that place knots.
-_RULE_NAMES = {
-    "levels": "R's quantile rule on the distinct doses",
-    "quantiles": "R's quantile rule",
-    "harrell": "Harrell's rule",
-}
+# The rules of NaturalSplineBasis that place knots on a dose ladder.
+RULES = ("levels", "quantiles")
 # Distinct doses closer than this, relative to the larger, are one dose that a
 # conversion of units left as two.
 _SAME_DOSE = 1e-8
@@ -66,7 +63,7 @@ _LISTED_DOSES = 20
 class DoseAxis:
     """The axis along which a curve of dose is fitted, with the vehicle's place on it.
 
-    Records the dose column of a sample table, the dose's unit and kind, whether
+    Records the dose column of a sample table, the dose's unit and metric, whether
     the curve follows log10 of the dose or the dose itself, and where the vehicle, the
     samples of dose 0, goes: in a group of its own (``"own_group"``), or on the axis
     (``"on_axis"``), on the log10 scale at an offset added to every dose. With the
@@ -86,9 +83,12 @@ class DoseAxis:
             animal or person, as mg/kg; ``"nominal"``, the amount added to the
             medium; ``"measured"``, the amount measured in the medium, blood or
             tissue; or ``"internal"``, the amount at the target estimated by a model.
-        scale: ``"log10"``, positions at log10 of the dose, or ``"linear"``, at the
-            dose itself.
-        vehicle: ``"own_group"`` or ``"on_axis"``.
+        scale: ``"log10"`` (default), positions at log10 of the dose, or
+            ``"linear"``, at the dose itself.
+        vehicle: ``"own_group"`` (default), the vehicle is a group of its own, marked
+            by ``{column}_treated``, and the spline runs along the treated doses; or
+            ``"on_axis"``, the vehicle sits on the axis, at log10(offset) on a log10
+            axis or at 0 on a linear one.
         offset: With ``scale="log10"`` and ``vehicle="on_axis"``, and only then: a
             dose, above 0, added to every dose before its logarithm is taken, so
             that the vehicle sits at log10(offset).
@@ -104,8 +104,9 @@ class DoseAxis:
         >>> axis = DoseAxis("dose", unit="ug/kg", metric="administered")
         >>> samples = {"dose": [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0]}
         >>> basis = axis.spline_basis(samples, df=2)
-        >>> axis.doses(basis.knots).round(6).tolist(), basis.boundary_knots
-        ([1.0], (-1.0, 1.0))
+        >>> knots = axis.doses(basis.knots), axis.doses(basis.boundary_knots)
+        >>> [k.round(6).tolist() for k in knots]
+        [[1.0], [0.1, 10.0]]
         >>> columns = axis.design_columns(samples, basis)
         >>> list(columns)
         ['dose_treated', 'dose_s1', 'dose_s2']
@@ -170,10 +171,10 @@ class DoseAxis:
     def doses(self, positions: npt.ArrayLike) -> FloatArray:
         """The doses at positions on the axis, the inverse of :meth:`positions`.
 
-        Prints knots and reads curves in the dose's unit: 10^position, minus the
-        offset when the vehicle sits on a log10 axis, or the position itself on the
-        linear scale. The round trip through :meth:`positions` can differ from the
-        dose in the last bit.
+        Converts positions on the axis, such as knots, back to doses in the axis's
+        unit: 10^position, minus the offset when the vehicle sits on a log10 axis, or
+        the position itself on the linear scale. The round trip through
+        :meth:`positions` can differ from the dose in the last bit.
 
         Args:
             positions: ``(n,)`` real positions; NaN marks a missing value, and stays
@@ -187,14 +188,7 @@ class DoseAxis:
                 array.
             ValueError: If ``positions`` is not 1-D or holds an infinite value.
         """
-        array = unmasked_array(positions, "positions", missing="NaN")
-        if array.dtype.kind not in "iuf":
-            raise TypeError(
-                f"positions must hold real numbers, got dtype {array.dtype}"
-            )
-        if array.ndim != 1:
-            raise ValueError(f"positions must be a 1-D array, got shape {array.shape}")
-        values = array.astype(np.float64)
+        values = _real_vector(positions, "positions", missing="NaN")
         if np.isinf(values).any():
             raise ValueError(
                 "positions must not be infinite; NaN marks a missing value"
@@ -217,14 +211,15 @@ class DoseAxis:
         """The basis of a natural cubic spline of dose, with knots placed on the
         samples' doses.
 
-        The knots and the boundary knots, by default the lowest and highest doses on
-        the axis, are placed on the positions of the samples that have one: the
-        treated samples when the vehicle is a group of its own, and every sample
-        when it is on the axis. Pass the basis to :meth:`design_columns`, and read
-        its knots in doses with :meth:`doses`. A spline of ``df`` columns and the
-        level of the treated samples fit ``df + 1`` distinct doses, so ``df`` is at
-        most the number of distinct doses on the axis minus one; at that number the
-        spline fits every dose group.
+        The knots and the boundary knots, the lowest and highest doses on the axis,
+        are placed on the positions of the samples that have one: the treated
+        samples when the vehicle is a group of its own, and every sample when it is
+        on the axis. Pass the basis to :meth:`design_columns`, and read its knots in
+        doses with :meth:`doses`. The spline columns and the intercept, with
+        ``{column}_treated`` when the vehicle is a group of its own, fit ``df + 1``
+        distinct doses on the axis, so ``df`` is at most the number of distinct
+        doses on the axis minus one; at that maximum the curve passes through the
+        mean of every dose group.
 
         Args:
             samples: The sample table, a ``Table``, a mapping of column name to 1-D
@@ -232,15 +227,17 @@ class DoseAxis:
             df: The number of spline columns, from 1 up. Needed with a rule; with
                 knots given, it must agree with them (``len(knots) + 1``).
             knots: A rule of :class:`~cytepool.stats.smoothing.NaturalSplineBasis`:
-                ``"levels"``, R's quantile rule on the distinct doses, each counted
-                once whatever its number of replicates; ``"quantiles"``, R's rule
-                for ``ns`` on the samples' positions; or ``"harrell"``, Harrell's
-                percentiles. Or the interior knots as doses in the axis's unit,
-                strictly between the lowest and highest dose on the axis.
-            form: ``"restricted_cubic"``, whose first column is the position minus
-                the lower boundary knot, so that the other columns test departure
-                from a straight line, or ``"b_spline"``, the columns of R's ``ns``
-                up to a change of basis.
+                ``"levels"`` (default), R's quantile rule on the distinct doses,
+                each counted once whatever its number of replicates, so that a knot
+                can fall between two doses; or ``"quantiles"``, R's rule for ``ns``
+                on the samples' positions. Or the interior knots as doses in the
+                axis's unit, strictly between the lowest and highest dose on the
+                axis.
+            form: ``"restricted_cubic"`` (default), whose first column is the
+                position minus the lower boundary knot, so that the other columns
+                test departure from a straight line; or ``"b_spline"``, the columns
+                of R's ``ns`` up to a change of basis. Both stay well conditioned
+                when doses crowd.
 
         Returns:
             The basis, without an intercept.
@@ -249,19 +246,27 @@ class DoseAxis:
             TypeError: If ``samples`` is not a table or holds a numpy masked array,
                 its dose column is not numeric, ``df`` is not an integer, or the
                 knots are not real numbers.
-            ValueError: If the dose column is missing or holds a dose that is not
-                finite or is negative; fewer than two distinct doses are on the
-                axis, or two of them differ by less than 1e-8 of the dose; ``df``
-                is missing with a rule, disagrees with given knots or exceeds the
-                distinct doses on the axis minus one; a given knot is not strictly
-                between the lowest and highest dose on the axis; any two knots
-                coincide; or the rule cannot place the knots.
+            ValueError: If ``knots`` names no rule of a dose axis; the dose column is
+                missing or holds a dose that is not finite or is negative; fewer
+                than two distinct doses are on the axis, or two of them differ by
+                less than 1e-8 of the dose; ``df`` is missing with a rule, disagrees
+                with given knots or exceeds the distinct doses on the axis minus
+                one; a given knot is not strictly between the lowest and highest
+                dose on the axis; any two knots coincide; or the rule cannot place
+                the knots.
         """
+        rule = isinstance(knots, str)
+        if rule and knots not in RULES:
+            raise ValueError(
+                f"knots must be a rule, one of {', '.join(map(repr, RULES))}, or the "
+                f"interior knots as doses in {self.unit}, got {knots!r}"
+            )
         doses = self._sample_doses(samples)
         positions = self._positions(doses)
         on_axis = ~np.isnan(positions)
         levels = np.unique(doses[on_axis])
         self._check_levels(levels)
+        placing: str | FloatArray
         if isinstance(knots, str):
             if df is None:
                 raise ValueError(
@@ -269,18 +274,10 @@ class DoseAxis:
                     f"it can be at most {levels.size - 1} here, one less than the "
                     "distinct doses on the axis"
                 )
-            columns = positive_integer(df, "df")
-            placing: str | FloatArray = knots
-            source = _RULE_NAMES.get(knots, repr(knots))
+            placing, columns = knots, positive_integer(df, "df")
         else:
             placing = self._knot_positions(knots, levels)
             columns = placing.size + 1
-            if df is not None and positive_integer(df, "df") != columns:
-                raise ValueError(
-                    f"df={df} disagrees with {placing.size} knots, which give "
-                    f"{columns} spline columns; give one of them"
-                )
-            source = "the knots given"
         if columns > levels.size - 1:
             raise ValueError(
                 f"a spline of {columns} columns needs {columns + 1} distinct doses on "
@@ -289,8 +286,10 @@ class DoseAxis:
                 f"{levels.size - 1}"
             )
         try:
-            placed = NaturalSplineBasis(positions[on_axis], columns, knots=placing)
+            placed = NaturalSplineBasis(positions[on_axis], df, knots=placing)
         except ValueError as error:
+            if not rule:
+                raise
             raise ValueError(
                 f"{error} (on this axis, x is {self._position_text()})"
             ) from error
@@ -298,20 +297,18 @@ class DoseAxis:
         repeated = interior[1:][np.diff(interior) == 0.0]
         if repeated.size:
             dose = f"{self.doses(repeated[:1])[0]:g} {self.unit}"
-            if source == "the knots given":
+            if not rule:
                 raise ValueError(
                     f"the knots given coincide at {dose}; give distinct knots"
                 )
+            # Only R's rule on the samples repeats a knot: the knots of "levels"
+            # never coincide on two or more distinct doses.
             raise ValueError(
-                f"the knots that {source} places on the doses coincide at {dose}, "
-                "which would make the curve less smooth there; use knots='levels', a "
-                "lower df, or give distinct knots"
+                f"the knots that R's quantile rule places on the doses coincide at "
+                f"{dose}, which would make the curve less smooth there; use "
+                "knots='levels', a lower df, or give distinct knots"
             )
-        if form == "b_spline":
-            return placed
-        return NaturalSplineBasis(
-            knots=placed.knots, boundary_knots=placed.boundary_knots, form=form
-        )
+        return dataclasses.replace(placed, form=form)
 
     def design_columns(
         self, samples: Any, basis: NaturalSplineBasis
@@ -368,7 +365,7 @@ class DoseAxis:
         if self.vehicle == "own_group":
             columns[f"{self.column}_treated"] = (doses > 0.0).astype(np.float64)
         for j in range(basis.df):
-            columns[f"{self.column}_s{j + 1}"] = np.ascontiguousarray(values[:, j])
+            columns[f"{self.column}_s{j + 1}"] = values[:, j]
         return columns
 
     def to_dict(self) -> dict[str, Any]:
@@ -382,7 +379,7 @@ class DoseAxis:
         """Positions of checked doses."""
         if self.vehicle == "on_axis":
             if self.scale == "linear":
-                return doses.copy()
+                return doses
             assert self.offset is not None  # set by the constructor
             on_log10_axis: FloatArray = np.log10(doses + self.offset)
             return on_log10_axis
@@ -397,9 +394,10 @@ class DoseAxis:
         """The checked doses of a sample table's dose column."""
         reject_masked(samples, "samples", missing="None or NaN")
         if not (isinstance(samples, Table | Mapping) or is_data_frame(samples)):
+            hint = "; pass cube.samples" if isinstance(samples, Cube) else ""
             raise TypeError(
                 "samples must be a Table, a mapping of column names to 1-D values or "
-                f"a pandas DataFrame, got {type(samples).__name__}"
+                f"a pandas DataFrame, got {type(samples).__name__}{hint}"
             )
         table = samples if isinstance(samples, Table) else Table(samples)
         if self.column not in table:
@@ -429,7 +427,7 @@ class DoseAxis:
         """Refuse fewer than two distinct doses on the axis, and doses that differ
         only by rounding."""
         if levels.size < 2:
-            found = self._dose_text(levels) if levels.size else "none"
+            found = f"only one, {self._dose_text(levels)}" if levels.size else "none"
             raise ValueError(
                 "a spline of dose needs at least two distinct doses on the axis, and "
                 f"the samples have {found}{self._which_doses()}"
@@ -465,12 +463,7 @@ class DoseAxis:
 
 def _checked_doses(values: Any, name: str) -> FloatArray:
     """Doses as float64: a 1-D array of real numbers, finite and at least 0."""
-    array = unmasked_array(values, name)
-    if array.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must hold numbers, got dtype {array.dtype}")
-    if array.ndim != 1:
-        raise ValueError(f"{name} must be a 1-D array, got shape {array.shape}")
-    doses = array.astype(np.float64)
+    doses = _real_vector(values, name)
     bad = ~np.isfinite(doses) | (doses < 0.0)
     if bad.any():
         raise ValueError(
@@ -478,3 +471,13 @@ def _checked_doses(values: Any, name: str) -> FloatArray:
             f"{listing([repr(float(dose)) for dose in doses[bad]])}"
         )
     return doses
+
+
+def _real_vector(values: Any, name: str, *, missing: Missing = None) -> FloatArray:
+    """A new float64 copy of a 1-D array of real numbers."""
+    array = unmasked_array(values, name, missing=missing)
+    if array.dtype.kind not in "iuf":
+        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
+    if array.ndim != 1:
+        raise ValueError(f"{name} must be a 1-D array, got shape {array.shape}")
+    return array.astype(np.float64)

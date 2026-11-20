@@ -30,13 +30,13 @@ CHAPTER = (
 TCDD = np.array([0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0])
 LADDER = np.repeat(np.r_[0.0, TCDD], [4, 2, 3, 3, 2, 3, 2, 3, 3])
 FORMS = ("restricted_cubic", "b_spline")
-# The cases of dose_axes.npz where DoseAxis raises and R does not.
+# The case of dose_axes.npz where DoseAxis raises and R does not.
 TIED_KNOTS = (
     "unbalanced_ladder | own group, log10 | restricted_cubic | quantiles | df 3"
 )
-TIED_VALUES = (
-    "exposures | on axis, log10 with offset | restricted_cubic | harrell | df 4"
-)
+# F-statistics and curves of R's lm are compared where R's design has a condition
+# number of at most this, as in validation/dose_axes.py.
+CONDITION_LIMIT = 1e5
 
 
 def ug_per_kg(**options: Any) -> DoseAxis:
@@ -66,6 +66,21 @@ def f_statistic(full: np.ndarray, reduced: np.ndarray, y: np.ndarray) -> np.ndar
         rank_full - rank_reduced
     )
     return extra / (rss_full / (y.shape[0] - rank_full))
+
+
+def spans_the_columns(ours: np.ndarray, reference: np.ndarray) -> float:
+    """Largest residual of the columns of ``reference`` regressed on those of
+    ``ours``, relative to each column's largest absolute value; infinite when the
+    combinations lose rank, so that the column spaces differ.
+
+    Regressing on ``ours`` keeps the error small where the reference is ill
+    conditioned, as Hmisc's truncated cubes are when doses crowd.
+    """
+    weights = np.linalg.lstsq(ours, reference, rcond=None)[0]
+    if np.linalg.matrix_rank(weights) < reference.shape[1]:
+        return np.inf
+    residuals = np.max(np.abs(reference - ours @ weights), axis=0)
+    return float(np.max(residuals / np.max(np.abs(reference), axis=0)))
 
 
 def same_column_space(ours: np.ndarray, reference: np.ndarray) -> float:
@@ -148,7 +163,7 @@ def test_dose_positions_by_hand() -> None:
 def test_design_columns_match_r(r_cases: list[dict[str, Any]]) -> None:
     compared = 0
     for case in r_cases:
-        if case["name"] in (TIED_KNOTS, TIED_VALUES):
+        if case["name"] == TIED_KNOTS:
             continue
         axis, samples, name = axis_of(case), table_of(case["doses"]), case["name"]
         assert_allclose(axis.positions(case["doses"]), case["positions"], rtol=1e-12)
@@ -170,18 +185,24 @@ def test_design_columns_match_r(r_cases: list[dict[str, Any]]) -> None:
             spline = slice(1, None)
         design = Design(samples.with_columns(columns), "~ " + " + ".join(names))
         assert design.columns == ("(Intercept)", *names)
+        # The spline columns alone: the vehicle's rows hold 0 in both, and the column
+        # space of the whole design does not depend on them.
         if case["form"] == "restricted_cubic":
-            # Element by element, relative to each column's largest value.
-            largest = np.max(np.abs(reference), axis=0)
-            assert np.max(np.abs(ours - reference) / largest) <= 1e-10, name
-            assert np.max(np.abs(design.matrix - case["design"])) <= 1e-10 * np.max(
-                np.abs(case["design"])
+            # The first spline column, the position minus the lower boundary knot,
+            # element by element; R's columns are Hmisc's, which the others span.
+            first = reference[:, spline][:, 0]
+            assert_allclose(
+                ours[:, spline][:, 0], first, rtol=0, atol=1e-12 * np.max(np.abs(first))
             )
+            assert spans_the_columns(ours[:, spline], reference[:, spline]) <= 1e-10
+            assert spans_the_columns(design.matrix, case["design"]) <= 1e-10
         else:
-            # The spline columns alone: the vehicle's rows hold 0 in both, and the
-            # column space of the whole design does not depend on them.
             assert same_column_space(ours[:, spline], reference[:, spline]) <= 1e-10
             assert same_column_space(design.matrix, case["design"]) <= 1e-10
+        compared += 1
+        if np.linalg.cond(case["design"]) > CONDITION_LIMIT:
+            # R's restricted cubic columns on a linear axis: lm's fits are not exact.
+            continue
         # F-statistics of nested fits: any dose, among the treated doses, non-linear.
         splines = [j + 1 for j, n in enumerate(names) if n.startswith("dose_s")]
         dropped = {
@@ -208,8 +229,7 @@ def test_design_columns_match_r(r_cases: list[dict[str, Any]]) -> None:
         assert_allclose(
             curves, case["curves"], rtol=0, atol=1e-10 * scale, err_msg=name
         )
-        compared += 1
-    assert compared == 8
+    assert compared == len(r_cases) - 1
 
 
 def test_coinciding_knots_are_refused_where_r_repeats_one(
@@ -230,15 +250,20 @@ def test_coinciding_knots_are_refused_where_r_repeats_one(
     assert len(set(levels.knots)) == 2
 
 
-def test_hmisc_method_for_tied_values_is_refused(r_cases: list[dict[str, Any]]) -> None:
-    # The 6 zeros of 30 exposures sit at log10(0.01) on the axis: Hmisc places 5 knots
-    # by its method for values tied at an extreme, which DoseAxis refuses.
-    (case,) = [c for c in r_cases if c["name"] == TIED_VALUES]
-    assert str(case["rule"]) == "harrell"
-    assert case["knots"].size == int(case["df"]) + 1
-    with pytest.raises(ValueError, match="tie at the smallest value") as error:
-        basis_of(case)
-    assert "x is log10 of the doses plus 0.01 ng/mL" in str(error.value)
+def test_knots_take_the_rules_of_a_dose_ladder() -> None:
+    # Harrell's percentiles are NaturalSplineBasis's: on a dose ladder their outer
+    # knots fall inside the lowest and highest doses. A rule is checked before the
+    # samples are read.
+    axis = ug_per_kg()
+    message = (
+        "knots must be a rule, one of 'levels', 'quantiles', or the interior knots as "
+        "doses in ug/kg, got"
+    )
+    for knots in ("harrell", "quantile"):
+        with pytest.raises(ValueError, match=re.escape(f"{message} {knots!r}")):
+            axis.spline_basis({"no dose": [1.0]}, 2, knots=knots)
+    positions = axis.positions(LADDER[LADDER > 0.0])
+    assert NaturalSplineBasis(positions, 3, knots="harrell").df == 3
 
 
 # What the columns mean.
@@ -323,6 +348,50 @@ def test_a_saturated_spline_is_the_dose_group_test(vehicle: str) -> None:
     assert np.max(np.abs(spline["p_value"] - p) / scale) <= 1e-8
 
 
+def test_both_forms_give_the_moderated_f_tests_of_one_model_where_doses_crowd() -> None:
+    # 24 measured exposures and 6 vehicle samples, on the default axis at df 7: the
+    # columns of either form span the same curves, so limma-trend's F-tests agree and
+    # count every column. Harrell's truncated cubes made the correlation of the
+    # coefficients so nearly singular that limma's rule dropped a dimension: F-tests
+    # up to 89% off, and 33 calls among the treated doses instead of 44 by limma-voom.
+    rng = np.random.default_rng(20261124)
+    rng.integers(2, 4, 8)
+    doses = np.r_[np.zeros(6), np.sort(rng.lognormal(0.0, 1.0, 24))]
+    counts_rng = np.random.default_rng(1)
+    level = np.log10(np.where(doses > 0.0, doses, doses[doses > 0.0].min() / 10.0))
+    effect = np.outer(
+        level - level.mean(), np.r_[counts_rng.normal(0.0, 0.5, 60), np.zeros(240)]
+    )
+    counts = counts_rng.poisson(counts_rng.uniform(20.0, 500.0, 300) * np.exp(effect))
+    samples = {"sample_id": [f"S{i}" for i in range(doses.size)], "dose": doses}
+    cube = from_bulk(counts, samples=samples)
+    axis = DoseAxis("dose", unit="ng/mL", metric="measured")
+    tables = {}
+    for form in FORMS:
+        columns = axis.design_columns(
+            cube.samples, axis.spline_basis(cube.samples, 7, form=form)
+        )
+        names = list(columns)
+        tests = {"any_dose": names, "among_doses": names[1:]}
+        if form == "restricted_cubic":
+            tests["nonlinear"] = names[2:]
+        result = limma_trend(
+            cube,
+            Design(cube.samples.with_columns(columns), "~ " + " + ".join(names)),
+            contrasts=names,
+            f_tests=tests,
+        )
+        (group,) = result.provenance["groups"]
+        assert group["f_test_df1"] == {name: len(m) for name, m in tests.items()}
+        tables |= {(form, name): result.table("bulk", name) for name in tests}
+    for test in ("any_dose", "among_doses"):
+        assert_allclose(
+            tables["restricted_cubic", test]["f_statistic"],
+            tables["b_spline", test]["f_statistic"],
+            rtol=1e-10,
+        )
+
+
 def test_the_nonlinear_test_at_saturation_is_lack_of_fit() -> None:
     # At df = 7 the columns after the first test departure from a line in log10 dose
     # among the treated doses: the lack-of-fit F of dose_treated and log10 dose against
@@ -382,15 +451,15 @@ def test_units_and_order_do_not_matter() -> None:
         second = scaled.design_columns(in_ng, scaled.spline_basis(in_ng, 3, form=form))
         for name, values in first.items():
             assert_allclose(second[name], values, rtol=0, atol=1e-12 * 30)
-    # On the linear scale the restricted cubic columns scale with the doses, and the
-    # B-spline columns do not change.
+    # On the linear scale the first restricted cubic column, the dose minus the lowest,
+    # scales with the doses; the B-splines, and the columns built from them, do not.
     axis = ug_per_kg(scale="linear")
     for form, factor in (("restricted_cubic", 1000.0), ("b_spline", 1.0)):
         first = axis.design_columns(samples, axis.spline_basis(samples, 3, form=form))
         second = axis.design_columns(in_ng, axis.spline_basis(in_ng, 3, form=form))
         for name, values in first.items():
-            if name != "dose_treated":
-                assert_allclose(second[name], factor * values, rtol=1e-12, atol=1e-9)
+            scale = factor if name == "dose_s1" else 1.0
+            assert_allclose(second[name], scale * values, rtol=1e-12, atol=1e-9)
     # The order of the samples changes the order of the rows only.
     order = np.random.default_rng(83).permutation(LADDER.size)
     axis = ug_per_kg()
@@ -417,17 +486,22 @@ def test_coinciding_knots_and_too_many_columns_are_refused() -> None:
         axis.spline_basis(samples, 8)
     on_axis = ug_per_kg(vehicle="on_axis", offset=0.003)
     assert on_axis.spline_basis(samples, 8).df == 8
-    for doses, found in (([0.0, 0.0, 1.0, 1.0], "1 ug/kg"), ([0.0, 0.0], "none")):
+    for doses, found in (
+        ([0.0, 0.0, 1.0, 1.0], "only one, 1 ug/kg"),
+        ([0.0, 0.0], "none"),
+    ):
         with pytest.raises(ValueError, match=f"have {found} \\(the treated doses"):
             axis.spline_basis({"dose": doses}, 1)
     with pytest.raises(ValueError, match="the knots given coincide at 0.1 ug/kg"):
         axis.spline_basis(samples, knots=[0.1, 0.1])
     with pytest.raises(ValueError, match="df, the number of spline columns, is needed"):
         axis.spline_basis(samples)
-    with pytest.raises(ValueError, match="df=4 disagrees with 2 knots"):
+    with pytest.raises(ValueError) as error:
         axis.spline_basis(samples, 4, knots=[0.1, 1.0])
-    with pytest.raises(ValueError, match="knots must be a rule"):
-        axis.spline_basis(samples, 2, knots="evenly")
+    # Not about placing knots on the axis: the message says nothing of x.
+    assert str(error.value) == (
+        "df=4 disagrees with 2 knots, which give 3 columns; give one of them"
+    )
 
 
 @pytest.mark.parametrize(
@@ -438,13 +512,33 @@ def test_coinciding_knots_and_too_many_columns_are_refused() -> None:
         ([0.01], "got 0.01 ug/kg"),
         ([-1.0], "knots must be finite and at least 0"),
         ([np.nan], "knots must be finite and at least 0"),
-        (["a"], "knots must hold numbers"),
+        (["a"], "knots must hold real numbers"),
     ],
 )  # fmt: skip
 def test_given_knots_are_doses_strictly_inside(knots: list, message: str) -> None:
     error = TypeError if knots == ["a"] else ValueError
     with pytest.raises(error, match=re.escape(message)):
         ug_per_kg().spline_basis(table_of(LADDER), knots=knots)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"vehicle": "on_axis", "offset": 0.003},
+        {"scale": "linear"},
+        {"scale": "linear", "vehicle": "on_axis"},
+    ],
+)
+def test_given_knots_are_the_doses_given_on_every_axis(options: dict[str, Any]) -> None:
+    # Knots given as doses come back as those doses, and the boundary knots are the
+    # positions of the lowest and highest dose on the axis.
+    axis = ug_per_kg(**options)
+    on_axis = LADDER if axis.vehicle == "on_axis" else LADDER[LADDER > 0.0]
+    for form in FORMS:
+        basis = axis.spline_basis({"dose": LADDER}, knots=[0.1, 1.0], form=form)
+        assert_allclose(axis.doses(basis.knots), [0.1, 1.0], rtol=1e-12)
+        expected = axis.positions(np.array([on_axis.min(), on_axis.max()]))
+        assert_array_equal(basis.boundary_knots, expected)
 
 
 def test_given_knots_in_any_order_are_sorted() -> None:
@@ -486,8 +580,8 @@ def test_axis_arguments_are_refused_with_a_fix(
     [
         ({"dose": [0.0, -1.0, 1.0]}, ValueError, "samples['dose'] must be finite and at least 0, with 0 for the vehicle; got -1.0"),
         ({"dose": [0.0, np.nan, 1.0]}, ValueError, "samples['dose'] must be finite and at least 0, with 0 for the vehicle; got nan"),
-        ({"dose": ["0", "1"]}, TypeError, "samples['dose'] must hold numbers, got dtype object"),
-        ({"dose": [False, True]}, TypeError, "samples['dose'] must hold numbers, got dtype bool"),
+        ({"dose": ["0", "1"]}, TypeError, "samples['dose'] must hold real numbers, got dtype object"),
+        ({"dose": [False, True]}, TypeError, "samples['dose'] must hold real numbers, got dtype bool"),
         ({"Dose": [0.0, 1.0]}, ValueError, "the dose column 'dose' is not a column of the sample table (did you mean 'Dose'?); columns are: 'Dose'"),
         ([0.0, 1.0], TypeError, "samples must be a Table, a mapping of column names to 1-D values or a pandas DataFrame, got list"),
     ],
@@ -506,12 +600,15 @@ def test_doses_are_refused_with_a_fix(
 
 
 def test_messages_say_what_x_and_the_doses_on_the_axis_are() -> None:
-    # A quarter of the treated doses tie at the lowest: Harrell's rule refuses, and
-    # the message says what x is on a linear axis.
-    doses = np.r_[0.0, 0.0, np.ones(10), np.arange(2.0, 32.0)]
+    # 10 of 12 treated samples have the lowest dose: R's rule places its one interior
+    # knot there, on the lower boundary knot, and the message says what x is on a
+    # linear axis.
+    doses = np.r_[0.0, 0.0, np.ones(10), 2.0, 3.0]
     linear = ug_per_kg(scale="linear")
-    with pytest.raises(ValueError, match="tie at the smallest value, 1.0") as error:
-        linear.spline_basis({"dose": doses}, 3, knots="harrell")
+    with pytest.raises(
+        ValueError, match="every interior knot falls on the lower"
+    ) as error:
+        linear.spline_basis({"dose": doses}, 2, knots="quantiles")
     assert str(error.value).endswith("(on this axis, x is the treated doses in ug/kg)")
     # With the vehicle on the axis, its dose counts among the doses on the axis.
     on_axis = ug_per_kg(vehicle="on_axis", offset=0.003)
@@ -535,6 +632,22 @@ def test_positions_and_doses_refuse_what_is_not_a_dose() -> None:
         axis.doses(["1"])
     with pytest.raises(ValueError, match="positions must be a 1-D array"):
         axis.doses(1.0)
+
+
+def test_doses_in_molar_units_give_the_same_columns() -> None:
+    # Doses of 1e-11 to 3e-8 M are distinct doses: the check for doses that differ only
+    # by rounding is relative to the dose.
+    ug, molar = ug_per_kg(), DoseAxis("dose", unit="M", metric="nominal")
+    in_molar = {"dose": LADDER * 1e-9}
+    for form in FORMS:
+        expected = ug.design_columns(
+            {"dose": LADDER}, ug.spline_basis({"dose": LADDER}, 3, form=form)
+        )
+        found = molar.design_columns(
+            in_molar, molar.spline_basis(in_molar, 3, form=form)
+        )
+        for name, values in expected.items():
+            assert_allclose(found[name], values, rtol=0, atol=1e-11)
 
 
 def test_doses_that_differ_only_by_rounding_are_refused() -> None:
@@ -574,8 +687,10 @@ def test_samples_as_a_table_a_mapping_or_a_data_frame() -> None:
         for name, values in expected.items():
             assert_array_equal(found[name], values)
             assert found[name].dtype == np.float64
+    with pytest.raises(TypeError, match="got Cube; pass cube.samples"):
+        axis.spline_basis(dose_series(97), 3)
     text = pandas.DataFrame({"dose": pandas.Categorical([f"{d:g}" for d in LADDER])})
-    with pytest.raises(TypeError, match=r"samples\['dose'\] must hold numbers"):
+    with pytest.raises(TypeError, match=r"samples\['dose'\] must hold real numbers"):
         axis.spline_basis(text, 3)
 
 
