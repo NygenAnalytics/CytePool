@@ -2311,6 +2311,7 @@ def plot_dose_response(
         raise TypeError(
             f"result must be a DoseResponseResult, got {type(result).__name__}"
         )
+    reject_masked(group, "group")
     reject_masked(genes, "genes")
     if isinstance(genes, str):
         names = [genes]
@@ -2328,21 +2329,19 @@ def plot_dose_response(
             "colours that stay distinguishable; draw them in several figures"
         )
     group = only_key(group, list(result.groups), "group", "cell types")
+    # The table of each dose, which raises for a cell type not checked or not tested.
+    each = result.table(group, "each_dose")
     axis = result.dose
     entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
     treated = np.array(entry["doses"][1:], dtype=np.float64)
     own_group = axis.vehicle == "own_group"
     # The curve's doses, from the lowest dose compared, or the vehicle on the axis,
-    # to the highest; curve() refuses a cell type that was not tested.
-    if treated.size:
-        low = float(treated[0]) if own_group else 0.0
-        ends = axis.positions(np.array([low, treated[-1]]))
-        grid = axis.doses(np.linspace(ends[0], ends[1], _CURVE_POINTS))
-        grid[0], grid[-1] = low, treated[-1]
-    else:
-        grid = np.zeros(1)
+    # to the highest.
+    low = float(treated[0]) if own_group else 0.0
+    ends = axis.positions(np.array([low, treated[-1]]))
+    grid = axis.doses(np.linspace(ends[0], ends[1], _CURVE_POINTS))
+    grid[0], grid[-1] = low, treated[-1]
     curve = result.curve(group, names, at=grid)
-    each = result.table(group, "each_dose")
     positions = axis.positions(treated)
     if own_group:
         steps = np.diff(positions)

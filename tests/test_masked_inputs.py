@@ -2806,6 +2806,18 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("top", "standardize"),
         objects=("activities", "ax"),
     ),
+    # A dose-response figure: the genes, as feature ids.
+    "cytepool.plotting.plot_dose_response": Entry(
+        lambda c: {
+            "result": _dose_result(),
+            "group": "cell_type_1",
+            "genes": ["gene_01", "gene_03"],
+            "ax": _axes(),
+        },
+        {"genes": None},
+        options=("group",),
+        objects=("result", "ax"),
+    ),
     "cytepool.plotting.plot_top_activities": Entry(
         lambda c: {
             "activities": _activities(),
