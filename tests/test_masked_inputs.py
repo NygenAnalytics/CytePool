@@ -55,6 +55,7 @@ from cytepool import (
     StudyResults,
     Table,
     camera,
+    dose_response,
     dream_voom,
     from_bulk,
     from_cells,
@@ -67,6 +68,7 @@ from cytepool import (
     over_representation,
     propeller,
     replication,
+    simulate_dose_series,
     sumrank,
     to_anndata,
     to_mudata,
@@ -344,6 +346,39 @@ def _dose_design(context: Context) -> dict[str, Any]:
         "min_counts": 1,
         "groups": ["bulk"],
     }
+
+
+def _dose_response(context: Context) -> dict[str, Any]:
+    """A bulk cube of COUNTS with two treated doses, so that a spline of one column
+    fits, with every option of dose_response."""
+    samples = {
+        "sample_id": SAMPLE_TABLE["sample_id"],
+        "dose": [0.0, 0.0, 1.0, 10.0],
+        "lane": ["a", "b", "a", "b"],
+    }
+    return {
+        "cube": from_bulk(COUNTS, samples=samples),
+        "design": Design(samples, "~ 1"),
+        "dose": DOSE_AXIS,
+        "tests": ["dose_groups"],
+        "spline_df": 1,
+        "analysis": limma_voom,
+        "batch": "lane",
+        "groups": ["bulk"],
+        "min_cells": 10,
+        "min_counts": 1,
+        # An option of the analysis, which dose_response passes on.
+        "expression_filter": {"min_count": 5},
+    }
+
+
+@functools.cache
+def _dose_result() -> Any:
+    """The dose tests of a small simulated series, whose curves take doses."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0, 10.0], replicates=2, cell_types=1, n_genes=60, rng=1
+    )
+    return dose_response(cube, Design(cube.samples, "~ 1"), dose=DOSE_AXIS)
 
 
 def _weighted_by_cells(context: Context) -> dict[str, Any]:
@@ -2088,6 +2123,24 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("batch", "rules", "sex", "min_counts"),
         objects=("cube", "design", "dose"),
     ),
+    # The dose tests of each cell type: the groups, tests and min_cells, as
+    # check_dose_design takes them; a curve's genes and doses.
+    "cytepool.dose_responses.dose_response": Entry(
+        _dose_response,
+        {"groups": None, "min_cells": None, "tests": None, "expression_filter": None},
+        options=("spline_df", "batch", "min_counts"),
+        objects=("cube", "design", "dose", "analysis"),
+    ),
+    "cytepool.dose_responses.DoseResponseResult.curve": Entry(
+        lambda c: {
+            "group": "cell_type_1",
+            "genes": ["gene_01", "gene_03"],
+            "at": [0.0, 0.1, 1.0],
+        },
+        {"genes": None, "at": None},
+        options=("group",),
+        instance=lambda c: _dose_result(),
+    ),
     # Simulated dose series: doses, the values per dose and per cell type, the shares
     # of shapes and the composition factors; the truth's doses, tables and genes.
     "cytepool.simulated_dose_series.simulate_dose_series": Entry(
@@ -3049,6 +3102,15 @@ NO_ARRAY_INPUT = {
         ("summary", "doses", "samples", "minimums", "design_check", "settings"),
         "Tables and a DesignReport, which were checked when they were built, and "
         "settings kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.dose_responses.DoseResponseResult": (
+        ("summary", "tables", "fits", "design_report", "provenance"),
+        "Tables, the analysis's results and a DoseDesignReport, which were checked "
+        "when they were built, and a record kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.dose_responses.DoseResponseResult.table": (
+        ("group", "name"),
+        "a cell type and a table name, looked up",
     ),
     "cytepool.dose_designs.DoseDesignReport.status": (
         ("group",),
