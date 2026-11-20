@@ -1,12 +1,12 @@
 ---
 myst:
   html_meta:
-    description: The dose tests of CytePool, which test in every cell type of a cube whether each gene responds to a dose, along a spline of dose, in its departure from a line, by its linear trend and by its dose groups, as contrasts of one moderated fit, with curves and 95% bands.
+    description: The dose tests of CytePool, which test in every cell type of a cube whether each gene responds to a dose, along a spline of dose, in its departure from a line, by its linear trend, by its dose groups and by Dunnett's, Williams-type and MCP contrasts, as contrasts of one moderated fit, with curves and 95% bands and each gene's lowest effective dose.
 ---
 
 # Dose responses
 
-Which genes respond to a dose in each cell type, by moderated tests of one model of the dose groups, with the fitted spline and its band; [Which genes respond to dose](../statistics/dose-response/#dose-response-tests) explains the tests.
+Which genes respond to a dose in each cell type, by moderated tests of one model of the dose groups, with the fitted spline and its band, multiple contrast tests of the doses and the lowest dose from which each gene responds; [Which genes respond to dose](../statistics/dose-response/#dose-response-tests) explains the tests.
 
 ```{eval-rst}
 .. automodule:: cytepool.dose_responses

@@ -10,8 +10,10 @@ themselves, identities of the tests derived by hand, the rules that choose the t
 and the spline's size, invariants, refusals and the records.
 """
 
+import contextlib
 import dataclasses
 import functools
+import io
 import json
 import math
 import pickle
@@ -2175,3 +2177,86 @@ def test_a_fit_computed_again_on_other_genes_is_refused(monkeypatch: Any) -> Non
     with pytest.raises(RuntimeError, match="tested other genes"):
         run((0, 1, 10), tests=("dunnett",))
 
+
+def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
+    """The code of the chapter's sections on the multiple contrast tests and the
+    lowest effective dose, on the series of its section on the tests; the printouts
+    and the numbers its text states, against the simulator's truth."""
+    text = CHAPTER.read_text()
+
+    def section(label: str) -> str:
+        return text.split(f"({label})=")[1].split("\n(")[0]
+
+    setup = re.findall(r"```python\n(.*?)```", section("dose-response-tests"), re.S)
+    contrasts, lowest = (
+        section("dose-response-contrasts"),
+        section("lowest-effective-dose"),
+    )
+    blocks = [
+        *re.findall(r"```python\n(.*?)```", contrasts, re.S),
+        *re.findall(r"```python\n(.*?)```", lowest, re.S),
+    ]
+    assert len(blocks) == 4
+    namespace: dict[str, Any] = {"cp": cytepool}
+    exec(setup[0].replace("print(result)\n", ""), namespace)  # noqa: S102
+    printed = []
+    for block in blocks:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec(block, namespace)  # noqa: S102
+        printed.append(output.getvalue())
+    # What each block prints is in the chapter, as printed: the result, and the
+    # lowest effective doses of five genes, rounded.
+    result = namespace["result"]
+    assert printed[0] == repr(result) + "\n" and repr(result) in contrasts
+    assert printed[1] == printed[3] == ""
+    assert printed[2].count("\n") == 5 and printed[2] in lowest
+    truth = namespace["truth"].table("hepatocyte")
+    ids = truth["feature_id"].tolist()
+    responds = dict(zip(ids, (np.asarray(truth["max_log2_change"]) != 0).tolist()))
+    shape = dict(zip(ids, truth["shape"].tolist()))
+    tested = result.table("hepatocyte", "spline")["feature_id"].tolist()
+    bells = [g for g in tested if shape[g] == "log_gauss_probit"]
+    found = {}
+    for test in ("spline", "dunnett", "williams", "mcp"):
+        table = result.table("hepatocyte", test)
+        called = np.asarray(table["feature_id"])[
+            np.asarray(table["adjusted_p_value"]) < 0.05
+        ].tolist()
+        found[test] = (
+            len(called),
+            sum(responds[g] for g in called),
+            sum(g in called for g in bells),
+        )
+    assert found == {
+        "spline": (88, 85, 21),
+        "dunnett": (69, 67, 17),
+        "williams": (73, 69, 12),
+        "mcp": (92, 89, 19),
+    }
+    assert len(bells) == 33
+    assert (
+        "the MCP step calls 92 genes, 89 of which respond in truth, the spline 88 (85), "
+        "the Williams-type test 73 (69) and Dunnett's test 69 (67)"
+    ) in contrasts
+    assert (
+        "Of the 33 responsive genes with bell-shaped responses, the spline calls 21, "
+        "the MCP step 19, Dunnett's test 17 and the Williams-type test 12"
+    ) in contrasts
+    assert namespace["guessed"].table("hepatocyte", "mcp")["contrast"][0] in (
+        namespace["shapes"].names
+    )
+    # The lowest effective doses: the genes with a dose called, and every dose called.
+    with_dose = np.count_nonzero(
+        ~np.isnan(np.asarray(namespace["called"]["lowest_effective_dose"]))
+    )
+    assert (len(namespace["called"]), with_dose) == (88, 69)
+    assert (
+        "Of the 88 genes the spline calls in the hepatocytes, 69 have a dose" in lowest
+    )
+    calls = namespace["calls"]
+    assert int(calls.sum()) == 167 and "here 167 gene-dose calls" in lowest
+    assert_array_equal(
+        calls.any(axis=1),
+        ~np.isnan(np.asarray(namespace["lowest"]["lowest_effective_dose"])),
+    )
