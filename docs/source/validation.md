@@ -26,6 +26,8 @@ Each method is listed with the functions that implement it, the reference it is 
 | Linear models of every gene and their contrasts (limma's `lmFit`, `contrasts.fit`) | {api}`fit_linear_model`, {api}`contrasts_fit` | limma 3.62.1 | exact: 1e-10 | [Linear models](#validation-linear-models) |
 | Empirical Bayes moderation, moderated t and F, B-statistics, TREAT | {api}`moderated_statistics`, {api}`treat`, {api}`squeeze_variances`, {api}`fit_f_distribution`, {api}`fit_f_distribution_robust`, {api}`fit_f_distribution_likelihood` | limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust and likelihood priors | [Empirical Bayes moderation](#validation-empirical-bayes) |
 | Adjustment for multiple testing (R's `p.adjust`) | {api}`adjust_p_values` | R 4.4.3 | exact: 1e-10 | [Multiple testing](#validation-multiple-testing) |
+| Multivariate t probabilities of boxes and their complements, and equicoordinate quantiles (mvtnorm's `pmvt` and `qmvt`) | {api}`multivariate_t_cdf`, {api}`multivariate_t_quantile` | mpmath 1.3.0, mvtnorm 1.4-2, scipy 1.18.1 | close: 1e-6 for two coordinates, relative to the smaller of the probability and the complement; calibrated: within 5.5 combined standard errors for three or more, small boxes and complements down to 1e-12 for product correlations, with one limit or a limit per coordinate, and to 1e-10 for others (ALOE); exact: 1e-10 for one coordinate | [Multiple contrast tests and multivariate t probabilities](#validation-multiple-contrast-tests) |
+| Dunnett's and Williams-type contrasts, and single-step multiple contrast tests of every gene (multcomp's `contrMat` and `glht`) | {api}`dunnett_contrasts`, {api}`williams_contrasts`, {api}`multiple_contrast_test` | multcomp 1.4-32, R 4.4.3 | exact: identical Dunnett matrices and names, 1e-10 for Williams matrices and for estimates, standard errors and t-statistics; calibrated: within 5.5 combined standard errors for p-values | [Multiple contrast tests and multivariate t probabilities](#validation-multiple-contrast-tests) |
 | TMM, upper-quartile and RLE factors; CPM and log-CPM; `filterByExpr` | {api}`tmm_factors`, {api}`upper_quartile_factors`, {api}`rle_factors`, {api}`cpm`, {api}`log2_cpm`, {api}`filter_by_expression` | edgeR 4.4.0 | exact: 1e-10, identical genes kept | [Normalization and filtering](#validation-normalization) |
 | DESeq2's median-of-ratios size factors | {api}`median_ratio_size_factors` | DESeq2 1.46.0 | exact: 1e-10 | [Normalization and filtering](#validation-normalization) |
 | voom's precision weights and limma's span rule | {api}`voom`, {api}`choose_lowess_span` | limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; close: 1e-6 on rarefied counts | [Precision weights for counts](#validation-voom) |
@@ -65,7 +67,7 @@ Each method is listed with the functions that implement it, the reference it is 
 | Tails and quantiles of distributions, special functions | {api}`cytepool.stats.distributions`, {api}`cytepool.stats.special` | mpmath 1.3.0 | exact: 1e-15 to 1e-12 | [Distributions and special functions](#validation-distributions) |
 | LOWESS; natural spline bases that keep their knots, in R's B-spline form and Harrell's restricted cubic form | {api}`lowess`, {api}`natural_spline_basis`, {api}`NaturalSplineBasis` | R 4.4.3, Hmisc 5.3-1, rms 8.2-1 | close: 1e-6 for LOWESS; exact: identical knots, 1e-10 for spline bases, restricted cubic columns and F-tests | [LOWESS and spline bases](#validation-smoothing) |
 
-In all, the scripts printed 3,029 checks: 2,568 pass, none failed; 302 information, 155 deliberate differences, 4 controls.
+In all, the scripts printed 3,147 checks: 2,674 pass, none failed; 308 information, 158 deliberate differences, 7 controls.
 
 Run time is the wall time of the whole script and peak memory the largest resident set of any of its processes, reference programs included, both of the second of two runs, one after the other, in the container described under [](#validation-timings). The first run downloaded the data that some scripts read and compiled CytePool's routines, which numba keeps in its cache for later runs. A first run in a new environment compiles them too: `differential_expression.py`, the first script in the container, took 52.7 s in its first run and 7.5 s in its second, and its peak memory fell from 578 to 362 MiB.
 
@@ -86,7 +88,7 @@ Some checks are stricter, such as the special functions (1e-15 to 1e-12) and cou
 - **deliberate difference**: an input where CytePool behaves differently from the reference on purpose, usually raising an error where the reference returns values without meaning; the row records what each program does;
 - **control**: a check that must exceed the tolerance, to show that the comparison can tell nearly identical rules apart.
 
-Sections also list deliberate differences that passing checks confirm, such as formulas that CytePool rejects by design; the summary counts as deliberate differences only the checks that the scripts print as such. The calibrated checks are those of `rotation_gene_set_tests.py`, whose tests draw random rotations, of `gsea.py` where each program draws its own random sets, of `sumrank.py` for p-values from random permutations, and of `simulate_dose_series.py` for the moments of simulated cells and counts and the shares of benchmark doses placed beyond the doses; the other checks compare deterministic results.
+Sections also list deliberate differences that passing checks confirm, such as formulas that CytePool rejects by design; the summary counts as deliberate differences only the checks that the scripts print as such. The calibrated checks are those of `rotation_gene_set_tests.py`, whose tests draw random rotations, of `gsea.py` where each program draws its own random sets, of `sumrank.py` for p-values from random permutations, of `simulate_dose_series.py` for the moments of simulated cells and counts and the shares of benchmark doses placed beyond the doses, and of `multiple_contrast_tests.py` for multivariate t probabilities, quantiles and p-values, which CytePool, mvtnorm and scipy compute by randomized integration; the other checks compare deterministic results.
 
 ## Cubes and files
 
@@ -311,6 +313,54 @@ The script printed 15 checks (15 pass) on 2026-11-20, in 3 min 47 s, with a peak
 | The small cases written as test fixtures | `p.adjust` | 0 | 1e-10 | 4 pass |
 
 Of the 290,224 p-values each method adjusted, all but 5 Hommel values were identical to R's to the last bit.
+
+(validation-multiple-contrast-tests)=
+### Multiple contrast tests and multivariate t probabilities
+
+The script printed 118 checks (106 pass, 6 information, 3 deliberate differences and 3 controls) on 2026-11-20, in 7 min 45 s, with a peak memory of 475 MiB. [Several contrasts of one gene](statistics/multiple_testing.md#correlated-tests) explains what it checks.
+
+[`validation/multiple_contrast_tests.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/multiple_contrast_tests.py) checks `multivariate_t_cdf` and `multivariate_t_quantile` on inputs from fixed seeds, with every problem that CytePool computes by Monte Carlo given its own seed and `relative_error=1e-3`, against references of five kinds:
+
+- two coordinates: Ding's conditional distribution [@ding2016], under which the probability and the complement are one-dimensional integrals, in mpmath at 30 digits; CytePool averages over directions instead, without random numbers;
+- product correlations, as Dunnett's contrasts of groups of unequal sizes have, with one limit for every coordinate or a limit per coordinate: Dunnett's integral over the shared normal factor and the chi variable [@dunnett1955], in double precision, checked against Ding's formula and, for the normal, against mpmath;
+- rank-two correlations, such as all pairs of three groups, with mixed signs: the average over directions in mpmath at 30 digits, which CytePool computes by Monte Carlo with singular coordinates;
+- correlations of rank 3 and more without a product structure, such as Williams-type contrasts of 5 to 9 groups, at complements from 1e-4 to 1e-10: ALOE [@owen2019], plain Monte Carlo from the mixture of the distributions given each exceedance, 1e6 draws per problem;
+- general correlations of 4 to 10 contrasts, at complements from 0.5 to 1e-3: mvtnorm's `pmvt` with `GenzBretz(maxpts = 1e6, abseps = 1e-5, releps = 0)` for integer df and the normal, and scipy's `multivariate_t.cdf`, 16 calls with different random states, for df 4.5, 10 and 20.5.
+
+Boxes are one- and two-sided, with complements down to 1e-14 for two coordinates and 1e-12 for product correlations, small central boxes and tail orthants. `dunnett_contrasts` and `williams_contrasts` are compared with multcomp's `contrMat`, and `multiple_contrast_test` with `summary(glht(parm(b, V, df), linfct = K))` on 40 seeded features per family (Dunnett's contrasts of 5 groups, Williams' of 5 groups one-sided, Tukey's of 4 groups, singular, and 5 random contrasts of 6 estimates), with df 5, 12, 40 and the normal and every alternative. Reference: R 4.4.3, mvtnorm 1.4-2, multcomp 1.4-32, mpmath 1.3.0, scipy 1.18.1.
+
+The calibrated checks allow 5.5 combined standard errors, the 99.994% point of the t distribution on the 15 degrees of freedom of CytePool's errors, whose two-sided tail is that of 4 normal standard errors. mvtnorm's and multcomp's standard error is taken as their error attribute over 3: in 200 repeated calls, the attribute was 3.0 and 3.4 times the spread of the estimates. Two calibration rows check that CytePool's errors are honest: over the product, rank-two and per-coordinate problems, the root-mean-square of (estimate - reference) / error lies within 4 simulation standard errors of sqrt(15/13) = 1.07, its value for honest errors on 15 degrees of freedom. ALOE's standard error comes from its own draws.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| One coordinate, df 4.5: probability and complement of one-sided limits from -30 to 1e8 and of two-sided limits from 1e-12 to 1e4, 28 values | mpmath, 30 digits | 2.1e-14 | 1e-10 | 1 pass |
+| Two coordinates, df 1, 2.5, 4, 9.7, 30, 200 and the normal: the smaller of the probability and the complement, 6 correlations from -0.95 to 0.99, 8 boxes each (336 cases) | Ding's conditional distribution, mpmath, 30 digits | 1.3e-13 | 1e-6 | 7 pass |
+| Two coordinates: the actual error over the stored error bound and mpmath's error estimate, 336 cases | Ding's conditional distribution | 0.21 | 1 | 1 pass |
+| Reference self-checks: Dunnett's integral in double precision against Ding's formula (48 two-coordinate cases) and against mpmath for the normal (45 product cases) | mpmath, 30 digits | 2.7e-14 | 1e-10 | 2 pass |
+| Product correlations, k = 3, 4, 6, 8 and 10, df 2.5, 7, 20.5 and the normal, 9 boxes each, the smaller side down to 4.0e-13 | Dunnett's integral | 3.82 standard errors; relative difference at most 2.8e-3 | 5.5 standard errors | 20 pass |
+| Rank-two correlations: Tukey's contrasts of 3 groups, equal and unequal; Williams' contrasts of 3 groups with the doses' difference; 4 and 6 random directions; df 3, 12.5 and the normal, 6 boxes each, the smaller side down to 2.5e-11 | average over directions, mpmath, 30 digits | 2.85 standard errors; relative difference at most 2.1e-3 | 5.5 standard errors | 5 pass |
+| Product correlations with a limit per coordinate, k = 3, 5 and 8, df 2.5, 7, 20.5 and the normal: 6 tails of 1e-2, 1e-5 and 1e-9 split unevenly over the coordinates and 2 small boxes each (96 problems), the smaller side down to 5.8e-10 | Dunnett's integral | 3.19 standard errors; relative difference at most 2.4e-3 | 5.5 standard errors | 3 pass |
+| Calibration: root-mean-square of (estimate - reference) / error over 366 problems of the rows above at `relative_error` 1e-3, and over 369 at the default 0.01 with fresh seeds | 1.07 for honest errors | 1.115 and 1.107 | 0.88 to 1.24 | 2 pass |
+| Correlations of rank 3 and more without a product structure: Williams-type contrasts of 5, 7 and 9 groups and 5 random contrasts of 6 groups, one-sided; Tukey's contrasts of 4 groups and 8 random contrasts of 9 groups, two-sided; df 3, 8 and the normal; complements of 1e-4, 1e-7 and 1e-10 (54 problems), down to 2.4e-11 | ALOE, 1e6 draws | 2.75 standard errors | 5.5 standard errors | 6 pass |
+| General correlations: Dunnett's contrasts of 5 groups, Williams' of 6, Tukey's of 4 (rank 3), 8 random contrasts of 9 groups and 10 of 11; df 3, 10, 30 and the normal; complements of 3 two-sided and 2 one-sided boxes from 0.5 to 1e-3 | mvtnorm `pmvt` | 4.23 standard errors | 5.5 standard errors | 20 pass |
+| The same correlations, Tukey's but for its singular one, at df 4.5, 10 and 20.5, 5 boxes each | scipy `multivariate_t.cdf`, 16 calls | 3.58 standard errors | 5.5 standard errors | 4 pass |
+| scipy with the singular correlation of Tukey's contrasts of 4 groups (rank 3 of 6), 15 boxes: its complement over Bonferroni's upper bound | scipy `multivariate_t.cdf`, `allow_singular=True` | up to 11.75; CytePool agrees with mvtnorm | n/a | 1 information |
+| Non-integer df, such as moderated ones | mvtnorm `pmvt` | `pmvt` refuses df = 4.5 | n/a | 1 deliberate difference |
+| mvtnorm in the tail, with `abseps = 1e-12` and `maxpts = 1e7`: k = 3, rho = 0.5, df 10, two-sided limits 6, 10 and 20 | Dunnett's integral | 3.565e-4 against 3.565e-4; 4.025e-6 against 4.367e-6; 0 against 5.942e-9 | n/a | 3 information |
+| Quantiles of two coordinates: rho -0.5, 0.5 and 0.9, df 4.5 and the normal, p 0.9, 0.95 and 0.99, one- and two-sided (36 cases) | roots of Ding's formula | 9.7e-16 | 1e-6 | 1 pass |
+| Quantiles of product correlations, k = 3, 5 and 8, df 7 and the normal, p 0.9, 0.95 and 0.99, one- and two-sided | roots of Dunnett's integral | 4.14 standard errors | 5.5 standard errors | 3 pass |
+| Quantiles of the five general correlations, df 10 and the normal, p 0.95 and 0.99, one- and two-sided: the probability at CytePool's quantile | mvtnorm `pmvt` | 2.67 standard errors | 5.5 standard errors | 5 pass |
+| Quantiles: `multivariate_t_cdf` at the quantile against p, 76 cases | the round trip | 3.12 standard errors | 5.5 standard errors | 1 pass |
+| Quantiles against mvtnorm's, 40 cases | mvtnorm `qmvt` | relative difference at most 5.5e-3 | n/a | 1 information |
+| `dunnett_contrasts`: matrices and names, 2 to 9 groups, the control first, in the middle and last (23 cases) | `contrMat(n, type = "Dunnett", base)` | 0 | 0 | 2 pass |
+| `williams_contrasts`: matrices, 3 to 9 groups of equal and unequal sizes (14 cases) | `contrMat(n, type = "Williams")` | 0 | 1e-10 | 1 pass |
+| `williams_contrasts`: names that say which doses are pooled, "D7 to D8 - D0" where `contrMat` writes "C 2"; two groups, Dunnett's one contrast, which `contrMat` refuses | `contrMat(n, type = "Williams")` | n/a | n/a | 2 deliberate differences |
+| `multiple_contrast_test`: estimates, standard errors and t of the 4 families' 160 features, each alternative | multcomp `glht(parm(b, V, df))` | 4.1e-15 | 1e-10 | 11 pass |
+| `multiple_contrast_test`: single-step p-values from 1e-3 to 1, 675 of them | multcomp `summary(glht)` | 5.48 standard errors | 5.5 standard errors | 11 pass |
+| `multiple_contrast_test`: the 85 single-step p-values that multcomp gives below 1e-3, its default absolute error, which cannot resolve them | multcomp `summary(glht)` | CytePool's over multcomp's: median 1.61, from 0.26 to 216; multcomp gives 0 for 10 | n/a | 1 information |
+| Bonferroni's p-values against the single-step ones, from 1e-3 to 0.5, of the Dunnett, Williams and Tukey families: the smallest gap | multcomp `adjusted("bonferroni")` | 43.2, 1994.6 and 60.5 standard errors | above 5.5 | 3 controls |
+
+The largest difference from multcomp, 5.48 standard errors, is at a p-value of 0.0115 of the random contrasts, whose correlation is nearly singular: there multcomp gave 0.0097, 6.1 of its own standard deviations below the mean of 30 calls with other seeds, 0.0114, with which CytePool's 0.01146 agrees. Below 1e-3, multcomp's p-values were up to 216 times smaller and 4 times larger than CytePool's, and 0 for 10 of them, as its default absolute error of 1e-3 allows. Asked for an absolute error of 1e-12, mvtnorm's `pmvt` returned 4.025e-6 for a true 4.367e-6, 8% low and twice its stated error, and 0 for a true 5.9e-9. `qmvt` searches with `pmvt`'s default absolute error of 1e-3, so its quantiles are information; CytePool's are checked by `pmvt` at its quantile and by the round trip. scipy's complements for the singular correlation of Tukey's contrasts of 4 groups exceed Bonferroni's upper bound, which no probability can, so those boxes are information.
 
 ## Differential expression
 
@@ -1430,6 +1480,18 @@ On fgsea's example data, 12,000 genes and 586 sets of 15 to 500 genes, with its 
 
 `adjust_p_values` with Hommel's method took 0.017 s on the 100,000 p-values of `multiple_testing.py`. In `distributions.py`, mpmath took 608 s to compute the references, 102 s of them at the edges of the double range, and CytePool 1.2 s to evaluate them, its routines compiled already; the incomplete beta function took at most 5.2e-5 s for any value at those edges, with the time of a call from Python. In `simulate_dose_series.py`, one series of 9 dose groups x 3 replicates x 2 cell types x 1,000 genes, the cube and its truth included, took 17.2 ms, and 19.0 ms with 4 replicates (median of three after a first call), about 3,500 and 3,200 series a minute; mpmath took 60 s to compute the references.
 
+`multiple_contrast_tests.py --benchmark`, run on 2026-11-20 on an Intel Granite Rapids host with AVX-512 (with the two settings above), tests 20,000 genes of 9 dose groups with gene-specific variances per group, df 20.5 and effects in 10% of the genes, on 2 threads, the median of three runs after a first call. The baseline, the weighted `fit_linear_model` of `linear_models.py --benchmark` on 20,000 genes x 200 samples, took 0.159 s in the same run, and the peak resident memory of the run was 603 MiB. Every p-value met its error target.
+
+| Scenario | Seconds | ms per gene | Baselines |
+| --- | --- | --- | --- |
+| 9 groups, 8 Dunnett contrasts, two-sided | 12.09 | 0.604 | 76 |
+| 3 groups, 2 Dunnett contrasts, two-sided, by quadrature | 0.49 | 0.024 | 3 |
+| 4 groups, 3 Dunnett contrasts, two-sided | 0.73 | 0.037 | 5 |
+| 9 groups, 8 Williams-type contrasts, greater | 22.69 | 1.134 | 143 |
+| 9 groups, 8 Dunnett contrasts, `relative_error` 1e-3 | 146.08 | 7.304 | 919 |
+
+On 1,000 of the genes of 9 groups, a p-value took 222 points in all over its 16 shifts at the mean, 256 at the median and 512 at most.
+
 `dose_response_tests.py --benchmark` ran on 20,000 genes x 24 profiles (the vehicle and 7 doses x 3) x 11 cell types, the median of three runs after a first call, on 2 threads: `dose_response` with its four tests took 9.19 s, 1.44 times the 6.37 s of `limma_voom` with the F-test of the dose groups; the extra time goes to the contrasts and F-tests of the spline, which share the one fit. In the same run, the ordinary least squares fit of `linear_models.py`'s benchmark, 20,000 genes x 200 samples, took 0.041 s.
 
 `cube_reads.py` read every layer of each selection of its cube file into memory with `to_memory()`. The file holds 720 MB of values in chunks of one group, every sample and 4,096 genes, 507 MB once compressed. Peak memory is the most that Python's `tracemalloc` traced during a read, and time the best of three reads after a first one:
@@ -1457,6 +1519,9 @@ export NUMBA_NUM_THREADS=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THRE
 export NPY_ENABLE_CPU_FEATURES="SSE SSE2 SSE3 SSSE3 SSE41 POPCNT SSE42 AVX F16C FMA3 AVX2"
 export OPENBLAS_CORETYPE=Haswell
 python validation/multiple_testing.py
+# mvtnorm and multcomp, in the R environment of the dose-response references (below).
+RSCRIPT=$REF/r-dose/bin/Rscript python validation/multiple_contrast_tests.py
+RSCRIPT=$REF/r-dose/bin/Rscript python validation/multiple_contrast_tests.py --benchmark
 # Hmisc, rms, limma and edgeR, in the R environment of the dose-response references (below).
 RSCRIPT=$REF/r-dose/bin/Rscript python validation/smoothing.py
 RSCRIPT=$REF/r-dose/bin/Rscript python validation/dose_axes.py
@@ -1612,7 +1677,7 @@ conda create -p $REF/r-progeny --override-channels -c conda-forge -c bioconda \
     r-base=4.4.3 bioconductor-progeny=1.28.0 r-jsonlite=2.0.0
 ```
 
-`smoothing.py` and `dose_axes.py` run R 4.4.3's `splines` and `stats` with Hmisc 5.3-1 and rms 8.2-1, and `dose_axes.py` limma 3.62.1 and edgeR, in the environment that holds the dose-response references: R 4.4.3 with DESeq2 1.46.0, limma 3.62.1, SummarizedExperiment 1.36.0 and stageR 1.28.0 (Bioconductor 3.20), tcplfit2 0.1.9, mvtnorm 1.4-2, multcomp 1.4-32, jsonlite 2.0.0 and TMB 1.9.19 from conda-forge and bioconda; and Hmisc 5.3-1, rms 8.2-1, DoseFinding 1.4-2, drc 4.0-0, DRomics 2.6.3, MuMIn 1.48.19 and muscat 1.20.0, which conda does not build for R 4.4, built from their CRAN and Bioconductor 3.20 source tarballs, whose dependencies come from conda unpinned. TMB is pinned at the version conda-forge's glmmTMB 1.1.14 for R 4.4 was built with, and lme4 is left free (2.0-6), with which variancePartition's `dream` fails, as above. The validation scripts of this page need R, Hmisc and rms from it, `dose_axes.py` also limma and edgeR, and `dose_response_tests.py` also DRomics, DESeq2, muscat and SingleCellExperiment; the command leaves edgeR unpinned (4.4.0 in the run reported here):
+`smoothing.py` and `dose_axes.py` run R 4.4.3's `splines` and `stats` with Hmisc 5.3-1 and rms 8.2-1, `dose_axes.py` limma 3.62.1 and edgeR, and `multiple_contrast_tests.py` mvtnorm 1.4-2 and multcomp 1.4-32, in the environment that holds the dose-response references: R 4.4.3 with DESeq2 1.46.0, limma 3.62.1, SummarizedExperiment 1.36.0 and stageR 1.28.0 (Bioconductor 3.20), tcplfit2 0.1.9, mvtnorm 1.4-2, multcomp 1.4-32, jsonlite 2.0.0 and TMB 1.9.19 from conda-forge and bioconda; and Hmisc 5.3-1, rms 8.2-1, DoseFinding 1.4-2, drc 4.0-0, DRomics 2.6.3, MuMIn 1.48.19 and muscat 1.20.0, which conda does not build for R 4.4, built from their CRAN and Bioconductor 3.20 source tarballs, whose dependencies come from conda unpinned. TMB is pinned at the version conda-forge's glmmTMB 1.1.14 for R 4.4 was built with, and lme4 is left free (2.0-6), with which variancePartition's `dream` fails, as above. The validation scripts of this page need R, Hmisc and rms from it, `dose_axes.py` also limma and edgeR, `dose_response_tests.py` also DRomics, DESeq2, muscat and SingleCellExperiment, and `multiple_contrast_tests.py` mvtnorm and multcomp; the command leaves edgeR unpinned (4.4.0 in the run reported here):
 
 ```bash
 conda create -p $REF/r-dose --override-channels -c conda-forge -c bioconda \

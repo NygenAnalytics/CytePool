@@ -772,7 +772,7 @@ def test_size_factors_cannot_be_estimated_when_every_gene_has_a_zero() -> None:
         (
             {"contrast": np.array([1.0, 0.0, 0.0])},
             ValueError,
-            "one row per coefficient",
+            "one row for each of the fit.s coefficients",
         ),
         ({"contrast": np.eye(2)}, ValueError, "one contrast"),
         ({"contrast": np.zeros(2)}, ValueError, "so it compares nothing"),

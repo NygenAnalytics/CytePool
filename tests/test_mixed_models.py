@@ -805,5 +805,5 @@ def test_invalid_tests_are_refused() -> None:
         fixed_effect_tests(fit, names=["a"])
     with pytest.raises(ValueError, match=r"must weigh exactly the fit's coefficients"):
         fixed_effect_tests(fit, make_contrasts(["groupB"], ["(Intercept)", "groupB"]))
-    with pytest.raises(ValueError, match="one row per coefficient"):
+    with pytest.raises(ValueError, match="one row for each of the fit.s coefficients"):
         fixed_effect_tests(fit, np.ones(2))

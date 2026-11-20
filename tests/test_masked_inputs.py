@@ -85,6 +85,7 @@ from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
+from cytepool.stats.multiple_contrasts import dunnett_contrasts, multiple_contrast_test
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
 from cytepool.stats.smoothing import NaturalSplineBasis, lowess
@@ -2010,6 +2011,76 @@ ENTRY_POINTS: dict[str, Entry] = {
         {"p_values": "NaN", "n": None, "axis": None},
         options=("method",),
     ),
+    # Multivariate t probabilities: limits, correlations, probabilities and df are
+    # arrays with NaN for missing values.
+    "cytepool.stats.multivariate_t.multivariate_t_cdf": Entry(
+        lambda c: {
+            "upper": [2.0, 2.5, 3.0],
+            "correlation": np.full((3, 3), 0.5) + 0.5 * np.eye(3),
+            "df": 6.0,
+            "two_sided": True,
+            "relative_error": 0.05,
+            "rng": 1,
+        },
+        {"upper": "NaN", "correlation": "NaN", "df": "NaN"},
+        options=("two_sided", "relative_error", "rng"),
+    ),
+    "cytepool.stats.multivariate_t.multivariate_t_quantile": Entry(
+        lambda c: {
+            "probability": 0.9,
+            "correlation": np.full((3, 3), 0.5) + 0.5 * np.eye(3),
+            "df": 6.0,
+            "two_sided": True,
+            "relative_error": 0.05,
+            "rng": 1,
+        },
+        {"probability": "NaN", "correlation": "NaN", "df": "NaN"},
+        options=("two_sided", "relative_error", "rng"),
+    ),
+    # Multiple contrast tests: group names, sizes, estimates and their covariances.
+    "cytepool.stats.multiple_contrasts.dunnett_contrasts": Entry(
+        lambda c: {"groups": ["vehicle", "low", "high"], "control": "vehicle"},
+        {"groups": None},
+        options=("control",),
+    ),
+    "cytepool.stats.multiple_contrasts.williams_contrasts": Entry(
+        lambda c: {"sizes": {"vehicle": 4, "low": 3, "high": 3}},
+        {"sizes": None},
+        keys={"sizes": "low"},
+    ),
+    "cytepool.stats.multiple_contrasts.multiple_contrast_test": Entry(
+        lambda c: {
+            "estimates": np.array([[5.0, 5.2, 6.1], [4.0, 4.1, 4.0]]),
+            "covariances": np.diag([0.05, 0.05, 0.05]),
+            "contrasts": dunnett_contrasts(["vehicle", "low", "high"]),
+            "df": np.array([9.5, 9.5]),
+            "estimate_names": ["vehicle", "low", "high"],
+            "alternative": "greater",
+            "relative_error": 0.05,
+            "rng": 1,
+            "n_threads": 1,
+        },
+        {
+            "estimates": "NaN",
+            "covariances": "NaN",
+            "contrasts": None,
+            "df": "NaN",
+            "estimate_names": None,
+        },
+        options=("alternative", "relative_error", "rng", "n_threads"),
+    ),
+    "cytepool.stats.multiple_contrasts.MultipleContrastTest.table": Entry(
+        lambda c: {"contrast": "low - vehicle", "feature_ids": ["g1", "g2"]},
+        {"feature_ids": None},
+        options=("contrast",),
+        instance=lambda c: multiple_contrast_test(
+            np.array([[5.0, 5.2, 6.1], [4.0, 4.1, 4.0]]),
+            np.diag([0.05, 0.05, 0.05]),
+            dunnett_contrasts(["vehicle", "low", "high"]),
+            df=9.5,
+            estimate_names=["vehicle", "low", "high"],
+        ),
+    ),
     # Numbers of points and the settings of the rule, each a number.
     "cytepool.stats.smoothing.choose_lowess_span": Entry(
         lambda c: {"n": 400, "small_n": 10, "min_span": 0.2, "power": 0.5},
@@ -3230,6 +3301,9 @@ RECORDS = {
     "cytepool.stats.meta_analysis.MetaAnalysisFit",
     "cytepool.stats.combined_p_values.CombinedPValues",
     "cytepool.stats.multiple_testing.TrueNullProportion",
+    "cytepool.stats.multivariate_t.MultivariateTProbability",
+    "cytepool.stats.multivariate_t.MultivariateTQuantile",
+    "cytepool.stats.multiple_contrasts.MultipleContrastTest",
     "cytepool.stats.sumrank.SumRankFit",
     "cytepool.principal_component_analysis.PrincipalComponents",
     "cytepool.stats.dream.ModeratedFixedEffectTests",

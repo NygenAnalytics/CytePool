@@ -166,18 +166,25 @@ def _is_or_are(items: Sequence[Any]) -> str:
 
 
 def contrast_matrix(
-    contrasts: Any, names: Sequence[str] | None, coefficient_names: tuple[str, ...]
+    contrasts: Any,
+    names: Sequence[str] | None,
+    coefficient_names: tuple[str, ...],
+    *,
+    target: str = "the fit's coefficients",
+    remedy: str | None = None,
 ) -> tuple[FloatArray, tuple[str, ...]]:
     """The contrast matrix, rows in the order of the coefficients, and its names.
 
     Weights that name their coefficients are matched to them by name, by the
     rule of :func:`weights_on_columns`; the others
-    are taken in order.
+    are taken in order. Messages name the coefficients as ``target`` and end a
+    mismatch with ``remedy``, by default how to make contrasts that match a fit.
     """
     reject_masked_contrasts(contrasts, "contrasts")
     reject_masked(names, "names")
     n_coefficients = len(coefficient_names)
-    remedy = _contrasts_remedy(coefficient_names)
+    if remedy is None:
+        remedy = _contrasts_remedy(coefficient_names)
     named = is_named_contrasts(contrasts)
     if (named or isinstance(contrasts, Mapping)) and names is not None:
         raise ValueError(
@@ -189,7 +196,7 @@ def contrast_matrix(
             contrasts,
             coefficient_names,
             label="the contrasts",
-            target="the fit's coefficients",
+            target=target,
             remedy=remedy,
         )
         matrix = real_array(weights, "contrasts")
@@ -207,13 +214,13 @@ def contrast_matrix(
                 vector,
                 coefficient_names,
                 label=f"contrast {key!r}",
-                target="the fit's coefficients",
+                target=target,
                 remedy=remedy,
             )
             values = real_array(weights, f"contrast {key!r}")
             if values.shape != (n_coefficients,):
                 raise ValueError(
-                    f"contrast {key!r} must have one value per coefficient "
+                    f"contrast {key!r} must have one value for each of {target} "
                     f"({n_coefficients}), got shape {values.shape}"
                 )
             vectors.append(values)
@@ -232,7 +239,7 @@ def contrast_matrix(
             contrasts,
             coefficient_names,
             label="the contrasts",
-            target="the fit's coefficients",
+            target=target,
             remedy=remedy,
         )
         matrix = real_array(weights, "contrasts")
@@ -240,7 +247,7 @@ def contrast_matrix(
             matrix = matrix[:, np.newaxis]
         if matrix.ndim != 2 or matrix.shape[0] != n_coefficients:
             raise ValueError(
-                "contrasts must have one row per coefficient of the fit "
+                f"contrasts must have one row for each of {target} "
                 f"({n_coefficients}), got shape {matrix.shape}"
             )
         if matrix.shape[1] == 0:
