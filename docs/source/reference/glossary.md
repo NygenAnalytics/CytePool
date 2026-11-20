@@ -12,7 +12,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
 
-**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from the vehicle by a stated change, the benchmark response (BMR), such as one SD of the vehicle or a fold change of 1.1. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from the vehicle by a stated change, the benchmark response (BMR), such as one SD of the vehicle or a fold change of 1.1. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
 
@@ -26,7 +26,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Counts per million (CPM).** Counts divided by the effective library size, times one million. [Counts per million and log-CPM](../statistics/normalization_and_filtering.md#log-cpm)
 
-**Coverage.** The share of intervals that contain the true value over repeated experiments, which a 95% interval should hold at 95%. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+**Coverage.** The share of intervals that contain the true value over repeated experiments, which a 95% interval should hold at 95%. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Cox-Reid adjusted profile likelihood.** The likelihood of a gene's dispersion with the coefficients fitted at each value, adjusted for most of the bias that fitting them gives, which edgeR and DESeq2 maximize to estimate dispersions. [The Cox-Reid adjusted profile likelihood](../statistics/count_models.md#cox-reid)
 
@@ -46,7 +46,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Dose group.** The samples given one dose, the vehicle's included; in a cell type, the samples of a dose group that pass the cell type's filter of samples. [What a number of dose groups supports](../statistics/dose_response.md#dose-groups)
 
-**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
