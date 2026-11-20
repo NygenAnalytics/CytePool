@@ -32,7 +32,8 @@ question they answer, the default first:
 - Dose response: :class:`DoseAxis`; whether a dose series supports tests in each
   cell type, :func:`check_dose_design`, :class:`DoseDesignReport`; which genes
   respond to dose in each cell type, :func:`dose_response`,
-  :class:`DoseResponseResult`; simulated dose series with known curves,
+  :class:`DoseResponseResult`, with the candidate shapes of its MCP step,
+  :class:`CandidateShapes`; simulated dose series with known curves,
   :func:`simulate_dose_series`, :class:`DoseTruth`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and
@@ -65,6 +66,7 @@ __version__: str = _installed_version()
 
 from .activity import Activities, mlm, ulm, weighted_aggregate  # noqa: E402
 from .composition import CompositionResult, propeller  # noqa: E402
+from .candidate_shapes import CandidateShapes  # noqa: E402
 from .cube import Cube, CubeCollection, from_bulk, from_cells  # noqa: E402
 from .design import Design  # noqa: E402
 from .differential_expression import (  # noqa: E402
@@ -184,6 +186,7 @@ __all__ = [
     "DoseDesignReport",
     "dose_response",
     "DoseResponseResult",
+    "CandidateShapes",
     "simulate_dose_series",
     "DoseTruth",
     # The version.

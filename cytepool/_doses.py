@@ -1,4 +1,5 @@
-"""The reading of doses that dose axes, dose designs and simulated dose series share.
+"""The reading of doses that dose axes, dose designs, candidate shapes and simulated
+dose series share.
 
 A dose column of a sample table holds real numbers, finite and at least 0, with 0 for
 the vehicle. Distinct doses closer than 1e-8 of the larger are refused as one dose
@@ -9,13 +10,16 @@ of each treated dose after the dose, ``{column}_0.03``, with 12 significant digi
 which separate any two doses that the 1e-8 rule keeps apart.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from ._masked_arrays import Missing, unmasked_array
+from ._columns import is_data_frame
+from ._masked_arrays import Missing, reject_masked, unmasked_array
 from ._messages import close_matches, listing
+from .cube import Cube
 from .table import Table
 
 FloatArray = npt.NDArray[np.float64]
@@ -71,6 +75,27 @@ def column_doses(table: Table, column: str) -> FloatArray:
             "that holds the doses with DoseAxis(<column>, ...)"
         )
     return checked_doses(table[column], f"samples[{column!r}]")
+
+
+def sample_doses(samples: Any, column: str) -> FloatArray:
+    """The checked doses of the dose column of a sample table: a ``Table``, a mapping of
+    column name to 1-D values, or a pandas DataFrame.
+
+    Raises:
+        TypeError: If ``samples`` is not a table or holds a numpy masked array, or the
+            column does not hold real numbers.
+        ValueError: If the table has no such column, or a dose is not finite or is
+            negative.
+    """
+    reject_masked(samples, "samples", missing="None or NaN")
+    if not (isinstance(samples, Table | Mapping) or is_data_frame(samples)):
+        hint = "; pass cube.samples" if isinstance(samples, Cube) else ""
+        raise TypeError(
+            "samples must be a Table, a mapping of column names to 1-D values or "
+            f"a pandas DataFrame, got {type(samples).__name__}{hint}"
+        )
+    table = samples if isinstance(samples, Table) else Table(samples)
+    return column_doses(table, column)
 
 
 def distinct_doses(doses: FloatArray, unit: str) -> FloatArray:

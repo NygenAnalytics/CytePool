@@ -45,6 +45,7 @@ from numpy.testing import assert_array_equal
 
 import cytepool
 from cytepool import (
+    CandidateShapes,
     Cube,
     CubeCollection,
     Design,
@@ -2069,6 +2070,27 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         options=("alternative", "relative_error", "rng", "n_threads"),
     ),
+    # The optimal contrasts of shapes, a mapping of each shape's means, and the
+    # stage-wise calls of a matrix of p-values, missing values marked NaN.
+    "cytepool.stats.multiple_contrasts.optimal_contrasts": Entry(
+        lambda c: {
+            "shapes": {"emax": [0.0, 0.6, 0.9, 1.0], "linear": [0.0, 0.1, 0.4, 1.0]},
+            "covariance": np.diag([0.25, 0.5, 0.5, 0.5]),
+            "groups": ["vehicle", "low", "mid", "high"],
+        },
+        {"shapes": None, "covariance": None, "groups": None},
+        keys={"shapes": "emax"},
+    ),
+    "cytepool.stats.multiple_contrasts.stage_wise_adjusted_p_values": Entry(
+        lambda c: {
+            "screen_p_values": np.array([0.001, 0.2, np.nan]),
+            "p_values": np.array([[0.01, 0.2], [0.3, np.nan], [0.02, 0.5]]),
+            "alpha": 0.05,
+            "method": "holm",
+        },
+        {"screen_p_values": "NaN", "p_values": "NaN"},
+        options=("alpha", "method"),
+    ),
     "cytepool.stats.multiple_contrasts.MultipleContrastTest.table": Entry(
         lambda c: {"contrast": "low - vehicle", "feature_ids": ["g1", "g2"]},
         {"feature_ids": None},
@@ -2145,6 +2167,41 @@ ENTRY_POINTS: dict[str, Entry] = {
         },
         {},
         options=("column", "unit", "metric", "scale", "vehicle", "offset"),
+    ),
+    # Candidate shapes: their parameters, the doses of their means, and the samples
+    # whose doses spread them.
+    "cytepool.candidate_shapes.CandidateShapes": Entry(
+        lambda c: {
+            "emax": [0.5, 2.0],
+            "sigmoid_emax": [(1.0, 3.0)],
+            "exponential": [4.0],
+            "beta": [(1.0, 1.0)],
+            "beta_scale": 12.0,
+        },
+        {"emax": None, "sigmoid_emax": None, "exponential": None, "beta": None},
+        options=("beta_scale",),
+    ),
+    "cytepool.candidate_shapes.CandidateShapes.means": Entry(
+        lambda c: {"doses": [0.0, 0.1, 1.0, 10.0]},
+        {"doses": None},
+        instance=lambda c: CandidateShapes(
+            emax=[1.0], beta=[(1.0, 1.0)], beta_scale=12.0
+        ),
+    ),
+    "cytepool.candidate_shapes.CandidateShapes.spread": Entry(
+        lambda c: {
+            "axis": DOSE_AXIS,
+            "samples": DOSE_SAMPLES,
+            "n_emax": 1,
+            "n_sigmoid_emax": 1,
+            "n_exponential": 0,
+            "n_beta": 1,
+        },
+        {"samples": "None or NaN"},
+        options=("n_emax", "n_sigmoid_emax", "n_exponential", "n_beta"),
+        objects=("axis",),
+        instance=lambda c: CandidateShapes,
+        keys={"samples": "dose"},
     ),
     "cytepool.dose_axes.DoseAxis.positions": Entry(
         lambda c: {"doses": [0.0, 0.1, 1.0]},

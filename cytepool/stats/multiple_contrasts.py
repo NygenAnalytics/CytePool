@@ -14,9 +14,18 @@ or estimates and their covariance as multcomp's ``glht`` does with ``parm()``.
 :func:`dunnett_contrasts` builds Dunnett's contrasts, each treatment against the
 control (Dunnett 1955), and :func:`williams_contrasts` the Williams-type contrasts,
 the control against the size-weighted mean of the highest one, two or more doses, for
-means that change in dose order (Bretz 2006), as multcomp's ``contrMat``.
+means that change in dose order (Bretz 2006), as multcomp's ``contrMat``;
+:func:`optimal_contrasts` builds the contrasts that best detect each of several
+candidate shapes, the MCP step of MCP-Mod (Bretz, Pinheiro and Branson 2005;
+Pinheiro et al. 2014), as DoseFinding's ``optContr``.
 https://docs.nygen.io/CytePool/statistics/multiple-testing#correlated-tests explains
 the tests.
+
+Across features, the contrasts of the features that a screen calls are called by
+:func:`stage_wise_adjusted_p_values`, stageR's stage-wise procedure (Heller et al.
+2009; Van den Berge et al. 2017): Holm's step-down within each feature (Holm 1979),
+with Shaffer's (1986) first step, at the level that the screen leaves
+(https://docs.nygen.io/CytePool/statistics/multiple-testing#stage-wise-testing).
 
 Differences from multcomp:
     - ``df`` need not be an integer, as moderated degrees of freedom are not, and has
@@ -44,6 +53,30 @@ References:
 
     Hothorn T, Bretz F, Westfall P (2008). Simultaneous inference in general
     parametric models. Biometrical Journal 50, 346-363. doi:10.1002/bimj.200810425
+
+    Bretz F, Pinheiro JC, Branson M (2005). Combining multiple comparisons and
+    modeling techniques in dose-response studies. Biometrics 61, 738-748.
+    doi:10.1111/j.1541-0420.2005.00344.x
+
+    Pinheiro J, Bornkamp B, Glimm E, Bretz F (2014). Model-based dose finding under
+    model uncertainty using general parametric models. Statistics in Medicine 33,
+    1646-1661. doi:10.1002/sim.6052
+
+    Holm S (1979). A simple sequentially rejective multiple test procedure.
+    Scandinavian Journal of Statistics 6, 65-70.
+
+    Shaffer JP (1986). Modified sequentially rejective multiple test procedures.
+    Journal of the American Statistical Association 81, 826-831.
+    doi:10.1080/01621459.1986.10478341
+
+    Heller R, Manduchi E, Grant GR, Ewens WJ (2009). A flexible two-stage procedure
+    for identifying gene sets that are differentially expressed. Bioinformatics 25,
+    1019-1025. doi:10.1093/bioinformatics/btp076
+
+    Van den Berge K, Soneson C, Robinson MD, Clement L (2017). stageR: a general
+    stage-wise method for controlling the gene-level false discovery rate in
+    differential expression and differential transcript usage. Genome Biology 18,
+    151. doi:10.1186/s13059-017-1277-0
 """
 
 from collections.abc import Mapping, Sequence
@@ -62,7 +95,7 @@ from cytepool._masked_arrays import (
     unmasked_array,
 )
 from cytepool._messages import listing, quoted
-from cytepool._options import checked_choice, integral_number
+from cytepool._options import checked_choice, integral_number, real_number
 from cytepool.design._contrast_weights import checked_names, contrast_matrix
 from cytepool.design.contrasts import Contrasts
 from cytepool.stats._result_tables import coefficient_position, feature_id_column
@@ -75,6 +108,8 @@ __all__ = [
     "MultipleContrastTest",
     "dunnett_contrasts",
     "multiple_contrast_test",
+    "optimal_contrasts",
+    "stage_wise_adjusted_p_values",
     "williams_contrasts",
 ]
 
@@ -87,6 +122,10 @@ _EPS = float(np.finfo(np.float64).eps)
 # times its scale, and a correlation of contrasts whose smallest eigenvalue is below
 # minus this times its largest, show a covariance that is not positive semidefinite.
 _TOLERANCE = 1e-10
+# A shape whose values lie within this fraction of their largest magnitude of each
+# other is constant, to the precision of a contrast.
+_CONSTANT = 1e-8
+_STAGE_WISE_METHODS = ("holm", "none")
 
 
 # ---------------------------------------------------------------------------------------
@@ -709,9 +748,10 @@ def multiple_contrast_test(
     )
 
 
-def _check_symmetric(v: FloatArray) -> None:
+def _check_symmetric(v: FloatArray, name: str = "covariances") -> None:
     """Refuse a covariance matrix that is not symmetric, relative to its largest
-    variance; a matrix with a missing value is not checked."""
+    variance; a matrix with a missing value is not checked. ``name`` is the
+    argument, as messages name it."""
     stack = v.reshape(-1, *v.shape[-2:])
     with np.errstate(invalid="ignore"):
         asymmetry = np.abs(stack - stack.transpose(0, 2, 1)).max(axis=(1, 2))
@@ -721,7 +761,7 @@ def _check_symmetric(v: FloatArray) -> None:
     if bad.size:
         which = "" if v.ndim == 2 else f" of feature {bad[0]}"
         raise ValueError(
-            f"covariances must be symmetric, to {_TOLERANCE:g} of the largest "
+            f"{name} must be symmetric, to {_TOLERANCE:g} of the largest "
             f"variance; the matrix{which} differs from its transpose by up to "
             f"{asymmetry[bad[0]]:.3g}, against a largest variance of "
             f"{scale[bad[0]]:.3g}"
@@ -792,3 +832,270 @@ def _monotone(
     np.put_along_axis(out_p, order, running, axis=1)
     np.put_along_axis(out_error, order, sorted_error, axis=1)
     return out_p, out_error
+
+
+# ---------------------------------------------------------------------------------------
+# Optimal contrasts and stage-wise calls
+# ---------------------------------------------------------------------------------------
+
+
+def optimal_contrasts(
+    shapes: Mapping[str, npt.ArrayLike] | npt.ArrayLike,
+    covariance: npt.ArrayLike,
+    *,
+    groups: Sequence[str] | None = None,
+) -> Contrasts:
+    """The contrasts of group means that best detect each of several shapes: the
+    optimal contrasts of the MCP step of MCP-Mod.
+
+    For a shape mu, the means it expects in k groups, and the covariance S of the
+    groups' estimates up to a factor, the contrast c that maximises the non-centrality
+    c'mu / sqrt(c' S c) of its t-statistic among contrasts (weights that sum to 0) is
+    proportional to S^-1 (mu - m 1), with m = (1' S^-1 mu) / (1' S^-1 1) (Bretz,
+    Pinheiro and Branson 2005; Pinheiro et al. 2014). Each contrast is scaled to unit
+    length; c'mu is then positive, so the contrast points the way the shape rises. For
+    independent groups of n_i samples, S = diag(1 / n_i) and c_i is proportional to
+    n_i (mu_i - the size-weighted mean of mu), DoseFinding's ``optContr(models, w =
+    n)``; a general S gives ``optContr(models, S = S)``. A shape and the same shape
+    scaled by a positive factor or shifted give the same contrast, so only the shapes'
+    directions matter. Test the contrasts with :func:`multiple_contrast_test`.
+    https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-contrasts
+    explains them.
+
+    Args:
+        shapes: The shapes, as a mapping of name to the k means each expects, or a
+            ``(n_shapes, k)`` array, whose shapes are then named ``"shape1"``,
+            ``"shape2"``, ...; such as :meth:`~cytepool.CandidateShapes.means` gives.
+        covariance: ``(k, k)`` the covariance of the groups' estimates, up to a
+            factor: symmetric and positive definite, such as ``np.diag(1 / n)``.
+        groups: The k group names, which the contrasts weigh; ``"1"`` to ``"k"`` by
+            default, as :func:`dunnett_contrasts` names unnamed groups.
+
+    Returns:
+        One contrast per shape, named after it, with the groups as the columns it
+        weighs.
+
+    Raises:
+        ValueError: If there are fewer than two groups or no shape, the shapes or
+            ``groups`` disagree with ``covariance`` in size, a value is not finite, a
+            shape is constant (its values within 1e-8 of their largest magnitude of
+            each other), which no contrast detects, the covariance is not symmetric
+            or not positive definite, or a name is empty or repeated.
+        TypeError: If an argument has the wrong type or is a numpy masked array.
+
+    Example:
+        >>> import numpy as np
+        >>> shapes = {"linear": [0.0, 1.0, 2.0]}
+        >>> contrasts = optimal_contrasts(shapes, np.diag(1 / np.array([2.0, 1, 1])))
+        >>> (contrasts.matrix[:, 0] / contrasts.matrix[0, 0] * -1.5).round(6).tolist()
+        [-1.5, 0.25, 1.25]
+    """
+    names, means = _shape_means(shapes)
+    k = means.shape[1]
+    if k < 2:
+        raise ValueError(f"shapes must give the means of two groups or more, got {k}")
+    weights = _covariance(covariance, k)
+    labels = (
+        tuple(str(j + 1) for j in range(k))
+        if groups is None
+        else tuple(_group_names(groups, "groups"))
+    )
+    if len(labels) != k:
+        raise ValueError(
+            f"groups must name the {k} groups of the shapes, got {len(labels)}"
+        )
+    for name, values in zip(names, means, strict=True):
+        largest = float(np.max(np.abs(values)))
+        if largest < np.finfo(np.float64).tiny or np.ptp(values) <= _CONSTANT * largest:
+            raise ValueError(
+                f"shape {name!r} is constant over the groups, so no contrast detects it"
+            )
+    solved = np.linalg.solve(weights, np.column_stack([np.ones(k), means.T]))
+    ones, inverse_means = solved[:, 0], solved[:, 1:]
+    centres = inverse_means.sum(axis=0) / ones.sum()
+    matrix = inverse_means - np.outer(ones, centres)
+    matrix /= np.linalg.norm(matrix, axis=0)
+    return Contrasts(np.ascontiguousarray(matrix), names, labels)
+
+
+def _shape_means(shapes: Any) -> tuple[tuple[str, ...], FloatArray]:
+    """The shapes' names and their means, ``(n_shapes, k)``."""
+    reject_masked(shapes, "shapes")
+    if isinstance(shapes, Mapping):
+        names = list(shapes.keys())
+        if not names:
+            raise ValueError("shapes holds no shape")
+        for name in names:
+            if not isinstance(name, str):
+                raise TypeError(
+                    f"shapes must name each shape with text, got {type(name).__name__} "
+                    f"{name!r}"
+                )
+            if not name:
+                raise ValueError("shapes has an empty shape name")
+        rows = [_real_array(shapes[name], f"shapes[{name!r}]") for name in names]
+        for name, row in zip(names, rows, strict=True):
+            if row.ndim != 1:
+                raise ValueError(
+                    f"shapes[{name!r}] must be the 1-D means of the groups, got shape "
+                    f"{row.shape}"
+                )
+        sizes = {row.size for row in rows}
+        if len(sizes) > 1:
+            raise ValueError(
+                "the shapes must each give one mean per group, got lengths "
+                f"{[row.size for row in rows]}"
+            )
+        means = np.array(rows, dtype=np.float64).reshape(len(rows), -1)
+    else:
+        means = _real_array(shapes, "shapes")
+        if means.ndim != 2:
+            raise ValueError(
+                "shapes must be a mapping of name to means or a (n_shapes, n_groups) "
+                f"array, got shape {means.shape}"
+            )
+        names = [f"shape{j + 1}" for j in range(means.shape[0])]
+    if not names:
+        raise ValueError("shapes holds no shape")
+    if not np.isfinite(means).all():
+        raise ValueError("the shapes' means must be finite")
+    return tuple(names), means
+
+
+def _real_array(values: Any, name: str) -> FloatArray:
+    reject_masked(values, name)
+    array: FloatArray = real_array(values, name)
+    return array
+
+
+def _covariance(covariance: Any, k: int) -> FloatArray:
+    matrix = _real_array(covariance, "covariance")
+    if matrix.shape != (k, k):
+        raise ValueError(
+            f"covariance must be ({k}, {k}) for shapes of {k} groups, got {matrix.shape}"
+        )
+    if not np.isfinite(matrix).all():
+        raise ValueError("covariance must be finite")
+    _check_symmetric(matrix, "covariance")
+    try:
+        np.linalg.cholesky(matrix)
+    except np.linalg.LinAlgError:
+        raise ValueError(
+            "covariance must be positive definite, as the covariance of independent "
+            "group estimates such as np.diag(1 / n) is"
+        ) from None
+    return matrix
+
+
+def stage_wise_adjusted_p_values(
+    screen_p_values: npt.ArrayLike,
+    p_values: npt.ArrayLike,
+    *,
+    alpha: float = 0.05,
+    method: str = "holm",
+) -> FloatArray:
+    """Adjust several p-values per feature in two stages, after a screen of the
+    features, so that the overall false discovery rate of the features holds.
+
+    Stage-wise testing (Heller et al. 2009; Van den Berge et al. 2017), as stageR's
+    ``stageWiseAdjustment``: the screen calls the features whose Benjamini-Hochberg
+    adjusted screen p-value is at most ``alpha``, R of the G features with a screen
+    p-value; then, in each called feature, its p-values are adjusted for the
+    feature's hypotheses and scaled by G / R, the level of R alpha / G that the screen
+    leaves. With the feature's m p-values sorted, p_(1) <= ... <= p_(m), the adjusted
+    p-value of p_(j) is min(1, (G / R) max over i <= j of c_i p_(i)), with c = (m - 1,
+    m - 1, m - 2, ..., 1) for ``"holm"``, Holm's step-down with Shaffer's first step
+    (Holm 1979; Shaffer 1986), or c = 1 for ``"none"``, for p-values already adjusted
+    within each feature. Shaffer's first multiplier is m - 1, not m, since the screen
+    has rejected the hypothesis that every hypothesis of the feature holds; with one
+    hypothesis it is 1. A feature or hypothesis is called when its adjusted p-value is
+    at most ``alpha``, as stageR counts. The calls control the overall false discovery
+    rate (OFDR) at ``alpha``: the expected share of called features with at least one
+    false call, the screen's or a hypothesis's, under the conditions in which
+    Benjamini-Hochberg controls the false discovery rate (Heller et al. 2009). The
+    share of false calls among all feature-hypothesis calls is not controlled. The
+    values hold only at the ``alpha`` given.
+    https://docs.nygen.io/CytePool/statistics/multiple-testing#stage-wise-testing
+    explains the procedure.
+
+    Args:
+        screen_p_values: ``(n_features,)`` p-values of the screen, a test of every
+            hypothesis of a feature at once, in [0, 1]; NaN leaves a feature out of
+            the screen's family.
+        p_values: ``(n_features, n_hypotheses)`` p-values of the hypotheses, each
+            unadjusted (``"holm"``) or adjusted within its feature (``"none"``), in
+            [0, 1]; NaN leaves a hypothesis out of its feature's family.
+        alpha: The level of the calls, between 0 and 1.
+        method: ``"holm"`` (default) or ``"none"``.
+
+    Returns:
+        ``(n_features, n_hypotheses)`` stage-wise adjusted p-values, NaN for a
+        feature that the screen does not call and for a missing p-value.
+
+    Raises:
+        ValueError: If the shapes disagree, a p-value is outside [0, 1] or infinite,
+            ``alpha`` is not between 0 and 1, or ``method`` is unknown.
+        TypeError: If an argument has the wrong type or is a numpy masked array.
+
+    Example:
+        >>> import numpy as np
+        >>> screen = np.array([1e-6, 1e-4, 0.3, 0.8])
+        >>> doses = np.array([[1e-5, 0.01, 0.2], [0.003, 0.003, 0.6],
+        ...                   [0.01, 0.5, 0.5], [0.5, 0.5, 0.5]])
+        >>> stage_wise_adjusted_p_values(screen, doses).tolist()[:2]
+        [[4e-05, 0.04, 0.4], [0.012, 0.012, 1.0]]
+    """
+    screen = _p_values(screen_p_values, "screen_p_values")
+    hypotheses = _p_values(p_values, "p_values")
+    if screen.ndim != 1:
+        raise ValueError(
+            f"screen_p_values must be 1-D, one per feature, got shape {screen.shape}"
+        )
+    if hypotheses.ndim != 2 or hypotheses.shape[0] != screen.size:
+        raise ValueError(
+            f"p_values must be (n_features, n_hypotheses) with one row per screen "
+            f"p-value ({screen.size}), got shape {hypotheses.shape}; for one hypothesis "
+            "per feature pass p_values[:, None]"
+        )
+    level = real_number(alpha, "alpha", finite=True)
+    if not 0.0 < level < 1.0:
+        raise ValueError(f"alpha must be between 0 and 1, got {level}")
+    procedure = checked_choice(method, "method", _STAGE_WISE_METHODS)
+    adjusted = np.full(hypotheses.shape, np.nan)
+    screened = np.asarray(adjust_p_values(screen, "bh"), dtype=np.float64)
+    called = np.flatnonzero(screened <= level)
+    if called.size == 0:
+        return adjusted
+    family = int(np.count_nonzero(~np.isnan(screen)))
+    rows = hypotheses[called]
+    # Missing p-values sort last, and leave their feature's family.
+    order = np.argsort(rows, axis=1, kind="stable")
+    ranked = np.take_along_axis(rows, order, axis=1)
+    m = np.count_nonzero(~np.isnan(rows), axis=1)[:, None]
+    position = np.arange(rows.shape[1])[None, :]
+    if procedure == "holm":
+        multiplier = np.where(position == 0, np.maximum(m - 1, 1), m - position)
+    else:
+        multiplier = np.ones_like(position)
+    running = np.fmax.accumulate(multiplier * ranked, axis=1)
+    running = np.where(np.isnan(ranked), np.nan, running)
+    scaled = np.minimum(1.0, running * (family / called.size))
+    values = np.empty_like(scaled)
+    np.put_along_axis(values, order, scaled, axis=1)
+    adjusted[called] = values
+    return adjusted
+
+
+def _p_values(values: Any, name: str) -> FloatArray:
+    array = unmasked_array(values, name, missing="NaN")
+    if array.dtype.kind not in "iuf":
+        raise TypeError(
+            f"{name} must hold numbers, got an array of dtype {array.dtype}"
+        )
+    array = np.asarray(array, dtype=np.float64)
+    outside = ~np.isnan(array) & ~((array >= 0.0) & (array <= 1.0))
+    if outside.any():
+        raise ValueError(
+            f"{name} must be p-values in [0, 1] or NaN, got {array[outside][0]}"
+        )
+    return array
