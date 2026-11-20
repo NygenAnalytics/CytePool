@@ -1270,7 +1270,13 @@ def _record_keys(record: dict[str, Any]) -> set[str]:
 def test_the_cube_files_page_names_every_key_that_cytepool_writes(
     tmp_path: Path,
 ) -> None:
-    from cytepool import CubeCollection, from_bulk, from_cells, write_cube
+    from cytepool import (
+        CubeCollection,
+        from_bulk,
+        from_cells,
+        simulate_dose_series,
+        write_cube,
+    )
 
     page = (SOURCE / "reference" / "cube_files.md").read_text()
     # A key is named when it is written as code: in a code span or a code block.
@@ -1314,6 +1320,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
         ).read_text()
     )
     bulk = from_bulk(np.array([[1, 2], [3, 4]]))
+    simulated, _ = simulate_dose_series([0, 1, 10], n_genes=3, rng=1)
     stacked = CubeCollection(
         {"a": cube, "b": cube}, group_names={"B": "B cells"}
     ).stack()
@@ -1326,6 +1333,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
         | set(sample_id["attributes"])
         | _record_keys(attributes["provenance"])
         | _record_keys(bulk.provenance)
+        | _record_keys(simulated.provenance)
         | _record_keys(stacked.provenance)
         | set(digests)
         | {key for layer in digests["layers"].values() for key in layer}
@@ -1333,6 +1341,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
     assert sorted(written - named) == [], sorted(written - named)
     assert {"construction", "operations", "with_columns", "numpy_dtype"} <= written
     assert {"studies", "group_names"} <= written
+    assert {"numpy_version", "max_changes", "seed"} <= written
     # The import and export of AnnData and MuData, when they are installed.
     ad = pytest.importorskip("anndata")
     pd = pytest.importorskip("pandas")

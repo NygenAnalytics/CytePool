@@ -125,7 +125,7 @@ with a `layer` line for each group of each layer: layers in the order counts, de
 
 **`source`:** the caller's record of where the data came from, given to {api}`from_cells`, {api}`from_bulk`, {api}`from_anndata` or {api}`from_mudata` as `source`: for example a dataset identity, references to the exporter's artifacts (such as frozen cell memberships, which stay in the exporter's files) and the exporter's settings. CytePool stores it as JSON, as it was given, does not interpret it, and reports its references as unresolved: following them needs the tool that wrote them. Null when no record was given.
 
-**`construction`:** how the cube was built: `function` (`"from_cells"`, `"from_bulk"`, `"from_anndata"`, `"from_mudata"` or `"CubeCollection.stack"`), `cytepool_version`, and the function's settings. {api}`from_cells` records:
+**`construction`:** how the cube was built: `function` (`"from_cells"`, `"from_bulk"`, `"from_anndata"`, `"from_mudata"`, `"CubeCollection.stack"` or `"simulate_dose_series"`), `cytepool_version`, and the function's settings. {api}`from_cells` records:
 
 - `n_cells`: the number of cells pooled (the cells of each sample and group are the cube's `n_cells`);
 - `layers`: the layers computed;
@@ -135,6 +135,8 @@ with a `layer` line for each group of each layer: layers in the order counts, de
 - `features`: where the feature ids came from: `"table"`, `"ids"` (a sequence), `"data_frame_columns"` or `"positions"` (`feature_0`, `feature_1`, ...).
 
 {api}`from_bulk` records `samples` and `features`, where their ids came from: `"table"`, `"ids"`, `"data_frame_index"` (samples) or `"data_frame_columns"` (features), or `"positions"`.
+
+{api}`simulate_dose_series` records each argument as it was resolved: `doses`; `replicates`, one per dose; `cell_types`; `cells` and `responsive`, one per cell type; `n_genes`; `shapes`, each shape's share; `max_changes`; `biological_sd`; `donor_sd`, null for one animal per replicate; `composition`, each cell type's factor at each dose; `unit`; `metric`; `seed`, the integer seed given, or null for a generator; and `numpy_version`, since the series follows numpy's random algorithms.
 
 {api}`from_anndata` and {api}`from_mudata`, reading data that CytePool did not export, record:
 

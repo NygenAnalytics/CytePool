@@ -745,7 +745,7 @@ def test_an_axis_survives_its_record() -> None:
 def test_the_chapter_example_runs() -> None:
     # The code of "Dose axes and the vehicle", run on a dose series of one group, which
     # from_bulk names "bulk" where the chapter's cube holds hepatocytes.
-    section = CHAPTER.read_text().split("(dose-axes)=")[1].split("(estimable")[0]
+    section = CHAPTER.read_text().split("(dose-axes)=")[1].split("\n(")[0]
     blocks = re.findall(r"```python\n(.*?)```", section, re.S)
     assert len(blocks) == 2
     namespace = {"cp": cytepool, "cube": dose_series(89)}

@@ -115,6 +115,64 @@ Row i of `curves` is the fitted log2 fold change of gene i of the table against 
 
 How many spline columns? A spline of `df` columns needs at least `df + 1` treated doses, so `df` is at most the number of treated doses minus one; at that maximum the curve passes through the mean of every dose group, and `any_dose` is the F-test of a factor of dose groups against the vehicle. Fewer columns give a smoother curve, with fewer coefficients to estimate from 2 or 3 replicates per dose, as `df=3` on the eight doses above; for a time course of many ordered levels, the limma User's Guide recommends 3 to 5 (section 9.6.2). With `vehicle="on_axis"`, the design holds the spline columns alone, the vehicle counts among the doses, and `df` can be one more. The vehicle's rows of the spline columns change neither the three F-tests nor any fitted curve; they decide only what `dose_treated` and the intercept mean.
 
+(simulated-dose-series)=
+## Simulated dose series with known curves
+
+How well does a dose method find the genes that respond, the shape of each response and the dose at which it starts, at a given design? Only data whose truth is known can say, and the one single-cell dose benchmark compared tests on cells, without curves [@nault2022]. {api}`simulate_dose_series` draws a cube of pseudobulk counts from known curves of each gene's expression along dose, and {api}`DoseTruth` holds the truth. Here the spline F-test of the previous section runs on a simulated series, and the truth says which genes it should call:
+
+```python
+import numpy as np
+
+cube, truth = cp.simulate_dose_series([0, 0.01, 0.1, 1, 10, 30], replicates=3, rng=1)
+axis = cp.DoseAxis("dose", unit=truth.unit, metric=truth.metric)
+basis = axis.spline_basis(cube.samples, df=3)
+samples = cube.samples.with_columns(axis.design_columns(cube.samples, basis))
+columns = ["dose_treated", "dose_s1", "dose_s2", "dose_s3"]
+design = cp.Design(samples, "~ " + " + ".join(columns))
+result = cp.limma_voom(cube, design, contrasts=columns, f_tests={"any_dose": columns})
+
+tested = result.table("cell_type_1", "any_dose")
+genes = truth.table("cell_type_1")
+flat = np.isin(tested["feature_id"], genes.filter(shape="flat")["feature_id"])
+called = tested["adjusted_p_value"] < 0.05
+responsive, flat_share = called[~flat].mean(), called[flat].mean()
+print(f"{responsive:.0%} of responsive genes called, {flat_share:.1%} of flat genes")
+# 53% of responsive genes called, 0.2% of flat genes
+```
+
+Of the genes that pass the expression filter of {api}`limma_voom`, the F-test of any dose calls 53% of those that respond and 0.2% of the flat ones at 5% FDR: with 3 replicates per dose and 100 cells per profile, about half of the responses go unseen while false calls stay rare. The same lines with `replicates=4` or `cells=30` show what another design gains or loses before it is run.
+
+The cube has one group per cell type and one sample per replicate, in dose order. Its sample table holds `sample_id`, such as `d2_r1` for the first replicate of the third dose; `dose`, with 0 for the vehicle, which {api}`DoseAxis` reads as it stands; `dose_group`, `d0` to `d5` here, which sorts in dose order with the vehicle first, for designs with a factor of dose groups; and `donor`. The layer `counts` and `n_cells` hold each profile's counts and cells, and the provenance records every argument. Each profile sums the counts of a random number of cells:
+
+| Level | Model | Default spread |
+| --- | --- | --- |
+| A gene's expression at the vehicle | Expected counts per cell, log-normal, partly shared by the cell types | Median 0.1 counts per cell; SD 1.5 (natural log) shared and 0.5 per cell type |
+| A gene's variability | A log-normal factor on `biological_sd` and `donor_sd` | SD 0.3 (natural log) |
+| Cells per profile | Poisson, with a log-normal mean of `cells` times the `composition` factor of the dose | Coefficient of variation about 0.3 between profiles |
+| Sequencing depth | A log-normal factor with mean 1 | SD 0.2 (natural log) |
+| Biological effect | Normal in log2 units, per replicate (`biological_sd`), plus a donor effect shared by the doses when donors are crossed with dose (`donor_sd`) | `biological_sd` 0.25 |
+| Counts | Negative binomial, the sum of the profile's cells | Dispersion 0.5 per cell, so 0.5 / n for n cells |
+
+Profiles of fewer cells vary more beyond their counts, so precision follows the cells per profile along dose, as it does for a cell type that a dose depletes. Replicates differ by effects on every gene, as in the simulations of muscat and scDesign3 [@crowell2020; @song2024]. A share `responsive` of the genes respond, with these curves of the change in log2 expression from the vehicle, where M is the maximal change, E the EC50, n the slope, P the peak dose, w the bell's SD along log10 dose and T the top dose:
+
+| `shape` | Change at dose d | Model sets that contain it | Default share |
+| --- | --- | --- | --- |
+| `hill` | M / (1 + (E/d)^n) | BMDS's Hill, drc's LL.4, DRomics' Hill | 30% |
+| `exponential` | M (1 - 2^(-d/E)) | BMDS's exponential 4, DRomics' exponential | 15% |
+| `linear` | M d / T | BMDS's linear and power, DRomics' linear | 5% |
+| `power` | M (d/T)^n | BMDS's power | 10% |
+| `log_gauss_probit` | M exp(-(log10(d/P) / w)^2 / 2) | DRomics' log-Gauss-probit | 20% |
+| `frechet` | M 2^(-(E/d)^n) | none | 10% |
+| `step` | M from d = E on, 0 below | none | 10% |
+
+Hill, sigmoid Emax and four-parameter log-logistic curves are one family [@kappenberg2023]. The Fréchet curve, drc's Weibull type 1 with a negative slope parameter [@ritz2015], is the Weibull curve of BMDS's exponential 5 model [@usepa2026] turned end for end on a log-dose axis: flat at low doses, then a steep rise and a slow approach to its plateau. Steps and Fréchet curves lie outside the model sets of BMDS, drc's LL.4 and DRomics [@delignettemuller2023], so a method is not checked only on curves of its own form. The maximal changes `max_changes`, 0.5, 1 and 2 log2 units by default, come in equal shares, half rises and half falls, and the counts of each shape, change and direction are exact. The benchmark dose of a 1.1-fold change of Hill, exponential, Fréchet and step curves is log-uniform from an eighth of the log10 span of the positive doses below the lowest dose to an eighth above the top dose, so that a tenth lies below the doses and a tenth above, and the EC50 follows from it; linear and power curves reach their maximal change at the top dose. Bells peak within the doses, with a width of 0.75 to 1.5 times the median log10 spacing of the doses, so that 97% to 99% reach half their peak at two or more doses from 3 to 9 dose groups; their benchmark dose, the lower crossing, then lies below the lowest dose more often in sparse designs, in 30% of bells at nine half-log doses and 94% at four doses a decade apart ([Validation](../validation.md#validation-simulate-dose-series)).
+
+{api}`DoseTruth.table` gives each gene's shape, parameters, expected counts per cell at the vehicle, `expression_sd` and two benchmark doses, the doses at which the true curve first departs from the vehicle by a stated change, the benchmark response [@crump1984]: `bmd_expression_sd` at one `expression_sd` and `bmd_fold_change` at a fold change of 1.1 in either direction, BMDS's two defaults for continuous data, one SD of the control and a change of 10% [@usepa2026], with the fold change taken on the log2 scale. {api}`DoseTruth.curve` gives the true change at any dose, and {api}`DoseTruth.benchmark_doses` the benchmark dose at any change, such as ETAP's 1.349 SDs. A method's estimates can then be compared with the truth gene by gene: their bias, and the coverage of their intervals, the share of intervals that contain the true value over simulated datasets.
+
+`expression_sd` is the SD of true expression between vehicle replicates, from biological and donor variation, before counting. Counting widens the SD of observed log-CPM values most for genes with few counts: at 100 cells per profile, 3.6 times for genes with 1 to 5 expected counts at the vehicle and 1.2 times above 100, so a benchmark dose at one observed SD lies above `bmd_expression_sd` for most genes ([Validation](../validation.md#validation-simulate-dose-series)). For SDs on the observed scale, simulate the same seed with many vehicle replicates, such as `replicates=[2000, 3, 3, 3, 3, 3]`, which keeps the truth, and pass a multiple of each gene's observed SD to {api}`DoseTruth.benchmark_doses`.
+
+The random draws come in independent streams, so a cell type's curves and expression stay the same when `replicates`, `cells`, `composition`, `biological_sd` or `donor_sd` change, or another cell type is added: designs compare on the same genes. Doses multiplied by a factor give EC50s, peak doses and benchmark doses multiplied by it, and the same counts.
+
 (estimable-contrasts)=
 ## Designs that cannot answer the question
 
@@ -157,6 +215,7 @@ Most problems of a design can be found before anything is fitted. {api}`Design.c
 - **Harrell's knots.** Where Hmisc places fewer knots than asked, drops a repeated knot, or switches to another method because 5% of the values or more tie at the smallest or largest value and none between them ties as often, `"harrell"` raises an error instead. {api}`DoseAxis.spline_basis` takes `"levels"`, `"quantiles"` or given knots: on a ladder with fewer than 5 samples per dose, Harrell's outer knots fall inside the lowest and highest doses, and `dose_treated` would no longer compare the lowest dose with the vehicle.
 - **Repeated knots.** R's `ns()` and {api}`natural_spline_basis` accept repeated knots, which lower the curve's smoothness there, as R's quantile rule gives on tied values; the restricted cubic form refuses them, and {api}`DoseAxis.spline_basis` refuses knots that coincide in either form, naming the rule and the dose.
 - **Doses that differ by rounding.** {api}`DoseAxis.spline_basis` refuses two doses that differ by less than 1e-8 of the dose, as `0.1 * 3` and `0.3` do, which a conversion of units can leave as two doses where there is one: round the dose column first.
+- **What a simulated series leaves out.** In {api}`simulate_dose_series`, a gene's biological SD is the same at every dose, the constant variance that BMDS fits by default; genes are independent given their curves, so gene-set methods meet no correlation between genes; each cell type draws its responsive genes on its own, so few genes respond in several cell types; bells are symmetric, and no curve is hormetic; the counts hold no ambient RNA; and library sizes move with dose, by a median of 0.08 log2 at the top dose of default series, which TMM removes from the flat genes.
 
 (linear-models-checks)=
 ## Checks and further reading
@@ -167,6 +226,7 @@ Designs and fits are compared with R and limma, run as separate programs on the 
 - {api}`fit_linear_model` and {api}`contrasts_fit`: `lmFit` and `contrasts.fit` of limma 3.62.1, exact (1e-10) ([Validation](#validation-linear-models)).
 - {api}`NaturalSplineBasis` and {api}`natural_spline_basis`: knots identical to those of R 4.4.3's `ns()` and Hmisc 5.3-1's `rcspline.eval`; bases at new points against `predict()`, the restricted cubic columns' first column and the curves they span against `rcspline.eval`, and F-tests against rms 8.2-1, exact (1e-10) ([Validation](#validation-smoothing)).
 - {api}`DoseAxis`: positions, knots, columns, designs, F-tests and fitted curves against R 4.4.3's `ns()`, Hmisc's `rcspline.eval`, `model.matrix`, `lm` and `predict`, exact (1e-10); moderated F-tests of `limma_trend` against limma 3.62.1's, exact on `ns()`'s columns and close (1e-6) on Hmisc's, with every column counted, and equal in the two forms ([Validation](#validation-dose-axes)).
+- {api}`simulate_dose_series` and {api}`DoseTruth`: true curves, EC50s and benchmark doses against mpmath 1.3.0, exact (1e-10); the means and variances of cells and counts within 4 standard errors of their exact values; the same series at 1, 2 and 8 threads ([Validation](#validation-simulate-dose-series)).
 
 Further reading:
 
@@ -175,5 +235,6 @@ Further reading:
 - @searle1971 gave the theory of linear models of less than full rank, and of the functions of their coefficients that the data can estimate.
 - @hoaglin1978 described the hat matrix, whose diagonal gives the leverage of each sample.
 - @durrleman1989 introduced restricted cubic splines to medical regression, @harrell2015 sets out their use with knots at percentiles, and @desquilbet2010 shows how to test overall and non-linear dose-response associations with them; @perperoglou2019 reviews the spline functions of R, `ns()` among them.
+- @nault2022 benchmarked tests of single-cell dose series simulated from the EPA's benchmark-dose equations; @crowell2020 and @song2024 describe the simulators of muscat and scDesign3; @crump1984 introduced the benchmark dose, and @kappenberg2023 reviews the design and analysis of 5,670 toxicological dose-response analyses.
 
 [Empirical Bayes moderation](empirical_bayes.md) makes the tests of these models hold with few samples.
