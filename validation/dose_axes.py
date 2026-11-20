@@ -43,11 +43,17 @@ as combinations of CytePool's (the largest residual relative to each column's la
 absolute value), since CytePool's columns after the first differ from Hmisc's by a
 change of basis that keeps them well conditioned; the design matrices against
 ``model.matrix`` in the same ways; the F-statistics (relative); the curves on the grid
-(relative to the largest absolute value); the moderated F-statistics (relative); their
-numerator degrees of freedom, which must count every column tested (identical); and
-the moderated F-statistics of the two forms on the same knots, which span the same
-curves (relative). Tier exact, 1e-10 throughout, except ``treated`` and the degrees of
-freedom (identical): R's and numpy's ``log10`` can differ in the last bit.
+(relative to the largest absolute value); the moderated F-statistics (relative), of
+the B-spline form against limma's on ``ns()``'s columns and of the restricted cubic
+form against limma's on Hmisc's; their numerator degrees of freedom, which must count
+every column tested (identical); and the moderated F-statistics of the two forms on
+the same knots, which span the same curves (relative). Tier exact, 1e-10 throughout,
+except ``treated`` and the degrees of freedom (identical), and the moderated
+F-statistics of the restricted cubic form (close, 1e-6): limma computes them from the
+correlation of the coefficients of Hmisc's nearly collinear columns, whose rounding
+grows with the square of the condition number of R's design, while the two forms'
+agreement ties them to ``ns()``'s at the exact tier. R's and numpy's ``log10`` can
+differ in the last bit.
 F-statistics, curves and moderated F-tests are compared with R's where R's design has
 a condition number of at most 1e5, so that rounding stays below the tier; above it, as
 for Hmisc's columns on a linear axis over doses that span decades, the cases are
@@ -86,6 +92,7 @@ from cytepool import Design, DoseAxis, Table, from_bulk, limma_trend
 
 FIXTURE_DIRECTORY = Path(__file__).resolve().parents[1] / "tests" / "data" / "dose_axes"
 EXACT = 1e-10
+CLOSE = 1e-6
 GENES = 4
 # Genes of the counts on which the moderated F-tests run.
 COUNTED_GENES = 200
@@ -639,7 +646,10 @@ def compare(inputs: list[dict], results: dict) -> tuple[dict, dict, dict]:
             departures.setdefault(DROPPED_DIMENSION, []).append(case["name"])
         else:
             ours_f = np.column_stack([statistics[name] for name in reference["tests"]])
-            found.record("moderated F", relative(ours_f, reference["moderated_f"]))
+            found.record(
+                f"moderated F, {case['form']}",
+                relative(ours_f, reference["moderated_f"]),
+            )
         found.record("cases", 0.0)
     # The two forms on the same knots span the same curves: the F-tests of any dose and
     # among the treated doses must agree.
@@ -665,7 +675,9 @@ ROWS = {
     "design matrices": "design matrices",
     "F-statistics": "F-statistics",
     "curves": "curves on the grid",
-    "moderated F": "moderated F-statistics",
+    "moderated F, b_spline": "moderated F-statistics of the B-spline form",
+    "moderated F, restricted_cubic": "moderated F-statistics of the restricted cubic "
+    "form",
     "moderated F df": "numerator degrees of freedom of the moderated F-tests",
     "forms": "moderated F-statistics of the two forms on the same knots",
 }
@@ -679,12 +691,16 @@ REFERENCES = {
     "design matrices": "model.matrix",
     "F-statistics": "anova(lm)",
     "curves": "predict(lm)",
-    "moderated F": "limma classifyTestsF",
+    "moderated F, b_spline": "limma classifyTestsF",
+    "moderated F, restricted_cubic": "limma classifyTestsF",
     "moderated F df": "columns tested",
     "forms": "B-spline form",
 }
 # Checks that count mismatches, with tolerance 0.
 IDENTICAL = ("treated", "moderated F df")
+# limma's F-tests of Hmisc's nearly collinear columns carry rounding of about the
+# squared condition number of R's design times 1e-16, up to 1e-6 at CONDITION_LIMIT.
+TOLERANCES = {"moderated F, restricted_cubic": CLOSE}
 
 
 def table(
@@ -697,7 +713,7 @@ def table(
             if kind not in found.largest:
                 continue
             value = found.largest[kind]
-            tolerance = 0.0 if kind in IDENTICAL else EXACT
+            tolerance = 0.0 if kind in IDENTICAL else TOLERANCES.get(kind, EXACT)
             passed = value <= tolerance
             failures += not passed
             shown = "0 mismatches" if kind in IDENTICAL and passed else f"{value:.1e}"
