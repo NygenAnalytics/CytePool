@@ -1074,13 +1074,13 @@ def test_arguments_are_refused_with_a_fix() -> None:
     for name in names:
         columns = {**samples, **{n: np.arange(9.0) for n in names if n != "dose"}}
         with pytest.raises(
-            ValueError, match=f"the design uses '{name}', but .* adds the dose groups"
+            ValueError, match=f"the design uses '{name}', but the dose groups are added"
         ):
             check_dose_design(cube, Design(columns, f"~ {name}"), dose=AXIS)
     # Names that only start like them are other terms.
     columns = {**samples, "dose_s1x": np.arange(9.0), "dosed": np.arange(9.0)}
     check_dose_design(cube, Design(columns, "~ dose_s1x + dosed"), dose=AXIS)
-    with pytest.raises(ValueError, match="'dose'.*adds the dose groups itself"):
+    with pytest.raises(ValueError, match="'dose'.*added from the dose axis"):
         check_dose_design(cube, Design(samples, "~ 1", random="(1 | dose)"), dose=AXIS)
     with pytest.raises(ValueError, match="random slopes"):
         check_dose_design(
@@ -1278,11 +1278,10 @@ def test_the_chapter_example_runs() -> None:
     axes = text.split("(dose-axes)=")[1].split("\n(")[0]
     section = text.split("(dose-design-check)=")[1].split("\n(")[0]
     blocks = re.findall(r"```python\n(.*?)```", section, re.S)
-    assert len(blocks) == 2
+    assert len(blocks) == 1
     namespace = {"cp": cytepool, "cube": tcdd_like_cube()}
     exec(re.findall(r"```python\n(.*?)```", axes, re.S)[0], namespace)  # noqa: S102
-    for block in blocks:
-        exec(block, namespace)  # noqa: S102
+    exec(blocks[0], namespace)  # noqa: S102
     report = namespace["report"]
     assert dict(
         zip(report.summary["group_id"].tolist(), report.summary["status"].tolist())
@@ -1312,10 +1311,8 @@ def test_the_chapter_example_runs() -> None:
         "sexes",
         "animals_per_sex_and_dose",
     }
-    # The fit runs in the cell types that support tests.
-    assert namespace["inferential"] == ["hepatocyte", "stellate"]
-    result = namespace["result"]
-    assert result.summary["group_id"].tolist() == ["hepatocyte", "stellate"]
+    # dose_response runs the check itself and tests the inferential cell types.
+    assert "{api}`dose_response` runs this check itself" in section
     # The printout and the values the chapter states.
     assert repr(report) in section
     assert "keeps one mouse at 30 ug/kg" in text

@@ -1126,13 +1126,14 @@ def test_the_chapter_example_runs(capsys: pytest.CaptureFixture[str]) -> None:
     printed = capsys.readouterr().out.strip().splitlines()
     # The output the code block shows, and the counts the text quotes.
     assert all(f"# {line}\n" in section for line in printed)
-    assert printed[0] == "59 of 113 responsive genes called, 2 of 461 flat"
+    assert printed[0] == "62 of 113 responsive genes called, 3 of 461 flat"
     assert printed[1:] == [
         "maximal change 0.5: 4 of 32 called",
-        "maximal change 1: 21 of 38 called",
+        "maximal change 1: 24 of 38 called",
         "maximal change 2: 34 of 43 called",
     ]
-    assert "59 of the 113 that respond and 2 of the 461 flat ones" in section
+    assert "62 of the 113 that respond and 3 of the 461 flat ones" in section
+    assert "28 of the 51 misses are changes of 0.5 log2 units" in section
 
 
 def test_the_examples_in_the_docstrings_run() -> None:

@@ -23,7 +23,7 @@ project:
     severity: error
   # To add a page, add its file here. A notebook page also needs a saved
   # execution: make -C docs execute PAGES="<page>". MyST needs a file first, the
-  # Overview; the six groups after it are the ones docs/page_index.py lists, in that
+  # Overview; the seven groups after it are the ones docs/page_index.py lists, in that
   # order, and the API reference comes last.
   toc:
   - file: index.md
@@ -62,6 +62,10 @@ project:
       title: Pathway and regulator activity
     - file: guides/bulk_rna_seq.ipynb
       title: Bulk RNA-seq
+  - title: Dose response
+    children:
+    - file: guides/dose_response.ipynb
+      title: Dose response per cell type
   - title: Combine studies
     children:
     - file: guides/combine_studies.ipynb

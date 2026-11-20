@@ -34,6 +34,9 @@ The figures:
 - Differential expression: :func:`plot_md`, limma's mean-difference plot ``plotMD``;
   :func:`plot_volcano`, limma's ``volcanoplot``; :func:`plot_p_values`, a histogram of
   p-values; :func:`plot_significant_genes`, the genes up and down in every group.
+- Dose response: :func:`plot_dose_response`, the estimates of each dose group, the
+  fitted spline of :func:`~cytepool.dose_response` and its 95% band, for chosen
+  genes of a cell type.
 - Gene sets: :func:`plot_barcode`, limma's ``barcodeplot``; :func:`plot_gene_sets`, the
   sets of a ``camera``, ``fry`` or ``mroast`` table; :func:`plot_over_representation`,
   the sets of an over-representation analysis, as clusterProfiler's dot plots show
@@ -221,6 +224,7 @@ from .activity import Activities
 from .composition import CompositionResult
 from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
+from .dose_responses import DoseResponseResult
 from .gene_sets import GeneSets
 from .held_out_studies import HeldOutPrediction
 from .meta_analysis_of_studies import MetaAnalysisResult
@@ -249,6 +253,7 @@ __all__ = [
     "plot_cell_numbers",
     "plot_composition",
     "plot_dispersions",
+    "plot_dose_response",
     "plot_dotplot",
     "plot_enrichment",
     "plot_feature_variance_fractions",
@@ -2248,6 +2253,175 @@ def plot_p_values(
         ],
     )
     return ax
+
+
+# Dose response.
+
+
+def plot_dose_response(
+    result: DoseResponseResult,
+    group: str | None = None,
+    *,
+    genes: str | Sequence[str],
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot how genes respond to dose in a cell type: each dose group's estimate, the
+    fitted spline and its 95% band.
+
+    For each gene of a :func:`~cytepool.dose_response` result, its log2 fold change
+    at each dose against the vehicle (the table ``"each_dose"``) as points, the
+    vehicle at 0, and the fitted spline as a change from the vehicle
+    (:meth:`~cytepool.DoseResponseResult.curve`) on 100 doses spaced evenly along
+    the dose axis over the doses the cell type compares, with its pointwise 95% band.
+    The x axis is the dose axis, labelled in doses, a label left out where it would
+    overlap the one before it; with the vehicle in a group of its own, the vehicle
+    sits one median step of the doses below the lowest dose, beyond a break in the
+    axis. Up to 8 genes take the module's hues in order, and beyond 3, each also a
+    marker of its own.
+    https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-curves
+    explains the curve and its band.
+
+    Draws, for each gene in the order given, its points (gid ``"doses"``), its curve
+    (gid ``"curve"``) and its band (gid ``"band"``), and a line at 0.
+
+    Args:
+        result: The result of ``dose_response`` by ``limma_voom`` or
+            ``limma_trend``.
+        group: A cell type that was tested; None when the result checked one.
+        genes: A feature id or symbol, or a list of up to 8 of them, among the genes
+            tested in the cell type.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``result`` is not a DoseResponseResult, or ``genes`` is not a
+            feature id or symbol or a list of them, or is a numpy masked array.
+        ValueError: If ``genes`` is empty or names more than 8 genes, or as
+            :meth:`~cytepool.DoseResponseResult.curve` raises: for a result of
+            ``dream_voom``, a cell type whose doses cannot estimate the spline, or a
+            symbol that names several genes.
+        KeyError: If the cell type was not tested, or a gene was not tested there.
+    """
+    _check_axes(ax)
+    if not isinstance(result, DoseResponseResult):
+        raise TypeError(
+            f"result must be a DoseResponseResult, got {type(result).__name__}"
+        )
+    reject_masked(group, "group")
+    reject_masked(genes, "genes")
+    if isinstance(genes, str):
+        names = [genes]
+    elif isinstance(genes, Sequence | np.ndarray):
+        names = list(genes)
+    else:
+        raise TypeError(
+            "genes must be a feature id or symbol, or a list of them, got "
+            f"{type(genes).__name__}"
+        )
+    if not names:
+        raise ValueError("genes is empty; name the genes whose curves to draw")
+    if len(names) > len(_CATEGORICAL):
+        raise ValueError(
+            f"genes names {len(names)} genes, more than the {len(_CATEGORICAL)} "
+            "colours that stay distinguishable; draw them in several figures"
+        )
+    # The table of each dose, which raises for a cell type not checked or not tested.
+    each = result.table(group, "each_dose")
+    # The curve on its default doses, the genes in the order given.
+    curve = result.curve(group, names)
+    axis = result.dose
+    treated = np.unique(np.asarray(each["dose"], dtype=np.float64))
+    own_group = axis.vehicle == "own_group"
+    n = len(curve) // len(names)
+    x = axis.positions(np.asarray(curve["dose"][:n], dtype=np.float64))
+    positions = axis.positions(treated)
+    if own_group:
+        steps = np.diff(positions)
+        vehicle = positions[0] - (float(np.median(steps)) if steps.size else 1.0)
+    else:
+        vehicle = float(axis.positions(np.zeros(1))[0])
+    labels = each["symbol"] if "symbol" in each else each["feature_id"]
+    label_of = dict(zip(each["feature_id"].tolist(), labels.tolist(), strict=True))
+    features = curve["feature_id"].tolist()[::n]
+    shapes = _shapes(names, "genes") if len(names) > _SCATTER_HUES else {}
+    ax = _axes(ax, (6.5, 4.0))
+    ax.axhline(0.0, color=_GREY, linewidth=0.8, zorder=1)
+    handles = []
+    for i, (gene, feature, color) in enumerate(
+        zip(names, features, _CATEGORICAL, strict=False)
+    ):
+        rows = slice(i * n, (i + 1) * n)
+        ax.fill_between(
+            x,
+            curve["ci_lower"][rows],
+            curve["ci_upper"][rows],
+            color=color,
+            alpha=0.18,
+            linewidth=0,
+            zorder=2,
+            gid="band",
+        )
+        ax.plot(
+            x, curve["log2_fold_change"][rows], color=color, linewidth=1.6, gid="curve"
+        )
+        mine = each["feature_id"] == feature
+        marker = shapes.get(gene, _MARKERS[0])
+        ax.scatter(
+            np.r_[vehicle, axis.positions(each["dose"][mine])],
+            np.r_[0.0, each["log2_fold_change"][mine]],
+            color=color,
+            marker=marker,
+            s=_SPARSE,
+            edgecolors="white",
+            linewidths=0.5,
+            zorder=3,
+            gid="doses",
+        )
+        handles.append(
+            _key(str(label_of[feature]), marker=marker, color=color, linestyle="-")
+        )
+    ax.set_xticks(
+        [vehicle, *positions.tolist()],
+        ["vehicle", *(f"{dose:g}" for dose in treated)],
+    )
+    _space_tick_labels(ax)
+    if own_group:
+        # A break in the axis between the vehicle and the lowest dose.
+        ax.text(
+            (vehicle + positions[0]) / 2.0,
+            0.0,
+            "//",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="center",
+            fontsize=9,
+            clip_on=False,
+            bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5},
+        )
+    scale = "" if axis.scale == "linear" else ", log10 axis"
+    ax.set_xlabel(f"Dose ({axis.unit}{scale})")
+    ax.set_ylabel("log2 fold change from the vehicle")
+    _legend(ax, handles, inside=True)
+    return ax
+
+
+def _space_tick_labels(ax: "Axes") -> None:
+    """Leave out each x tick label that would overlap the label kept before it, as
+    the doses crowded at the low end of a linear axis would; the ticks stay."""
+    ax.figure.figure.draw_without_rendering()  # the Figure, also of a subfigure
+    pad = 4.0  # pixels between two labels
+    kept_right = -np.inf
+    texts = []
+    for label in ax.get_xticklabels():
+        box = label.get_window_extent()
+        if box.x0 < kept_right + pad:
+            texts.append("")
+            continue
+        kept_right = box.x1
+        texts.append(label.get_text())
+    ax.set_xticks(ax.get_xticks(), texts)
 
 
 # Gene sets.

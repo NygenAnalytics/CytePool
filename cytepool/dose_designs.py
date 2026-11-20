@@ -633,8 +633,8 @@ def _refuse_dose_terms(design: Design, axis: DoseAxis) -> None:
     used = sorted({name for name in names if is_axis_column(name, axis.column)})
     if used:
         raise ValueError(
-            f"the design uses {quoted(used)}, but check_dose_design adds the dose "
-            "groups itself; give the design of the other terms, such as "
+            f"the design uses {quoted(used)}, but the dose groups are added from the "
+            "dose axis; give the design of the other terms, such as "
             "Design(cube.samples, '~ 1'), or '~ sex' for a study of both sexes"
         )
 

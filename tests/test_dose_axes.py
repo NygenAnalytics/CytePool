@@ -760,13 +760,13 @@ def test_the_chapter_example_runs() -> None:
     assert curves.shape == (len(table["feature_id"]), 50)
     assert_allclose(curves[:, 0], table["log2_fold_change_dose_treated"], atol=1e-12)
     result = namespace["result"]
-    assert set(result.f_tests) == {"any_dose", "among_doses", "nonlinear"}
+    assert set(result.f_tests) == {"spline", "among_doses", "nonlinearity"}
     tables = {test: result.table("bulk", test) for test in result.f_tests}
     # 60 genes respond along log dose; the F-test of any dose finds most of them.
     responsive = np.isin(
-        tables["any_dose"]["feature_id"], [f"feature_{i}" for i in range(60)]
+        tables["spline"]["feature_id"], [f"feature_{i}" for i in range(60)]
     )
-    called = tables["any_dose"]["adjusted_p_value"] < 0.05
+    called = tables["spline"]["adjusted_p_value"] < 0.05
     assert called[responsive].mean() > 0.5 and called[~responsive].mean() < 0.1
 
 

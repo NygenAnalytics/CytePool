@@ -18,6 +18,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Competitive and self-contained tests.** A competitive gene-set test asks whether a set's genes change more than the other genes, and a self-contained test whether they change at all. [Competitive or self-contained](../statistics/gene_set_tests.md#competitive-and-self-contained)
 
+**Confidence band (pointwise).** Intervals around a fitted curve, one at each dose, each of which holds with the stated probability, such as 95%, the curve that the model fits to the true means; that is the true curve where the response has the model's shape, and over the whole range at once the curve stays inside less often. [Curves with a band](../statistics/dose_response.md#dose-response-curves)
+
 **Contrast.** A combination of a design's coefficients that answers one question, such as stimulated minus control. [Contrasts](../statistics/linear_models.md#contrasts)
 
 **Contribution weight.** A weight that roast gives a gene of a set, whose sign says in which direction the gene is expected to change and whose size how much it counts. [roast and mroast](../statistics/gene_set_tests.md#roast)
@@ -88,6 +90,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Library size.** The total count of a cell, or of a sample or profile summed over its genes. [Library sizes and composition](../statistics/normalization_and_filtering.md#library-sizes)
 
+**Linear trend test.** The moderated t-test of the slope of a straight line fitted to the dose groups' means along the dose axis, whether expression rises or falls steadily with log dose; not the Hill slope of a fitted curve. [Which genes respond to dose](../statistics/dose_response.md#dose-response-tests)
+
 **Log-CPM.** The log2 of counts per million after a small count is added to every count, so that zero counts have finite logs. [Counts per million and log-CPM](../statistics/normalization_and_filtering.md#log-cpm)
 
 **LOWESS span.** The share of the genes that each local fit of a LOWESS trend uses, which voom chooses from the number of genes. [The span](../statistics/limma_voom.md#voom-span)
@@ -101,6 +105,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Natural cubic spline (restricted cubic spline).** A curve made of cubic pieces joined smoothly at knots and straight beyond the outer knots, which enters a linear model as a few columns of the design, in R's B-spline form or Harrell's restricted cubic form. [Spline columns](../statistics/linear_models.md#spline-bases)
 
 **Network.** A map from each source, a transcription factor or a pathway, to its target genes with signed weights, such as CollecTRI's regulons or PROGENy's footprints. [Networks of regulators and pathways](../statistics/activities.md#regulator-networks)
+
+**Non-linearity test.** The F-test of whether a fitted spline of dose bends away from a straight line along the dose axis: of its restricted cubic columns after the first, whose coefficients are all zero for a line. [Which genes respond to dose](../statistics/dose_response.md#dose-response-tests)
 
 **Normalization factor and size factor.** Corrections for sequencing depth and composition: edgeR multiplies library sizes by normalization factors, such as TMM's, and DESeq2 replaces them by size factors. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 

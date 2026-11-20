@@ -55,6 +55,7 @@ SECTIONS = (
     "Start here",
     "Build and share cubes",
     "Compare conditions",
+    "Dose response",
     "Combine studies",
     "Understand the methods",
     "Reference",

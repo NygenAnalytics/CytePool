@@ -35,16 +35,19 @@ from cytepool import (
     CubeCollection,
     Design,
     DifferentialExpressionResult,
+    DoseAxis,
     MetaAnalysisResult,
     StudyResults,
     Table,
     analyse_each_study,
     camera,
+    dose_response,
     from_bulk,
     limma_voom,
     meta_analysis,
     plotting,
     propeller,
+    simulate_dose_series,
 )
 from cytepool.normalization import log2_cpm
 from cytepool.stats.deseq2 import deseq2_wald_test, fit_deseq2
@@ -1386,3 +1389,166 @@ def test_no_module_of_cytepool_imports_matplotlib_when_imported() -> None:
     assert found == []
     # plotting.py imports it in the functions that draw, and names it for type checkers.
     assert "matplotlib" in (package / "plotting.py").read_text()
+
+
+# Dose response.
+
+
+@cache
+def dose_result(placement: str = "own_group") -> Any:
+    """The dose tests of a simulated series of the vehicle and 5 doses x 3."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=200,
+        rng=3,
+    )
+    offset = 0.001 if placement == "on_axis" else None
+    axis = DoseAxis(
+        "dose", unit="ug/kg", metric="administered", vehicle=placement, offset=offset
+    )
+    return dose_response(cube, Design(cube.samples, "~ 1"), dose=axis)
+
+
+def top_genes(result: Any, n: int) -> list[str]:
+    table = result.table("cell_type_1", "spline")
+    return table.sort("p_value")["feature_id"][:n].tolist()
+
+
+@pytest.mark.parametrize("placement", ["own_group", "on_axis"])
+def test_plot_dose_response_draws_the_curves(placement: str) -> None:
+    result = dose_result(placement)
+    axis = result.dose
+    genes = top_genes(result, 5)
+    ax = plotting.plot_dose_response(result, "cell_type_1", genes=genes, ax=axes())
+    curves, bands, dots = (artists(ax, gid) for gid in ("curve", "band", "doses"))
+    assert len(curves) == len(bands) == len(dots) == 5
+    # 100 doses evenly spaced along the axis over the doses compared: from the lowest
+    # dose, or from the vehicle when it sits on the axis, to the highest.
+    x = curves[0].get_xdata()
+    assert x.size == 100
+    assert_allclose(np.diff(x), np.diff(x)[0], rtol=1e-9)
+    low = 0.01 if placement == "own_group" else 0.0
+    assert_allclose(x[[0, -1]], axis.positions(np.array([low, 30.0])), rtol=1e-12)
+    doses = axis.doses(x)
+    doses[0], doses[-1] = low, 30.0
+    curve = result.curve("cell_type_1", genes, at=doses)
+    each = result.table("cell_type_1", "each_dose")
+    positions = axis.positions(np.array([0.01, 0.1, 1.0, 10.0, 30.0]))
+    vehicle = positions[0] - 1.0 if placement == "own_group" else np.log10(0.001)
+    for i, gene in enumerate(genes):
+        rows = curve["feature_id"] == gene
+        assert scaled(curves[i].get_ydata(), curve["log2_fold_change"][rows]) <= EXACT
+        # The band's outline: the lower bounds forward and the upper ones back.
+        vertices = bands[i].get_paths()[0].vertices
+        lower = vertices[1 : 1 + x.size, 1]
+        upper = vertices[x.size + 2 : 2 * x.size + 2, 1][::-1]
+        assert scaled(lower, curve["ci_lower"][rows]) <= EXACT
+        assert scaled(upper, curve["ci_upper"][rows]) <= EXACT
+        # The points: the vehicle at 0, one median step of half-log doses (1 log10
+        # unit here) below the lowest dose, or at log10(offset) on the axis.
+        mine = each.filter(each["feature_id"] == gene)
+        expected = np.column_stack(
+            [np.r_[vehicle, positions], np.r_[0.0, mine["log2_fold_change"]]]
+        )
+        assert scaled(dots[i].get_offsets(), expected) <= EXACT
+    # Each gene a hue, and beyond three a marker of its own.
+    colours = {COLORS.to_hex(c.get_color()) for c in curves}
+    assert len(colours) == 5
+    markers = {d.get_paths()[0].vertices.tobytes() for d in dots}
+    assert len(markers) == 5
+    labels = [t.get_text() for t in ax.get_xticklabels()]
+    assert labels == ["vehicle", "0.01", "0.1", "1", "10", "30"]
+    assert ax.get_xlabel() == "Dose (ug/kg, log10 axis)"
+    assert [t.get_text() for t in ax.get_legend().get_texts()] == genes
+
+
+def test_plot_dose_response_refuses_what_it_cannot_draw() -> None:
+    result = dose_result()
+    genes = top_genes(result, 9)
+    with pytest.raises(ValueError, match="9 genes, more than the 8 colours"):
+        plotting.plot_dose_response(result, genes=genes, ax=axes())
+    with pytest.raises(ValueError, match="genes is empty"):
+        plotting.plot_dose_response(result, genes=[], ax=axes())
+    with pytest.raises(TypeError, match="feature id or symbol, or a list"):
+        plotting.plot_dose_response(result, genes=3, ax=axes())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="DoseResponseResult"):
+        plotting.plot_dose_response(object(), genes=genes[:1], ax=axes())  # type: ignore[arg-type]
+    with pytest.raises(KeyError, match="was not tested"):
+        plotting.plot_dose_response(result, genes=["nope"], ax=axes())
+    # One gene, by its id alone, with the cell type left out.
+    one = plotting.plot_dose_response(result, genes=genes[0], ax=axes())
+    assert len(artists(one, "curve")) == 1
+    # A cell type that was not tested: every sample has 3 cells.
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0], replicates=2, cell_types=1, cells=3.0, n_genes=50, rng=1
+    )
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    untested = dose_response(cube, Design(cube.samples, "~ 1"), dose=axis)
+    with pytest.raises(KeyError, match="'cell_type_1' was not tested"):
+        plotting.plot_dose_response(
+            untested, "cell_type_1", genes=["gene_01"], ax=axes()
+        )
+
+
+def test_plot_dose_response_takes_symbols() -> None:
+    # Genes named by symbol draw what their feature ids draw, and the legend shows
+    # the symbols.
+    cube, _ = simulate_dose_series(
+        [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=200,
+        rng=3,
+    )
+    ids = cube.features["feature_id"].tolist()
+    named = Cube(
+        {"counts": np.stack([cube.layer("counts", g) for g in range(cube.n_groups)])},
+        samples=cube.samples,
+        groups=cube.groups,
+        features={"feature_id": ids, "symbol": [f"Sym{i}" for i in range(len(ids))]},
+        n_cells=cube.n_cells,
+    )
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    result = dose_response(named, Design(named.samples, "~ 1"), dose=axis)
+    genes = top_genes(result, 2)
+    symbols = [f"Sym{ids.index(gene)}" for gene in genes]
+    by_id = plotting.plot_dose_response(result, genes=genes, ax=axes())
+    by_symbol = plotting.plot_dose_response(result, genes=symbols, ax=axes())
+    for gid in ("curve", "doses"):
+        for ours, theirs in zip(
+            artists(by_symbol, gid), artists(by_id, gid), strict=True
+        ):
+            data = (
+                (ours.get_offsets(), theirs.get_offsets())
+                if gid == "doses"
+                else (ours.get_xydata(), theirs.get_xydata())
+            )
+            assert_array_equal(*data)
+    for ax in (by_id, by_symbol):
+        assert [t.get_text() for t in ax.get_legend().get_texts()] == symbols
+
+
+def test_plot_dose_response_leaves_out_labels_that_would_overlap() -> None:
+    # On a linear axis, doses from 0.001 to 10 uM crowd at its low end: a tick
+    # stays at every dose, and the labels that would overlap one before them are
+    # left out, keeping the vehicle's and the top dose's.
+    cube, _ = simulate_dose_series(
+        [0.0, 0.001, 0.01, 0.1, 1.0, 10.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=100,
+        unit="uM",
+        rng=4,
+    )
+    axis = DoseAxis("dose", unit="uM", metric="nominal", scale="linear")
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=axis)
+    ax = plotting.plot_dose_response(result, genes=top_genes(result, 1), ax=axes())
+    ax.figure.draw_without_rendering()
+    assert ax.get_xticks().size == 6
+    shown = [label for label in ax.get_xticklabels() if label.get_text()]
+    assert shown[0].get_text() == "vehicle" and shown[-1].get_text() == "10"
+    assert len(shown) < 6
+    boxes = [label.get_window_extent() for label in shown]
+    assert all(left.x1 <= right.x0 for left, right in zip(boxes, boxes[1:]))

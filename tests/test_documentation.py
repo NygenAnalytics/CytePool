@@ -1830,6 +1830,7 @@ def test_every_dataset_records_its_source_licence_citation_and_contents() -> Non
         "simulated_pbmc",
         "simulated_bulk",
         "simulated_cohorts",
+        "simulated_dose_series",
         "kang2018",
         "hallmark_interferon_alpha",
     }
@@ -1985,6 +1986,19 @@ def test_a_dataset_is_made_once_and_checked_against_the_registry(
     assert builds == [directory]  # the second call finds it prepared
     (directory / "values.json").write_text('{"x": 2}\n')
     assert datasets.check(dataset, directory)[0].startswith("values.json has sha256:")
+
+
+def test_the_dose_series_truth_is_written_to_6_significant_digits() -> None:
+    datasets = _datasets()
+    # 0.1 + 0.2 and 0.3 differ in their last bits, as numpy's powers and logarithms do
+    # on CPUs with and without AVX-512; the smallest float stays above 0, which the
+    # truth requires of EC50s, and NaN, text and integers stay as they are.
+    values = [0.1 + 0.2, 0.3, 0.123456789, 1234567.0, -0.000123456789, 5e-324]
+    values += [0.0, float("nan"), "gene_0001", 3]
+
+    assert json.dumps(datasets._six_significant_digits(values)) == (
+        '[0.3, 0.3, 0.123457, 1234570.0, -0.000123457, 5e-324, 0.0, NaN, "gene_0001", 3]'
+    )
 
 
 def test_counts_are_read_from_matrix_market_files_without_scipy(tmp_path: Path) -> None:

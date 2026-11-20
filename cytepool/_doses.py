@@ -4,7 +4,9 @@ A dose column of a sample table holds real numbers, finite and at least 0, with 
 the vehicle. Distinct doses closer than 1e-8 of the larger are refused as one dose
 that a conversion of units left as two, such as ``0.1 * 3`` and ``0.3``. A dose axis
 names the design columns it builds after the dose column: ``{column}_treated`` and
-``{column}_s1``, ``{column}_s2``, ...
+``{column}_s1``, ``{column}_s2``, ...; a model of the dose groups names the indicator
+of each treated dose after the dose, ``{column}_0.03``, with 12 significant digits,
+which separate any two doses that the 1e-8 rule keeps apart.
 """
 
 from typing import Any
@@ -103,6 +105,12 @@ def treated_column(column: str) -> str:
 def spline_column(column: str, j: int) -> str:
     """The name of the j-th spline column of dose, counted from 1."""
     return f"{column}{SPLINE_SUFFIX}{j}"
+
+
+def dose_group_column(column: str, dose: float) -> str:
+    """The name of the design column that is 1 for the samples given a treated dose,
+    such as ``dose_0.03``."""
+    return f"{column}_{dose:.12g}"
 
 
 def is_axis_column(name: str, column: str) -> bool:
