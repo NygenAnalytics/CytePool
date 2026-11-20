@@ -290,7 +290,7 @@ Further reading:
 
 - @lun2017 showed that plate effects confounded with the condition break the control of false positives, and that summing the counts within each plate restores it.
 - @crowell2020 benchmarked differential state methods on simulated and real multi-sample data, and found pseudobulk methods performing decently from about 100 cells per cell type and sample.
-- @usepa2024 sets out EPA's standard methods for transcriptomic assessment products, with the design minimums of its Sections 3.4.1.3, 3.4.2 and 3.4.5.2.
+- @usepa2024 sets out the agency's standard methods for transcriptomic assessment products, with the design minimums of Sections 3.4.1.3, 3.4.2 and 3.4.5.2.
 - @ema2014 qualified MCP-Mod for phase 2 dose finding, with its minimum numbers of doses.
 - @nault2022 benchmarked tests of single-cell dose series simulated from the EPA's benchmark-dose equations; @crowell2020 and @song2024 describe the simulators of muscat and scDesign3; @crump1984 introduced the benchmark dose, and @kappenberg2023 reviews the design and analysis of 5,670 toxicological dose-response analyses.
 
