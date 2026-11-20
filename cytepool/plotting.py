@@ -34,6 +34,9 @@ The figures:
 - Differential expression: :func:`plot_md`, limma's mean-difference plot ``plotMD``;
   :func:`plot_volcano`, limma's ``volcanoplot``; :func:`plot_p_values`, a histogram of
   p-values; :func:`plot_significant_genes`, the genes up and down in every group.
+- Dose response: :func:`plot_dose_response`, the estimates of each dose group, the
+  fitted spline of :func:`~cytepool.dose_response` and its 95% band, for chosen
+  genes of a cell type.
 - Gene sets: :func:`plot_barcode`, limma's ``barcodeplot``; :func:`plot_gene_sets`, the
   sets of a ``camera``, ``fry`` or ``mroast`` table; :func:`plot_over_representation`,
   the sets of an over-representation analysis, as clusterProfiler's dot plots show
@@ -202,6 +205,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._masked_arrays import real_array, reject_masked, unmasked_array
+from ._analysis_records import only_key
 from ._messages import listing, quoted
 from ._options import (
     checked_choice,
@@ -221,6 +225,7 @@ from .activity import Activities
 from .composition import CompositionResult
 from .cube import Cube
 from .differential_expression import DifferentialExpressionResult
+from .dose_responses import DoseResponseResult
 from .gene_sets import GeneSets
 from .held_out_studies import HeldOutPrediction
 from .meta_analysis_of_studies import MetaAnalysisResult
@@ -249,6 +254,7 @@ __all__ = [
     "plot_cell_numbers",
     "plot_composition",
     "plot_dispersions",
+    "plot_dose_response",
     "plot_dotplot",
     "plot_enrichment",
     "plot_feature_variance_fractions",
@@ -2247,6 +2253,161 @@ def plot_p_values(
             _key("Expected without effects", marker="", linestyle="--", color=_INK),
         ],
     )
+    return ax
+
+
+# Dose response.
+
+# The doses at which a figure draws a fitted curve, evenly spaced along the dose axis.
+_CURVE_POINTS = 100
+
+
+def plot_dose_response(
+    result: DoseResponseResult,
+    group: str | None,
+    genes: str | Sequence[str],
+    *,
+    ax: "Axes | None" = None,
+) -> "Axes":
+    """Plot how genes respond to dose in a cell type: each dose group's estimate, the
+    fitted spline and its 95% band.
+
+    For each gene of a :func:`~cytepool.dose_response` result, its log2 fold change
+    at each dose against the vehicle (the table ``"each_dose"``) as points, the
+    vehicle at 0, and the fitted spline as a change from the vehicle
+    (:meth:`~cytepool.DoseResponseResult.curve`) on 100 doses spaced evenly along
+    the dose axis over the doses the cell type compares, with its pointwise 95% band.
+    The x axis is the dose axis, labelled in doses; with the vehicle in a group of
+    its own, the vehicle sits one median step of the doses below the lowest dose,
+    beyond a break in the axis. Up to 8 genes take the module's hues in order, and
+    beyond 3, each also a marker of its own.
+    https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-curves
+    explains the curve and its band.
+
+    Draws, for each gene in the order given, its points (gid ``"doses"``), its curve
+    (gid ``"curve"``) and its band (gid ``"band"``), and a line at 0.
+
+    Args:
+        result: The result of ``dose_response`` by ``limma_voom`` or
+            ``limma_trend``.
+        group: A cell type that was tested; None when the result checked one.
+        genes: A feature id or a list of up to 8 of them, among the genes tested in
+            the cell type.
+        ax: The Axes to draw into, or None for a new figure.
+
+    Returns:
+        The Axes.
+
+    Raises:
+        TypeError: If ``result`` is not a DoseResponseResult, or ``genes`` is not a
+            feature id or a list of them, or is a numpy masked array.
+        ValueError: If ``genes`` is empty or names more than 8 genes, or as
+            :meth:`~cytepool.DoseResponseResult.curve` raises: for a result of
+            ``dream_voom``, or a cell type whose doses cannot estimate the spline.
+        KeyError: If the cell type was not tested, or a gene was not tested there.
+    """
+    _check_axes(ax)
+    if not isinstance(result, DoseResponseResult):
+        raise TypeError(
+            f"result must be a DoseResponseResult, got {type(result).__name__}"
+        )
+    reject_masked(genes, "genes")
+    if isinstance(genes, str):
+        names = [genes]
+    elif isinstance(genes, Sequence | np.ndarray):
+        names = list(genes)
+    else:
+        raise TypeError(
+            f"genes must be a feature id or a list of them, got {type(genes).__name__}"
+        )
+    if not names:
+        raise ValueError("genes is empty; name the genes whose curves to draw")
+    if len(names) > len(_CATEGORICAL):
+        raise ValueError(
+            f"genes names {len(names)} genes, more than the {len(_CATEGORICAL)} "
+            "colours that stay distinguishable; draw them in several figures"
+        )
+    group = only_key(group, list(result.groups), "group", "cell types")
+    axis = result.dose
+    entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
+    treated = np.array(entry["doses"][1:], dtype=np.float64)
+    own_group = axis.vehicle == "own_group"
+    # The curve's doses, from the lowest dose compared, or the vehicle on the axis,
+    # to the highest; curve() refuses a cell type that was not tested.
+    if treated.size:
+        low = float(treated[0]) if own_group else 0.0
+        ends = axis.positions(np.array([low, treated[-1]]))
+        grid = axis.doses(np.linspace(ends[0], ends[1], _CURVE_POINTS))
+        grid[0], grid[-1] = low, treated[-1]
+    else:
+        grid = np.zeros(1)
+    curve = result.curve(group, names, at=grid)
+    each = result.table(group, "each_dose")
+    positions = axis.positions(treated)
+    if own_group:
+        steps = np.diff(positions)
+        vehicle = positions[0] - (float(np.median(steps)) if steps.size else 1.0)
+    else:
+        vehicle = float(axis.positions(np.zeros(1))[0])
+    x = axis.positions(grid)
+    labels = each["symbol"] if "symbol" in each else each["feature_id"]
+    label_of = dict(zip(each["feature_id"].tolist(), labels.tolist(), strict=True))
+    shapes = _shapes(names, "genes") if len(names) > _SCATTER_HUES else {}
+    ax = _axes(ax, (6.5, 4.0))
+    ax.axhline(0.0, color=_GREY, linewidth=0.8, zorder=1)
+    handles = []
+    for gene, color in zip(names, _CATEGORICAL, strict=False):
+        rows = curve["feature_id"] == gene
+        ax.fill_between(
+            x,
+            curve["ci_lower"][rows],
+            curve["ci_upper"][rows],
+            color=color,
+            alpha=0.18,
+            linewidth=0,
+            zorder=2,
+            gid="band",
+        )
+        ax.plot(
+            x, curve["log2_fold_change"][rows], color=color, linewidth=1.6, gid="curve"
+        )
+        mine = each["feature_id"] == gene
+        marker = shapes.get(gene, _MARKERS[0])
+        ax.scatter(
+            np.r_[vehicle, axis.positions(each["dose"][mine])],
+            np.r_[0.0, each["log2_fold_change"][mine]],
+            color=color,
+            marker=marker,
+            s=_SPARSE,
+            edgecolors="white",
+            linewidths=0.5,
+            zorder=3,
+            gid="doses",
+        )
+        handles.append(
+            _key(str(label_of[gene]), marker=marker, color=color, linestyle="-")
+        )
+    ax.set_xticks(
+        [vehicle, *positions.tolist()],
+        ["vehicle", *(f"{dose:g}" for dose in treated)],
+    )
+    if own_group:
+        # A break in the axis between the vehicle and the lowest dose.
+        ax.text(
+            (vehicle + positions[0]) / 2.0,
+            0.0,
+            "//",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="center",
+            fontsize=9,
+            clip_on=False,
+            bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5},
+        )
+    scale = "" if axis.scale == "linear" else ", log10 axis"
+    ax.set_xlabel(f"Dose ({axis.unit}{scale})")
+    ax.set_ylabel("log2 fold change from the vehicle")
+    _legend(ax, handles, inside=True)
     return ax
 
 

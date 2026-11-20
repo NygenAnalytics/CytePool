@@ -46,6 +46,14 @@ with an outlying count.
 - ``plot_composition`` against speckle's ``plotCellTypeProps``, and
   ``plot_proportions`` against the proportions, ``PropMean`` and ``FDR`` of
   ``propeller``, on the cell numbers of 5 cell types in 12 samples of two conditions.
+- ``plot_dose_response`` of a ``dose_response`` result by limma-trend, on a dose series
+  simulated by ``simulate_dose_series`` (seed 20261217: the vehicle and 5 half-log
+  doses x 3, 300 genes), against R's own spline through the dose groups' means
+  (``ns()`` with knots by R's rule, ``lmFit``, ``contrasts.fit``, ``eBayes(trend =
+  TRUE)``): the drawn curves and 95% bands of 3 genes against ``topTable(confint =
+  TRUE)`` of the curve's contrast at 100 doses evenly spaced on log10 dose, and the
+  points against each dose's ``logFC``. No R function draws this figure, so the
+  values R computes for it are compared with the drawn artists.
 
 Differences are scaled by max(|reference|, 1). Tiers: exact (1e-10) for values both
 programs compute by the same deterministic steps; close (1e-6) for iterative fits
@@ -81,11 +89,15 @@ from matplotlib.figure import Figure
 from cytepool import (
     Cube,
     Design,
+    DoseAxis,
+    dose_response,
     from_bulk,
+    limma_trend,
     limma_voom,
     meta_analysis,
     plotting,
     propeller,
+    simulate_dose_series,
 )
 from cytepool.normalization import log2_cpm, tmm_factors
 from cytepool.stats.deseq2 import fit_deseq2
@@ -218,6 +230,47 @@ out <- list(
   versions = c(paste("R", getRversion()), paste("speckle", packageVersion("speckle"))))
 jsonlite::write_json(out, file.path(root, "out.json"), digits = NA, auto_unbox = TRUE,
                      matrix = "rowmajor")
+"""
+
+
+# limma-trend's spline of dose through the dose groups' means, from R's own knots and
+# ns() columns: the curve at 100 doses evenly spaced on log10 dose from the lowest
+# dose to the highest, with topTable's 95% interval, and each dose against the
+# vehicle.
+R_DOSE = r"""
+suppressPackageStartupMessages({library(limma); library(edgeR); library(splines)})
+root <- commandArgs(trailingOnly = TRUE)[[1]]
+input <- jsonlite::read_json(file.path(root, "dose.json"), simplifyVector = TRUE)
+counts <- input$counts; rownames(counts) <- input$features
+dose <- input$dose; xs <- log10(dose[dose > 0])
+knots <- c(min(xs), attr(ns(unique(xs), df = input$df), "knots"), max(xs))
+columns <- function(d) {
+  m <- matrix(0, length(d), input$df); on <- d > 0
+  m[on, ] <- ns(log10(d[on]), knots = knots[-c(1, length(knots))],
+               Boundary.knots = knots[c(1, length(knots))])
+  cbind(1, as.numeric(d > 0), m)
+}
+levels <- sort(unique(dose)); k <- length(levels) - 1
+X <- cbind(1, sapply(levels[-1], function(l) as.numeric(dose == l)))
+dge <- DGEList(counts)
+dge <- calcNormFactors(dge[filterByExpr(dge, design = X), , keep.lib.sizes = FALSE])
+fit <- lmFit(cpm(dge, log = TRUE, prior.count = 3), X)
+n <- sapply(levels, function(l) sum(dose == l))
+Z <- columns(levels); A <- solve(crossprod(Z, Z * n), t(Z * n))
+grid <- 10^seq(min(xs), max(xs), length.out = 100)
+curve <- eBayes(contrasts.fit(fit, rbind(0, t((columns(grid) %*% A)[, -1]))), trend = TRUE)
+each <- eBayes(contrasts.fit(fit, rbind(0, diag(k))), trend = TRUE)
+genes <- match(input$genes, rownames(dge))
+table <- function(e, j) topTable(e, coef = j, number = Inf, sort.by = "none",
+                                  confint = TRUE)[genes, ]
+tops <- lapply(seq_along(grid), function(j) table(curve, j))
+out <- list(grid = grid,
+            estimate = sapply(tops, `[[`, "logFC"), lower = sapply(tops, `[[`, "CI.L"),
+            upper = sapply(tops, `[[`, "CI.R"),
+            points = sapply(seq_len(k), function(j) table(each, j)$logFC),
+            versions = c(paste("R", getRversion()), paste("limma", packageVersion("limma")),
+                         paste("edgeR", packageVersion("edgeR"))))
+jsonlite::write_json(out, file.path(root, "out.json"), digits = NA, matrix = "rowmajor")
 """
 
 
@@ -832,6 +885,87 @@ def check_composition(ref, cube):
     return rows
 
 
+def dose_series():
+    """A dose series of the vehicle and 5 half-log doses x 3, its dose tests by
+    limma-trend, and the 3 genes of smallest p-value of the spline."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.01, 0.03, 0.1, 0.3, 1.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=300,
+        rng=20261217,
+    )
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    result = dose_response(
+        cube, Design(cube.samples, "~ 1"), dose=axis, analysis=limma_trend
+    )
+    genes = result.table("cell_type_1", "spline").sort("p_value")["feature_id"][:3]
+    return cube, result, genes.tolist()
+
+
+def check_dose_response(theirs, result, genes):
+    """The drawn curves, bands and points of plot_dose_response against limma-trend's
+    spline in R."""
+    ax = plotting.plot_dose_response(result, "cell_type_1", genes, ax=axes())
+    curves, bands, dots = (artists(ax, gid) for gid in ("curve", "band", "doses"))
+    grid = np.log10(column(theirs["grid"]))
+    estimate = matrix_of(theirs["estimate"], len(genes))
+    lower = matrix_of(theirs["lower"], len(genes))
+    upper = matrix_of(theirs["upper"], len(genes))
+    points = matrix_of(theirs["points"], len(genes))
+    doses = np.log10([0.01, 0.03, 0.1, 0.3, 1.0])
+    drawn = curves_value = band_value = points_value = 0.0
+    for i in range(len(genes)):
+        drawn = max(drawn, scaled(curves[i].get_xdata(), grid))
+        curves_value = max(curves_value, scaled(curves[i].get_ydata(), estimate[i]))
+        vertices = bands[i].get_paths()[0].vertices
+        n = grid.size
+        band_value = max(
+            band_value,
+            scaled(vertices[1 : 1 + n, 1], lower[i]),
+            scaled(vertices[n + 2 : 2 * n + 2, 1][::-1], upper[i]),
+        )
+        offsets = dots[i].get_offsets()
+        # The vehicle sits at 0, a median step of half a log10 below the lowest dose.
+        expected = np.column_stack(
+            [np.r_[doses[0] - 0.5, doses], np.r_[0.0, points[i]]]
+        )
+        points_value = max(points_value, scaled(offsets, expected))
+    return [
+        row(
+            "dose response: the doses of the curves, 100 evenly spaced on log10 dose",
+            "seq(), log10",
+            drawn,
+            EXACT,
+        ),
+        row(
+            "dose response: the curves of 3 genes, limma-trend's spline through the "
+            "dose groups' means",
+            "limma topTable of each dose's contrast",
+            curves_value,
+            EXACT,
+        ),
+        row(
+            "dose response: the 95% bands of the curves",
+            "limma topTable(confint = TRUE)",
+            band_value,
+            EXACT,
+        ),
+        row(
+            "dose response: each dose's log2 fold change against the vehicle, and the "
+            "vehicle at 0",
+            "limma topTable",
+            points_value,
+            EXACT,
+        ),
+    ]
+
+
+def matrix_of(values, rows):
+    """R's genes x doses matrix, which jsonlite writes as rows."""
+    return np.array(values, dtype=float).reshape(rows, -1)
+
+
 def write_fixtures(ref, inputs):
     """The inputs and R's values, in four files, for the tests."""
     FIXTURE_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -928,6 +1062,21 @@ def main():
             labels["group"] += ["ctrl" if s < 6 else "stim"] * int(cells[s, g])
     speckle = run_r(R_SPECKLE, {"cells.json": labels}, "SPECKLE_RSCRIPT")
 
+    dose_cube, dose_result, dose_genes = dose_series()
+    dose = run_r(
+        R_DOSE,
+        {
+            "dose.json": {
+                "counts": dose_cube.layer("counts", 0).T.astype(int).tolist(),
+                "features": dose_cube.features["feature_id"].tolist(),
+                "dose": np.asarray(dose_cube.samples["dose"], dtype=float).tolist(),
+                "df": dose_result.spline_basis.df,
+                "genes": dose_genes,
+            }
+        },
+        "RSCRIPT",
+    )
+
     ref = references(limma, metafor, speckle)
     print(
         "Reference: "
@@ -942,6 +1091,7 @@ def main():
     rows += check_count_models(ref, counts, design, factors)
     rows += check_forests(ref, metas, features)
     rows += check_composition(ref, composition_data)
+    rows += check_dose_response(dose, dose_result, dose_genes)
     print("| check | reference | metric | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- | --- |")
     for line in rows:
