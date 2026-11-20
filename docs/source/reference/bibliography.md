@@ -36,7 +36,7 @@ Mixed models and dream [@bates2015; @patterson1971; @harville1977; @henderson197
 
 ## Dose response
 
-Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
+Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022], the dose tests of each cell type [@desquilbet2010; @harrell2015; @law2014; @ntp2018; @tukey1985; @delignettemuller2023], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
 
 ## Gene sets and pathways
 

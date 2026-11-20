@@ -1278,11 +1278,10 @@ def test_the_chapter_example_runs() -> None:
     axes = text.split("(dose-axes)=")[1].split("\n(")[0]
     section = text.split("(dose-design-check)=")[1].split("\n(")[0]
     blocks = re.findall(r"```python\n(.*?)```", section, re.S)
-    assert len(blocks) == 2
+    assert len(blocks) == 1
     namespace = {"cp": cytepool, "cube": tcdd_like_cube()}
     exec(re.findall(r"```python\n(.*?)```", axes, re.S)[0], namespace)  # noqa: S102
-    for block in blocks:
-        exec(block, namespace)  # noqa: S102
+    exec(blocks[0], namespace)  # noqa: S102
     report = namespace["report"]
     assert dict(
         zip(report.summary["group_id"].tolist(), report.summary["status"].tolist())
@@ -1312,10 +1311,8 @@ def test_the_chapter_example_runs() -> None:
         "sexes",
         "animals_per_sex_and_dose",
     }
-    # The fit runs in the cell types that support tests.
-    assert namespace["inferential"] == ["hepatocyte", "stellate"]
-    result = namespace["result"]
-    assert result.summary["group_id"].tolist() == ["hepatocyte", "stellate"]
+    # dose_response runs the check itself and tests the inferential cell types.
+    assert "{api}`dose_response` runs this check itself" in section
     # The printout and the values the chapter states.
     assert repr(report) in section
     assert "keeps one mouse at 30 ug/kg" in text

@@ -1,10 +1,10 @@
 ---
-description: Where doses sit on the axis of a curve, what a number of dose groups supports, whether a dose series supports tests in each cell type, and dose series simulated from known curves.
+description: Where doses sit on a dose axis, what a dose series supports, which genes respond to dose in each cell type with curves and bands, and dose series simulated from known curves.
 ---
 
 # Dose response
 
-[Composition tests](composition.md) asked whether a condition changes which cells a sample holds. A dose series asks of each cell type which genes respond to a dose and from which dose, and two things come before any test or curve: where each dose sits on the axis of a curve, which {api}`DoseAxis` records, and whether the samples of each cell type can support tests at all, which {api}`check_dose_design` reports. Series simulated from known curves with {api}`simulate_dose_series` show how well a dose method recovers the responses at a design before it is run. A dose response is fitted per cell type on the samples, as [Genes that change in each cell type](../guides/genes_per_cell_type.ipynb) fits a condition.
+[Composition tests](composition.md) asked whether a condition changes which cells a sample holds. A dose series asks of each cell type which genes respond to a dose and how, and two things come before any test or curve: where each dose sits on the axis of a curve, which {api}`DoseAxis` records, and whether the samples of each cell type can support tests at all, which {api}`check_dose_design` reports. {api}`dose_response` then tests every cell type that supports tests, with a fitted curve and its band for each gene, and series simulated from known curves with {api}`simulate_dose_series` show how well a dose method recovers the responses at a design before it is run. [Dose response per cell type](../guides/dose_response.ipynb) runs the steps on a simulated series.
 
 (dose-axes)=
 ## Dose axes and the vehicle
@@ -42,28 +42,30 @@ result = cp.limma_voom(
     design,
     contrasts=columns,
     f_tests={
-        "any_dose": columns,  # any dose against the vehicle
+        "spline": columns,  # any dose against the vehicle
         "among_doses": columns[1:],  # any change among the treated doses
-        "nonlinear": columns[2:],  # departure from a line in log10 dose
+        "nonlinearity": columns[2:],  # departure from a line in log10 dose
     },
 )
 ```
 
-The two interior knots sit at 0.14 and 2.1 ug/kg, between doses of the ladder, and the boundary knots at the lowest and highest doses. Each F-test has its table, such as `result.table("hepatocyte", "any_dose")`, whose `f_statistic`, `p_value` and `adjusted_p_value` columns test each gene: `any_dose` whether it responds at all, `among_doses` whether it changes along the treated doses, monotone or not, and `nonlinear` whether that change departs from a line in log10 dose. The tables of the spline columns, and the `log2_fold_change_dose_s1` to `log2_fold_change_dose_s3` columns of the F-tests' tables, hold coefficients that mean nothing one by one and change with the basis. `log2_fold_change_dose_treated` is the jump from the vehicle to the curve at the lowest dose, because every spline column is 0 at the lower boundary knot.
+The two interior knots sit at 0.14 and 2.1 ug/kg, between doses of the ladder, and the boundary knots at the lowest and highest doses. Each F-test has its table, such as `result.table("hepatocyte", "spline")`, whose `f_statistic`, `p_value` and `adjusted_p_value` columns test each gene: `spline` whether it responds at all, `among_doses` whether it changes along the treated doses, monotone or not, and `nonlinearity` whether that change departs from a line in log10 dose. The tables of the spline columns, and the `log2_fold_change_dose_s1` to `log2_fold_change_dose_s3` columns of the F-tests' tables, hold coefficients that mean nothing one by one and change with the basis. `log2_fold_change_dose_treated` is the jump from the vehicle to the curve at the lowest dose, because every spline column is 0 at the lower boundary knot.
 
 The fitted curve of each gene comes from the columns at a grid of doses and the coefficients in the table:
 
 ```python
 import numpy as np
 
-table = result.table("hepatocyte", "any_dose")
+table = result.table("hepatocyte", "spline")
 at = axis.design_columns({"dose": np.geomspace(0.01, 30.0, 50)}, basis)
 curves = sum(np.outer(table[f"log2_fold_change_{name}"], at[name]) for name in columns)
 ```
 
 Row i of `curves` is the fitted log2 fold change of gene i of the table against the vehicle, at each of the 50 doses.
 
-How many spline columns? A spline of `df` columns needs at least `df + 1` treated doses, so `df` is at most the number of treated doses minus one; at that maximum the curve passes through the mean of every dose group, and `any_dose` is the F-test of a factor of dose groups against the vehicle. Fewer columns give a smoother curve, with fewer coefficients to estimate from 2 or 3 replicates per dose, as `df=3` on the eight doses above; for a time course of many ordered levels, the limma User's Guide recommends 3 to 5 (section 9.6.2). With `vehicle="on_axis"`, the design holds the spline columns alone, the vehicle counts among the doses, and `df` can be one more. The vehicle's rows of the spline columns change neither the three F-tests nor any fitted curve; they decide only what `dose_treated` and the intercept mean.
+How many spline columns? A spline of `df` columns needs at least `df + 1` treated doses, so `df` is at most the number of treated doses minus one; at that maximum the curve passes through the mean of every dose group, and `spline` is the F-test of a factor of dose groups against the vehicle. Fewer columns give a smoother curve, with fewer coefficients to estimate from 2 or 3 replicates per dose, as `df=3` on the eight doses above; for a time course of many ordered levels, the limma User's Guide recommends 3 to 5 (section 9.6.2). With `vehicle="on_axis"`, the design holds the spline columns alone, the vehicle counts among the doses, and `df` can be one more. The vehicle's rows of the spline columns change neither the three F-tests nor any fitted curve; they decide only what `dose_treated` and the intercept mean.
+
+{api}`dose_response` builds these tests itself, in every cell type at once, as contrasts of a model of the dose groups whose variance the four tests share ([Which genes respond to dose](#dose-response-tests)); the columns here serve models of your own, such as a spline beside other covariates.
 
 On a ladder of decades, such as 0.1, 1 and 10, the first restricted cubic column holds the whole numbers 0, 1 and 2, which {api}`Design.check` warns may be codes of groups (`numeric_codes`). The warning does not apply to the columns of a dose axis, and {api}`check_dose_design` takes the design of the other terms, so its report does not carry it.
 
@@ -140,14 +142,7 @@ DoseDesignReport: 4 cell types, 9 dose groups from 0 to 30 ug/kg, batch 'lane',
 
 The hepatocytes keep every mouse and 15 residual degrees of freedom. The stellate cells stay inferential though one of the two mice at 30 ug/kg has fewer than 10 of them: eight replicated groups estimate the variance, and `flagged` shows the group that keeps one mouse at 30 ug/kg. The cholangiocytes keep three mice, one per dose group, so their curves can only describe; the macrophages have no vehicle sample to compare with. The lanes, assigned at random, confound no dose.
 
-Test the cell types that support tests, with the design of the spline columns from [Dose axes and the vehicle](#dose-axes):
-
-```python
-inferential = report.summary.filter(status="inferential")["group_id"].tolist()
-result = cp.limma_voom(
-    cube, design, groups=inferential, contrasts=columns, f_tests={"any_dose": columns}
-)
-```
+{api}`dose_response` runs this check itself, with the same `batch`, `min_cells` and `min_counts`, and tests the cell types it calls inferential ([Which genes respond to dose](#dose-response-tests)).
 
 The {api}`DoseDesignReport` holds four tables:
 
@@ -176,23 +171,101 @@ Which of EPA's design requirements does a dose series miss? The standard methods
 
 A step counts as half a log10 when its log10 lies within 0.05 of 0.5, and as a full log10 within 0.05 of 1: one decimal place of log10, the precision of "half-log10", which holds both steps of a 1-3-10 series, 0.48 and 0.52. Animals are counted among the design's samples, one per animal, and passing samples are those the cell type uses. ETAP defines a dataset by tissue, sex and exposure regimen, so the minimums of passing samples apply to each cell type and sex. {api}`DoseDesignReport.rules_status` is `"deviation"` when a minimum of the design or the cell type's vehicle minimum is unmet, and `"met"` otherwise: a dose level that ETAP excludes is listed, in `minimums` and in the printout, without changing it, since ETAP's procedure goes on without the level. The TCDD series above misses three minimums of the design: one sex, 2 or 3 mice per dose, and steps of 0.48 log10 at its low end, where ETAP asks for a full log10. The other four rows of `missed` belong to cell types: ETAP excludes the stellate cells' 30 ug/kg, where one mouse passes, and every dose level of the cholangiocytes, and the cholangiocytes and macrophages keep 1 and 0 of the 3 passing vehicle samples ETAP needs to model a dose response.
 
+(dose-response-tests)=
+## Which genes respond to dose
+
+Which genes respond to the dose in each cell type, and how? {api}`dose_response` answers for every cell type of a cube in one call. It runs {api}`check_dose_design` and keeps its report as `result.design_report`, so the check needs no call of its own; fits one moderated model of the dose groups in each cell type that supports tests, by {api}`limma_voom` (the default), {api}`limma_trend` or {api}`dream_voom`; and runs four tests as contrasts of that one fit, so that a gene's tests share its one moderated variance:
+
+| Test | Question | What is tested | Numerator df |
+| --- | --- | --- | --- |
+| `spline` | Does the gene respond at all, along a smooth curve of dose? | A natural cubic spline of dose fitted to the dose groups' means, with `dose_treated` when the vehicle is a group of its own | The spline's columns, plus 1 with the vehicle in a group of its own |
+| `nonlinearity` | Does the response bend away from a straight line? | The spline's restricted cubic columns after the first | The spline's columns minus 1 |
+| `slope` | How fast does expression change along the axis? | The slope of a straight line fitted to the dose groups' means | 1, a moderated t-test |
+| `dose_groups` | Does any dose differ from the vehicle? | Every treated dose against the vehicle | The treated doses compared |
+
+Read `spline` first: it asks whether a gene responds at all, and the other three describe the responses it finds. The dose-group test is the one-way analysis of variance of the dose groups with moderated variances, the counterpart of the ANOVA that the genomic dose-response approach of the National Toxicology Program runs as its first filter, at a Benjamini-Hochberg FDR below 0.05 [@ntp2018].
+
+The spline is fitted by least squares to the means of the dose groups that a cell type compares, each group weighted by its samples, so that each of its coefficients is a contrast of the dose groups' differences from the vehicle. Without observation weights or other terms in the design, these are the coefficients of the spline fitted to the samples themselves, as the limma User's Guide fits a spline of time (section 9.6.2); under voom's weights the means are those of the weighted fit [@law2014]. The knots are placed once, on the doses of the design's samples, by {api}`DoseAxis.spline_basis` with its rule `"levels"`, so that the knots and curves of the cell types compare. By default the spline has 2 columns, 3 knots, when the axis holds 4 doses or more, and 1 otherwise: on simulated series of the vehicle and 8 doses, 2 columns found as many responsive genes as 3, and more than 1 column or a spline through every dose group ([Validation](../validation.md#validation-dose-response-calibration)). `spline_df` sets another size. A spline with as many coefficients as the dose groups a cell type compares passes through every group's mean, and its F-test is the dose-group F-test.
+
+The slope is the change in log2 expression per log10 unit of dose, or per unit of dose on a linear axis. With the vehicle in a group of its own, the line runs through the treated doses only: a gene that jumps at the lowest dose and then stays flat has a slope near 0, and its jump from the vehicle is what `spline` and `dose_groups` test. With the vehicle on the axis, the line runs through every dose, the vehicle at its offset, as the regression on log dose of Tukey's trend test does [@tukey1985].
+
+For a series simulated from known curves ([Simulated dose series with known curves](#simulated-dose-series)), the vehicle and eight doses from 0.01 to 30 ug/kg in three replicates, with hepatocytes, stellate cells that fall to a tenth at the top dose and rare cholangiocytes:
+
+```python
+cube, truth = cp.simulate_dose_series(
+    [0, 0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30],
+    replicates=3,
+    cell_types=["hepatocyte", "stellate", "cholangiocyte"],
+    cells=[300, 60, 6],
+    composition={"stellate": [1, 1, 1, 1, 1, 1, 1, 1, 0.1]},
+    rng=7,
+)
+axis = cp.DoseAxis("dose", unit="ug/kg", metric="administered")
+result = cp.dose_response(cube, cp.Design(cube.samples, "~ 1"), dose=axis)
+print(result)
+spline = result.table("hepatocyte", "spline")
+responding = spline.filter(spline["adjusted_p_value"] < 0.05)
+```
+
+```text
+DoseResponseResult (limma_voom): 3 cell types, 2 tested; tests: spline (read
+    first), nonlinearity, slope, dose_groups
+  dose: ug/kg (administered) on a log10 axis, the vehicle in a group of its own;
+        spline of 2 columns, knots at 0.548 ug/kg, boundary knots at 0.01 and 30
+        ug/kg
+  hepatocyte: 9 dose groups, 27 samples, 817 genes; calls at 5% FDR: spline 88,
+              nonlinearity 31, slope 81 (per log10 dose), dose_groups 77
+  stellate: 8 dose groups, 24 samples, 494 genes; calls at 5% FDR: spline 43,
+            nonlinearity 9, slope 38 (per log10 dose), dose_groups 34
+  cholangiocyte: not tested, refused: no vehicle sample is left (3 vehicle
+                 samples left out); compare the doses with each other with
+                 limma_voom
+```
+
+The {api}`DoseResponseResult` prints the axis and the spline's knots in doses, and for each cell type the dose groups it compares, its samples, the genes it tests and the genes each test calls at 5% FDR. The hepatocytes compare all 9 dose groups and the spline calls 88 genes, 85 of which respond in truth. The stellate cells keep no sample at 30 ug/kg, so they compare 8 dose groups, and their dose-group test has one degree of freedom fewer. The cholangiocytes keep no vehicle sample of 10 cells or more, so the check refuses them, and the summary gives its reason.
+
+{api}`DoseResponseResult.table` gives each table by cell type and name:
+
+| Table | One row per | What to look at |
+| --- | --- | --- |
+| `table(g, "spline")`, `"nonlinearity"`, `"dose_groups"` | Gene | `f_statistic`, `p_value`, `adjusted_p_value` and `adjusted_p_value_across_groups`; `df`, the denominator degrees of freedom |
+| `table(g, "slope")` | Gene | `log2_fold_change`, the slope; `t`, `p_value` and the adjusted p-values |
+| `table(g, "each_dose")` | Gene and treated dose | Each dose against the vehicle: `log2_fold_change`, `standard_error`, `t`, `p_value` and `adjusted_p_value`, adjusted within the dose |
+| `summary` | Cell type | `status`, the check's; `tested` and `reason`; `n_dose_groups_tested`; `tests_not_run` |
+
+`adjusted_p_value` adjusts the p-values of a cell type and test by Benjamini-Hochberg, as limma's `topTable` does, and `adjusted_p_value_across_groups` adjusts each test over every cell type that ran it, one family per test, for a report of calls across cell types. The tests of each dose are adjusted within the cell type and dose only; each dose against the vehicle with control over a gene's several doses, as Dunnett's test gives it, is not implemented yet.
+
+A cell type compares the dose groups that keep a sample there and that the design can compare with the vehicle; the provenance lists them with their samples. A test whose contrasts a cell type's doses cannot estimate is not run there, such as a spline of 2 columns on the vehicle and two treated doses, and `tests_not_run` names it, with the reason in the record and in the error of `result.table`. When the dose groups are few, two tests can ask the same question: with the vehicle and two treated doses, a spline of one column and `dose_treated` pass through the three groups' means, so the spline's F-test is the dose-group test; with the vehicle on the axis and three doses, a spline of one column is the straight line. By default a cell type then runs the first of `spline`, `dose_groups` and `slope` and lists the others as not run; a test named in `tests` runs whatever it repeats.
+
+(dose-response-curves)=
+## Curves with a band
+
+What shape does a response take? {api}`DoseResponseResult.curve` gives the fitted spline of chosen genes at any dose within those a cell type compares, as a change in log2 expression from the vehicle's mean, with a pointwise 95% band, and {api}`plot_dose_response` draws it beside each dose's estimate:
+
+```python
+import numpy as np
+from cytepool.plotting import plot_dose_response
+
+genes = responding.sort("p_value")["feature_id"][:4].tolist()
+curve = result.curve("hepatocyte", genes, at=np.geomspace(0.01, 30, 50))
+ax = plot_dose_response(result, "hepatocyte", genes)
+```
+
+`curve` has one row per gene and dose, with `log2_fold_change`, `standard_error`, `ci_lower` and `ci_upper`. At dose x, the curve is a combination a(x)'theta of the dose groups' differences from the vehicle, theta; its standard error is (a(x)' V a(x))^(1/2) times the gene's posterior standard deviation, with V the unscaled covariance of theta, each gene's own under voom's weights, and the band is the estimate plus and minus the 0.975 quantile of t on the degrees of freedom of the gene's moderated t-tests, as limma's `topTable(confint = TRUE)` forms intervals. The band is pointwise: at each dose, 95% of such bands contain the true curve, and over the whole range at once, fewer. With the vehicle in a group of its own the curve is 0 at the vehicle, exactly; with the vehicle on the axis the spline need not pass through the vehicle's mean, and the curve's value at dose 0 shows how far it misses. `curve` refuses doses outside those the cell type compares, so the stellate cells above have no curve beyond 10 ug/kg, and it gives none for results of {api}`dream_voom`, whose fits do not keep the degrees of freedom of each point of a curve.
+
 (simulated-dose-series)=
 ## Simulated dose series with known curves
 
-How well does a dose method find the genes that respond, the shape of each response and the dose at which it starts, at a given design? Only data whose truth is known can say, and the one single-cell dose benchmark compared tests on cells, without curves [@nault2022]. {api}`simulate_dose_series` draws a cube of pseudobulk counts from known curves of each gene's expression along dose, and {api}`DoseTruth` holds the truth. Here the spline F-test of [Dose axes and the vehicle](#dose-axes) runs on a simulated series, and the truth says which genes it should call:
+How well does a dose method find the genes that respond, the shape of each response and the dose at which it starts, at a given design? Only data whose truth is known can say, and the one single-cell dose benchmark compared tests on cells, without curves [@nault2022]. {api}`simulate_dose_series` draws a cube of pseudobulk counts from known curves of each gene's expression along dose, and {api}`DoseTruth` holds the truth. Here the spline F-test of [Which genes respond to dose](#dose-response-tests) runs on a simulated series, and the truth says which genes it should call:
 
 ```python
 import numpy as np
 
 cube, truth = cp.simulate_dose_series([0, 0.01, 0.1, 1, 10, 30], replicates=3, rng=1)
 axis = cp.DoseAxis("dose", unit=truth.unit, metric=truth.metric)
-basis = axis.spline_basis(cube.samples, df=3)
-samples = cube.samples.with_columns(axis.design_columns(cube.samples, basis))
-columns = ["dose_treated", "dose_s1", "dose_s2", "dose_s3"]
-design = cp.Design(samples, "~ " + " + ".join(columns))
-result = cp.limma_voom(cube, design, contrasts=columns, f_tests={"any_dose": columns})
+result = cp.dose_response(cube, cp.Design(cube.samples, "~ 1"), dose=axis)
 
-tested = result.table("cell_type_1", "any_dose")
+tested = result.table("cell_type_1", "spline")
 called = tested.filter(tested["adjusted_p_value"] < 0.05)["feature_id"]
 genes = truth.table("cell_type_1")
 genes = genes.filter(np.isin(genes["feature_id"], tested["feature_id"]))
@@ -206,13 +279,13 @@ print(
 for change in (0.5, 1, 2):
     chosen = size == change
     print(f"maximal change {change}: {hit[chosen].sum()} of {chosen.sum()} called")
-# 59 of 113 responsive genes called, 2 of 461 flat
+# 62 of 113 responsive genes called, 3 of 461 flat
 # maximal change 0.5: 4 of 32 called
-# maximal change 1: 21 of 38 called
+# maximal change 1: 24 of 38 called
 # maximal change 2: 34 of 43 called
 ```
 
-Of the 574 genes that pass the expression filter of {api}`limma_voom`, the F-test of any dose calls 59 of the 113 that respond and 2 of the 461 flat ones at 5% FDR: with 3 replicates per dose and 100 cells per profile, about half of the responses go unseen while false calls stay rare. Half of the misses are changes of 0.5 log2 units, of which 4 in 32 are called, against 34 in 43 changes of 2. The same lines with `replicates=4` or `cells=30` show what another design gains or loses before it is run.
+Of the 574 genes that pass the expression filter, the spline's F-test calls 62 of the 113 that respond and 3 of the 461 flat ones at 5% FDR: with 3 replicates per dose and 100 cells per profile, nearly half of the responses go unseen while false calls stay rare. 28 of the 51 misses are changes of 0.5 log2 units, of which 4 in 32 are called, against 34 in 43 changes of 2. The same lines with `replicates=4` or `cells=30` show what another design gains or loses before it is run.
 
 The cube has one group per cell type and one sample per replicate, in dose order. Its sample table holds `sample_id`, such as `d2_r1` for the first replicate of the third dose; `dose`, with 0 for the vehicle, which {api}`DoseAxis` reads as it stands; `dose_group`, `d0` to `d5` here, which sorts in dose order with the vehicle first, for designs with a factor of dose groups; and `donor`. The layer `counts` and `n_cells` hold each profile's counts and cells, and the provenance records every argument. Each profile sums the counts of a random number of cells:
 
@@ -262,6 +335,10 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **Replication.** Judged at the treated doses: a cell type whose estimable treated dose groups each keep one sample, or the samples of one level of a random intercept's grouping, is descriptive, whatever the vehicle keeps.
 - **Batches of one sample.** Pooled before the batch is checked; a sample alone in its batch, when it is the only one, joins no batch.
 - **A batch as a random intercept.** It compares the dose groups it confounds with the vehicle when the vehicle and each such group span two or more batches.
+- **The tests.** Every test the design supports, of which `spline` is read first; in a cell type whose dose groups are few, one of two tests of the same hypothesis ([Which genes respond to dose](#dose-response-tests)).
+- **The analysis.** {api}`limma_voom` with exact standard errors, its expression filter and TMM normalization, on the model of the dose groups.
+- **The spline.** 2 columns when the axis holds 4 doses or more, otherwise 1, in the restricted cubic form, with knots at quantiles of the distinct doses of the design's samples.
+- **FDR.** Benjamini-Hochberg within each cell type and test, and across the cell types that ran a test.
 - **Cells per profile.** Reported, with no threshold beyond `min_cells`. In muscat's benchmark of differential state tests, methods on pseudobulk profiles performed decently from about 100 cells per cell type and sample, with moderate gains beyond [@crowell2020], which makes `n_cells_min` worth reading.
 
 (dose-response-limits)=
@@ -275,19 +352,28 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **The expression filter.** It does not run, so a cell type that the check calls inferential can still stop in its fit when no gene passes the filter.
 - **Fits of descriptive designs.** {api}`limma_voom` fits a design that the check calls descriptive whenever residual degrees of freedom are left: in GSE208161, one participant per dose level sampled before and after dosing [@sonigra2022], 13 of 18 clusters keep one residual degree of freedom, the placebo participant's change from baseline.
 - **Doses that differ by rounding.** {api}`DoseAxis.spline_basis` and {api}`check_dose_design` refuse two doses that differ by less than 1e-8 of the dose, as `0.1 * 3` and `0.3` do, which a conversion of units can leave as two doses where there is one: round the dose column first.
+- **Descriptive cell types.** {api}`dose_response` lists them with the check's reason and gives them no estimates; curves that describe their dose groups' means are not implemented yet.
+- **Each dose against the vehicle.** The table `each_dose` adjusts each dose's tests within the cell type and dose, without control over the several doses of a gene, which Dunnett's or Williams' test would give.
+- **The spline's weights.** The spline passes through the dose groups' means weighted by their samples, not by each gene's precision, so under voom's weights a dose group of few cells counts as much as its samples, though its mean is less precise.
+- **limma's standard errors.** With `contrast_standard_errors="limma"`, the F-tests of the spline use limma's approximate standard errors, which depend on the spline's columns: the F-statistics of R's `ns()` columns and of the restricted cubic columns of the same spline differ by up to half ([Validation](#validation-dose-response-tests)). The exact default and {api}`limma_trend` do not depend on them.
+- **Curves of dream fits and beyond the doses.** {api}`DoseResponseResult.curve` gives no curve for results of {api}`dream_voom`, whose tests run in full, and no value outside the doses a cell type compares.
 - **What a simulated series leaves out.** In {api}`simulate_dose_series`, a gene's biological SD is the same at every dose, the constant variance that BMDS fits by default; genes are independent given their curves, so gene-set methods meet no correlation between genes; each cell type draws its responsive genes on its own, so few genes respond in several cell types; bells are symmetric, and no curve is hormetic; the counts hold no ambient RNA; and library sizes move with dose, by a median of 0.08 log2 at the top dose of default series, which TMM removes for the most part, leaving about 0.01 log2 on the flat genes at the top dose.
 
 (dose-response-checks)=
 ## Checks and further reading
 
-Dose axes, dose designs and simulated dose series are compared with R, limma, scanpy, mpmath and published data, run as separate programs on the same inputs:
+Dose axes, dose designs, dose tests and simulated dose series are compared with R, limma, scanpy, mpmath and published data, run as separate programs on the same inputs:
 
 - {api}`DoseAxis`: positions, knots, columns, designs, F-tests and fitted curves against R 4.4.3's `ns()`, Hmisc's `rcspline.eval`, `model.matrix`, `lm` and `predict`, exact (1e-10); moderated F-tests of `limma_trend` against limma 3.62.1's, exact on `ns()`'s columns and close (1e-6) on Hmisc's, with every column counted, and equal in the two forms ([Validation](#validation-dose-axes)).
 - {api}`check_dose_design`: cells, counts and the samples used per dose group against scanpy 1.12.4 and pandas; the residual degrees of freedom, estimable dose groups and groups confounded with a batch against R 4.4.3's `qr()` and limma 3.62.1's `nonEstimable`; statuses and ETAP's minimums against the same rules coded in R; and GSE208161, where every cluster is descriptive, all identical ([Validation](#validation-dose-design)).
 - {api}`simulate_dose_series` and {api}`DoseTruth`: true curves, EC50s and benchmark doses against mpmath 1.3.0, exact (1e-10); the means and variances of cells and counts within 4 standard errors of their exact values; the same series at 1, 2 and 8 threads ([Validation](#validation-simulate-dose-series)).
+- {api}`dose_response`: the samples, dose groups and genes of each cell type, its F-tests, slopes, each dose against the vehicle, adjusted p-values and curves with their bands against limma 3.62.1 and edgeR 4.4.0 run on R's own knots and spline columns, the exact default against each gene's weighted least squares in R, exact (1e-10); the spline's sums of squares against rms 8.2-1, exact; the dream route against variancePartition 1.36.2, close (1e-6); DRomics, dreamlet and muscat on the same profiles, as information ([Validation](#validation-dose-response-tests)); error rates under the null and power on simulated series ([Validation](#validation-dose-response-calibration)).
+- {api}`plot_dose_response`: the drawn curves, bands and points against limma-trend's spline in R, exact ([Validation](#validation-plotting)).
 
 Further reading:
 
+- @desquilbet2010 explain dose-response analyses with restricted cubic splines, their knots and their tests of any response and of departure from a line.
+- @ntp2018 sets out the National Toxicology Program's approach to genomic dose-response modelling, from its ANOVA filter to benchmark doses.
 - @lun2017 showed that plate effects confounded with the condition break the control of false positives, and that summing the counts within each plate restores it.
 - @crowell2020 benchmarked differential state methods on simulated and real multi-sample data, and found pseudobulk methods performing decently from about 100 cells per cell type and sample.
 - @usepa2024 sets out the agency's standard methods for transcriptomic assessment products, with the design minimums of Sections 3.4.1.3, 3.4.2 and 3.4.5.2.

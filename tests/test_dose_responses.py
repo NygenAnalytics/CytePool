@@ -1023,3 +1023,46 @@ def test_the_package_lists_the_names() -> None:
     assert cytepool.dose_response is dose_response
     assert cytepool.DoseResponseResult is DoseResponseResult
     assert re.search(r":func:`dose_response`", cytepool.__doc__ or "")
+
+
+# The chapter.
+
+CHAPTER = (
+    Path(__file__).resolve().parents[1] / "docs/source/statistics/dose_response.md"
+)
+
+
+def test_the_chapter_example_runs() -> None:
+    pytest.importorskip("matplotlib")
+    text = CHAPTER.read_text()
+    tests = text.split("(dose-response-tests)=")[1].split("\n(")[0]
+    curves = text.split("(dose-response-curves)=")[1].split("\n(")[0]
+    blocks = [
+        *re.findall(r"```python\n(.*?)```", tests, re.S),
+        *re.findall(r"```python\n(.*?)```", curves, re.S),
+    ]
+    assert len(blocks) == 2
+    namespace: dict[str, Any] = {"cp": cytepool}
+    for block in blocks:
+        exec(block.replace("print(result)\n", ""), namespace)  # noqa: S102
+    result = namespace["result"]
+    # The printout, and the values the text states.
+    assert repr(result) in tests
+    summary = result.summary
+    assert summary["n_dose_groups_tested"].tolist() == [9, 8, 0]
+    assert summary["status"].tolist()[2] == "refused"
+    responding = namespace["responding"]
+    truth = namespace["truth"].table("hepatocyte")
+    size = dict(zip(truth["feature_id"].tolist(), truth["max_log2_change"].tolist()))
+    hits = sum(size[g] != 0 for g in responding["feature_id"].tolist())
+    assert (len(responding), hits) == (88, 85)
+    assert "the spline calls 88 genes, 85 of which respond in truth" in tests
+    stellate = result.provenance["groups"][1]
+    assert stellate["f_test_df1"]["dose_groups"] == 7
+    assert 30.0 not in stellate["doses"]
+    # The curves of four genes on 50 doses, and the figure.
+    curve = namespace["curve"]
+    assert len(curve) == 4 * 50
+    assert namespace["ax"].get_xlabel() == "Dose (ug/kg, log10 axis)"
+    with pytest.raises(ValueError, match="'stellate' compares"):
+        result.curve("stellate", at=[30.0])
