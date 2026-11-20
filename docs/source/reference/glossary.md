@@ -34,7 +34,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Design.** The sample table with the model to fit: an R formula of the fixed effects, random effects in lme4's notation, and named contrasts. [The design](../statistics/linear_models.md#designs-and-formulas)
 
-**Descriptive.** The status of a cell type whose dose series supports curves that describe the means of the dose groups, without p-values or bounds: no treated dose group that the design can compare with the vehicle keeps a second sample, the model leaves no residual degrees of freedom, or a batch that the design leaves out is confounded with such a group. A cell type whose samples support tests is inferential, and one that supports no dose analysis, refused. [Checking a dose design](../statistics/dose_response.md#dose-design-check)
+**Descriptive.** The status of a cell type whose dose series supports curves that describe the means of the dose groups, without p-values or bounds: no treated dose group that the design can compare with the vehicle has a second replicate (a second sample, or with random intercepts a second animal or other unit they name), the model leaves no residual degrees of freedom, or a batch is confounded with such a group and the design does not compare them through a random intercept of the batch. A cell type whose samples support tests is inferential, and one that supports no dose analysis, refused. [Checking a dose design](../statistics/dose_response.md#dose-design-check)
 
 **Digest.** The SHA-256 hash of one part of a cube, such as a table or one group of a layer, from which the fingerprint is built. [Fingerprints](cube_files.md#fingerprint-encoding)
 

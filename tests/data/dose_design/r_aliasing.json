@@ -84,6 +84,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -558,6 +560,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -708,6 +712,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -858,6 +864,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1008,6 +1016,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1106,6 +1116,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1204,6 +1216,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1302,6 +1316,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1415,6 +1431,540 @@
    ]
   },
   {
+   "name": "one sample alone in its lane",
+   "samples": {
+    "sample_id": [
+     "S1",
+     "S2",
+     "S3",
+     "S4",
+     "S5",
+     "S6",
+     "S7",
+     "S8",
+     "S9"
+    ],
+    "dose": [
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     10,
+     10,
+     30
+    ],
+    "lane": [
+     "a",
+     "b",
+     "c",
+     "d",
+     "a",
+     "b",
+     "c",
+     "d",
+     "e"
+    ]
+   },
+   "formula": "~ 1",
+   "random": null,
+   "groupings": [],
+   "batch": "lane",
+   "min_cells": 10,
+   "min_counts": 0.0,
+   "cell_types": [
+    {
+     "name": "kept",
+     "cells": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+     ],
+     "totals": [
+      1000,
+      1010,
+      1020,
+      1030,
+      1040,
+      1050,
+      1060,
+      1070,
+      1080
+     ]
+    }
+   ],
+   "r": [
+    {
+     "used": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     "df_residual": 5,
+     "estimable": [
+      false,
+      true,
+      true,
+      true
+     ],
+     "confounded": [
+      false,
+      false,
+      false,
+      false
+     ],
+     "status": "inferential"
+    }
+   ]
+  },
+  {
+   "name": "the vehicle alone in its lane, (1 | lane)",
+   "samples": {
+    "sample_id": [
+     "S1",
+     "S2",
+     "S3",
+     "S4",
+     "S5",
+     "S6",
+     "S7",
+     "S8",
+     "S9"
+    ],
+    "dose": [
+     0,
+     0,
+     0,
+     1,
+     1,
+     1,
+     10,
+     10,
+     10
+    ],
+    "lane": [
+     "V",
+     "V",
+     "V",
+     "A",
+     "B",
+     "A",
+     "B",
+     "A",
+     "B"
+    ]
+   },
+   "formula": "~ 1",
+   "random": "(1 | lane)",
+   "groupings": [
+    "lane"
+   ],
+   "batch": "lane",
+   "min_cells": 10,
+   "min_counts": 0.0,
+   "cell_types": [
+    {
+     "name": "kept",
+     "cells": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+     ],
+     "totals": [
+      1000,
+      1010,
+      1020,
+      1030,
+      1040,
+      1050,
+      1060,
+      1070,
+      1080
+     ]
+    }
+   ],
+   "r": [
+    {
+     "used": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     "df_residual": 6,
+     "estimable": [
+      false,
+      true,
+      true
+     ],
+     "confounded": [
+      false,
+      true,
+      true
+     ],
+     "status": "descriptive"
+    }
+   ]
+  },
+  {
+   "name": "two lanes of their own per dose, (1 | lane_id) grouping as the lanes",
+   "samples": {
+    "sample_id": [
+     "S1",
+     "S2",
+     "S3",
+     "S4",
+     "S5",
+     "S6",
+     "S7",
+     "S8",
+     "S9",
+     "S10",
+     "S11",
+     "S12"
+    ],
+    "dose": [
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     1,
+     1,
+     10,
+     10,
+     10,
+     10
+    ],
+    "lane": [
+     "a",
+     "a",
+     "b",
+     "b",
+     "c",
+     "c",
+     "d",
+     "d",
+     "e",
+     "e",
+     "f",
+     "f"
+    ],
+    "lane_id": [
+     "lane a",
+     "lane a",
+     "lane b",
+     "lane b",
+     "lane c",
+     "lane c",
+     "lane d",
+     "lane d",
+     "lane e",
+     "lane e",
+     "lane f",
+     "lane f"
+    ]
+   },
+   "formula": "~ 1",
+   "random": "(1 | lane_id)",
+   "groupings": [
+    "lane_id"
+   ],
+   "batch": "lane",
+   "min_cells": 10,
+   "min_counts": 0.0,
+   "cell_types": [
+    {
+     "name": "kept",
+     "cells": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+     ],
+     "totals": [
+      1000,
+      1010,
+      1020,
+      1030,
+      1040,
+      1050,
+      1060,
+      1070,
+      1080,
+      1090,
+      1100,
+      1110
+     ]
+    }
+   ],
+   "r": [
+    {
+     "used": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     "df_residual": 9,
+     "estimable": [
+      false,
+      true,
+      true
+     ],
+     "confounded": [
+      false,
+      true,
+      true
+     ],
+     "status": "inferential"
+    }
+   ]
+  },
+  {
+   "name": "each treated dose in a lane of its own, (1 | lane)",
+   "samples": {
+    "sample_id": [
+     "S1",
+     "S2",
+     "S3",
+     "S4",
+     "S5",
+     "S6",
+     "S7",
+     "S8"
+    ],
+    "dose": [
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     10,
+     10
+    ],
+    "lane": [
+     "a",
+     "a",
+     "b",
+     "b",
+     "c",
+     "c",
+     "d",
+     "d"
+    ]
+   },
+   "formula": "~ 1",
+   "random": "(1 | lane)",
+   "groupings": [
+    "lane"
+   ],
+   "batch": "lane",
+   "min_cells": 10,
+   "min_counts": 0.0,
+   "cell_types": [
+    {
+     "name": "kept",
+     "cells": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+     ],
+     "totals": [
+      1000,
+      1010,
+      1020,
+      1030,
+      1040,
+      1050,
+      1060,
+      1070
+     ]
+    }
+   ],
+   "r": [
+    {
+     "used": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     "df_residual": 5,
+     "estimable": [
+      false,
+      true,
+      true
+     ],
+     "confounded": [
+      false,
+      true,
+      true
+     ],
+     "status": "descriptive"
+    }
+   ]
+  },
+  {
+   "name": "one animal of two samples per treated dose, (1 | animal)",
+   "samples": {
+    "sample_id": [
+     "S1",
+     "S2",
+     "S3",
+     "S4",
+     "S5",
+     "S6",
+     "S7",
+     "S8",
+     "S9",
+     "S10"
+    ],
+    "dose": [
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     10,
+     10,
+     30,
+     30
+    ],
+    "animal": [
+     "A1",
+     "A1",
+     "A2",
+     "A2",
+     "A3",
+     "A3",
+     "A4",
+     "A4",
+     "A5",
+     "A5"
+    ]
+   },
+   "formula": "~ 1",
+   "random": "(1 | animal)",
+   "groupings": [
+    "animal"
+   ],
+   "batch": null,
+   "min_cells": 10,
+   "min_counts": 0.0,
+   "cell_types": [
+    {
+     "name": "kept",
+     "cells": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+     ],
+     "totals": [
+      1000,
+      1010,
+      1020,
+      1030,
+      1040,
+      1050,
+      1060,
+      1070,
+      1080,
+      1090
+     ]
+    }
+   ],
+   "r": [
+    {
+     "used": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     "df_residual": 6,
+     "estimable": [
+      false,
+      true,
+      true,
+      true
+     ],
+     "confounded": [
+      false,
+      false,
+      false,
+      false
+     ],
+     "status": "descriptive"
+    }
+   ]
+  },
+  {
    "name": "~ sex: sex and lane absorb dose 1 together",
    "samples": {
     "sample_id": [
@@ -1459,6 +2009,8 @@
     ]
    },
    "formula": "~ sex",
+   "random": null,
+   "groupings": [],
    "batch": "lane",
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1549,6 +2101,8 @@
     ]
    },
    "formula": "~ sex",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1623,6 +2177,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1691,6 +2247,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1780,6 +2338,8 @@
     ]
    },
    "formula": "~ patient",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1882,6 +2442,8 @@
     ]
    },
    "formula": "~ patient + timepoint",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -1966,6 +2528,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 1000.0,
@@ -2033,6 +2597,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -2103,6 +2669,8 @@
     ]
    },
    "formula": "~ a + b",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -2167,6 +2735,8 @@
     ]
    },
    "formula": "~ 0",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -2248,6 +2818,8 @@
     ]
    },
    "formula": "~ x",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,
@@ -2314,6 +2886,8 @@
     ]
    },
    "formula": "~ 1",
+   "random": null,
+   "groupings": [],
    "batch": null,
    "min_cells": 10,
    "min_counts": 0.0,

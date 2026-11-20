@@ -320,7 +320,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 0.48 log10 from the lowest dose",
+     "observed": "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 0.48 log10 down from the highest dose",
      "met": false
     },
     {
@@ -1091,7 +1091,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.52, 0.48, 0.52, 0.48, 0.52, 0.48 log10 from the lowest dose",
+     "observed": "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 1.00 log10 down from the highest dose",
      "met": true
     },
     {
@@ -1590,7 +1590,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.52, 0.48, 0.52, 0.48, 0.52, 0.48 log10 from the lowest dose",
+     "observed": "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 1.00 log10 down from the highest dose",
      "met": true
     },
     {
@@ -1768,7 +1768,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.40, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.40, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": false
     },
     {
@@ -1946,7 +1946,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.48, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.48, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": true
     },
     {
@@ -2124,7 +2124,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.52, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.52, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": true
     },
     {
@@ -2302,7 +2302,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.54, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.54, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": true
     },
     {
@@ -2480,7 +2480,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.56, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.56, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": false
     },
     {
@@ -2658,7 +2658,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.60, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.60, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": false
     },
     {
@@ -2836,7 +2836,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 0.48, 0.50, 0.50, 0.50, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.50, 0.50, 0.50, 0.48 log10 down from the highest dose",
      "met": false
     },
     {
@@ -3014,7 +3014,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 0.93, 0.50, 0.50, 0.50, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.50, 0.50, 0.50, 0.93 log10 down from the highest dose",
      "met": false
     },
     {
@@ -3192,7 +3192,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 0.95, 0.50, 0.50, 0.50, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.50, 0.50, 0.50, 0.95 log10 down from the highest dose",
      "met": true
     },
     {
@@ -3370,7 +3370,7 @@
      "group_id": null,
      "sex": null,
      "minimum": "dose_spacing",
-     "observed": "steps of 1.00, 0.50, 0.50, 0.50, 0.50, 0.50, 0.50 log10 from the lowest dose",
+     "observed": "steps of 0.50, 0.50, 0.50, 0.50, 0.50, 0.50, 1.00 log10 down from the highest dose",
      "met": true
     },
     {

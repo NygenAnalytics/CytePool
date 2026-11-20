@@ -70,15 +70,15 @@ On a ladder of decades, such as 0.1, 1 and 10, the first restricted cubic column
 (dose-groups)=
 ## What a number of dose groups supports
 
-How much can a dose series say? The number of dose groups K, the vehicle included, sets it. A test of any dose against the vehicle has K - 1 degrees of freedom. A spline of dose with the vehicle in a group of its own runs along the K - 1 treated doses, so it has at most K - 2 columns, and K - 1 with the vehicle on the axis ([Dose axes and the vehicle](#dose-axes)). A curve of p parameters fitted to the means of K groups leaves K - p groups to test its fit, so a curve with a spare group needs p at most K - 1.
+How much can a dose series say? The number of dose groups K, the vehicle included, sets it. A test of any dose against the vehicle has K - 1 degrees of freedom. A spline of dose with the vehicle in a group of its own runs along the K - 1 treated doses, so it has at most K - 2 columns, and K - 1 with the vehicle on the axis ([Dose axes and the vehicle](#dose-axes)). A curve of p parameters fitted to the means of K groups leaves K - p groups to test its fit, so a curve with a spare group needs p at most K - 1. Two documents set numbers of doses: EMA's qualification of MCP-Mod, a method for dose finding in phase 2 trials that tests candidate curve shapes and then fits one [@ema2014], and the standard methods of EPA's Transcriptomic Assessment Products (ETAP), for transcriptomic studies of chemicals in rats [@usepa2024].
 
 | K | Tests | A curve with a spare group | What documents ask |
 | --- | --- | --- | --- |
 | 2 | The dose against the vehicle | None | |
-| 3 | Any dose, on 2 degrees of freedom; each dose against the vehicle; a spline of 1 column | A line | MCP-Mod's test step, placebo included [@ema2014] |
-| 4 | A spline of up to 2 columns | An Emax curve, of 3 parameters | MCP-Mod's modelling step [@ema2014] |
+| 3 | Any dose, on 2 degrees of freedom; each dose against the vehicle; a spline of 1 column | A line | MCP-Mod's test step, placebo included |
+| 4 | A spline of up to 2 columns | An Emax curve, which rises to a maximum effect, of 3 parameters | MCP-Mod's modelling step |
 | 5 | A spline of up to 3 columns | A Hill curve, of 4 parameters | |
-| 9 | A spline of up to 7 columns | Any curve of up to 8 parameters | ETAP: 8 doses and a vehicle [@usepa2024] |
+| 9 | A spline of up to 7 columns | Any curve of up to 8 parameters | ETAP: 8 doses and a vehicle |
 
 Replicates count too: n samples in each of K groups leave K(n - 1) residual degrees of freedom before moderation, 3 for a vehicle and two doses in duplicate, so the prior of the moderation ([Empirical Bayes moderation](empirical_bayes.md)) carries much of each gene's variance estimate.
 
@@ -87,33 +87,35 @@ Replicates count too: n samples in each of K groups leave K(n - 1) residual degr
 
 Which cell types of a dose series can be tested, and which can only be described? Filtering can leave a dose group without a sample in a depleted cell type [@hoffman2026a], a dose processed in a lane or plate of its own cannot be told apart from that batch, which breaks the control of false positives [@lun2017], and a dose given to a single animal has no replicate. {api}`check_dose_design` reports these per cell type before anything is fitted:
 
-1. **Samples.** Each cell type uses the samples that its fit in {api}`limma_voom` would use, with the same `min_cells` and `min_counts`: at least 10 cells there by default, some counts, and at least `min_counts` counts over every feature. The expression filter does not run.
-2. **Dose groups.** The distinct doses of the design's samples, the vehicle first. A dose group that keeps no sample in a cell type is dropped there; one that keeps a single sample stays, and the doses table shows it.
+1. **Samples.** Each cell type uses the samples that its fit in {api}`limma_voom` would use, with the same `min_cells` and `min_counts`: at least 10 cells there by default, some counts, and at least `min_counts` counts summed over all features. The expression filter does not run.
+2. **Dose groups.** The distinct doses of the design's samples, the vehicle first. A dose group that keeps no sample in a cell type is dropped there; one that keeps a single sample stays, and the doses table shows it. The replicates of a dose group are its samples or, when the design has random intercepts, the levels of each grouping among them: two samples of one animal at a dose, under `random="(1 | animal)"`, are one replicate.
 3. **The dose-group model.** The design holds the terms other than dose, such as `"~ 1"` or `"~ sex"`, and the check adds an intercept and an indicator of each treated dose group that keeps a sample. The rank, by R's `qr()` rule, gives the residual degrees of freedom. A dose group is estimable when the design can compare it with the vehicle apart from its other terms: when its column lies outside the span of the other columns [@searle1971], which limma's `nonEstimable` reports with the column placed last. Random intercepts are checked on the samples used, as {api}`Design.check` checks them.
-4. **The batch.** With `batch`, a column such as the lane or plate of each sample, a dose group is confounded with the batch when it is estimable and its difference from the vehicle is also a difference between batches. Batches of a single sample are pooled first, since such a batch cannot be told apart from its sample's own deviation, so a lane per sample confounds nothing.
+4. **The batch.** With `batch`, a column such as the lane or plate of each sample, a dose group is confounded with the batch when it is estimable and its difference from the vehicle is also a difference between batches. Batches of a single sample are pooled first, since such a batch cannot be told apart from its sample's own deviation, and a sample alone in its batch, when it is the only one, joins no batch, so a lane per sample confounds nothing. The rule finds exact confounding: a batch unbalanced across the doses without confounding them, as when samples are loaded into lanes in dose order, also biases the comparisons when the model leaves it out, so a known batch belongs in the design whenever it is unbalanced.
 
 Each cell type gets one of three statuses:
 
 | Status | When | What it supports |
 | --- | --- | --- |
-| `"inferential"` | An estimable treated dose group keeps two samples or more, the model leaves residual degrees of freedom, and no batch that the design leaves out is confounded with a dose group | Tests with p-values, and curves with bounds |
-| `"descriptive"` | No estimable treated dose group keeps a second sample; or no residual degrees of freedom are left; or a batch that the design leaves out is confounded with an estimable dose group | Curves that describe the means, without p-values or bounds |
+| `"inferential"` | An estimable treated dose group has two replicates or more, the model leaves residual degrees of freedom, and every dose group confounded with the batch is compared through a random intercept of it | Tests with p-values, and curves with bounds |
+| `"descriptive"` | No estimable treated dose group has a second replicate; or no residual degrees of freedom are left; or a dose group is confounded with the batch, and the design does not have the batch as a random intercept over two or more batches of the vehicle and of each such group | Curves that describe the means, without p-values or bounds |
 | `"refused"` | Every sample was left out; the design or the cell type has no vehicle sample; no treated sample is left; no treated dose group is estimable; or the random intercepts cannot be estimated beside the dose groups | No dose analysis |
 
-The replicates that count are those of the treated doses: a replicated vehicle with a single sample at each dose leaves residual degrees of freedom, but no dose shows the variation between replicates given it. A batch that the design holds as a fixed term absorbs the dose groups it confounds, which then are not estimable, and one that it holds as a random intercept is compared against the variance between batches, so in neither case does the batch make the cell type descriptive.
+The replicates that count are those of the treated doses: a replicated vehicle with a single sample at each dose leaves residual degrees of freedom, but no dose shows the variation between replicates given it. A batch that the design holds as a fixed term absorbs the dose groups it confounds, which then are not estimable. One that it holds as a random intercept compares them against the variance between batches when the vehicle and each such dose span two or more batches; with the vehicle alone in one lane, that variance rests on too few lanes, and the cell type stays descriptive.
 
-For a cube of a TCDD-like series of 24 mice, the vehicle and eight doses from 0.01 to 30 ug/kg in lanes of two mice, with hepatocytes, stellate cells, which become scarce at the top dose, rare cholangiocytes and macrophages, which the vehicle mice lack:
+For a cube of a series modelled on studies of TCDD (dioxin) in mouse liver, 24 mice given the vehicle or one of eight doses from 0.01 to 30 ug/kg, in lanes of two mice, with hepatocytes, stellate cells, which become scarce at the top dose, rare cholangiocytes and macrophages, which the vehicle mice lack:
 
 ```python
 axis = cp.DoseAxis("dose", unit="ug/kg", metric="administered")
-design = cp.Design(cube.samples, "~ 1")
+other_terms = cp.Design(cube.samples, "~ 1")
 report = cp.check_dose_design(
-    cube, design, dose=axis, batch="lane", rules="etap_2024", sex="sex"
+    cube, other_terms, dose=axis, batch="lane", rules="etap_2024", sex="sex"
 )
 print(report)
 flagged = report.doses.filter(group_id="stellate", n_samples_used=1)
 missed = report.minimums.filter(met=False)
 ```
+
+`batch`, `rules` and `sex` are optional: `cp.check_dose_design(cube, other_terms, dose=axis)` checks the samples, dose groups and replicates alone, as an in vitro or clinical series needs.
 
 ```text
 DoseDesignReport: 4 cell types, 9 dose groups from 0 to 30 ug/kg, batch 'lane',
@@ -121,11 +123,15 @@ DoseDesignReport: 4 cell types, 9 dose groups from 0 to 30 ug/kg, batch 'lane',
   hepatocyte: inferential; 9 of 9 dose groups keep a sample, 2 to 4 each; 15
               residual df; rules: deviation
   stellate: inferential; 9 of 9 dose groups keep a sample, 1 to 4 each; 14
-            residual df; rules: deviation
+            residual df; rules: deviation, ETAP excludes doses short of 2
+            passing samples (M: 1 at 30 ug/kg)
   cholangiocyte: descriptive; 3 of 9 dose groups keep a sample, 1 each; 0
                  residual df; no treated dose group that can be compared with
                  the vehicle keeps a second sample, so no dose has a replicate;
-                 rules: deviation
+                 rules: deviation, ETAP excludes doses short of 2 passing
+                 samples (M: 1 at 0.01 ug/kg, 1 at 0.03 ug/kg, 0 at 0.1 ug/kg, 0
+                 at 0.3 ug/kg, 0 at 1 ug/kg, 0 at 3 ug/kg, 0 at 10 ug/kg, 0 at
+                 30 ug/kg)
   macrophage: refused; 8 of 9 dose groups keep a sample, 2 to 3 each; 12
               residual df; no vehicle sample is left (4 vehicle samples left
               out); compare the doses with each other with limma_voom; rules:
@@ -134,12 +140,30 @@ DoseDesignReport: 4 cell types, 9 dose groups from 0 to 30 ug/kg, batch 'lane',
 
 The hepatocytes keep every mouse and 15 residual degrees of freedom. The stellate cells stay inferential though one of the two mice at 30 ug/kg has fewer than 10 of them: eight replicated groups estimate the variance, and `flagged` shows the group that keeps one mouse at 30 ug/kg. The cholangiocytes keep three mice, one per dose group, so their curves can only describe; the macrophages have no vehicle sample to compare with. The lanes, assigned at random, confound no dose.
 
-The {api}`DoseDesignReport` holds four tables. `summary` has a row per cell type: its status and the reason, the dose groups a dose analysis can use (`n_dose_groups`, the vehicle and the treated groups it can compare with the vehicle), those that keep no sample, the samples used and left out, and the residual degrees of freedom. `doses` has a row per cell type and dose group: the samples used and left out, the fewest cells and counts among the samples used, `estimable` and, with a batch, `confounded_with_batch`. `samples` has a row per cell type and sample, with its cells, its counts over every feature, whether it is used and why not, as {api}`limma_voom` words it. With a rule set, `minimums` lists each minimum, met or not. {api}`DoseDesignReport.status` reads the status of a cell type, and `report.design_check` holds {api}`Design.check` of the design given.
+Test the cell types that support tests, with the design of the spline columns from [Dose axes and the vehicle](#dose-axes):
+
+```python
+inferential = report.summary.filter(status="inferential")["group_id"].tolist()
+result = cp.limma_voom(
+    cube, design, groups=inferential, contrasts=columns, f_tests={"any_dose": columns}
+)
+```
+
+The {api}`DoseDesignReport` holds four tables:
+
+| Table | One row per | What to look at |
+| --- | --- | --- |
+| `summary` | Cell type | `status` and `reason`; `n_dose_groups`, the dose groups that keep a sample, and `n_dose_groups_estimable`, those the design can compare with the vehicle; `df_residual` |
+| `doses` | Cell type and dose group | Groups with `n_samples_used` 1, or a low `n_cells_min` or `total_counts_min`; `estimable` False beside a kept group; `confounded_with_batch` |
+| `samples` | Cell type and sample | `used`, and `reason` for a sample left out, as {api}`limma_voom` words it |
+| `minimums` | Minimum of the rule set | Rows with `met` False, their `observed` text and `when_unmet`; `group_id` None marks a minimum of the design |
+
+{api}`DoseDesignReport.status` reads the status of a cell type, and `report.design_check` holds {api}`Design.check` of the design given.
 
 (dose-rule-minimums)=
 ## ETAP's design minimums
 
-Which of EPA's design requirements does a dose series miss? The standard methods of EPA's Transcriptomic Assessment Products (ETAP) set minimums for the design and for the samples that pass quality control [@usepa2024]. With `rules="etap_2024"` and `sex`, the column of each sample's sex, `minimums` lists those that samples show:
+Which of EPA's design requirements does a dose series miss? The standard methods of EPA's Transcriptomic Assessment Products (ETAP) set minimums for the design and for the samples that pass quality control [@usepa2024]. With `rules="etap_2024"` and `sex`, the column of each sample's sex, `minimums` lists those that samples show, each met or not, with what ETAP does when it is unmet in `when_unmet`:
 
 | `minimum` | Section | Required | When unmet, ETAP |
 | --- | --- | --- | --- |
@@ -150,7 +174,7 @@ Which of EPA's design requirements does a dose series miss? The standard methods
 | `passing_samples_per_dose` | 3.4.5.2 | At least 2 passing samples at each dose level | excludes the dose level and goes on |
 | `passing_vehicle_samples` | 3.4.5.2 | At least 3 passing vehicle samples | does not model the dose response |
 
-A step counts as half a log10 when its log10 lies within 0.05 of 0.5, and as a full log10 within 0.05 of 1: one decimal place of log10, the precision of "half-log10", which holds both steps of a 1-3-10 series, 0.48 and 0.52. Animals are counted among the design's samples, one per animal, and passing samples are those the cell type uses. ETAP defines a dataset by tissue, sex and exposure regimen, so the minimums of passing samples apply to each cell type and sex. {api}`DoseDesignReport.rules_status` is `"deviation"` when a minimum of the design or the cell type's vehicle minimum is unmet, and `"met"` otherwise: a dose level that ETAP excludes is listed without changing it, since ETAP's procedure goes on without the level. The TCDD-like series above misses three minimums of the design: one sex, 2 or 3 mice per dose, and steps of 0.48 log10 at its low end, where ETAP asks for a full log10.
+A step counts as half a log10 when its log10 lies within 0.05 of 0.5, and as a full log10 within 0.05 of 1: one decimal place of log10, the precision of "half-log10", which holds both steps of a 1-3-10 series, 0.48 and 0.52. Animals are counted among the design's samples, one per animal, and passing samples are those the cell type uses. ETAP defines a dataset by tissue, sex and exposure regimen, so the minimums of passing samples apply to each cell type and sex. {api}`DoseDesignReport.rules_status` is `"deviation"` when a minimum of the design or the cell type's vehicle minimum is unmet, and `"met"` otherwise: a dose level that ETAP excludes is listed, in `minimums` and in the printout, without changing it, since ETAP's procedure goes on without the level. The TCDD series above misses three minimums of the design: one sex, 2 or 3 mice per dose, and steps of 0.48 log10 at its low end, where ETAP asks for a full log10. The other four rows of `missed` belong to cell types: ETAP excludes the stellate cells' 30 ug/kg, where one mouse passes, and every dose level of the cholangiocytes, and the cholangiocytes and macrophages keep 1 and 0 of the 3 passing vehicle samples ETAP needs to model a dose response.
 
 (dose-response-defaults)=
 ## Defaults and choices
@@ -158,14 +182,17 @@ A step counts as half a log10 when its log10 lies within 0.05 of 0.5, and as a f
 - **The vehicle.** In a group of its own. On the axis, at 0 on a linear axis, or on a log10 axis only at an offset that is given and recorded ([Dose axes and the vehicle](#dose-axes)).
 - **The samples of a cell type.** Those of its fit in {api}`limma_voom`: `min_cells=10` and `min_counts=0`, with the same meaning ([Checking a dose design](#dose-design-check)).
 - **Dose groups of one sample.** Kept and shown in the doses table; a group is dropped only when it keeps no sample. ETAP excludes levels with fewer than 2 passing samples, which `minimums` lists.
-- **Replication.** Judged at the treated doses: a cell type whose estimable treated dose groups each keep one sample is descriptive, whatever the vehicle keeps.
-- **Batches of one sample.** Pooled before the batch is checked.
+- **Replication.** Judged at the treated doses: a cell type whose estimable treated dose groups each keep one sample, or the samples of one level of a random intercept's grouping, is descriptive, whatever the vehicle keeps.
+- **Batches of one sample.** Pooled before the batch is checked; a sample alone in its batch, when it is the only one, joins no batch.
+- **A batch as a random intercept.** It compares the dose groups it confounds with the vehicle when the vehicle and each such group span two or more batches.
 - **Cells per profile.** Reported, with no threshold beyond `min_cells`. In muscat's benchmark of differential state tests, methods on pseudobulk profiles performed decently from about 100 cells per cell type and sample, with moderate gains beyond [@crowell2020], which makes `n_cells_min` worth reading.
 
 (dose-response-limits)=
 ## Limits and differences
 
-- **Samples are the replicates.** The check counts samples; technical replicates or several samples of one animal are pooled first with {api}`Cube.collapse_samples`. A design that names the animal as a random intercept, with one animal per dose group, is refused with that advice.
+- **Samples are the replicates, unless a random intercept names the unit.** With random intercepts, the replicates of a dose group are the levels of each grouping among its samples. Under `"~ 1"` or a fixed term of the unit, such as `"~ patient"`, repeated samples of one participant at a dose count as replicates: pool them first with {api}`Cube.collapse_samples`, by participant and dose, or name the participant as a random intercept. A design that names the animal as a random intercept, with one animal per dose group, the vehicle's included, is refused with advice to pool.
+- **Several compounds.** The dose groups are the distinct doses of all the design's samples, so two compounds tested at the same concentrations would count each other's wells as replicates. Check one compound at a time, with a design of that compound's samples and the vehicle's: with `s = cube.samples`, `cp.Design(s.filter((s["compound"] == "A") | (s["dose"] == 0)), "~ 1")`.
+- **Batches unbalanced across doses.** The batch rule finds exact confounding only; add a known batch to the design whenever it is unbalanced across the doses ([Checking a dose design](#dose-design-check)).
 - **Doses measured per sample.** Measured exposures, one per sample, make a dose group of every sample, so most groups hold one sample and the check calls the cell type descriptive.
 - **ETAP's other requirements.** Its sequencing quality metrics, species, strain, route, duration and age are not checked: samples do not show them.
 - **The expression filter.** It does not run, so a cell type that the check calls inferential can still stop in its fit when no gene passes the filter.

@@ -260,3 +260,18 @@ def matched_samples(
     positions = np.array([index[value] for value in values], dtype=np.intp)
     order = np.argsort(positions, kind="stable")
     return positions[order], order
+
+
+def cube_samples(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray]:
+    """The position of every design sample in a cube, increasing, and its design row,
+    with the messages of the workflows that fit every group of a cube."""
+    return matched_samples(
+        cube,
+        design,
+        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
+        "be matched to the cube's samples; build the Design from cube.samples, or from "
+        "a table whose 'sample_id' column holds cube sample ids",
+        text_ids="the cube's does",
+        data="the cube",
+        data_ids="the cube's sample ids",
+    )

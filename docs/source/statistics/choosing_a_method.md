@@ -60,7 +60,7 @@ Use {api}`propeller` ({api}`plot_composition`) to test whether cell-type proport
 
 ## Does a dose series support tests in each cell type?
 
-Use {api}`check_dose_design` before fitting a dose series: it reports, for every cell type, the samples each dose group keeps after the filter of {api}`limma_voom`, the dose groups that the design's other terms or a processing batch make impossible to compare with the vehicle, and whether the cell type supports tests, only curves that describe the data, or no dose analysis [@lun2017]. With `rules="etap_2024"` it lists the design minimums of EPA's Transcriptomic Assessment Products that the design misses [@usepa2024]. {api}`Design.check` finds the problems of any design. See [Dose response](dose_response.md).
+Use {api}`check_dose_design` before fitting a dose series: it reports, for every cell type, the samples each dose group keeps after the filter of {api}`limma_voom`, the dose groups that the design's other terms or a processing batch make impossible to compare with the vehicle, and whether the cell type supports tests, only curves that describe the data, or no dose analysis [@lun2017]. With `rules="etap_2024"` it lists the design minimums of EPA's Transcriptomic Assessment Products, each met or not [@usepa2024]. {api}`Design.check` finds the problems of any design. See [Dose response](dose_response.md).
 
 ## Do the genes of a pathway respond to a contrast?
 

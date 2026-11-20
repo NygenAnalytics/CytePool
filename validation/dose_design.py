@@ -7,31 +7,38 @@ cell types and 300 genes: hepatocytes, abundant; stellate cells, depleted with d
 cholangiocytes, rare, about 9 cells per mouse; and macrophages, absent from the
 vehicle mice. ``from_cells`` pools them, and ``check_dose_design`` reports, at
 ``min_counts`` 0 and at the median count of the stellate profiles of 10 cells or more,
-each sample's cells and counts over every feature and whether it is used, and each
-dose group's samples used and left out and its fewest cells and counts. scanpy's
+each sample's cells and counts summed over all features and whether it is used, and
+each dose group's samples used and left out and its fewest cells and counts. scanpy's
 ``get.aggregate`` sums the same cells per mouse and cell type (``sum``,
 ``n_obs_aggregated``), and pandas applies the filter (``min_cells`` 10, some counts,
 ``min_counts``) and groups the samples by cell type and dose. Tier: identical.
 
-Aliasing and statuses: 20 designs, among them the TCDD-like series with its lanes; the
+Aliasing and statuses: 25 designs, among them the TCDD-like series with its lanes; the
 lane equal to the dose; two lanes that split the low and high doses; the vehicle in
 both lanes; a lane per sample; eight lanes, two vehicle samples sharing one; two
-dose-1 samples sharing a lane; the vehicle alone in its lane; sex and lane that absorb
-dose 1 together under ``~ sex``; sex equal to the top dose's indicator; one sample per
-dose; a replicated vehicle with single doses; a series with one participant per dose
-sampled before and after dosing, under ``~ patient`` and ``~ patient + timepoint``; a
-bulk cube; the vehicle and one dose; two covariates that leave no residual degrees of
-freedom; ``~ 0``; a covariate equal to the treated
-indicator; and no vehicle. R filters each cell type's samples from their cells and
-counts, builds the design's columns with ``model.matrix`` on every sample and keeps
-the rows used, adds an intercept and an indicator of each treated dose group that
-keeps a sample, and computes the rank with ``qr()``; a dose group is estimable when
-limma's ``nonEstimable`` does not name its column placed last, and confounded with
-the batch when it is estimable and ``nonEstimable`` names it once indicators of the
-batches, those of a single sample pooled into one, join the model. The statuses follow
-the rules of ``cytepool.dose_designs`` coded again in R for this check (self-coded),
-which catches slips in either coding. CytePool runs on cubes of one feature that hold
-the same cells and counts. Tier: identical.
+dose-1 samples sharing a lane; the vehicle alone in its lane; one sample alone in its
+lane; sex and lane that absorb dose 1 together under ``~ sex``; sex equal to the top
+dose's indicator; one sample per dose; a replicated vehicle with single doses; a
+series with one participant per dose sampled before and after dosing, under
+``~ patient`` and ``~ patient + timepoint``; a bulk cube; the vehicle and one dose;
+two covariates that leave no residual degrees of freedom; ``~ 0``; a covariate equal
+to the treated indicator; no vehicle; and four designs with a random intercept: the
+vehicle alone in its lane under ``(1 | lane)``, two lanes of their own per dose under a
+random intercept that groups the samples as the lanes do, each treated dose in a lane
+of its own under ``(1 | lane)``, and one animal of two samples per treated dose under
+``(1 | animal)``. R filters each cell type's samples from their cells and counts,
+builds the design's columns with ``model.matrix`` on every sample and keeps the rows
+used, adds an intercept and an indicator of each treated dose group that keeps a
+sample, and computes the rank with ``qr()``; a dose group is estimable when limma's
+``nonEstimable`` does not name its column placed last, and confounded with the batch
+when it is estimable and ``nonEstimable`` names it once contrasts of the batches join
+the model, those of a single sample pooled into one and a sample alone in its batch,
+when it is the only one, left at 0. The statuses follow the rules of
+``cytepool.dose_designs`` coded again in R for this check: replicates counted as the
+levels of a random intercept's grouping when the design has one, and a batch that a
+random intercept models excused when the vehicle and each confounded dose span two
+batches or more. The second coding catches slips in either one. CytePool runs on
+cubes of one feature that hold the same cells and counts. Tier: identical.
 
 ETAP's minimums (US EPA 2024, Sec. 3.4.1.3, 3.4.2 and 3.4.5.2), coded in R from the
 text for this check (self-coded): the TCDD-like series, males only; a design of the
@@ -260,23 +267,45 @@ check <- function(case, cell_type) {
   estimable <- !vapply(seq_along(kept), function(k) aliased_last(base, D, k), logical(1))
   out$estimable[match(kept, levels)] <- estimable
   if (!any(estimable)) return(out)
+  compared <- TRUE
   if (!is.null(case$batch)) {
     labels <- as.character(samples[[case$batch]][used])
     sizes <- as.vector(table(labels)[labels])
     pooled <- ifelse(sizes > 1, labels, "(a single sample)")
     batches <- unique(pooled)
+    # A sample alone in its batch, the only one, joins no batch: contrasts that sum
+    # to zero over the other batches leave it at 0.
+    if (sum(table(labels) == 1) == 1) batches <- setdiff(batches, "(a single sample)")
     if (length(batches) > 1) {
-      B <- vapply(batches[-1], function(b) as.numeric(pooled == b), numeric(length(pooled)))
+      last <- as.numeric(pooled == batches[length(batches)])
+      B <- vapply(batches[-length(batches)], function(b) as.numeric(pooled == b) - last,
+                  numeric(length(pooled)))
       B <- matrix(B, nrow = length(pooled), dimnames = list(NULL, sprintf("b%d", seq_len(length(batches) - 1))))
       confounded <- estimable & vapply(seq_along(kept),
         function(k) aliased_last(cbind(base, B), D, k), logical(1))
       out$confounded[match(kept, levels)] <- confounded
+      # A random intercept that groups the samples as the batch does compares the
+      # confounded doses with the vehicle when the vehicle and each span two batches.
+      all_labels <- as.character(samples[[case$batch]])
+      modelled <- any(vapply(case$groupings, function(g) {
+        grouping <- as.character(samples[[g]])
+        pairs <- length(unique(paste(all_labels, grouping, sep = "\r")))
+        pairs == length(unique(all_labels)) && pairs == length(unique(grouping))
+      }, logical(1)))
+      spans <- vapply(c(0, kept), function(t) length(unique(labels[d == t])), integer(1))
+      compared <- !any(confounded) ||
+        (modelled && spans[1] >= 2 && all(spans[-1][confounded] >= 2))
     }
   }
-  sizes <- vapply(kept, function(t) sum(d == t), integer(1))
-  out$status <- if (!any(sizes[estimable] >= 2)) "descriptive" else
+  # Replicates: samples, or the fewest levels of a random intercept's grouping.
+  replicates <- vapply(kept, function(t) sum(d == t), integer(1))
+  for (g in case$groupings) {
+    units <- as.character(samples[[g]][used])
+    replicates <- pmin(replicates, vapply(kept, function(t) length(unique(units[d == t])), integer(1)))
+  }
+  out$status <- if (!any(replicates[estimable] >= 2)) "descriptive" else
     if (out$df_residual == 0) "descriptive" else
-    if (any(out$confounded)) "descriptive" else "inferential"
+    if (!compared) "descriptive" else "inferential"
   out
 }
 count_text <- function(n, noun) paste0(n, " ", noun, if (n == 1) "" else "s")
@@ -307,7 +336,8 @@ etap <- function(design) {
   } else {
     steps <- diff(log10(positive))
     add(NA, NA, "dose_spacing",
-        paste0("steps of ", paste(sprintf("%.2f", steps), collapse = ", "), " log10 from the lowest dose"),
+        paste0("steps of ", paste(sprintf("%.2f", rev(steps)), collapse = ", "),
+               " log10 down from the highest dose"),
         abs(steps[1] - 1) <= 0.05 && all(abs(steps[-1] - 0.5) <= 0.05))
   }
   sexes <- sort(unique(sex))
@@ -527,10 +557,12 @@ def simple(
     batch: str | None = None,
     cell_types: dict | None = None,
     min_counts: float = 0.0,
+    grouping: str | None = None,
     **columns: list,
 ) -> dict:
     """A design of a few samples: every sample with 30 cells and 1,000 counts or more
-    in the cell type "kept", unless ``cell_types`` gives cells and counts."""
+    in the cell type "kept", unless ``cell_types`` gives cells and counts; with
+    ``grouping``, a random intercept of that column."""
     n = len(doses)
     samples = {"sample_id": [f"S{i + 1}" for i in range(n)], "dose": doses, **columns}
     if cell_types is None:
@@ -539,6 +571,8 @@ def simple(
         "name": name,
         "samples": samples,
         "formula": formula,
+        "random": None if grouping is None else f"(1 | {grouping})",
+        "groupings": [] if grouping is None else [grouping],
         "batch": batch,
         "min_cells": MIN_CELLS,
         "min_counts": min_counts,
@@ -568,6 +602,8 @@ def aliasing_cases(series: dict, n_cells: np.ndarray, totals: np.ndarray) -> lis
             "lane": series["lane"],
         },
         "formula": "~ 1",
+        "random": None,
+        "groupings": [],
         "batch": "lane",
         "min_cells": MIN_CELLS,
         "min_counts": 0.0,
@@ -624,6 +660,40 @@ def aliasing_cases(series: dict, n_cells: np.ndarray, totals: np.ndarray) -> lis
             batch="lane",
             cell_types=filtered,
             lane=list("aaabcbcbc"),
+        ),
+        simple(
+            "one sample alone in its lane",
+            [0, 0, 0, 0, 1, 1, 10, 10, 30],
+            batch="lane",
+            lane=list("abcdabcde"),
+        ),
+        simple(
+            "the vehicle alone in its lane, (1 | lane)",
+            [0, 0, 0, 1, 1, 1, 10, 10, 10],
+            batch="lane",
+            grouping="lane",
+            lane=list("VVVABABAB"),
+        ),
+        simple(
+            "two lanes of their own per dose, (1 | lane_id) grouping as the lanes",
+            [0, 0, 0, 0, 1, 1, 1, 1, 10, 10, 10, 10],
+            batch="lane",
+            grouping="lane_id",
+            lane=list("aabbccddeeff"),
+            lane_id=[f"lane {label}" for label in "aabbccddeeff"],
+        ),
+        simple(
+            "each treated dose in a lane of its own, (1 | lane)",
+            [0, 0, 0, 0, 1, 1, 10, 10],
+            batch="lane",
+            grouping="lane",
+            lane=list("aabbccdd"),
+        ),
+        simple(
+            "one animal of two samples per treated dose, (1 | animal)",
+            [0, 0, 0, 0, 1, 1, 10, 10, 30, 30],
+            grouping="animal",
+            animal=["A1", "A1", "A2", "A2", "A3", "A3", "A4", "A4", "A5", "A5"],
         ),
         simple(
             "~ sex: sex and lane absorb dose 1 together",
@@ -701,7 +771,7 @@ def compare_aliasing(cases: list[dict], results: list, tcdd: Cube) -> list[tuple
     rows = []
     for case, found in zip(cases, results, strict=True):
         cube = tcdd if case["name"].startswith("TCDD") else case_cube(case)
-        design = Design(case["samples"], case["formula"])
+        design = Design(case["samples"], case["formula"], random=case["random"])
         report = check_dose_design(
             cube,
             design,

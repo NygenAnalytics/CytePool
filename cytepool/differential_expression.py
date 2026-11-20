@@ -169,8 +169,8 @@ import numpy as np
 
 from ._analysis_records import (
     cube_record,
+    cube_samples,
     design_record,
-    matched_samples,
     mixed_design_record,
     only_key,
     software_versions,
@@ -1338,7 +1338,7 @@ def _analyse(
             "prior_weights at None"
         )
     check_sample_groups(settings, design.samples)
-    cube_rows, order = _matched(cube, design)
+    cube_rows, order = cube_samples(cube, design)
     tested = _contrasts_to_test(design, contrasts, method)
     if settings.get("f_tests"):
         _check_f_tests(settings["f_tests"], tested)
@@ -1389,20 +1389,6 @@ def _analyse(
     )
 
 
-def _matched(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray]:
-    """The cube position of every design sample, increasing, and its design row."""
-    return matched_samples(
-        cube,
-        design,
-        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
-        "be matched to the cube's samples; build the Design from cube.samples, or from "
-        "a table whose 'sample_id' column holds cube sample ids",
-        text_ids="the cube's does",
-        data="the cube",
-        data_ids="the cube's sample ids",
-    )
-
-
 def _group_fit(
     method: str,
     cube: Cube,
@@ -1413,7 +1399,7 @@ def _group_fit(
     entry: Mapping[str, Any],
 ) -> GroupFit:
     """The fit of one group computed again, as the analysis computed it."""
-    cube_rows, order = _matched(cube, design)
+    cube_rows, order = cube_samples(cube, design)
     g = group_positions(cube, group)[0]
     inputs = GroupInputs(method, cube, order, cube_rows, contrasts, settings)
     fit_group = _fit_dream_group if method == "dream_voom" else _fit_group

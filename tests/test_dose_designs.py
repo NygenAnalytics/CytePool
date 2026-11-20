@@ -181,7 +181,7 @@ def test_aliasing_matches_r() -> None:
     for case in fixture["cases"]:
         report = check_dose_design(
             cube_from_fixture(case),
-            Design(case["samples"], case["formula"]),
+            Design(case["samples"], case["formula"], random=case["random"]),
             dose=AXIS,
             batch=case["batch"],
             min_cells=case["min_cells"],
@@ -307,7 +307,10 @@ def test_statuses_by_hand() -> None:
     report = check([0, 0, 1, 1, 10, 10])
     assert one(report, "status") == "inferential"
     assert one(report, "df_residual") == 3.0
-    assert one(report, "n_dose_groups") == 3
+    assert (one(report, "n_dose_groups"), one(report, "n_dose_groups_estimable")) == (
+        3,
+        2,
+    )
     assert dose_column(report, "estimable") == [False, True, True]
     assert one(report, "reason") == ""
     # One sample per dose: the model fits every sample.
@@ -317,6 +320,15 @@ def test_statuses_by_hand() -> None:
     # A replicated vehicle leaves residual df, but no dose has a replicate.
     report = check([0, 0, 0, 0, 1, 10, 30])
     assert (one(report, "status"), one(report, "df_residual")) == ("descriptive", 3.0)
+    # Replicates are counted among the samples used: each dose keeps one of two.
+    report = check([0, 0, 0, 1, 1, 10, 10], cells=[30, 30, 30, 30, 5, 30, 5])
+    assert dose_column(report, "n_samples_used") == [3, 1, 1]
+    assert (one(report, "status"), one(report, "df_residual")) == ("descriptive", 2.0)
+    # Replicates count only in dose groups that can be compared with the vehicle:
+    # sex M is the 30 ug/kg indicator, so its two samples do not count.
+    report = check([0, 0, 1, 10, 30, 30], "~ sex", sex=["F"] * 4 + ["M"] * 2)
+    assert dose_column(report, "estimable") == [False, True, True, False]
+    assert (one(report, "status"), one(report, "df_residual")) == ("descriptive", 2.0)
     # A sample with exactly min_cells cells is used, as in limma_voom; the doses
     # table gives each group's fewest cells and counts among the samples used.
     samples = samples_of([0, 0, 1, 1])
@@ -358,7 +370,16 @@ def test_statuses_by_hand() -> None:
         "no vehicle sample is left (2 vehicle samples left out); compare the doses "
         "with each other with limma_voom"
     )
-    assert one(report, "n_dose_groups") == 0
+    # The dropped vehicle counts among the dropped dose groups, and no dose group
+    # can be compared with it.
+    assert [
+        one(report, column)
+        for column in (
+            "n_dose_groups",
+            "n_dose_groups_dropped",
+            "n_dose_groups_estimable",
+        )
+    ] == [2, 1, 0]
     report = check([0, 0, 1, 1, 10, 10], cells=[30, 30, 5, 5, 5, 5])
     assert (
         one(report, "reason")
@@ -397,6 +418,12 @@ def test_statuses_by_hand() -> None:
     report = check([1, 1, 10, 10])
     assert one(report, "status") == "refused"
     assert one(report, "reason").startswith("the design has no sample of dose 0")
+    # A vehicle given as -0.0 is dose 0, and prints as 0.
+    report = check([-0.0, -0.0, 1, 1])
+    assert one(report, "status") == "inferential"
+    assert not np.signbit(report.doses["dose"]).any()
+    assert not np.signbit(report.samples["dose"]).any()
+    assert repr(report).splitlines()[0].endswith("2 dose groups from 0 to 1 ug/kg")
 
 
 def test_designs_sampled_before_and_after_dosing() -> None:
@@ -415,6 +442,22 @@ def test_designs_sampled_before_and_after_dosing() -> None:
     report = check(doses, random="(1 | patient)", patient=patient)
     assert one(report, "status") == "descriptive"
     assert dose_column(report, "estimable") == [False, True, True, True]
+    # Sampled again at day 15, each dose keeps two samples of one participant. As a
+    # random intercept, the participant is the replicate, and no dose has two.
+    doses = [0] * 4 + [0.3, 1, 3, 0.3, 1, 3, 0, 0]
+    patient = ["P19", "P11", "P04", "P21"] + ["P11", "P04", "P21"] * 2 + ["P19"] * 2
+    report = check(doses, random="(1 | patient)", patient=patient)
+    assert dose_column(report, "n_samples_used") == [6, 2, 2, 2]
+    assert one(report, "status") == "descriptive"
+    assert one(report, "reason") == (
+        "no treated dose group that can be compared with the vehicle keeps samples of "
+        "a second patient, so no dose has a replicate"
+    )
+    # As a fixed term, the participant leaves the samples of one participant at a
+    # dose counted as replicates, which the chapter's limits describe: pooled per
+    # participant and dose, the series is descriptive.
+    report = check(doses, "~ patient", patient=patient)
+    assert one(report, "status") == "inferential"
 
 
 def test_batch_confounding_by_hand() -> None:
@@ -423,19 +466,35 @@ def test_batch_confounding_by_hand() -> None:
         doses = check(DOSE9, batch="lane", lane=lanes).doses
         return doses["dose"][doses["confounded_with_batch"]].tolist()
 
-    # Each dose in its own lane: every lane indicator is a dose indicator.
+    # Each dose in its own lane: every lane indicator is a dose indicator, and with
+    # the vehicle in one lane neither a random intercept nor a fixed term of the lane
+    # can separate them, so the reason offers neither.
     assert confounded(list("aaabbccdd")) == [1.0, 10.0, 30.0]
     report = check(DOSE9, batch="lane", lane=list("aaabbccdd"))
     assert one(report, "status") == "descriptive"
     assert one(report, "reason") == (
         "the difference of 1, 10 and 30 ug/kg from the vehicle is also a difference "
-        "between values of lane; add lane to the design, as a random intercept, "
-        "random='(1 | lane)', when each dose spans two or more values of it, or as "
-        "a fixed term, which sets the confounded doses aside"
+        "between values of lane"
     )
     # Lane b holds 10 and 30 alone, so 10 = b - 30; lane a holds the vehicle and 1,
-    # whose difference stays within a lane.
+    # whose difference stays within a lane. A fixed term of the lane keeps dose 1.
     assert confounded(list("aaaaabbbb")) == [10.0, 30.0]
+    report = check(DOSE9, batch="lane", lane=list("aaaaabbbb"))
+    assert one(report, "reason") == (
+        "the difference of 10 and 30 ug/kg from the vehicle is also a difference "
+        "between values of lane; add lane to the design as a fixed term, which sets "
+        "these doses aside"
+    )
+    # Two lanes of the vehicle, and two lanes of its own for each dose: a random
+    # intercept of the lane can separate them, a fixed term cannot.
+    report = check(
+        [0] * 4 + [1] * 4 + [10] * 4, batch="lane", lane=list("aabbccddeeff")
+    )
+    assert one(report, "reason") == (
+        "the difference of 1 and 10 ug/kg from the vehicle is also a difference "
+        "between values of lane; add lane to the design as a random intercept, "
+        "random='(1 | lane)'"
+    )
     # The vehicle in both lanes links every dose to it within a lane.
     assert confounded(list("abaababba")) == []
     # A lane per sample: a lane's effect is its sample's own deviation.
@@ -463,6 +522,55 @@ def test_batch_confounding_by_hand() -> None:
     )
     assert dose_column(report, "confounded_with_batch") == [False, True, False]
     assert one(report, "status") == "descriptive"
+    # A dose group that the design's terms absorb is not confounded with the batch:
+    # sex M is the 30 ug/kg indicator, and each dose has a sample in each lane.
+    report = check(
+        [0, 0, 1, 1, 10, 10, 30, 30],
+        "~ sex",
+        batch="lane",
+        sex=["F"] * 6 + ["M"] * 2,
+        lane=list("abababab"),
+    )
+    assert dose_column(report, "estimable") == [False, True, True, False]
+    assert dose_column(report, "confounded_with_batch") == [False] * 4
+    assert one(report, "status") == "inferential"
+
+
+@pytest.mark.parametrize(
+    "lanes",
+    [
+        list("abcdabcde"),  # the 30 ug/kg sample alone in lane e
+        list("abcfabcde"),  # and a vehicle sample alone in lane f
+        [f"L{i}" for i in range(9)],  # a lane per sample
+    ],
+)
+def test_one_batch_of_a_single_sample_confounds_nothing(lanes: list[str]) -> None:
+    # A sample alone in its lane cannot be told apart from its own deviation, so its
+    # lane absorbs nothing, whether it is the only such lane or not.
+    report = check([0, 0, 0, 0, 1, 1, 10, 10, 30], batch="lane", lane=lanes)
+    assert not report.doses["confounded_with_batch"].any()
+    assert one(report, "status") == "inferential"
+
+
+def test_a_lane_left_with_one_sample_by_the_filter_confounds_nothing() -> None:
+    # The chapter's series with both 30 ug/kg mice in one lane: the stellate cells of
+    # one of them fall below min_cells, which leaves the other alone in its lane.
+    cube = tcdd_like_cube()
+    lanes = cube.samples["lane"].tolist()
+    top = np.flatnonzero(cube.samples["dose"] == 30.0)
+    mate = next(
+        i for i, lane in enumerate(lanes) if lane == lanes[top[0]] and i != top[0]
+    )
+    lanes[mate], lanes[top[1]] = lanes[top[1]], lanes[mate]
+    samples = cube.samples.with_columns({"lane": lanes})
+    assert samples["lane"][top[0]] == samples["lane"][top[1]]
+    report = check_dose_design(
+        cube, Design(samples, "~ 1"), dose=AXIS, batch="lane", groups="stellate"
+    )
+    used = report.samples["used"][top].tolist()
+    assert used == [True, False]
+    assert report.status() == "inferential"
+    assert not report.doses["confounded_with_batch"].any()
 
 
 def test_a_modelled_batch() -> None:
@@ -481,6 +589,48 @@ def test_a_modelled_batch() -> None:
     report = check(doses, random="(1 | lane)", batch="lane", lane=list("aabbccddeeff"))
     assert one(report, "status") == "inferential"
     assert dose_column(report, "confounded_with_batch") == [False, True, True]
+    assert repr(report).splitlines()[1:] == [
+        "  cells: inferential; 3 of 3 dose groups keep a sample, 4 each; 9 residual df; 1",
+        "         and 10 ug/kg confounded with lane, which a random intercept of the",
+        "         design models",
+    ]
+    # A random intercept that groups the samples as the batch does models it, under
+    # another name.
+    report = check(
+        doses,
+        random="(1 | lane_id)",
+        batch="lane",
+        lane=list("aabbccddeeff"),
+        lane_id=[f"lane {label}" for label in "aabbccddeeff"],
+    )
+    assert one(report, "status") == "inferential"
+    # The vehicle alone in its lane: every dose differs from it between lanes, and
+    # the random intercept of three lanes cannot separate them.
+    report = check(
+        [0, 0, 0, 1, 1, 1, 10, 10, 10],
+        random="(1 | lane)",
+        batch="lane",
+        lane=list("VVVABABAB"),
+    )
+    assert dose_column(report, "confounded_with_batch") == [False, True, True]
+    assert one(report, "status") == "descriptive"
+    assert one(report, "reason") == (
+        "the difference of 1 and 10 ug/kg from the vehicle is also a difference "
+        "between values of lane, which the random intercept of lane cannot separate "
+        "unless the vehicle and each of these doses span two or more values of lane"
+    )
+    # Dose 10 alone in its lane beside replicated groups that share lanes: a fixed
+    # term of the lane keeps the others.
+    report = check(
+        [0, 0, 0, 0, 1, 1, 1, 1, 10, 10],
+        random="(1 | lane)",
+        batch="lane",
+        lane=list("abcdabcdee"),
+    )
+    assert one(report, "status") == "descriptive"
+    assert one(report, "reason").endswith(
+        "; add lane as a fixed term instead, which sets them aside"
+    )
     # One lane per dose: the lanes cannot be separated from the dose groups.
     report = check(DOSE9, random="(1 | lane)", batch="lane", lane=list("aaabbccdd"))
     assert one(report, "status") == "refused"
@@ -535,6 +685,60 @@ def test_a_unit_nested_one_to_one_in_the_dose_groups() -> None:
     assert "every group of the random effect (1 | animal) has a single sample" in one(
         report, "reason"
     )
+    # One litter left by the filter: Design.check's message, since pooling by
+    # litter, as the advice for a nested unit says, would merge the doses.
+    report = check(
+        [0, 0, 1, 1, 10, 10],
+        random="(1 | litter)",
+        litter=["L1", "L2"] * 3,
+        cells=[30, 5] * 3,
+    )
+    assert one(report, "status") == "refused"
+    assert "has a single group" in one(report, "reason")
+    assert "collapse_samples" not in one(report, "reason")
+
+
+def test_the_replicates_of_a_dose_are_the_units_a_random_intercept_names() -> None:
+    # Two vehicle animals, and one animal of two samples at each treated dose: the
+    # random intercept can be estimated, but no dose has a second animal.
+    animal = ["A1", "A1", "A2", "A2", "A3", "A3", "A4", "A4", "A5", "A5"]
+    doses = [0, 0, 0, 0, 1, 1, 10, 10, 30, 30]
+    report = check(doses, random="(1 | animal)", animal=animal)
+    assert dose_column(report, "n_samples_used") == [4, 2, 2, 2]
+    assert one(report, "status") == "descriptive"
+    assert one(report, "reason") == (
+        "no treated dose group that can be compared with the vehicle keeps samples of "
+        "a second animal, so no dose has a replicate"
+    )
+    # Pooled per animal, one profile per treated dose remains.
+    samples = samples_of(doses, animal=animal)
+    pooled = cube_of(samples).collapse_samples("animal")
+    report = check_dose_design(pooled, Design(pooled.samples, "~ 1"), dose=AXIS)
+    assert one(report, "status") == "descriptive"
+    # A second animal at dose 10 replicates it.
+    report = check(
+        doses, random="(1 | animal)", animal=[*animal[:7], "A6", *animal[8:]]
+    )
+    assert one(report, "status") == "inferential"
+    # The lane as a random intercept, each treated dose in a lane of its own: the two
+    # mice of a dose share their lane's deviation.
+    report = check(
+        [0, 0, 0, 0, 1, 1, 10, 10], random="(1 | lane)", lane=list("aabbccdd")
+    )
+    assert one(report, "status") == "descriptive"
+    assert "keeps samples of a second lane" in one(report, "reason")
+    # Two random intercepts: a dose needs two levels of each, and dose 1 holds two
+    # animals in one lane.
+    report = check(
+        [0, 0, 0, 0, 1, 1, 1, 1],
+        random="(1 | animal) + (1 | lane)",
+        animal=["A1", "A1", "A2", "A2", "A3", "A3", "A4", "A4"],
+        lane=list("ababcccc"),
+    )
+    assert one(report, "reason") == (
+        "no treated dose group that can be compared with the vehicle keeps samples of "
+        "a second animal and a second lane, so no dose has a replicate"
+    )
 
 
 def test_other_terms_absorb_dose_groups() -> None:
@@ -542,14 +746,32 @@ def test_other_terms_absorb_dose_groups() -> None:
     report = check([0, 0, 1, 1, 10, 10, 30, 30], "~ sex", sex=["F"] * 6 + ["M"] * 2)
     assert dose_column(report, "estimable") == [False, True, True, False]
     assert one(report, "status") == "inferential"
-    assert one(report, "n_dose_groups") == 3
-    # A covariate equal to the treated indicator: no dose apart from it.
+    assert (one(report, "n_dose_groups"), one(report, "n_dose_groups_estimable")) == (
+        4,
+        2,
+    )
+    # The printout names the dose that cannot be compared, though the cell type is
+    # inferential.
+    assert repr(report).splitlines()[1:] == [
+        "  cells: inferential; 4 of 4 dose groups keep a sample, 2 each; 4 residual df;",
+        "         30 ug/kg cannot be compared with the vehicle apart from the design's",
+        "         other terms",
+    ]
+    # A covariate equal to the treated indicator: no dose apart from it. R's qr()
+    # pivots out the last dose column, whose relation names every dose.
     report = check([0, 0, 1, 1, 10, 10], "~ x", x=[0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
     assert one(report, "status") == "refused"
     assert one(report, "reason") == (
         "no treated dose group can be compared with the vehicle apart from the "
-        "design's other terms: dose 1 ug/kg = x - dose 10 ug/kg; and dose 10 ug/kg = "
-        "x - dose 1 ug/kg"
+        "design's other terms: dose 10 ug/kg = x - dose 1 ug/kg"
+    )
+    # Six doses: one relation still, not one per dose.
+    doses = [0, 0] + [d for d in (1, 3, 10, 30, 100, 300) for _ in "ab"]
+    report = check(doses, "~ x", x=[float(d > 0) for d in doses])
+    assert one(report, "reason") == (
+        "no treated dose group can be compared with the vehicle apart from the "
+        "design's other terms: dose 300 ug/kg = x - dose 1 ug/kg - dose 3 ug/kg - "
+        "dose 10 ug/kg - dose 30 ug/kg - dose 100 ug/kg"
     )
 
 
@@ -619,12 +841,23 @@ def test_etap_minimums_by_hand() -> None:
     }
     assert found["sexes", None] == "1 (M)"
     assert found["dose_spacing", None] == (
-        "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 0.48 log10 from the lowest dose"
+        "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 0.48 log10 down from the "
+        "highest dose"
     )
     assert report.rules_status() == "deviation"
-    # 3 females at 3 mg/kg.
+    # The ETAP ladder's steps from the top: half a log10 apart, then a full log10.
+    met = etap(ETAP_LADDER).minimums
+    assert met is not None
+    assert met.filter(minimum="dose_spacing")["observed"].tolist() == [
+        "steps of 0.48, 0.52, 0.48, 0.52, 0.48, 0.52, 1.00 log10 down from the "
+        "highest dose"
+    ]
+    # 3 females at 3 mg/kg, and 3 female vehicle animals, which count as a dose
+    # group of their own.
     found = unmet(etap(ETAP_LADDER, short=(3.0, "F")))
     assert found == {("animals_per_sex_and_dose", "F"): "3 at 3 mg/kg"}
+    found = unmet(etap(ETAP_LADDER, short=(0.0, "F")))
+    assert found == {("animals_per_sex_and_dose", "F"): "3 at 0 mg/kg"}
 
 
 @pytest.mark.parametrize(
@@ -674,9 +907,14 @@ def test_etap_excludes_a_dose_level_and_goes_on() -> None:
     excluded = table.filter(minimum="passing_samples_per_dose", met=False)
     assert excluded["observed"].tolist() == ["1 at 1 mg/kg"]
     assert excluded["sex"].tolist() == ["M"]
-    assert excluded["consequence"].tolist() == ["dose level excluded"]
-    # ETAP's procedure goes on without the level: the design meets ETAP.
+    assert excluded["when_unmet"].tolist() == ["dose level excluded"]
+    # ETAP's procedure goes on without the level: the design meets ETAP, and the
+    # printout names the level it excludes.
     assert report.rules_status() == "met"
+    assert repr(report).splitlines()[-2:] == [
+        "         df; rules: met, ETAP excludes doses short of 2 passing samples (M: 1 at",
+        "         1 mg/kg)",
+    ]
     # Two passing female vehicle samples: ETAP does not model the cell type.
     cells = [30] * n
     for i in [i for i in range(n) if dose[i] == 0.0 and sex[i] == "F"][:2]:
@@ -686,7 +924,35 @@ def test_etap_excludes_a_dose_level_and_goes_on() -> None:
     assert report.rules_status() == "deviation"
     assert report.minimums is not None
     vehicle = report.minimums.filter(minimum="passing_vehicle_samples", met=False)
-    assert vehicle["consequence"].tolist() == ["dose response not modelled"]
+    assert vehicle["when_unmet"].tolist() == ["dose response not modelled"]
+
+
+def test_rules_status_is_per_cell_type() -> None:
+    # An ETAP design that meets every minimum of the design; in cell type b, two of
+    # the four female vehicle samples fail the filter.
+    dose = [level for level in [0.0, *ETAP_LADDER] for _ in range(8)]
+    sex = (["F"] * 4 + ["M"] * 4) * 9
+    samples = samples_of(dose, sex=sex)
+    cells = np.full((len(dose), 2), 30)
+    female_vehicle = [
+        i for i, (d, s) in enumerate(zip(dose, sex)) if d == 0 and s == "F"
+    ]
+    cells[female_vehicle[:2], 1] = 3
+    cube = Cube(
+        {"counts": np.full((2, len(dose), 1), 100, dtype=np.int64)},
+        samples=samples,
+        groups={"group_id": ["a", "b"]},
+        features={"feature_id": ["all"]},
+        n_cells=cells,
+    )
+    report = check_dose_design(
+        cube,
+        Design(samples, "~ 1"),
+        dose=DoseAxis("dose", unit="mg/kg", metric="administered"),
+        rules="etap_2024",
+        sex="sex",
+    )
+    assert (report.rules_status("a"), report.rules_status("b")) == ("met", "deviation")
 
 
 # Invariants.
@@ -749,6 +1015,45 @@ def test_order_units_and_labels_do_not_matter() -> None:
     assert found[2:] == expected[2:]
 
 
+def test_design_rows_in_another_order_than_the_cube() -> None:
+    # The design's rows run backwards; the tables follow the cube. By hand: sex M is
+    # the 30 ug/kg indicator, and dose 1 keeps S3 alone, S4 having 5 cells.
+    samples = samples_of(
+        [0, 0, 1, 1, 10, 10, 30, 30], sex=["F"] * 6 + ["M"] * 2, lane=list("abababab")
+    )
+    cube = cube_of(samples, [30, 30, 30, 5, 30, 30, 30, 30])
+    backwards = {key: list(values)[::-1] for key, values in samples.items()}
+    report = check_dose_design(
+        cube, Design(backwards, "~ sex"), dose=AXIS, batch="lane"
+    )
+    assert dose_column(report, "estimable") == [False, True, True, False]
+    assert dose_column(report, "n_samples_used") == [2, 1, 2, 2]
+    assert report.samples["sample_id"].tolist() == samples["sample_id"]
+    assert report.samples["used"].tolist() == [True] * 3 + [False] + [True] * 4
+    in_cube_order = check_dose_design(
+        cube, Design(samples, "~ sex"), dose=AXIS, batch="lane"
+    )
+    assert report.summary.equals(in_cube_order.summary)
+    assert report.doses.equals(in_cube_order.doses)
+    assert report.samples.equals(in_cube_order.samples)
+
+
+def test_the_samples_table_gives_each_samples_dose_in_every_cell_type() -> None:
+    samples = samples_of(DOSE9)
+    cube = Cube(
+        {"counts": np.full((2, 9, 1), 100, dtype=np.int64)},
+        samples=samples,
+        groups={"group_id": ["a", "b"]},
+        features={"feature_id": ["all"]},
+        n_cells=np.full((9, 2), 30),
+    )
+    report = check_dose_design(cube, Design(samples, "~ 1"), dose=AXIS)
+    dose_of = dict(zip(samples["sample_id"], DOSE9, strict=True))
+    ids = report.samples["sample_id"].tolist()
+    assert report.samples["dose"].tolist() == [float(dose_of[s]) for s in ids]
+    assert report.samples["group_id"].tolist() == ["a"] * 9 + ["b"] * 9
+
+
 # Arguments.
 
 
@@ -762,10 +1067,19 @@ def test_arguments_are_refused_with_a_fix() -> None:
         check_dose_design(cube, "~ 1", dose=AXIS)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="dose must be a DoseAxis, such as"):
         check_dose_design(cube, design, dose="dose")  # type: ignore[arg-type]
-    for formula in ("~ dose", "~ dose_treated + dose_s1"):
-        columns = {**samples, "dose_treated": np.zeros(9), "dose_s1": np.zeros(9)}
-        with pytest.raises(ValueError, match="adds the dose groups itself"):
-            check_dose_design(cube, Design(columns, formula), dose=AXIS)
+    # The columns of the axis, each alone, by the names the axis gives them.
+    basis = AXIS.spline_basis(samples, df=2)
+    names = ["dose", *AXIS.design_columns(samples, basis), "dose_s12"]
+    assert names == ["dose", "dose_treated", "dose_s1", "dose_s2", "dose_s12"]
+    for name in names:
+        columns = {**samples, **{n: np.arange(9.0) for n in names if n != "dose"}}
+        with pytest.raises(
+            ValueError, match=f"the design uses '{name}', but .* adds the dose groups"
+        ):
+            check_dose_design(cube, Design(columns, f"~ {name}"), dose=AXIS)
+    # Names that only start like them are other terms.
+    columns = {**samples, "dose_s1x": np.arange(9.0), "dosed": np.arange(9.0)}
+    check_dose_design(cube, Design(columns, "~ dose_s1x + dosed"), dose=AXIS)
     with pytest.raises(ValueError, match="'dose'.*adds the dose groups itself"):
         check_dose_design(cube, Design(samples, "~ 1", random="(1 | dose)"), dose=AXIS)
     with pytest.raises(ValueError, match="random slopes"):
@@ -792,7 +1106,11 @@ def test_arguments_are_refused_with_a_fix() -> None:
         check_dose_design(
             cube, Design(with_missing, "~ 1"), dose=AXIS, rules="etap_2024", sex="sex"
         )
-    with pytest.raises(ValueError, match="dose column 'conc' is not a column"):
+    with pytest.raises(
+        ValueError,
+        match=r"dose column 'conc' is not a column .*; name the column that holds the "
+        r"doses with DoseAxis\(<column>, \.\.\.\)",
+    ):
         check_dose_design(
             cube, design, dose=DoseAxis("conc", unit="uM", metric="nominal")
         )
@@ -854,14 +1172,16 @@ def test_the_report_reads_back() -> None:
     assert report.settings["batch"] is None
     assert DoseAxis(**report.settings["dose"]) == AXIS
     assert report.settings["min_cells"] == 10 and report.settings["groups"] is None
-    # The repr: one line per cell type, with its dose groups and status.
+    # The repr: one line per cell type, with its dose groups and status, and the
+    # level that ETAP excludes in b, whose dose-1 sample S4 has 4 cells.
     assert repr(report).splitlines() == [
         "DoseDesignReport: 2 cell types, 4 dose groups from 0 to 30 ug/kg, rules",
         "                  etap_2024",
         "  a: inferential; 4 of 4 dose groups keep a sample, 2 to 3 each; 5 residual df;",
         "     rules: deviation",
         "  b: inferential; 4 of 4 dose groups keep a sample, 1 to 3 each; 4 residual df;",
-        "     rules: deviation",
+        "     rules: deviation, ETAP excludes doses short of 2 passing samples (M: 1 at 1",
+        "     ug/kg)",
     ]
     # Pickled and read back.
     copy = pickle.loads(pickle.dumps(report))
@@ -875,6 +1195,15 @@ def test_the_report_reads_back() -> None:
         report.summary = Table()  # type: ignore[misc]
     with pytest.raises(AttributeError, match="immutable"):
         del report.summary
+
+
+def test_the_accessors_read_each_cell_types_own_row() -> None:
+    cube = tcdd_like_cube()
+    report = check_dose_design(
+        cube, Design(cube.samples, "~ 1"), dose=AXIS, batch="lane"
+    )
+    statuses = [report.status(g) for g in ("macrophage", "cholangiocyte", "stellate")]
+    assert statuses == ["refused", "descriptive", "inferential"]
 
 
 def test_the_repr_of_a_cell_type_that_keeps_no_sample() -> None:
@@ -944,11 +1273,16 @@ def test_the_report_refuses_fields_of_the_wrong_type() -> None:
 
 
 def test_the_chapter_example_runs() -> None:
-    section = CHAPTER.read_text().split("(dose-design-check)=")[1].split("\n(")[0]
+    text = CHAPTER.read_text()
+    # The design of the spline columns comes from the section on dose axes.
+    axes = text.split("(dose-axes)=")[1].split("\n(")[0]
+    section = text.split("(dose-design-check)=")[1].split("\n(")[0]
     blocks = re.findall(r"```python\n(.*?)```", section, re.S)
-    assert len(blocks) == 1
+    assert len(blocks) == 2
     namespace = {"cp": cytepool, "cube": tcdd_like_cube()}
-    exec(blocks[0], namespace)  # noqa: S102
+    exec(re.findall(r"```python\n(.*?)```", axes, re.S)[0], namespace)  # noqa: S102
+    for block in blocks:
+        exec(block, namespace)  # noqa: S102
     report = namespace["report"]
     assert dict(
         zip(report.summary["group_id"].tolist(), report.summary["status"].tolist())
@@ -961,20 +1295,35 @@ def test_the_chapter_example_runs() -> None:
     flagged = namespace["flagged"]
     assert flagged["dose"].tolist() == [30.0]
     missed = namespace["missed"]
-    assert set(missed["minimum"].tolist()) == {
+    assert [
+        (group, minimum)
+        for group, minimum in zip(
+            missed["group_id"].tolist(), missed["minimum"].tolist(), strict=True
+        )
+        if group is not None
+    ] == [
+        ("stellate", "passing_samples_per_dose"),
+        ("cholangiocyte", "passing_samples_per_dose"),
+        ("cholangiocyte", "passing_vehicle_samples"),
+        ("macrophage", "passing_vehicle_samples"),
+    ]
+    assert set(missed.filter(group_id=None)["minimum"].tolist()) == {
         "dose_spacing",
         "sexes",
         "animals_per_sex_and_dose",
-        "passing_samples_per_dose",
-        "passing_vehicle_samples",
     }
-    # The values the chapter states.
-    text = CHAPTER.read_text()
+    # The fit runs in the cell types that support tests.
+    assert namespace["inferential"] == ["hepatocyte", "stellate"]
+    result = namespace["result"]
+    assert result.summary["group_id"].tolist() == ["hepatocyte", "stellate"]
+    # The printout and the values the chapter states.
+    assert repr(report) in section
     assert "keeps one mouse at 30 ug/kg" in text
     assert report.summary.filter(group_id="hepatocyte")["df_residual"].tolist() == [
         15.0
     ]
     assert "15 residual degrees of freedom" in text
+    assert "keep 1 and 0 of the 3 passing vehicle samples" in text
 
 
 def tcdd_like_cube() -> Cube:

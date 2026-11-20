@@ -35,7 +35,7 @@ import numpy.typing as npt
 
 from ._analysis_records import (
     cube_record,
-    matched_samples,
+    cube_samples,
     mixed_design_record,
     only_key,
     software_versions,
@@ -407,16 +407,7 @@ def variance_partitioning(
             "prior_weights at None"
         )
     check_sample_groups(settings, design.samples)
-    cube_rows, order = matched_samples(
-        cube,
-        design,
-        no_ids="the design's sample table has no 'sample_id' column, so its rows cannot "
-        "be matched to the cube's samples; build the Design from cube.samples, or from "
-        "a table whose 'sample_id' column holds cube sample ids",
-        text_ids="the cube's does",
-        data="the cube",
-        data_ids="the cube's sample ids",
-    )
+    cube_rows, order = cube_samples(cube, design)
     positions = group_positions(cube, groups)
     inputs = GroupInputs(_METHOD, cube, order, cube_rows, None, settings)
     fits = [_fit_group(inputs, design, terms, g) for g in positions]
