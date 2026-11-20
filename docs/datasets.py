@@ -274,8 +274,8 @@ def simulated_dose_series(downloads: Path, output: Path) -> None:
     """A dose series drawn by ``simulate_dose_series`` from known curves, 3 replicates
     of the vehicle and eight doses, four cell types of 800, 150, 40 and 8 cells per
     profile and 2,000 genes, of which 20%, 15%, 5% and 10% respond. Writes the cube
-    and the truth as the arguments of ``DoseTruth`` in JSON, which
-    ``DoseTruth(**json.loads(text))`` rebuilds."""
+    and the truth as the arguments of ``DoseTruth`` in JSON, to 6 significant
+    digits, which ``DoseTruth(**json.loads(text))`` rebuilds."""
     cube, truth = simulate_dose_series(
         list(DOSE_SERIES_DOSES),
         replicates=3,
@@ -291,11 +291,14 @@ def simulated_dose_series(downloads: Path, output: Path) -> None:
         rng=20261226,
     )
     write_cube(cube, output / "simulated_dose_series.cube.zarr", overwrite=True)
+    # The floats are written to 6 significant digits: numpy computes powers,
+    # exponentials and logarithms with different last bits on CPUs with and without
+    # AVX-512, so at full precision the file's hash would depend on the CPU.
     arguments = {
         "doses": list(truth.doses),
         "tables": {
             cell_type: {
-                name: np.asarray(values).tolist()
+                name: _six_significant_digits(np.asarray(values).tolist())
                 for name, values in truth.table(cell_type).to_dict().items()
             }
             for cell_type in truth.cell_types
@@ -306,6 +309,13 @@ def simulated_dose_series(downloads: Path, output: Path) -> None:
     # Python's json writes the parameters a shape does not use as NaN, and reads them
     # back.
     (output / "simulated_dose_series_truth.json").write_text(json.dumps(arguments))
+
+
+def _six_significant_digits(values: list[Any]) -> list[Any]:
+    """Floats rounded to 6 significant digits, NaN kept; other values as they are."""
+    return [
+        float(f"{value:.6g}") if isinstance(value, float) else value for value in values
+    ]
 
 
 # Six case-control cohorts of one disease: name, cases, controls, cells per sample
@@ -728,7 +738,7 @@ DATASETS = {
                 "simulated_dose_series.cube.zarr": "sha256:"
                 "2442bbd7ef86c5d604d78cd21be10f334d2b4349fec4b811778c3c51e0d2eace",
                 "simulated_dose_series_truth.json": "sha256:"
-                "f3d8dc29c70b18c8c96b3ca44028574dbccf94a2d90b496d228be93258715822",
+                "4361a82b8322667bb8cdab21bd8322c0d7a2455300686e5daf353a3052b06935",
             },
             build=simulated_dose_series,
         ),
