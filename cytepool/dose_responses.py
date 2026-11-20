@@ -470,8 +470,8 @@ class DoseResponseResult:
 
     @property
     def gate(self) -> dict[str, Any]:
-        """The gate, as a new dict: ``test``, ``fdr`` and ``fold_change``, as
-        ``dose_response(..., gate=result.gate)`` takes it back."""
+        """The gate's ``test``, ``fdr`` and ``fold_change``, as a new dict that
+        ``dose_response(..., gate=result.gate)`` takes back."""
         gate: dict[str, Any] = json.loads(self._record)["settings"]["gate"]
         return gate
 

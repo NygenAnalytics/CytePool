@@ -30,6 +30,10 @@ References:
     toxicogenomic potency estimates: a systematic evaluation of transcriptomic points
     of departure. Toxicological Sciences 209, kfag115. doi:10.1093/toxsci/kfag115
 
+    Bourgon R, Gentleman R, Huber W (2010). Independent filtering increases detection
+    power for high-throughput experiments. Proceedings of the National Academy of
+    Sciences 107, 9546-9551. doi:10.1073/pnas.0914005107
+
     Phipson B, Smyth GK (2010). Permutation p-values should never be zero: calculating
     exact p-values when permutations are randomly drawn. Statistical Applications in
     Genetics and Molecular Biology 9, article 39. doi:10.2202/1544-6115.1585
@@ -190,14 +194,15 @@ class PermutationCheck:
 
     @property
     def summary(self) -> Table:
-        """Each cell type: whether it was checked, its assignments and runs, the genes
-        the gate passes, how often its runs pass genes, and the p-value."""
+        """One row per cell type, with whether it was checked, its assignments and
+        runs, the genes the gate passes, how often its runs pass genes, and the
+        p-value."""
         return self._summary
 
     @property
     def settings(self) -> dict[str, Any]:
-        """The settings, as a new dict (also in the provenance): ``n_permutations``,
-        ``groups`` as given, and ``seed``, the seed of the runs, given or drawn."""
+        """The settings ``n_permutations``, ``groups`` as given, and ``seed``, the
+        seed of the runs, given or drawn, as a new dict, also in the provenance."""
         settings: dict[str, Any] = json.loads(self._record)["settings"]
         return settings
 
@@ -333,9 +338,9 @@ def permutation_check(
     ``n_permutations`` other assignments runs each of them, which makes the p-value
     exact; otherwise ``n_permutations`` assignments are drawn at random. Each run
     keeps the samples of every dose group and the doses of the design, and so the
-    spline's knots and the genes of the dose-blind expression filter (Bourgon et al.
-    2010); ``batch``, which a rerun could find confounded by chance and which no fit
-    models, is left out. Vehicle-only data placed in mock dose groups by the design,
+    spline's knots and the genes of the dose-blind expression filter (Bourgon,
+    Gentleman and Huber 2010); ``batch``, which a rerun could find confounded by
+    chance and which no fit models, is left out. Vehicle-only data placed in mock dose groups by the design,
     the check of Lee et al. (2024), run through :func:`~cytepool.dose_response` and
     this check alike
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-permutation-check).
@@ -343,8 +348,9 @@ def permutation_check(
     Before the runs, each cell type runs once with its true doses through the same
     path and must give the result's gate p-values, bit for bit, so that the runs are
     the analysis the result records. Each run takes the time of the cell type's
-    analysis and of the gate's test: about 0.6 s per 20,000 genes for the spline
-    test on two threads, and more for a multiple contrast test or under dream.
+    analysis and of the gate's test: about 1 s for 20,000 genes and 24 samples with
+    the spline test on two threads, twice that with a fold change, and more for a
+    multiple contrast test or under dream.
 
     Args:
         result: The result of :func:`~cytepool.dose_response` to check, which keeps

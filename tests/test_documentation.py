@@ -728,6 +728,8 @@ NO_PUBLISHED_WORK = {
     "cytepool._masked_arrays": "refuses numpy masked arrays at the public boundary",
     "cytepool._messages": "formats lists of ids and names in error messages",
     "cytepool._options": "checks flags and choices among names",
+    "cytepool._reruns": "reads back the options that CytePool's own records of an "
+    "analysis hold",
     "cytepool._version": "holds the version that the build writes",
     "cytepool.cube": "the package's namespace; its modules cite their sources",
     "cytepool.cube._axes": "reads the axis tables, cell numbers and cell labels of "
