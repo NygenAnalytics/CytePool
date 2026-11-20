@@ -850,12 +850,27 @@ def test_optimal_contrasts_by_hand() -> None:
     fall = optimal_contrasts({"fall": [0.0, -1.0, -2.0]}, covariance)
     np.testing.assert_allclose(fall.matrix, -contrasts.matrix, rtol=1e-15)
     named = optimal_contrasts(
-        np.array([[0.0, 1.0, 2.0], [0.0, 1.0, 0.0]]),
+        {"rise": [0.0, 1.0, 2.0], "peak": [0.0, 1.0, 0.0]},
         covariance,
         groups=["vehicle", "low", "high"],
     )
-    assert named.names == ("shape1", "shape2")
+    assert named.names == ("rise", "peak")
     assert named.columns == ("vehicle", "low", "high")
+
+
+def test_optimal_contrasts_do_not_depend_on_the_scale() -> None:
+    """Shapes times 1e-200 or 1e200, whose squares underflow or overflow a double,
+    and a covariance times 1e-300 give the contrasts of the shapes as they are."""
+    covariance = np.diag(1.0 / np.array([3.0, 2.0, 3.0, 4.0]))
+    shapes = {"umbrella": np.array([0.0, 1.0, 3.0, 2.0]), "rise": [0.0, 1.0, 2.0, 3.0]}
+    expected = optimal_contrasts(shapes, covariance).matrix
+    for factor in (1e-200, 1e200):
+        scaled = {"umbrella": shapes["umbrella"] * factor, "rise": shapes["rise"]}
+        with np.errstate(over="raise", under="ignore", divide="raise", invalid="raise"):
+            found = optimal_contrasts(scaled, covariance)
+            tiny = optimal_contrasts(shapes, covariance * 1e-300)
+        np.testing.assert_allclose(found.matrix, expected, rtol=1e-14, atol=1e-15)
+        np.testing.assert_allclose(tiny.matrix, expected, rtol=1e-14, atol=1e-15)
 
 
 def test_optimal_contrasts_maximise_the_non_centrality() -> None:
@@ -919,10 +934,11 @@ def test_optimal_contrasts_maximise_the_non_centrality() -> None:
         ({"": [0.0, 1.0, 2.0]}, np.eye(3), {}, ValueError, "empty"),
         ({1: [0.0, 1.0, 2.0]}, np.eye(3), {}, TypeError, "text"),
         ({}, np.eye(3), {}, ValueError, "no shape"),
-        (np.zeros(3), np.eye(3), {}, ValueError, "n_shapes, n_groups"),
+        (np.zeros((2, 3)), np.eye(3), {}, TypeError, r"mapping.*dict\(zip\("),
         ({"a": ["0", "1", "2"]}, np.eye(3), {}, TypeError, "numbers"),
         ({"a": [[0.0, 1.0], [1.0, 2.0]]}, np.eye(2), {}, ValueError, "1-D means"),
-        (np.zeros((0, 3)), np.eye(3), {}, ValueError, "no shape"),
+        ({"a": [False, True, True]}, np.eye(3), {}, TypeError, "real numbers"),
+        ({"a": np.array([0, 1, 2], dtype=object)}, np.eye(3), {}, TypeError, "real"),
         ({"a": [0.0, 1.0, 2.0]}, np.full((3, 3), np.nan), {}, ValueError, "finite"),
     ],
 )

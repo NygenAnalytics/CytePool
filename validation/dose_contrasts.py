@@ -29,8 +29,9 @@ References, each run as a separate program on inputs it sees as numbers only:
   ``adaptive.span = TRUE`` or ``cpm(log = TRUE, prior.count = 3)`` with ``eBayes(trend
   = TRUE)``, ``lmFit``, ``contrasts.fit`` to the treated doses, ``eBayes``), with each
   gene's covariance of the doses' estimates from its own ``lm.wfit`` (voom's exact
-  default), from limma's ``contrasts.fit`` (``contrast_standard_errors="limma"``), or
-  shared (limma-trend).
+  default) or shared (limma-trend). ``dose_response`` refuses the three tests with
+  limma's approximate standard errors (``contrast_standard_errors="limma"``), which
+  give no covariance of the doses' estimates.
 - variancePartition 1.36.2 (``DREAM_RSCRIPT``): ``voomWithDreamWeights`` and ``dream``
   for the donors series; each gene's covariance from ``cov.coefficients.list`` over
   sigma^2 times ``s2.post``.
@@ -131,8 +132,7 @@ args <- commandArgs(trailingOnly = TRUE)
 input <- read_json(args[[1]], simplifyVector = TRUE)
 out <- list(versions = as.list(c(R = as.character(getRversion()), sapply(
   c("limma", "edgeR"), function(p) as.character(packageVersion(p))))))
-# Each job: a series, an analysis ("voom", "voom_limma" with limma's standard errors,
-# or "trend") and its cell types. R keeps each cell type's samples of min_cells cells
+# Each job: a series, an analysis ("voom" or "trend") and its cell types. R keeps each cell type's samples of min_cells cells
 # or more and some counts, the treated doses that keep a sample and that limma's
 # nonEstimable does not name with their indicator placed last, and fits the design's
 # terms with an indicator of each such dose.
@@ -162,7 +162,7 @@ for (name in names(input$jobs)) {
     L <- rbind(matrix(0, ncol(others), k), diag(k))
     dge <- DGEList(yy); keep <- filterByExpr(dge, design = X)
     dge <- dge[keep, , keep.lib.sizes = FALSE]; dge <- calcNormFactors(dge)
-    voomed <- job$analysis %in% c("voom", "voom_limma")
+    voomed <- job$analysis == "voom"
     if (voomed) {
       v <- voom(dge, X, adaptive.span = TRUE); E <- v$E; W <- v$weights; fit <- lmFit(v, X)
     } else {
@@ -172,18 +172,11 @@ for (name in names(input$jobs)) {
     s2 <- eb$s2.post; df_total <- eb$df.total
     theta <- unname(eb$coefficients)
     # The unscaled covariance of each gene's theta.
-    if (job$analysis == "voom") {
+    if (voomed) {
       V <- lapply(seq_len(nrow(E)), function(g) {
         f <- lm.wfit(X, E[g, ], W[g, ])
         stopifnot(identical(f$qr$pivot, seq_len(ncol(X))))
         chol2inv(qr.R(f$qr))[columns, columns, drop = FALSE]
-      })
-    } else if (job$analysis == "voom_limma") {
-      # limma's contrasts.fit: each gene's unscaled standard errors with the
-      # correlation of the design without weights.
-      R <- cov2cor(eb$cov.coefficients)
-      V <- lapply(seq_len(nrow(E)), function(g) {
-        su <- eb$stdev.unscaled[g, ]; R * outer(su, su)
       })
     } else {
       V <- lapply(seq_len(nrow(E)), function(g) eb$cov.coefficients)
@@ -734,7 +727,7 @@ class Series:
     name: str
     cube: Cube
     axis: DoseAxis
-    analyses: tuple[str, ...]  # "voom", "voom_limma", "trend", "dream"
+    analyses: tuple[str, ...]  # "voom", "trend", "dream"
 
     @property
     def design(self) -> Design:
@@ -754,7 +747,7 @@ def series() -> list[Series]:
         "fixture",
         [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
         LOG_AXIS,
-        ("voom", "voom_limma", "trend"),
+        ("voom", "trend"),
         seed=SEED,
         replicates=3,
         cell_types=["full", "depleted"],
@@ -766,7 +759,7 @@ def series() -> list[Series]:
         "ladder",
         HALF_LOG,
         LOG_AXIS,
-        ("voom", "voom_limma", "trend"),
+        ("voom", "trend"),
         seed=SEED + 1,
         replicates=3,
         cell_types=["abundant", "depleted"],
@@ -1005,14 +998,11 @@ class Job:
 
     def run(self, seed: int) -> Any:
         options: dict[str, Any] = {}
-        if self.analysis == "voom_limma":
-            options["contrast_standard_errors"] = "limma"
         if self.analysis == "dream":
             # voomWithDreamWeights' span, which dream_voom takes from voom by default.
             options["span"] = 0.5
         analysis = {
             "voom": limma_voom,
-            "voom_limma": limma_voom,
             "trend": limma_trend,
             "dream": dream_voom,
         }[self.analysis]
@@ -1275,7 +1265,6 @@ def compare_contrasts(rows: Rows, cases: list, r: list) -> None:
     for case, reference in zip(cases, r, strict=True):
         shapes = CandidateShapes(**case["shapes"])
         means = dict(zip(shapes.names, shapes.means(case["doses"]), strict=True))
-        k = len(case["doses"])
         ours = {
             "w": optimal_contrasts(
                 means, np.diag(1.0 / np.asarray(case["n"], float))
@@ -1286,7 +1275,6 @@ def compare_contrasts(rows: Rows, cases: list, r: list) -> None:
         for key, matrix in ours.items():
             theirs = numbers(reference[key]).reshape(matrix.shape[0], -1)
             worst[key] = max(worst[key], statistic(matrix, theirs))
-        del k
     where = f"{len(cases)} designs of 3 to 9 groups"
     rows.bound(
         f"optimal_contrasts, independent groups of sizes n, {where}",
@@ -1556,7 +1544,6 @@ def compare_series(
     )
     for analysis, label, tolerance in (
         ("voom", "limma-voom, exact standard errors", EXACT),
-        ("voom_limma", "limma-voom, contrast_standard_errors='limma'", EXACT),
         ("trend", "limma-trend", EXACT),
         ("dream", "dream_voom", CLOSE),
     ):

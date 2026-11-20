@@ -102,7 +102,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Lowest effective dose.** The lowest dose whose difference from the vehicle is called, in a gene that a screen calls, with no threshold on the size of the change: toxicology's lowest observed effect level (LOEL); the clinical minimum effective dose usually adds a clinically relevant size. [From which dose a gene responds](../statistics/dose_response.md#lowest-effective-dose)
 
-**MCP step.** The test step of MCP-Mod: each candidate shape becomes its optimal contrast of the dose groups, and the largest of their t-statistics is referred to the multivariate t distribution, which says whether the response follows any of the shapes. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
+**MCP step.** The multiple comparison procedure of MCP-Mod (multiple comparison procedure and modelling), its test step: each candidate shape becomes its optimal contrast of the dose groups, and the largest of their t-statistics is referred to the multivariate t distribution, which says whether the response follows any of the shapes. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
 
 **Moderated F-statistic.** A test that several coefficients or contrasts of a gene are all zero at once, from their moderated t-statistics and the correlation of their estimates, on the number of independent contrasts and the gene's residual plus prior degrees of freedom. With dose groups alone in the design, it is a one-way ANOVA with moderated variances. [Moderated F-statistics](../statistics/empirical_bayes.md#moderated-f-statistics)
 

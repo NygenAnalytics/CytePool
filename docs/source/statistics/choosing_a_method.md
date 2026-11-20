@@ -89,11 +89,11 @@ See [Dose response](dose_response.md) and [Dose response per cell type](../guide
 
 ## Does a response follow one of a few expected shapes?
 
-Use {api}`dose_response` with `tests="mcp"` when a few shapes of response are expected: the MCP step of MCP-Mod turns each candidate shape into the contrast of the dose groups that best detects it, and tests the largest of their t-statistics against the multivariate t distribution [@bretz2005; @pinheiro2014]. {api}`CandidateShapes.spread` places Emax, sigmoid Emax, exponential and beta shapes over the doses by default, and {api}`CandidateShapes` takes shapes of your own. Switch to:
+Use {api}`dose_response` with `tests="mcp"` when a few shapes of response are expected: the MCP step, the multiple comparison procedure of MCP-Mod (multiple comparison procedure and modelling), turns each candidate shape into the contrast of the dose groups that best detects it, and tests the largest of their t-statistics against the multivariate t distribution [@bretz2005; @pinheiro2014]. {api}`CandidateShapes.spread` places Emax, sigmoid Emax, exponential and beta shapes over the doses by default, and {api}`CandidateShapes` takes shapes of your own. Switch to:
 
 - `"spline"`, read first, for a response of any shape;
 - `"williams"` for responses that rise or fall in dose order, the Williams-type test [@bretz2006];
-- `"dunnett"` to say which doses differ from the vehicle, with one error rate for the gene's doses [@dunnett1955].
+- `"dunnett"` to ask whether any dose differs from the vehicle and which differs most, with one error rate for the gene's doses [@dunnett1955]; {api}`multiple_contrast_test` on the cell type's fit gives each dose's own adjusted p-value, and {api}`DoseResponseResult.lowest_effective_doses` calls the doses across genes.
 
 See [Trends, doses against the vehicle and candidate shapes](dose_response.md#dose-response-contrasts).
 

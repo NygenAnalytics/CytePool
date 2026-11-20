@@ -16,7 +16,8 @@ control (Dunnett 1955), and :func:`williams_contrasts` the Williams-type contras
 the control against the size-weighted mean of the highest one, two or more doses, for
 means that change in dose order (Bretz 2006), as multcomp's ``contrMat``;
 :func:`optimal_contrasts` builds the contrasts that best detect each of several
-candidate shapes, the MCP step of MCP-Mod (Bretz, Pinheiro and Branson 2005;
+candidate shapes, for the MCP step, the multiple comparison procedure, of MCP-Mod
+(multiple comparison procedure and modelling; Bretz, Pinheiro and Branson 2005;
 Pinheiro et al. 2014), as DoseFinding's ``optContr``.
 https://docs.nygen.io/CytePool/statistics/multiple-testing#correlated-tests explains
 the tests.
@@ -89,6 +90,7 @@ import numpy.typing as npt
 from cytepool._columns import text_column
 from cytepool._jit import thread_limit
 from cytepool._masked_arrays import (
+    Missing,
     read_only,
     real_array,
     reject_masked,
@@ -840,13 +842,14 @@ def _monotone(
 
 
 def optimal_contrasts(
-    shapes: Mapping[str, npt.ArrayLike] | npt.ArrayLike,
+    shapes: Mapping[str, npt.ArrayLike],
     covariance: npt.ArrayLike,
     *,
     groups: Sequence[str] | None = None,
 ) -> Contrasts:
     """The contrasts of group means that best detect each of several shapes: the
-    optimal contrasts of the MCP step of MCP-Mod.
+    optimal contrasts of the MCP step, the multiple comparison procedure, of MCP-Mod
+    (multiple comparison procedure and modelling).
 
     For a shape mu, the means it expects in k groups, and the covariance S of the
     groups' estimates up to a factor, the contrast c that maximises the non-centrality
@@ -863,9 +866,9 @@ def optimal_contrasts(
     explains them.
 
     Args:
-        shapes: The shapes, as a mapping of name to the k means each expects, or a
-            ``(n_shapes, k)`` array, whose shapes are then named ``"shape1"``,
-            ``"shape2"``, ...; such as :meth:`~cytepool.CandidateShapes.means` gives.
+        shapes: The shapes, a mapping of name to the k means each expects; for
+            :class:`~cytepool.CandidateShapes`, ``dict(zip(shapes.names,
+            shapes.means(doses)))``.
         covariance: ``(k, k)`` the covariance of the groups' estimates, up to a
             factor: symmetric and positive definite, such as ``np.diag(1 / n)``.
         groups: The k group names, which the contrasts weigh; ``"1"`` to ``"k"`` by
@@ -881,20 +884,26 @@ def optimal_contrasts(
             shape is constant (its values within 1e-8 of their largest magnitude of
             each other), which no contrast detects, the covariance is not symmetric
             or not positive definite, or a name is empty or repeated.
-        TypeError: If an argument has the wrong type or is a numpy masked array.
+        TypeError: If ``shapes`` is not a mapping, an argument has the wrong type, or
+            an argument is a numpy masked array.
 
     Example:
+        Groups of 2, 1 and 1 samples and a shape rising by 1 per group: the
+        size-weighted mean is 0.75, so the contrast is proportional to
+        2 (0 - 0.75), 1 (1 - 0.75) and 1 (2 - 0.75), (-1.5, 0.25, 1.25), here of unit
+        length.
+
         >>> import numpy as np
         >>> shapes = {"linear": [0.0, 1.0, 2.0]}
         >>> contrasts = optimal_contrasts(shapes, np.diag(1 / np.array([2.0, 1, 1])))
-        >>> (contrasts.matrix[:, 0] / contrasts.matrix[0, 0] * -1.5).round(6).tolist()
-        [-1.5, 0.25, 1.25]
+        >>> contrasts.matrix[:, 0].round(3).tolist()
+        [-0.762, 0.127, 0.635]
     """
     names, means = _shape_means(shapes)
     k = means.shape[1]
     if k < 2:
         raise ValueError(f"shapes must give the means of two groups or more, got {k}")
-    weights = _covariance(covariance, k)
+    s = _covariance(covariance, k)
     labels = (
         tuple(str(j + 1) for j in range(k))
         if groups is None
@@ -904,13 +913,19 @@ def optimal_contrasts(
         raise ValueError(
             f"groups must name the {k} groups of the shapes, got {len(labels)}"
         )
-    for name, values in zip(names, means, strict=True):
-        largest = float(np.max(np.abs(values)))
-        if largest < np.finfo(np.float64).tiny or np.ptp(values) <= _CONSTANT * largest:
+    largest = np.max(np.abs(means), axis=1)
+    for name, values, top in zip(names, means, largest, strict=True):
+        if top < np.finfo(np.float64).tiny or np.ptp(values) <= _CONSTANT * top:
             raise ValueError(
                 f"shape {name!r} is constant over the groups, so no contrast detects it"
             )
-    solved = np.linalg.solve(weights, np.column_stack([np.ones(k), means.T]))
+    # The contrasts depend on neither the shapes' scale nor S's: both are scaled to a
+    # largest value of 1 first, so that neither the solve nor the norms underflow or
+    # overflow.
+    solved = np.linalg.solve(
+        s / np.max(np.diag(s)),
+        np.column_stack([np.ones(k), (means / largest[:, None]).T]),
+    )
     ones, inverse_means = solved[:, 0], solved[:, 1:]
     centres = inverse_means.sum(axis=0) / ones.sum()
     matrix = inverse_means - np.outer(ones, centres)
@@ -921,50 +936,50 @@ def optimal_contrasts(
 def _shape_means(shapes: Any) -> tuple[tuple[str, ...], FloatArray]:
     """The shapes' names and their means, ``(n_shapes, k)``."""
     reject_masked(shapes, "shapes")
-    if isinstance(shapes, Mapping):
-        names = list(shapes.keys())
-        if not names:
-            raise ValueError("shapes holds no shape")
-        for name in names:
-            if not isinstance(name, str):
-                raise TypeError(
-                    f"shapes must name each shape with text, got {type(name).__name__} "
-                    f"{name!r}"
-                )
-            if not name:
-                raise ValueError("shapes has an empty shape name")
-        rows = [_real_array(shapes[name], f"shapes[{name!r}]") for name in names]
-        for name, row in zip(names, rows, strict=True):
-            if row.ndim != 1:
-                raise ValueError(
-                    f"shapes[{name!r}] must be the 1-D means of the groups, got shape "
-                    f"{row.shape}"
-                )
-        sizes = {row.size for row in rows}
-        if len(sizes) > 1:
-            raise ValueError(
-                "the shapes must each give one mean per group, got lengths "
-                f"{[row.size for row in rows]}"
-            )
-        means = np.array(rows, dtype=np.float64).reshape(len(rows), -1)
-    else:
-        means = _real_array(shapes, "shapes")
-        if means.ndim != 2:
-            raise ValueError(
-                "shapes must be a mapping of name to means or a (n_shapes, n_groups) "
-                f"array, got shape {means.shape}"
-            )
-        names = [f"shape{j + 1}" for j in range(means.shape[0])]
+    if not isinstance(shapes, Mapping):
+        raise TypeError(
+            "shapes must be a mapping of shape name to the means it expects in each "
+            "group, such as dict(zip(shapes.names, shapes.means(doses))) for "
+            f"CandidateShapes, got {type(shapes).__name__}"
+        )
+    names = list(shapes.keys())
     if not names:
         raise ValueError("shapes holds no shape")
+    for name in names:
+        if not isinstance(name, str):
+            raise TypeError(
+                f"shapes must name each shape with text, got {type(name).__name__} "
+                f"{name!r}"
+            )
+        if not name:
+            raise ValueError("shapes has an empty shape name")
+    rows = [_real_array(shapes[name], f"shapes[{name!r}]") for name in names]
+    for name, row in zip(names, rows, strict=True):
+        if row.ndim != 1:
+            raise ValueError(
+                f"shapes[{name!r}] must be the 1-D means of the groups, got shape "
+                f"{row.shape}"
+            )
+    sizes = {row.size for row in rows}
+    if len(sizes) > 1:
+        raise ValueError(
+            "the shapes must each give one mean per group, got lengths "
+            f"{[row.size for row in rows]}"
+        )
+    means = np.array(rows, dtype=np.float64).reshape(len(rows), -1)
     if not np.isfinite(means).all():
         raise ValueError("the shapes' means must be finite")
     return tuple(names), means
 
 
-def _real_array(values: Any, name: str) -> FloatArray:
-    reject_masked(values, name)
-    array: FloatArray = real_array(values, name)
+def _real_array(values: Any, name: str, missing: Missing = None) -> FloatArray:
+    """An array of real numbers, neither booleans nor objects, as float64."""
+    array: FloatArray = real_array(
+        unmasked_array(values, name, missing=missing),
+        name,
+        boolean=False,
+        objects=False,
+    )
     return array
 
 
@@ -1008,13 +1023,15 @@ def stage_wise_adjusted_p_values(
     (Holm 1979; Shaffer 1986), or c = 1 for ``"none"``, for p-values already adjusted
     within each feature. Shaffer's first multiplier is m - 1, not m, since the screen
     has rejected the hypothesis that every hypothesis of the feature holds; with one
-    hypothesis it is 1. A feature or hypothesis is called when its adjusted p-value is
-    at most ``alpha``, as stageR counts. The calls control the overall false discovery
+    hypothesis it is 1, Bonferroni, where stageR's 0 would call the hypothesis on the
+    screen alone. A feature or hypothesis is called when its adjusted p-value is at
+    most ``alpha``, as stageR counts. The calls control the overall false discovery
     rate (OFDR) at ``alpha``: the expected share of called features with at least one
-    false call, the screen's or a hypothesis's, under the conditions in which
-    Benjamini-Hochberg controls the false discovery rate (Heller et al. 2009). The
-    share of false calls among all feature-hypothesis calls is not controlled. The
-    values hold only at the ``alpha`` given.
+    false call, the screen's or a hypothesis's. Heller et al. (2009) proved it under
+    independence between features, and Van den Berge et al. (2017) expect it wherever
+    Benjamini-Hochberg controls the false discovery rate. The share of false calls
+    among all feature-hypothesis calls is not controlled. The values hold only at the
+    ``alpha`` given.
     https://docs.nygen.io/CytePool/statistics/multiple-testing#stage-wise-testing
     explains the procedure.
 
@@ -1024,7 +1041,11 @@ def stage_wise_adjusted_p_values(
             the screen's family.
         p_values: ``(n_features, n_hypotheses)`` p-values of the hypotheses, each
             unadjusted (``"holm"``) or adjusted within its feature (``"none"``), in
-            [0, 1]; NaN leaves a hypothesis out of its feature's family.
+            [0, 1]; NaN leaves a hypothesis out of its feature's family. Shaffer's
+            first step needs the screen to have tested the feature's other
+            hypotheses only: when it also tested those missing here, adjust each
+            feature by Holm's procedure first, ``adjust_p_values(p_values, "holm",
+            axis=1)``, and pass the result with ``method="none"``.
         alpha: The level of the calls, between 0 and 1.
         method: ``"holm"`` (default) or ``"none"``.
 
@@ -1087,12 +1108,7 @@ def stage_wise_adjusted_p_values(
 
 
 def _p_values(values: Any, name: str) -> FloatArray:
-    array = unmasked_array(values, name, missing="NaN")
-    if array.dtype.kind not in "iuf":
-        raise TypeError(
-            f"{name} must hold numbers, got an array of dtype {array.dtype}"
-        )
-    array = np.asarray(array, dtype=np.float64)
+    array = _real_array(values, name, missing="NaN")
     outside = ~np.isnan(array) & ~((array >= 0.0) & (array <= 1.0))
     if outside.any():
         raise ValueError(

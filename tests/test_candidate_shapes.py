@@ -228,6 +228,21 @@ def test_a_steep_exponential_neither_overflows_nor_warns() -> None:
     assert np.all(means[1:5] < 1e-300)
 
 
+def test_a_steep_sigmoid_far_from_its_ed50_neither_overflows_nor_warns() -> None:
+    """(ED50 / d)^h overflows a double far above the doses with a steep slope. At an
+    ED50 of 100 and a slope of 500 the shape is 10^-500 of its top value at dose 1, 0
+    in double precision; at an ED50 of 1e4 and a slope of 100, its value at 0.1 over
+    its value at 1 is (1 + 1e400) / (1 + 1e500), 1e-100 to double precision."""
+    with np.errstate(over="raise", invalid="raise", divide="raise"):
+        steep = CandidateShapes(sigmoid_emax=[(100.0, 500.0)]).means([0.0, 1.0, 10.0])
+        far = CandidateShapes(sigmoid_emax=[(1e4, 100.0)]).means([0.0, 0.1, 1.0])
+        below = CandidateShapes(sigmoid_emax=[(1e-6, 60.0)]).means([0.0, 0.5, 1.0])
+    assert steep[0].tolist() == [0.0, 0.0, 1.0]
+    assert far[0, 0] == 0.0 and far[0, 2] == 1.0
+    assert far[0, 1] == pytest.approx(1e-100, rel=1e-12)
+    assert below[0].tolist() == [0.0, 1.0, 1.0]
+
+
 def test_beta_is_scaled_at_its_peak_as_dosefinding_scales_it() -> None:
     """A beta shape peaking at 90.9, above the top dose of 10: scaled to 1 at its peak,
     so its largest mean at the doses is 0.138, as DoseFinding printed (build probe)."""
@@ -300,7 +315,7 @@ def test_names_and_the_record() -> None:
         (
             {"emax": [0.0]},
             ValueError,
-            "ED50 of emax shape 1 must be finite and above 0",
+            "ED50 of emax shape 1 must be positive and finite",
         ),
         ({"emax": [1.0, -2.0]}, ValueError, "emax shape 2"),
         ({"exponential": [np.inf]}, ValueError, "delta of exponential shape 1"),
@@ -331,6 +346,8 @@ def test_means_refuse_doses_they_cannot_place() -> None:
         shapes.means([0.0, np.nan, 2.0])
     with pytest.raises(TypeError, match="real numbers"):
         shapes.means(["0", "1"])
+    with pytest.raises(ValueError, match="1-D"):
+        shapes.means(10.0)
 
 
 def test_spread_refuses_what_it_cannot_place() -> None:

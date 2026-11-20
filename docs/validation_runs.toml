@@ -17,7 +17,7 @@
 "differential_expression_options.py" = "2ad146c9459a"
 "distributions.py" = "7e769bb15f9f"
 "dose_axes.py" = "ac212df1da00"
-"dose_contrasts.py" = "2353c325c24f"
+"dose_contrasts.py" = "a6edd5a900ff"
 "dose_design.py" = "968197121549"
 "dose_response_calibration.py" = "29c39ea67b08"
 "dose_response_tests.py" = "f92a9775fdc2"

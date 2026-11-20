@@ -32,8 +32,9 @@ question they answer, the default first:
 - Dose response: :class:`DoseAxis`; whether a dose series supports tests in each
   cell type, :func:`check_dose_design`, :class:`DoseDesignReport`; which genes
   respond to dose in each cell type, :func:`dose_response`,
-  :class:`DoseResponseResult`, with the candidate shapes of its MCP step,
-  :class:`CandidateShapes`; simulated dose series with known curves,
+  :class:`DoseResponseResult`, with the candidate shapes of its MCP step, the test of
+  MCP-Mod (multiple comparison procedure and modelling), :class:`CandidateShapes`;
+  simulated dose series with known curves,
   :func:`simulate_dose_series`, :class:`DoseTruth`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and

@@ -132,10 +132,15 @@ def spline_column(column: str, j: int) -> str:
     return f"{column}{SPLINE_SUFFIX}{j}"
 
 
+def dose_label(dose: float) -> str:
+    """A dose as names show it, with 12 significant digits, such as ``0.03``."""
+    return f"{dose:.12g}"
+
+
 def dose_group_column(column: str, dose: float) -> str:
     """The name of the design column that is 1 for the samples given a treated dose,
     such as ``dose_0.03``."""
-    return f"{column}_{dose:.12g}"
+    return f"{column}_{dose_label(dose)}"
 
 
 def is_axis_column(name: str, column: str) -> bool:

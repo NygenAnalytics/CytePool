@@ -1,10 +1,11 @@
 """Candidate shapes of a dose response, for the MCP step of MCP-Mod.
 
-The MCP step of MCP-Mod tests for a dose signal under uncertainty about the shape of
-the response (Bretz, Pinheiro and Branson 2005; Pinheiro et al. 2014): the analyst
-guesses a few plausible shapes, each becomes the contrast of the dose groups that
-best detects it, and the largest of the contrasts' t-statistics is referred to the
-multivariate t distribution. :class:`CandidateShapes` holds the guesses in the model
+MCP-Mod, multiple comparison procedure and modelling (Bretz, Pinheiro and Branson
+2005; Pinheiro et al. 2014), tests for a dose signal under uncertainty about the shape
+of the response, then models it. Its first step, the MCP step, is the test: the
+analyst guesses a few plausible shapes, each becomes the contrast of the dose groups
+that best detects it, and the largest of the contrasts' t-statistics is referred to
+the multivariate t distribution. :class:`CandidateShapes` holds the guesses in the model
 families of DoseFinding (Bornkamp et al. 2026), as the change from the vehicle along
 dose: Emax, sigmoid Emax, exponential and beta. Its
 :meth:`~cytepool.CandidateShapes.spread` places a few shapes of each family over the
@@ -40,7 +41,7 @@ import numpy.typing as npt
 
 from ._doses import checked_doses, distinct_doses, dose_text, sample_doses
 from ._masked_arrays import reject_masked
-from ._options import integral_number, positive_finite_number, real_number
+from ._options import integral_number, positive_finite_number
 from .dose_axes import DoseAxis
 
 __all__ = ["CandidateShapes"]
@@ -60,7 +61,8 @@ takes, DoseFinding's default."""
 @dataclass(frozen=True)
 class CandidateShapes:
     """Candidate shapes of a dose response: guesses of the mean change from the
-    vehicle along dose, for the MCP step of MCP-Mod.
+    vehicle along dose, for the MCP step of MCP-Mod (multiple comparison procedure
+    and modelling), its test for a dose signal.
 
     Each shape is a curve of dose d in one of DoseFinding's model families (Bornkamp
     et al. 2026), up to its size, which the step does not need:
@@ -88,7 +90,9 @@ class CandidateShapes:
         emax: The ED50 of each Emax shape, in the dose's unit.
         sigmoid_emax: (ED50, Hill slope) of each sigmoid Emax shape.
         exponential: delta of each exponential shape, in the dose's unit.
-        beta: (delta1, delta2) of each beta shape.
+        beta: (delta1, delta2) of each beta shape, exponents: for a peak at P,
+            delta1 = k P / s and delta2 = k (1 - P / s), and a larger k narrows the
+            peak.
         beta_scale: The beta model's scale s, at least the top dose, in the dose's
             unit; given with beta shapes, and only then.
 
@@ -166,8 +170,9 @@ class CandidateShapes:
         return tuple(names)
 
     def means(self, doses: npt.ArrayLike) -> FloatArray:
-        """Each shape's mean change from the vehicle at doses, scaled to a largest
-        change of 1.
+        """Each shape's mean change from the vehicle at doses, scaled as DoseFinding
+        scales them: 1 at the highest dose for rising shapes, 1 at the peak for beta
+        shapes.
 
         A shape's change is 0 at dose 0 and is scaled to 1 at the highest of
         ``doses`` for the rising shapes, and at its peak for a beta shape, wherever
@@ -189,8 +194,7 @@ class CandidateShapes:
                 is negative, has no dose above 0, or holds a dose above
                 ``beta_scale``.
         """
-        reject_masked(doses, "doses")
-        values = checked_doses(np.atleast_1d(np.asarray(doses)), "doses")
+        values = checked_doses(doses, "doses")
         top = float(values.max()) if values.size else 0.0
         if top <= 0.0:
             raise ValueError(
@@ -327,13 +331,11 @@ class CandidateShapes:
         def dose_at(position: float) -> float:
             return float(axis.doses(np.array([position]))[0])
 
-        beta_scale = BETA_SCALE_FACTOR * top if counts["beta"] else None
-        beta = []
-        for peak in placed(counts["beta"]):
-            assert beta_scale is not None
-            beta.append(
-                _beta_parameters(dose_at((low + peak) / 2.0), dose_at(peak), beta_scale)
-            )
+        scale = BETA_SCALE_FACTOR * top
+        beta = tuple(
+            _beta_parameters(dose_at((low + peak) / 2.0), dose_at(peak), scale)
+            for peak in placed(counts["beta"])
+        )
         exponential = [
             _exponential_delta(
                 (0.5 + j / (2.0 * (counts["exponential"] + 1))) * top, top
@@ -346,8 +348,8 @@ class CandidateShapes:
                 (dose_at(p), SPREAD_HILL_SLOPE) for p in placed(counts["sigmoid_emax"])
             ),
             exponential=tuple(exponential),
-            beta=tuple(beta),
-            beta_scale=beta_scale,
+            beta=beta,
+            beta_scale=scale if beta else None,
         )
 
 
@@ -361,13 +363,13 @@ def _emax(d: FloatArray, ed50: float, top: float) -> FloatArray:
 
 
 def _sigmoid_emax(d: FloatArray, ed50: float, h: float, top: float) -> FloatArray:
-    # d^h / (ED50^h + d^h) = 1 / (1 + (ED50 / d)^h), whose power overflows to infinity
-    # (a change of 0) far below ED50, over its value at the top dose.
-    with np.errstate(divide="ignore", over="ignore"):
-        ratio = np.exp(h * (math.log(ed50) - np.log(d)))
-    level = 1.0 / (1.0 + ratio)
-    at_top = 1.0 / (1.0 + math.exp(h * (math.log(ed50) - math.log(top))))
-    result: FloatArray = level / at_top
+    # d^h / (ED50^h + d^h) = 1 / (1 + exp(x)) with x = h (log ED50 - log d), over its
+    # value at the top dose, in logarithms, so that a steep shape far from its ED50
+    # overflows nowhere; x is infinite at dose 0, where the change is 0.
+    with np.errstate(divide="ignore"):
+        x = h * (math.log(ed50) - np.log(d))
+    at_top = h * (math.log(ed50) - math.log(top))
+    result: FloatArray = np.exp(np.logaddexp(0.0, at_top) - np.logaddexp(0.0, x))
     return result
 
 
@@ -442,13 +444,6 @@ def _beta_parameters(half: float, peak: float, scale: float) -> tuple[float, flo
 # Reading the arguments.
 
 
-def _parameter(value: Any, name: str) -> float:
-    number = real_number(value, name)
-    if not (math.isfinite(number) and number > 0.0):
-        raise ValueError(f"{name} must be finite and above 0, got {number}")
-    return number
-
-
 def _entries(value: Any, name: str, example: str) -> list[Any]:
     reject_masked(value, name)
     if isinstance(value, str | bytes) or not isinstance(value, Sequence | np.ndarray):
@@ -462,7 +457,7 @@ def _entries(value: Any, name: str, example: str) -> list[Any]:
 def _numbers(value: Any, name: str, what: str) -> tuple[float, ...]:
     entries = _entries(value, name, f"{name}=[0.5] for one shape")
     return tuple(
-        _parameter(entry, f"the {what} of {name} shape {j + 1}")
+        positive_finite_number(entry, f"the {what} of {name} shape {j + 1}")
         for j, entry in enumerate(entries)
     )
 
@@ -485,8 +480,12 @@ def _pairs(
             )
         pairs.append(
             (
-                _parameter(entry[0], f"the {what[0]} of {name} shape {j + 1}"),
-                _parameter(entry[1], f"the {what[1]} of {name} shape {j + 1}"),
+                positive_finite_number(
+                    entry[0], f"the {what[0]} of {name} shape {j + 1}"
+                ),
+                positive_finite_number(
+                    entry[1], f"the {what[1]} of {name} shape {j + 1}"
+                ),
             )
         )
     return tuple(pairs)

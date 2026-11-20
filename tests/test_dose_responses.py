@@ -11,7 +11,6 @@ and the spline's size, invariants, refusals and the records.
 """
 
 import contextlib
-import dataclasses
 import functools
 import io
 import json
@@ -42,6 +41,7 @@ from cytepool import (
     simulate_dose_series,
     write_cube,
 )
+from cytepool import dose_responses
 from cytepool.dose_designs import DoseDesignReport
 from cytepool.dose_responses import _dose_group_estimates
 from cytepool.stats.distributions import t_ppf
@@ -1561,9 +1561,6 @@ def contrast_cube() -> Cube:
 @functools.cache
 def contrast_result(analysis: str) -> DoseResponseResult:
     cube = contrast_cube()
-    options: dict[str, Any] = {}
-    if analysis == "voom_limma":
-        options["contrast_standard_errors"] = "limma"
     return dose_response(
         cube,
         Design(cube.samples, "~ 1"),
@@ -1571,7 +1568,6 @@ def contrast_result(analysis: str) -> DoseResponseResult:
         tests=("dose_groups", *CONTRAST_TESTS),
         analysis=limma_trend if analysis == "trend" else limma_voom,
         rng=20261216,
-        **options,
     )
 
 
@@ -1589,13 +1585,12 @@ def numbers(values: Any) -> np.ndarray:
     ).reshape(array.shape)
 
 
-@pytest.mark.parametrize("analysis", ["voom", "voom_limma", "trend"])
+@pytest.mark.parametrize("analysis", ["voom", "trend"])
 def test_multiple_contrast_tests_match_r(analysis: str) -> None:
     """Contrasts, each gene's largest |t|, the contrast it belongs to and df against R:
     limma fitted from the counts, multcomp's contrMat and DoseFinding's optContr from
     the doses and samples R counted, and glht(parm()) on R's estimates."""
     result = contrast_result(analysis)
-    features = result.table("full", "dose_groups")["feature_id"].tolist()
     for theirs in contrast_reference()["cell_types"]:
         if theirs["analysis"] != analysis:
             continue
@@ -1617,7 +1612,6 @@ def test_multiple_contrast_tests_match_r(analysis: str) -> None:
         assert_p_values(
             result.table(group, "dose_groups")["p_value"], theirs["f_p"], 1e-9
         )
-    del features
 
 
 def test_multiple_contrast_p_values_match_scipy() -> None:
@@ -1719,20 +1713,11 @@ def test_dunnett_t_is_each_dose_s_t() -> None:
             )
             / 3
         )
-        if name != "dream":
-            # dream's F combines the doses' own df (lmerTest's rule); its statistic is
-            # the Wald F all the same.
-            assert_allclose(
-                wald,
-                result.table("cell_type_1", "dose_groups")["f_statistic"],
-                rtol=1e-9,
-            )
-        else:
-            assert_allclose(
-                wald,
-                result.table("cell_type_1", "dose_groups")["f_statistic"],
-                rtol=1e-9,
-            )
+        # dream's F takes the doses' own df (lmerTest's rule); its statistic is the
+        # Wald F all the same.
+        assert_allclose(
+            wald, result.table("cell_type_1", "dose_groups")["f_statistic"], rtol=1e-9
+        )
 
 
 def test_contrasts_follow_the_cell_type_s_samples() -> None:
@@ -1792,6 +1777,7 @@ def test_lowest_effective_doses_by_the_closed_test() -> None:
                 ][1:]
             )
             m = doses.size
+            change = by_dose(result.table(group, "each_dose"), "log2_fold_change", m)
             subsets = [s for size in range(1, m) for s in combinations(range(m), size)]
             gaps = 0
             for g in np.flatnonzero(selected):
@@ -1804,11 +1790,15 @@ def test_lowest_effective_doses_by_the_closed_test() -> None:
                 assert ours["lowest_effective_dose"][g] == pytest.approx(
                     lowest, nan_ok=True
                 )
+                # The change from the vehicle at that dose, from the table of each dose.
+                at = change[g, rejected.index(True)] if any(rejected) else np.nan
+                np.testing.assert_equal(ours["log2_fold_change"][g], at)
                 if any(rejected):
                     first = rejected.index(True)
                     gaps += not all(rejected[first:])
             assert_array_equal(np.isnan(ours["lowest_effective_dose"][~selected]), True)
-        assert gaps >= 0
+            assert_array_equal(np.isnan(ours["log2_fold_change"][~selected]), True)
+            assert gaps > 0
 
 
 def test_lowest_effective_doses_at_extreme_levels() -> None:
@@ -1872,6 +1862,15 @@ def test_contrast_tests_do_not_depend_on_threads_order_or_other_cell_types() -> 
                 four.table(group, test)["p_value"],
                 base.table(group, test)["p_value"],
                 rtol=1e-12,
+            )
+    # A test named alone draws the random numbers it draws beside the others: the
+    # test's position counts among every multiple contrast test, not those named.
+    for test in ("williams", "mcp"):
+        named_alone = dose_response(cube, design, dose=AXIS, tests=(test,), rng=seed)
+        for group in ("full", "depleted"):
+            assert_array_equal(
+                named_alone.table(group, test)["p_value"],
+                base.table(group, test)["p_value"],
             )
     # Each cell type and test draws from numpy.random.default_rng([seed, CRC-32 of the
     # cell type's name, the test's position]).
@@ -1963,6 +1962,8 @@ def test_few_dose_groups() -> None:
     with pytest.raises(ValueError, match="the design has 1"):
         run((0, 10), tests=("mcp",))
     one = run((0, 10), tests=("dunnett", "williams"))
+    assert one.tests == ("dunnett", "williams")
+    assert ("cell_type_1", "dose_groups") not in one.tables
     each = one.table("cell_type_1", "each_dose")
     for test in ("dunnett", "williams"):
         table = one.table("cell_type_1", test)
@@ -2047,6 +2048,39 @@ def test_a_flat_shape_is_left_out() -> None:
     with pytest.raises(KeyError, match="no candidate shape changes at the doses"):
         only_beta.table("depleted", "mcp")
     assert "mcp" in only_beta.summary.filter(group_id="depleted")["tests_not_run"][0]
+    assert "mcp: beta left out, flat at the doses compared" in " ".join(
+        repr(result).split()
+    )
+    # A beta shape whose largest change at 1 and 10 is subnormal, about 1e-310, is
+    # flat to double precision and left out; one of about 3e-178 is kept, and its
+    # contrast is n_k (mu_k - the size-weighted mean of mu) of its means, by hand,
+    # where squaring the means would underflow.
+    for delta, flat in ((698.0, True), (400.0, False)):
+        shapes = CandidateShapes(
+            emax=[1.0, 10.0], beta=[(delta, delta)], beta_scale=100.0
+        )
+        means = shapes.means([0.0, 1.0, 10.0])[2]
+        assert (0.0 < means.max() < np.finfo(np.float64).tiny) == flat
+        tiny = dose_response(
+            cube,
+            Design(cube.samples, "~ 1"),
+            dose=AXIS,
+            tests=("mcp",),
+            candidates=shapes,
+            groups=["depleted"],
+            rng=1,
+        )
+        (entry,) = tiny.provenance["groups"]
+        mcp = entry["contrast_tests"]["mcp"]
+        assert list(mcp["shapes_left_out"]) == (["beta"] if flat else [])
+        assert np.isfinite(tiny.table("depleted", "mcp")["p_value"]).all()
+        if not flat:
+            n = np.array(entry["samples"])
+            mu = means / means.max()
+            by_hand = (n * (mu - (n * mu).sum() / n.sum()))[1:]
+            assert_allclose(
+                mcp["contrasts"]["beta"], by_hand / np.linalg.norm(by_hand), rtol=1e-13
+            )
 
 
 def test_contrast_test_arguments_are_refused_with_a_fix() -> None:
@@ -2071,6 +2105,15 @@ def test_contrast_test_arguments_are_refused_with_a_fix() -> None:
         )
     with pytest.raises(ValueError, match="did you mean 'mcp'"):
         dose_response(cube, design, dose=AXIS, tests=("mpc",))
+    for test in CONTRAST_TESTS:
+        with pytest.raises(ValueError, match="limma's approximate standard errors"):
+            dose_response(
+                cube,
+                design,
+                dose=AXIS,
+                tests=("dose_groups", test),
+                contrast_standard_errors="limma",
+            )
     with pytest.raises(TypeError, match="rng must be"):
         dose_response(cube, design, dose=AXIS, tests=("mcp",), rng="1")
     with pytest.raises(ValueError, match="non-negative seed"):
@@ -2123,6 +2166,14 @@ def test_the_contrast_tests_read_back() -> None:
         "adjusted_p_value",
         "adjusted_p_value_across_groups",
     )
+    for group in ("full", "depleted"):
+        for test in CONTRAST_TESTS:
+            found = result.table(group, test)
+            assert_allclose(
+                found["adjusted_p_value"],
+                adjust_p_values(np.asarray(found["p_value"]), "bh"),
+                rtol=1e-15,
+            )
     stacked = np.concatenate(
         [result.table(g, "mcp")["p_value"] for g in ("full", "depleted")]
     )
@@ -2163,19 +2214,68 @@ def test_the_lowest_effective_doses_of_an_untested_cell_type_are_refused() -> No
         result.lowest_effective_doses(untested, screen="dose_groups")
 
 
-def test_a_fit_computed_again_on_other_genes_is_refused(monkeypatch: Any) -> None:
-    """The multiple contrast tests read the fit computed again, which must test the
-    genes of the cell type's tables; a lazy cube whose source changed would not."""
-    original = cytepool.DifferentialExpressionResult.fit
+def test_the_contrast_tables_carry_the_genes_symbols() -> None:
+    """With symbols in the cube's feature table, the tables of the multiple contrast
+    tests and the lowest effective doses carry each gene's own symbol."""
+    base = contrast_cube()
+    ids = base.features["feature_id"].tolist()
+    symbols = [f"Gene{j}" for j in range(len(ids))]
+    cube = Cube(
+        {"counts": np.stack([base.layer("counts", g) for g in range(base.n_groups)])},
+        samples=base.samples,
+        groups=base.groups,
+        features={"feature_id": ids, "symbol": symbols},
+        n_cells=base.n_cells,
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("dose_groups", "dunnett"),
+        rng=1,
+    )
+    of_gene = dict(zip(ids, symbols, strict=True))
+    for table in (
+        result.table("full", "dunnett"),
+        result.lowest_effective_doses("full", screen="dose_groups"),
+    ):
+        assert table.columns[:2] == ("feature_id", "symbol")
+        assert table["symbol"].tolist() == [
+            of_gene[g] for g in table["feature_id"].tolist()
+        ]
 
-    def shuffled(self: Any, group: Any = None) -> Any:
-        fit = original(self, group)
-        order = np.arange(len(fit.features))[::-1]
-        return dataclasses.replace(fit, features=fit.features.take(order))
 
-    monkeypatch.setattr(cytepool.DifferentialExpressionResult, "fit", shuffled)
-    with pytest.raises(RuntimeError, match="tested other genes"):
-        run((0, 1, 10), tests=("dunnett",))
+def test_a_beta_scale_at_the_top_dose_is_accepted() -> None:
+    """DoseFinding takes a beta model's scale equal to the top dose, and so does
+    dose_response, where the beta shape is 0 at the top dose."""
+    cube = contrast_cube()
+    shapes = CandidateShapes(emax=[1.0], beta=[(1.0, 1.0)], beta_scale=10.0)
+    assert float(np.max(cube.samples["dose"])) == 10.0
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("mcp",),
+        candidates=shapes,
+        groups=["full"],
+        rng=1,
+    )
+    assert np.isfinite(result.table("full", "mcp")["p_value"]).all()
+    assert result.candidates == shapes
+
+
+def test_the_contrast_tests_follow_the_thread_limit(monkeypatch: Any) -> None:
+    """n_threads among the analysis's options reaches every multiple contrast test."""
+    calls: list[Any] = []
+    original = dose_responses.multiple_contrast_test
+
+    def recorded(*args: Any, **options: Any) -> Any:
+        calls.append(options.get("n_threads"))
+        return original(*args, **options)
+
+    monkeypatch.setattr(dose_responses, "multiple_contrast_test", recorded)
+    run((0, 1, 10, 100), tests=CONTRAST_TESTS, n_threads=2)
+    assert calls == [2, 2, 2]
 
 
 def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
@@ -2196,7 +2296,7 @@ def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
         *re.findall(r"```python\n(.*?)```", contrasts, re.S),
         *re.findall(r"```python\n(.*?)```", lowest, re.S),
     ]
-    assert len(blocks) == 4
+    assert len(blocks) == 5
     namespace: dict[str, Any] = {"cp": cytepool}
     exec(setup[0].replace("print(result)\n", ""), namespace)  # noqa: S102
     printed = []
@@ -2209,8 +2309,17 @@ def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
     # lowest effective doses of five genes, rounded.
     result = namespace["result"]
     assert printed[0] == repr(result) + "\n" and repr(result) in contrasts
-    assert printed[1] == printed[3] == ""
-    assert printed[2].count("\n") == 5 and printed[2] in lowest
+    assert printed[1] == printed[2] == printed[4] == ""
+    assert printed[3].count("\n") == 5 and printed[3] in lowest
+    # Each dose's own p-value: at 10 ug/kg for every gene, and the smallest over the
+    # doses is the gene's p-value in "dunnett"'s table, within their errors.
+    at_ten = namespace["at_ten"]
+    dunnett = result.table("hepatocyte", "dunnett")
+    assert at_ten["feature_id"].tolist() == dunnett["feature_id"].tolist()
+    whole = namespace["per_dose"].table()
+    error = np.hypot(dunnett["p_value_error"], whole["p_value_error"])
+    assert np.all(np.abs(whole["p_value"] - dunnett["p_value"]) <= CALIBRATED * error)
+    assert len(namespace["doses"]) == 8
     truth = namespace["truth"].table("hepatocyte")
     ids = truth["feature_id"].tolist()
     responds = dict(zip(ids, (np.asarray(truth["max_log2_change"]) != 0).tolist()))
