@@ -295,11 +295,15 @@ class DoseAxis:
         interior = np.array(placed.knots)
         repeated = interior[1:][np.diff(interior) == 0.0]
         if repeated.size:
-            dose = self.doses(repeated[:1])[0]
+            dose = f"{self.doses(repeated[:1])[0]:g} {self.unit}"
+            if source == "the knots given":
+                raise ValueError(
+                    f"the knots given coincide at {dose}; give distinct knots"
+                )
             raise ValueError(
-                f"the knots that {source} places on the doses coincide at "
-                f"{dose:g} {self.unit}, which would make the curve less smooth there; "
-                "use knots='levels', a lower df, or give distinct knots"
+                f"the knots that {source} places on the doses coincide at {dose}, "
+                "which would make the curve less smooth there; use knots='levels', a "
+                "lower df, or give distinct knots"
             )
         if form == "b_spline":
             return placed
@@ -468,7 +472,7 @@ def _checked_doses(values: Any, name: str) -> FloatArray:
     bad = ~np.isfinite(doses) | (doses < 0.0)
     if bad.any():
         raise ValueError(
-            f"{name} must hold doses that are finite and at least 0, with 0 for the "
-            f"vehicle; got {listing([repr(float(dose)) for dose in doses[bad]])}"
+            f"{name} must be finite and at least 0, with 0 for the vehicle; got "
+            f"{listing([repr(float(dose)) for dose in doses[bad]])}"
         )
     return doses

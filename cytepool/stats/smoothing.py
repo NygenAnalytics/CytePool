@@ -472,15 +472,16 @@ class NaturalSplineBasis:
             interior = placed[1:-1]
             lower, upper = float(placed[0]), float(placed[-1])
         else:
-            lower, upper = _boundary_knots(boundary_knots, observed)
-            if rule is None:
-                interior = _given_knots(knots, columns, with_intercept, lower, upper)
-            elif columns is None:
-                interior = np.empty(0)
-            elif observed is None:
+            if rule is not None and columns is not None and observed is None:
                 raise ValueError(
                     f"{_RULES[rule]} places the knots on the values of x; give x"
                 )
+            lower, upper = _boundary_knots(boundary_knots, observed)
+            if rule is None:
+                interior = _given_knots(knots, columns, with_intercept, lower, upper)
+            elif columns is None or observed is None:
+                # A rule without df places no interior knots, as R's ns(x) does.
+                interior = np.empty(0)
             else:
                 values = observed if rule == "quantiles" else np.unique(observed)
                 interior = _quantile_knots(
