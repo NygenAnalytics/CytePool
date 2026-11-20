@@ -15,13 +15,16 @@ References for the probabilities of boxes, P(T in box) and its complement:
   without random numbers, so these rows are in the close tier (1e-6, relative to the
   smaller of the probability and the complement).
 - Product correlations, R_ij = lambda_i lambda_j, as Dunnett's contrasts of groups of
-  unequal sizes have: Dunnett's (1955) integral over the shared normal factor and the
-  chi variable, in double precision with tail-accurate normal functions (scipy's
-  ``ndtr``), the factor by Gauss-Legendre panels around the peaks of the integrand and
-  the chi variable by adaptive quadrature (scipy's ``quad``) to 1e-12 relative.
+  unequal sizes have, with one limit for every coordinate or a limit per coordinate:
+  Dunnett's (1955) integral over the shared normal factor and the chi variable, in
+  double precision with tail-accurate normal functions (scipy's ``ndtr``), the factor
+  by Gauss-Legendre panels around the peaks of the integrand and the chi variable by
+  adaptive quadrature (scipy's ``quad``) to 1e-12 relative.
   Two-dimensional quadrature in mpmath took over two minutes per value, so the script
   checks this reference against Ding's at 30 digits on two-coordinate cases, and
-  against mpmath's one-dimensional integral over the factor for the normal.
+  against mpmath's one-dimensional integral over the factor for the normal. In that
+  check, scipy's ``quad`` warns of rounding in 4 of the 48 two-coordinate cases, tail
+  orthants, whose values still agree with Ding's to 2.7e-14.
 - Rank-two correlations, such as all pairwise contrasts of three groups (Tukey's), with
   mixed signs: R_ij = cos(theta_i - theta_j), so that T = Z / S with Z = A u for the
   unit vectors a_i of the angles theta_i and u standard normal in the plane; the
@@ -29,6 +32,14 @@ References for the probabilities of boxes, P(T in box) and its complement:
   G(r) = (1 + r^2 / df)^(-df / 2), the tail of the F distribution on 2 and df degrees of
   freedom at r^2 / 2. Computed with mpmath at 30 digits; CytePool computes these boxes
   by Monte Carlo, with singular coordinates.
+- Correlations of rank 3 and more without a product structure, deep in the tail
+  (Williams-type contrasts of 5, 7 and 9 groups, Tukey's of 4 groups and random
+  contrasts, complements of 1e-4, 1e-7 and 1e-10): ALOE (Owen, Maximov and Chertkov
+  2019), plain Monte Carlo from the mixture of the distributions given each
+  exceedance, each draw weighted by the sum of the marginal tails over the number of
+  coordinates beyond their limits, 1e6 draws per problem, in numpy and scipy, with
+  the standard error of its draws. It differs from CytePool's method, which
+  integrates the chance of each first exceedance with lattice points.
 - General correlations of three to ten coordinates (Dunnett's, Williams' and Tukey's
   contrasts of groups of unequal sizes, and random contrasts): mvtnorm's ``pmvt`` with
   ``GenzBretz(maxpts = 1e6, abseps = 1e-5, releps = 0)`` for integer df and the normal,
@@ -107,6 +118,10 @@ References:
     Dunnett CW (1955). A multiple comparison procedure for comparing several
     treatments with a control. Journal of the American Statistical Association 50,
     1096-1121. doi:10.1080/01621459.1955.10501294
+
+    Owen AB, Maximov Y, Chertkov M (2019). Importance sampling the union of rare events
+    with an application to power systems analysis. Electronic Journal of Statistics
+    13, 231-254. doi:10.1214/18-EJS1527
 """
 
 import argparse
@@ -148,6 +163,23 @@ PRODUCT_DF = (2.5, 7.0, 20.5, INF)
 RANK_TWO_DF = (3.0, 12.5, INF)
 MVTNORM_DF = (3.0, 10.0, 30.0, INF)
 SCIPY_DF = (4.5, 10.0, 20.5)
+DISTINCT_K = (3, 5, 8)
+ALOE_DF = (3.0, 8.0, INF)
+ALOE_TARGETS = (1e-4, 1e-7, 1e-10)
+ALOE_DRAWS = 1_000_000
+# The kinds of reference the reference process computes, in the order it returns them.
+REFERENCE_KINDS = (
+    "plane",
+    "plane_product",
+    "product",
+    "product_mp",
+    "distinct",
+    "rank_two",
+    "product_quantile",
+    "plane_quantile",
+    "scipy",
+    "aloe",
+)
 
 
 # ---------------------------------------------------------------------------------------
@@ -211,6 +243,96 @@ def product_cases(rng: np.random.Generator) -> list[dict[str, Any]]:
                         "df": df,
                         "two_sided": two_sided,
                         "upper": np.full(k, limit),
+                    }
+                )
+    return cases
+
+
+def distinct_cases(rng: np.random.Generator) -> list[dict[str, Any]]:
+    """Product correlations with a limit per coordinate: for each k and df, complements
+    of 1e-2, 1e-5 and 1e-9 split unevenly over the coordinates, the largest share
+    last, one- and two-sided; and small boxes of probability near 1e-3 split unevenly,
+    the coordinate of smallest probability last."""
+    cases = []
+    for k in DISTINCT_K:
+        sizes = rng.integers(2, 7, k)
+        lam = np.sqrt(sizes / (sizes + int(rng.integers(2, 9))))
+        for df in PRODUCT_DF:
+            boxes: list[tuple[bool, list[float]]] = []
+            for target in (1e-2, 1e-5, 1e-9):
+                shares = np.sort(rng.dirichlet(np.ones(k)))
+                boxes.append((True, [_isf(target * s / 2.0, df) for s in shares]))
+                boxes.append((False, [_isf(target * s, df) for s in shares]))
+            inside = np.sort(1e-3 ** rng.dirichlet(np.ones(k)))[::-1]
+            boxes.append((True, [_isf((1.0 - p) / 2.0, df) for p in inside]))
+            boxes.append((False, [-_isf(p, df) for p in inside]))
+            for two_sided, upper in boxes:
+                cases.append(
+                    {
+                        "lam": lam,
+                        "df": df,
+                        "two_sided": two_sided,
+                        "upper": np.array(upper),
+                    }
+                )
+    return cases
+
+
+def aloe_families(rng: np.random.Generator) -> list[tuple[str, np.ndarray, bool]]:
+    """Correlations of rank 3 and more without a product structure, each with the side
+    its test uses: Williams-type contrasts of 5, 7 and 9 groups, one-sided; Tukey's
+    contrasts of 4 groups, two-sided; 8 random contrasts of 9 groups, two-sided, and 5
+    of 6, one-sided."""
+    families = []
+    for sizes in ([4, 3, 3, 4, 3], [3] * 7, [6, 2, 3, 2, 4, 2, 3, 2, 5]):
+        n = np.array(sizes, float)
+        families.append(
+            (
+                f"Williams' contrasts of {n.size} groups, one-sided",
+                _correlation(williams_matrix(n), np.diag(1.0 / n)),
+                False,
+            )
+        )
+    n = np.array([3.0, 4.0, 2.0, 5.0])
+    families.append(
+        (
+            "Tukey's contrasts of 4 groups (rank 3), two-sided",
+            _correlation(tukey_matrix(4), np.diag(1.0 / n)),
+            True,
+        )
+    )
+    for k, two_sided in ((8, True), (5, False)):
+        weights = rng.normal(size=(k + 1, k))
+        weights -= weights.mean(axis=0)
+        n = rng.integers(2, 6, k + 1).astype(float)
+        side = "two-sided" if two_sided else "one-sided"
+        families.append(
+            (
+                f"{k} random contrasts of {k + 1} groups, {side}",
+                _correlation(weights, np.diag(1.0 / n)),
+                two_sided,
+            )
+        )
+    return families
+
+
+def aloe_cases(rng: np.random.Generator) -> list[dict[str, Any]]:
+    """Complements of 1e-4, 1e-7 and 1e-10 by Bonferroni's split, at df 3, 8 and the
+    normal, each with its own seed for ALOE."""
+    cases = []
+    for label, correlation, two_sided in aloe_families(rng):
+        k = correlation.shape[0]
+        for df in ALOE_DF:
+            for target in ALOE_TARGETS:
+                share = target / (2 * k) if two_sided else target / k
+                cases.append(
+                    {
+                        "label": label,
+                        "correlation": correlation,
+                        "df": df,
+                        "two_sided": two_sided,
+                        "upper": np.full(k, _isf(share, df)),
+                        "seed": SEED + 13000 + len(cases),
                     }
                 )
     return cases
@@ -1066,6 +1188,87 @@ def scipy_reference(
     )
 
 
+def _chi_given_exceedance(c: float, df: float) -> tuple[np.ndarray, np.ndarray]:
+    """The distribution function of log S given Z > c S, on a grid of log S: the
+    density of S, df S^2 chi-squared on df degrees of freedom, times P(Z > c S), with
+    the Jacobian of log S; for drawing S by inversion."""
+    from scipy import special, stats
+
+    u = np.linspace(-14.0, 5.0, 400_001)
+    s = np.exp(u)
+    log_density = (
+        math.log(2.0 * df)
+        + 2.0 * u
+        + stats.chi2.logpdf(df * s * s, df)
+        + special.log_ndtr(-c * s)
+    )
+    density = np.exp(log_density - log_density.max())
+    cumulative = np.concatenate(
+        [[0.0], np.cumsum(0.5 * (density[1:] + density[:-1]) * np.diff(u))]
+    )
+    return u, cumulative / cumulative[-1]
+
+
+def aloe_reference(
+    correlation: np.ndarray, upper: np.ndarray, df: float, two_sided: bool, seed: int
+) -> tuple[float, float]:
+    """P(T_i > c_i for some i), or P(|T_i| > c_i for some i), by ALOE (Owen, Maximov
+    and Chertkov 2019): ALOE_DRAWS draws from the mixture of the distributions of T
+    given each exceedance, coordinate i with weight P_i / sum P, each draw weighted by
+    sum P over the number of coordinates beyond their limits there. Given T_i > c_i, S
+    is drawn by inversion of its distribution, Z_i above c_i S and the other normals
+    given Z_i; two-sided, the exceedance below -c_i is the mirror image of this one,
+    which gives the same count of |T_j| > c_j. Returns the estimate and its standard
+    error. Plain Monte Carlo, with numpy and scipy."""
+    from scipy import special
+
+    rng = np.random.default_rng(seed)
+    upper = np.asarray(upper, float)
+    k = upper.size
+    factor = 2.0 if two_sided else 1.0
+    if df == INF:
+        marginal = factor * special.ndtr(-upper)
+    else:
+        from scipy import stats
+
+        marginal = factor * stats.t.sf(upper, df)
+    total = float(marginal.sum())
+    counts = rng.multinomial(ALOE_DRAWS, marginal / total)
+    inverse_weights = []
+    for i in range(k):
+        others = [j for j in range(k) if j != i]
+        rho = correlation[others, i]
+        values, vectors = np.linalg.eigh(
+            correlation[np.ix_(others, others)] - np.outer(rho, rho)
+        )
+        loadings = vectors * np.sqrt(np.clip(values, 0.0, None))
+        grid = None if df == INF else _chi_given_exceedance(upper[i], df)
+        done = 0
+        while done < counts[i]:
+            n = min(100_000, counts[i] - done)
+            if grid is None:
+                s = np.ones(n)
+            else:
+                s = np.exp(np.interp(rng.random(n), grid[1], grid[0]))
+            z_i = -special.ndtri(rng.random(n) * special.ndtr(-upper[i] * s))
+            z = np.empty((n, k))
+            z[:, i] = z_i
+            z[:, others] = (
+                z_i[:, None] * rho + rng.standard_normal((n, k - 1)) @ loadings.T
+            )
+            t = z / s[:, None]
+            if two_sided:
+                t = np.abs(t)  # the sign of the whole vector does not matter
+            # The draw's own coordinate is beyond its limit by construction.
+            beyond = 1 + (t[:, others] > upper[others]).sum(axis=1)
+            inverse_weights.append(1.0 / beyond)
+            done += n
+    values = np.concatenate(inverse_weights)
+    return total * float(values.mean()), total * float(values.std(ddof=1)) / math.sqrt(
+        values.size
+    )
+
+
 def one_dimension_reference(points: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     mp = _mp()
     nu = mp.mpf(4.5)
@@ -1102,6 +1305,18 @@ def _task(job: tuple[str, dict[str, Any]]) -> Any:
         )
     if kind == "product_mp":
         return product_reference_mp(case["lam"], case["upper"], case["two_sided"])
+    if kind == "distinct":
+        return product_reference(
+            case["lam"], case["upper"], case["df"], case["two_sided"]
+        )
+    if kind == "aloe":
+        return aloe_reference(
+            case["correlation"],
+            case["upper"],
+            case["df"],
+            case["two_sided"],
+            int(case["seed"]),
+        )
     if kind == "rank_two":
         return rank_two_reference(
             case["angles"], case["upper"], case["df"], case["two_sided"]
@@ -1124,16 +1339,7 @@ def reference_main(directory: Path) -> None:
 
     cases = json.loads((directory / "cases.json").read_text(), object_hook=_from_json)
     jobs: list[tuple[str, dict]] = []
-    for kind in (
-        "plane",
-        "plane_product",
-        "product",
-        "product_mp",
-        "rank_two",
-        "product_quantile",
-        "plane_quantile",
-        "scipy",
-    ):
+    for kind in REFERENCE_KINDS:
         jobs += [(kind, case) for case in cases[kind]]
     # The slow jobs first, so that the workers finish together.
     order = sorted(
@@ -1146,16 +1352,7 @@ def reference_main(directory: Path) -> None:
             results[j] = value
     out: dict[str, Any] = {}
     start = 0
-    for kind in (
-        "plane",
-        "plane_product",
-        "product",
-        "product_mp",
-        "rank_two",
-        "product_quantile",
-        "plane_quantile",
-        "scipy",
-    ):
+    for kind in REFERENCE_KINDS:
         count = len(cases[kind])
         out[kind] = results[start : start + count]
         start += count
@@ -1553,11 +1750,42 @@ def compare_probabilities(
             z,
             f"largest relative difference {relative:.1e}",
         )
+    # A limit per coordinate.
+    distinct = inputs["distinct"]
+    distinct_values = np.array(reference["distinct"])
+    for k in DISTINCT_K:
+        chosen = [i for i, c in enumerate(distinct) if c["lam"].size == k]
+        z = np.array(
+            [
+                _z(
+                    ours["distinct"][i][1],
+                    distinct_values[i][1],
+                    ours["distinct"][i][2],
+                )
+                for i in chosen
+            ]
+        )
+        z_tight += list(z)
+        relative = max(
+            abs(ours["distinct"][i][1] - distinct_values[i][1])
+            / _smaller(*distinct_values[i])
+            for i in chosen
+        )
+        smallest = min(_smaller(*distinct_values[i]) for i in chosen)
+        rows.calibrated(
+            f"Product correlations with a limit per coordinate, k = {k}: df 2.5, 7, 20.5 "
+            f"and the normal, 6 tails split unevenly and 2 small boxes each, smaller "
+            f"side down to {smallest:.1e}",
+            "Dunnett's integral",
+            z,
+            f"largest relative difference {relative:.1e}",
+        )
     z_tight_array = np.array(z_tight)
     low, high = rms_bounds(z_tight_array.size)
     rows.within(
         f"Calibration at relative_error 1e-3: root-mean-square of (estimate - reference) "
-        f"/ error, {z_tight_array.size} problems of the product and rank-two rows",
+        f"/ error, {z_tight_array.size} problems of the product, rank-two and "
+        "per-coordinate rows",
         "sqrt(15/13) = 1.07 for honest errors",
         float(np.sqrt(np.mean(z_tight_array**2))),
         low,
@@ -1580,6 +1808,14 @@ def compare_probabilities(
                     ours["rank_two_default"][i][2],
                 )
                 for i in range(len(rank_two))
+            ],
+            [
+                _z(
+                    ours["distinct_default"][i][1],
+                    distinct_values[i][1],
+                    ours["distinct_default"][i][2],
+                )
+                for i in range(len(distinct))
             ],
         ]
     )
@@ -1620,6 +1856,20 @@ def compare_general(
                 "mvtnorm pmvt",
                 np.array(z),
             )
+    aloe = inputs["aloe"]
+    for label in dict.fromkeys(c["label"] for c in aloe):
+        chosen = [i for i, c in enumerate(aloe) if c["label"] == label]
+        z = []
+        for i in chosen:
+            value, error = reference["aloe"][i]
+            p, q, se = ours["aloe"][i]
+            z.append((q - value) / math.hypot(se, error))
+        smallest = min(reference["aloe"][i][0] for i in chosen)
+        rows.calibrated(
+            f"{label}: df 3, 8 and the normal, complements down to {smallest:.1e}",
+            f"ALOE, {ALOE_DRAWS:.0e} draws",
+            np.array(z),
+        )
     scipy_cases = inputs["scipy"]
     singular_ratio = []
     for label in dict.fromkeys(c["label"] for c in scipy_cases):
@@ -2044,6 +2294,9 @@ def build_inputs() -> dict[str, Any]:
     inputs["scipy"] = general_cases(general_rng, SCIPY_DF)
     general_rng = np.random.default_rng(SEED + 1)
     inputs["general_quantile"] = general_quantile_cases(general_rng)
+    # Their own generators, so that adding them left the other cases as they were.
+    inputs["distinct"] = distinct_cases(np.random.default_rng(SEED + 2))
+    inputs["aloe"] = aloe_cases(np.random.default_rng(SEED + 3))
     # Every seventh two-coordinate case, for the self-check of Dunnett's integral, and
     # the product cases of the normal, for the check against mpmath.
     inputs["plane_product_index"] = list(range(0, len(inputs["plane"]), 7))
@@ -2090,10 +2343,12 @@ def reference_cases(inputs: dict) -> dict[str, Any]:
         ],
         "product": [plain(c) for c in inputs["product"]],
         "product_mp": [plain(inputs["product"][i]) for i in inputs["product_mp_index"]],
+        "distinct": [plain(c) for c in inputs["distinct"]],
         "rank_two": [plain(c) for c in inputs["rank_two"]],
         "product_quantile": [plain(c) for c in inputs["product_quantile"]],
         "plane_quantile": [plain(c) for c in inputs["plane_quantile"]],
         "scipy": [plain(c) for c in inputs["scipy"]],
+        "aloe": [plain(c) for c in inputs["aloe"]],
         "one_dimension": inputs["one_dimension"],
     }
 
@@ -2109,6 +2364,20 @@ def cytepool_values(inputs: dict) -> dict[str, Any]:
             product_correlation(c["lam"]), c, SEED + 2000 + i, relative_error=0.01
         )
         for i, c in enumerate(inputs["product"])
+    ]
+    ours["distinct"] = [
+        cytepool_box(product_correlation(c["lam"]), c, SEED + 10000 + i)
+        for i, c in enumerate(inputs["distinct"])
+    ]
+    ours["distinct_default"] = [
+        cytepool_box(
+            product_correlation(c["lam"]), c, SEED + 11000 + i, relative_error=0.01
+        )
+        for i, c in enumerate(inputs["distinct"])
+    ]
+    ours["aloe"] = [
+        cytepool_box(c["correlation"], c, SEED + 12000 + i)
+        for i, c in enumerate(inputs["aloe"])
     ]
     ours["rank_two"] = [
         cytepool_box(rank_two_correlation(c["angles"]), c, SEED + 3000 + i)
