@@ -303,8 +303,8 @@ class DoseResponseResult:
 
     @property
     def summary(self) -> Table:
-        """One row per cell type checked: its status, whether it was tested and why
-        not, its dose groups, samples, genes and degrees of freedom."""
+        """The status of each cell type checked, whether it was tested and why not,
+        and its dose groups, samples, genes and degrees of freedom."""
         return self._summary
 
     @property
@@ -331,13 +331,13 @@ class DoseResponseResult:
 
     @property
     def tests(self) -> tuple[str, ...]:
-        """The tests of the design: those named, or those it supports when none
-        were, in the order of :data:`TESTS`."""
+        """The tests of the design, those named or, when none were, those it
+        supports, in the order spline, nonlinearity, slope and dose_groups."""
         return tuple(json.loads(self._record)["tests"])
 
     @property
     def method(self) -> str:
-        """The analysis: ``"limma_voom"``, ``"limma_trend"`` or ``"dream_voom"``."""
+        """The analysis, ``"limma_voom"``, ``"limma_trend"`` or ``"dream_voom"``."""
         return str(json.loads(self._record)["method"])
 
     @property
@@ -354,11 +354,14 @@ class DoseResponseResult:
 
     @property
     def settings(self) -> dict[str, Any]:
-        """The settings of the analysis, as a new dict (also in the provenance): the
-        axis (``dose``, as :meth:`DoseAxis.to_dict` gives it), the spline's basis
-        (``spline_basis``, as :meth:`NaturalSplineBasis.to_dict` gives it), the
+        """The settings of the analysis, as a new dict, also in the provenance.
+
+        They hold the axis (``dose``, as :meth:`DoseAxis.to_dict` gives it), the
+        spline's basis (``spline_basis``, as
+        :meth:`~cytepool.stats.smoothing.NaturalSplineBasis.to_dict` gives it), the
         tests and ``spline_df`` as given, the analysis, the options given to it, and
-        ``batch``, ``groups``, ``min_cells`` and ``min_counts``."""
+        ``batch``, ``groups``, ``min_cells`` and ``min_counts``.
+        """
         settings: dict[str, Any] = json.loads(self._record)["settings"]
         return settings
 
@@ -1235,18 +1238,24 @@ def _each_dose_table(
 ) -> Table:
     """The table of each treated dose against the vehicle: the analysis's tables of
     its indicators, stacked in dose order, with each row's dose after the gene."""
-    tables = [
-        result.table(group, model.indicators[float(dose)])
-        for dose in comparison.doses[1:]
-    ]
+    doses = comparison.doses[1:]
+    tables = [result.table(group, model.indicators[float(dose)]) for dose in doses]
     first = tables[0]
-    after = "symbol" if "symbol" in first else "feature_id"
-    columns: dict[str, Any] = {}
-    for name in first.columns:
-        columns[name] = np.concatenate([table[name] for table in tables])
-        if name == after:
-            columns["dose"] = np.repeat(comparison.doses[1:], len(first))
-    return Table(columns)
+    genes = [name for name in ("feature_id", "symbol") if name in first]
+    # The genes' columns repeated by position, which keeps them as they were checked;
+    # the statistics stacked, and each row's dose.
+    stacked = first.take(np.tile(np.arange(len(first)), len(tables))).with_columns(
+        {
+            **{
+                name: np.concatenate([table[name] for table in tables])
+                for name in first.columns
+                if name not in genes
+            },
+            "dose": np.repeat(doses, len(first)),
+        }
+    )
+    order = [*genes, "dose", *(name for name in first.columns if name not in genes)]
+    return stacked.select(order)
 
 
 def _adjust_across_groups(fits: list["_CellTypeFit"], tests: Sequence[str]) -> None:
@@ -1263,12 +1272,11 @@ def _adjust_across_groups(fits: list["_CellTypeFit"], tests: Sequence[str]) -> N
         for fit in running:
             table = fit.tables[test]
             stop = start + len(table)
-            columns: dict[str, Any] = {}
-            for name in table.columns:
-                columns[name] = table[name]
-                if name == "adjusted_p_value":
-                    columns[_ACROSS_GROUPS] = adjusted[start:stop]
-            fit.tables[test] = Table(columns)
+            names = list(table.columns)
+            at = names.index("adjusted_p_value") + 1
+            fit.tables[test] = table.with_columns(
+                {_ACROSS_GROUPS: adjusted[start:stop]}
+            ).select([*names[:at], _ACROSS_GROUPS, *names[at:]])
             start = stop
 
 
