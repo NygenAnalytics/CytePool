@@ -21,8 +21,7 @@ the knots with R's own rule (``attr(ns(unique(x), df), "knots")`` on the positio
 the design's samples), fits the spline to the means of the dose groups with its own
 columns, ``ns()`` for the spline, Hmisc's ``rcspline.eval`` for the non-linearity and
 the line ``x - min(x)`` for the linear trend, each group weighted by its samples, and
-tests
-the rows of A = (Z'NZ)^-1 Z'N as contrasts: ``contrasts.fit``, ``eBayes``,
+tests the rows of A = (Z'NZ)^-1 Z'N as contrasts: ``contrasts.fit``, ``eBayes``,
 ``topTable(sort.by = "none")`` for t-tests and ``classifyTestsF`` for F-tests, with
 p-values from ``pf`` per gene, as ``topTable`` of several columns refers every gene
 to the first gene's degrees of freedom when those are infinite, and ``p.adjust`` within
