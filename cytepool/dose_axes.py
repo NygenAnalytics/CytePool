@@ -58,6 +58,8 @@ _RULE_NAMES = {
 # Distinct doses closer than this, relative to the larger, are one dose that a
 # conversion of units left as two.
 _SAME_DOSE = 1e-8
+# The most doses a message lists: dose series rarely have more.
+_LISTED_DOSES = 20
 
 
 @dataclass(frozen=True)
@@ -458,7 +460,7 @@ class DoseAxis:
 
     def _dose_text(self, doses: FloatArray) -> str:
         """Doses for messages, such as "0.1, 1 and 10 ug/kg"."""
-        return f"{listing([f'{dose:g}' for dose in doses])} {self.unit}"
+        return f"{listing([f'{dose:g}' for dose in doses], limit=_LISTED_DOSES)} {self.unit}"
 
 
 def _checked_doses(values: Any, name: str) -> FloatArray:

@@ -505,6 +505,24 @@ def test_doses_are_refused_with_a_fix(
             call()
 
 
+def test_messages_say_what_x_and_the_doses_on_the_axis_are() -> None:
+    # A quarter of the treated doses tie at the lowest: Harrell's rule refuses, and
+    # the message says what x is on a linear axis.
+    doses = np.r_[0.0, 0.0, np.ones(10), np.arange(2.0, 32.0)]
+    linear = ug_per_kg(scale="linear")
+    with pytest.raises(ValueError, match="tie at the smallest value, 1.0") as error:
+        linear.spline_basis({"dose": doses}, 3, knots="harrell")
+    assert str(error.value).endswith("(on this axis, x is the treated doses in ug/kg)")
+    # With the vehicle on the axis, its dose counts among the doses on the axis.
+    on_axis = ug_per_kg(vehicle="on_axis", offset=0.003)
+    with pytest.raises(ValueError) as error:
+        on_axis.spline_basis(table_of(LADDER), 9)
+    assert str(error.value) == (
+        "a spline of 9 columns needs 10 distinct doses on the axis, and the samples "
+        "have 9, 0, 0.01, 0.03, 0.1, 0.3, 1, 3, 10 and 30 ug/kg; lower df to at most 8"
+    )
+
+
 def test_positions_and_doses_refuse_what_is_not_a_dose() -> None:
     axis = ug_per_kg()
     with pytest.raises(ValueError, match="doses must be finite and at least 0"):
