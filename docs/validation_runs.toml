@@ -30,6 +30,7 @@
 "linear_models.py" = "a0857feca4e9"
 "meta_analysis.py" = "fc3a1fe4b474"
 "mixed_models.py" = "e9aec645ac4a"
+"multiple_contrast_tests.py" = "8dcdcec5ba58"
 "multiple_testing.py" = "9f5211900c32"
 "negative_binomial_fits.py" = "e08eca1f3563"
 "normalization.py" = "9d7c957a5672"

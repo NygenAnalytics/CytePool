@@ -50,6 +50,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
+**Dunnett's test.** The comparison of each treatment or dose with the control at one family-wise error rate, which refers the largest of the contrasts' correlated t-statistics to the multivariate t distribution. [Dunnett's and Williams-type contrasts](../statistics/multiple_testing.md#dunnett-and-williams-contrasts)
+
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
 **Empirical Bayes moderation.** Shrinking each gene's residual variance towards a value estimated from all the genes, which steadies the tests of experiments with few samples. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
@@ -101,6 +103,10 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Moderated t-statistic.** A coefficient or contrast divided by a standard error that uses the gene's moderated variance, tested on the gene's residual degrees of freedom plus the prior's. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
 
 **Multidimensional scaling (MDS) plot.** limma's plot of the samples, placed so that their distances approximate the leading log2 fold changes between them. [Samples at a glance](../statistics/normalization_and_filtering.md#samples-at-a-glance)
+
+**Multiple contrast test.** A test of several contrasts of one gene at once, such as each dose against the vehicle, whose p-values are adjusted for the gene's contrasts by the distribution of the largest of their correlated t-statistics. [Several contrasts of one gene](../statistics/multiple_testing.md#correlated-tests)
+
+**Multivariate t distribution.** The distribution of correlated t-statistics that share their degrees of freedom: normal variables with a correlation matrix, divided by one chi variable. [Multivariate t probabilities](../statistics/multiple_testing.md#multivariate-t-probabilities)
 
 **Natural cubic spline (restricted cubic spline).** A curve made of cubic pieces joined smoothly at knots and straight beyond the outer knots, which enters a linear model as a few columns of the design, in R's B-spline form or Harrell's restricted cubic form. [Spline columns](../statistics/linear_models.md#spline-bases)
 
@@ -154,6 +160,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Satterthwaite's degrees of freedom.** An approximation of the degrees of freedom of a mixed model's t-test, from how precisely the estimated variance components determine its standard error. [Satterthwaite's degrees of freedom](../statistics/mixed_models.md#satterthwaite)
 
+**Single-step adjusted p-value.** The chance that the largest of a family's correlated test statistics is at least as extreme as a given one. It controls the family-wise error rate of the family, as Bonferroni's adjustment does, and takes the correlation into account. [Several contrasts of one gene](../statistics/multiple_testing.md#correlated-tests)
+
 **Source record.** The caller's record of where a cube's data came from, kept in its provenance as it was given. [Provenance records](cube_files.md#provenance-keys)
 
 **SumRank.** A test of replication that ranks the genes within each study and sums every gene's ranks across the studies, so that a gene must rank high in study after study. [SumRank](../statistics/replication.md#sum-of-ranks)
@@ -165,3 +173,5 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Variance fraction.** The share of a gene's variance that one variable of the design explains, from a mixed model fitted by maximum likelihood, which variancePartition's help page reports gives unbiased fractions where REML can show substantial bias. [Variance partitioning](../statistics/mixed_models.md#variance-fractions)
 
 **Vehicle.** The samples given the solvent or carrier of a treatment without the substance, dose 0 of a dose series, against which the doses are compared. [Dose axes and the vehicle](../statistics/dose_response.md#dose-axes)
+
+**Williams-type contrasts.** Contrasts of the vehicle with the mean of the highest one, two or more doses, weighted by their group sizes, for a response that grows in dose order; unlike Williams' trend test, they need no fit of means that change in dose order. [Dunnett's and Williams-type contrasts](../statistics/multiple_testing.md#dunnett-and-williams-contrasts)

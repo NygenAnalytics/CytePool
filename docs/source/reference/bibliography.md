@@ -18,7 +18,7 @@ Designs, linear models and contrasts [@wilkinson1973; @chambers1992; @becker1988
 
 Empirical Bayes moderation [@smyth2004; @loennstedt2002; @phipson2016; @mccarthy2009; @chen2025].
 
-Multiple testing [@holm1979; @hochberg1988; @hommel1988; @simes1986; @benjamini1995; @benjamini2001; @bourgon2010; @crowell2020; @storey2002; @storey2003; @storey2004].
+Multiple testing [@holm1979; @hochberg1988; @hommel1988; @simes1986; @benjamini1995; @benjamini2001; @bourgon2010; @crowell2020; @storey2002; @storey2003; @storey2004], with several contrasts of one gene and multivariate t probabilities [@dunnett1955; @bretz2006; @hothorn2008; @vandenberge2017; @genz1992; @genz2002; @owen2019; @ding2016].
 
 ## Differential expression
 
