@@ -603,6 +603,13 @@ def test_a_fit_without_exact_standard_errors_and_missing_arguments_are_refused()
         multiple_contrast_test(moderated, np.eye(3), df=4.0)
     with pytest.raises(ValueError, match="so leave out estimate_names"):
         multiple_contrast_test(moderated, estimate_names=names)
+    # Contrasts of other names point to the fit's own coefficient names.
+    with pytest.raises(
+        ValueError,
+        match=r"exactly the fit's coefficients \('vehicle', 'low' and 'high'\).*"
+        r"fit\.coefficient_names",
+    ):
+        multiple_contrast_test(moderated, contrasts=dunnett_contrasts(["v", "l", "h"]))
     with pytest.raises(TypeError, match="needs covariances and df with estimates"):
         multiple_contrast_test(fit.coefficients)
     with pytest.raises(TypeError, match="needs df with estimates"):

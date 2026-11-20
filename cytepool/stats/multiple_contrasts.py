@@ -120,9 +120,9 @@ def _group_names(groups: Any, name: str) -> list[str]:
         raise ValueError(
             f"{name} include '(Intercept)', the intercept of a model, which is not a "
             "group: with an intercept, the coefficients of the other groups are "
-            "already their differences from the reference group, so test them as "
-            "they are (contrasts=None), or fit a design without an intercept, such as "
-            "'~ 0 + dose', which gives one coefficient per group"
+            "already their differences from the reference group, so test those "
+            "coefficients without the intercept, or fit a design without an "
+            "intercept, such as '~ 0 + dose', which gives one coefficient per group"
         )
     repeated = sorted({group for group in names if names.count(group) > 1})
     if repeated:
@@ -419,10 +419,11 @@ def _feature_test(
 
 
 def _contrast_weights(
-    contrasts: Any, estimate_names: Any, n_estimates: int
+    contrasts: Any, estimate_names: Any, n_estimates: int, *, fitted: bool
 ) -> tuple[FloatArray, tuple[str, ...], tuple[str, ...]]:
     """The contrast matrix, rows in the order of the estimates, its names and the
-    estimate names."""
+    estimate names; messages speak of the fit's coefficients when the estimates are
+    those of a ``fitted`` model, and of the estimates and estimate_names otherwise."""
     if estimate_names is None:
         names = tuple(f"estimate{j + 1}" for j in range(n_estimates))
     else:
@@ -430,13 +431,17 @@ def _contrast_weights(
         names = checked_names(estimate_names, n_estimates, "estimate_names")
     if contrasts is None:
         return np.eye(n_estimates), names, names
-    matrix, contrast_names = contrast_matrix(
-        contrasts,
-        None,
-        names,
-        target="the estimates",
-        remedy="name the estimates with estimate_names, in the order of their columns",
-    )
+    if fitted:
+        matrix, contrast_names = contrast_matrix(contrasts, None, names)
+    else:
+        matrix, contrast_names = contrast_matrix(
+            contrasts,
+            None,
+            names,
+            target="the estimates",
+            remedy="name the estimates with estimate_names, in the order of their "
+            "columns",
+        )
     zero = np.flatnonzero(~matrix.any(axis=0))
     if zero.size:
         raise ValueError(
@@ -586,7 +591,9 @@ def multiple_contrast_test(
         >>> test.p_value[0].round(4).tolist()  # low and high against the vehicle
         [0.7587, 0.0127]
     """
+    fitted = False
     if isinstance(estimates, ModeratedFit):
+        fitted = True
         given = [
             name
             for name, value in (
@@ -642,7 +649,7 @@ def multiple_contrast_test(
         )
     _check_symmetric(v)
     matrix, names, estimate_labels = _contrast_weights(
-        contrasts, estimate_names, n_estimates
+        contrasts, estimate_names, n_estimates, fitted=fitted
     )
     side = checked_choice(alternative, "alternative", _ALTERNATIVES)
     feature_df = _feature_df(df, n_features)
