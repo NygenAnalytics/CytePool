@@ -22,8 +22,11 @@ from cytepool.stats.multiple_contrasts import (
     MultipleContrastTest,
     dunnett_contrasts,
     multiple_contrast_test,
+    optimal_contrasts,
+    stage_wise_adjusted_p_values,
     williams_contrasts,
 )
+from cytepool.stats.multiple_testing import adjust_p_values
 
 FIXTURES = Path(__file__).parent / "data" / "multiple_contrast_tests"
 CALIBRATED = 5.5
@@ -780,3 +783,383 @@ def test_asymmetric_covariances_are_refused() -> None:
     rounded[3, 0] = 0.0
     rounded[0, 1], rounded[1, 0] = 0.01, 0.01 * (1 + 1e-15)
     assert np.isfinite(multiple_contrast_test(means, rounded, df=9.0).p_value).all()
+
+
+# ---------------------------------------------------------------------------------------
+# Optimal contrasts
+# ---------------------------------------------------------------------------------------
+
+DOSE_CONTRASTS = Path(__file__).parent / "data" / "dose_contrasts"
+
+
+def _numbers(values: object) -> np.ndarray:
+    array = np.array(values, dtype=object)
+    return np.array(
+        [np.nan if v is None else v for v in array.ravel()], dtype=np.float64
+    ).reshape(array.shape)
+
+
+def _shapes(case: dict) -> dict[str, np.ndarray]:
+    """The means of a case's shapes at its doses, from the fixture's DoseFinding run."""
+    from cytepool import CandidateShapes
+
+    shapes = CandidateShapes(**case["shapes"])
+    return dict(zip(shapes.names, shapes.means(case["doses"]), strict=True))
+
+
+def test_optimal_contrasts_match_optcontr() -> None:
+    data = json.loads((DOSE_CONTRASTS / "dosefinding.json").read_text())
+    for case in data["contrasts"]:
+        shapes = _shapes(case)
+        reference = case["reference"]
+        k = len(case["doses"])
+        sizes = optimal_contrasts(shapes, np.diag(1.0 / np.asarray(case["n"], float)))
+        np.testing.assert_allclose(
+            sizes.matrix, _numbers(reference["w"]).reshape(k, -1), rtol=0, atol=1e-12
+        )
+        general = optimal_contrasts(shapes, np.asarray(case["S"]))
+        np.testing.assert_allclose(
+            general.matrix, _numbers(reference["S"]).reshape(k, -1), rtol=0, atol=1e-12
+        )
+        # Dropping the vehicle's row and scaling to unit length gives DoseFinding's
+        # placebo-adjusted contrasts of the differences, of covariance D S D'.
+        dropped = general.matrix[1:] / np.linalg.norm(general.matrix[1:], axis=0)
+        np.testing.assert_allclose(
+            dropped,
+            _numbers(reference["placebo_adjusted"]).reshape(k - 1, -1),
+            rtol=0,
+            atol=1e-12,
+        )
+        assert general.names == tuple(shapes)
+
+
+def test_optimal_contrasts_by_hand() -> None:
+    """n = (2, 1, 1) and mu = (0, 1, 2): the size-weighted mean is 0.75, and c is
+    proportional to n (mu - 0.75) = (-1.5, 0.25, 1.25)."""
+    covariance = np.diag([0.5, 1.0, 1.0])
+    contrasts = optimal_contrasts({"rise": [0.0, 1.0, 2.0]}, covariance)
+    expected = np.array([-1.5, 0.25, 1.25]) / math.sqrt(1.5**2 + 0.25**2 + 1.25**2)
+    np.testing.assert_allclose(contrasts.matrix[:, 0], expected, rtol=1e-15)
+    assert contrasts.names == ("rise",)
+    assert contrasts.columns == ("1", "2", "3")
+    # The same shape shifted, scaled up, or with S scaled gives the same contrast; a
+    # negative scale flips the shape and its contrast with it, since c'mu > 0.
+    for mu, s in (([5.0, 6.0, 7.0], covariance), ([0.0, 3.0, 6.0], 7.0 * covariance)):
+        again = optimal_contrasts({"rise": mu}, s)
+        np.testing.assert_allclose(again.matrix, contrasts.matrix, rtol=1e-14)
+    fall = optimal_contrasts({"fall": [0.0, -1.0, -2.0]}, covariance)
+    np.testing.assert_allclose(fall.matrix, -contrasts.matrix, rtol=1e-15)
+    named = optimal_contrasts(
+        {"rise": [0.0, 1.0, 2.0], "peak": [0.0, 1.0, 0.0]},
+        covariance,
+        groups=["vehicle", "low", "high"],
+    )
+    assert named.names == ("rise", "peak")
+    assert named.columns == ("vehicle", "low", "high")
+
+
+def test_optimal_contrasts_do_not_depend_on_the_scale() -> None:
+    """Shapes times 1e-200 or 1e200, whose squares underflow or overflow a double,
+    and a covariance times 1e-300 give the contrasts of the shapes as they are."""
+    covariance = np.diag(1.0 / np.array([3.0, 2.0, 3.0, 4.0]))
+    shapes = {"umbrella": np.array([0.0, 1.0, 3.0, 2.0]), "rise": [0.0, 1.0, 2.0, 3.0]}
+    expected = optimal_contrasts(shapes, covariance).matrix
+    for factor in (1e-200, 1e200):
+        scaled = {"umbrella": shapes["umbrella"] * factor, "rise": shapes["rise"]}
+        with np.errstate(over="raise", under="ignore", divide="raise", invalid="raise"):
+            found = optimal_contrasts(scaled, covariance)
+            tiny = optimal_contrasts(shapes, covariance * 1e-300)
+        np.testing.assert_allclose(found.matrix, expected, rtol=1e-14, atol=1e-15)
+        np.testing.assert_allclose(tiny.matrix, expected, rtol=1e-14, atol=1e-15)
+
+
+def test_optimal_contrasts_maximise_the_non_centrality() -> None:
+    """Among 2,000 random contrasts, none detects a shape better than its optimal one:
+    the non-centrality c'mu / sqrt(c' S c) is largest at the optimum."""
+    rng = np.random.default_rng(7)
+    a = rng.standard_normal((5, 5))
+    covariance = a @ a.T + np.eye(5)
+    mu = np.array([0.0, 0.3, 1.1, 0.9, 0.2])
+    best = optimal_contrasts({"umbrella": mu}, covariance).matrix[:, 0]
+
+    def non_centrality(c: np.ndarray) -> np.ndarray:
+        return (c @ mu) / np.sqrt(np.einsum("...i,ij,...j->...", c, covariance, c))
+
+    random = rng.standard_normal((2000, 5))
+    random -= random.mean(axis=1, keepdims=True)
+    assert np.all(non_centrality(random) <= non_centrality(best) + 1e-12)
+    assert abs(best.sum()) < 1e-15 and best @ mu > 0
+    assert np.linalg.norm(best) == pytest.approx(1.0, rel=1e-15)
+
+
+@pytest.mark.parametrize(
+    ("shapes", "covariance", "options", "error", "message"),
+    [
+        ({"flat": [1.0, 1.0, 1.0]}, np.eye(3), {}, ValueError, "constant"),
+        ({"zero": [0.0, 0.0, 0.0]}, np.eye(3), {}, ValueError, "constant"),
+        ({"tiny": [0.0, 1e-310, 0.0]}, np.eye(3), {}, ValueError, "constant"),
+        ({"nearly": [1.0, 1.0 + 1e-12, 1.0]}, np.eye(3), {}, ValueError, "constant"),
+        ({"one": [1.0]}, np.eye(1), {}, ValueError, "two groups or more"),
+        (
+            {"a": [0.0, 1.0], "b": [0.0, 1.0, 2.0]},
+            np.eye(3),
+            {},
+            ValueError,
+            "one mean per group",
+        ),
+        ({"a": [0.0, np.nan, 1.0]}, np.eye(3), {}, ValueError, "finite"),
+        ({"a": [0.0, 1.0, 2.0]}, np.eye(2), {}, ValueError, r"\(3, 3\)"),
+        ({"a": [0.0, 1.0, 2.0]}, -np.eye(3), {}, ValueError, "positive definite"),
+        (
+            {"a": [0.0, 1.0, 2.0]},
+            np.triu(np.ones((3, 3))),
+            {},
+            ValueError,
+            "covariance must be symmetric",
+        ),
+        (
+            {"a": [0.0, 1.0, 2.0]},
+            np.eye(3),
+            {"groups": ["x", "y"]},
+            ValueError,
+            "3 groups",
+        ),
+        (
+            {"a": [0.0, 1.0, 2.0]},
+            np.eye(3),
+            {"groups": ["x", "x", "y"]},
+            ValueError,
+            "once",
+        ),
+        ({"": [0.0, 1.0, 2.0]}, np.eye(3), {}, ValueError, "empty"),
+        ({1: [0.0, 1.0, 2.0]}, np.eye(3), {}, TypeError, "text"),
+        ({}, np.eye(3), {}, ValueError, "no shape"),
+        (np.zeros((2, 3)), np.eye(3), {}, TypeError, r"mapping.*dict\(zip\("),
+        ({"a": ["0", "1", "2"]}, np.eye(3), {}, TypeError, "numbers"),
+        ({"a": [[0.0, 1.0], [1.0, 2.0]]}, np.eye(2), {}, ValueError, "1-D means"),
+        ({"a": [False, True, True]}, np.eye(3), {}, TypeError, "real numbers"),
+        ({"a": np.array([0, 1, 2], dtype=object)}, np.eye(3), {}, TypeError, "real"),
+        ({"a": [0.0, 1.0, 2.0]}, np.full((3, 3), np.nan), {}, ValueError, "finite"),
+    ],
+)
+def test_optimal_contrasts_refuse(shapes, covariance, options, error, message) -> None:
+    with pytest.raises(error, match=message):
+        optimal_contrasts(shapes, covariance, **options)
+
+
+# ---------------------------------------------------------------------------------------
+# Stage-wise adjusted p-values
+# ---------------------------------------------------------------------------------------
+
+
+def test_stage_wise_matches_stager() -> None:
+    data = json.loads((DOSE_CONTRASTS / "stager.json").read_text())
+    compared = 0
+    for case in data["cases"]:
+        screen = _numbers(case["screen"])
+        p = _numbers(case["p"]).reshape(screen.size, -1)
+        ours = stage_wise_adjusted_p_values(
+            screen, p, alpha=case["alpha"], method=case["method"]
+        )
+        reference = case["reference"]["adjusted"]
+        if "one_left" in case:
+            # stageR's "holm" calls a feature's one hypothesis left on the screen alone
+            # (0); CytePool tests it by Bonferroni at the screen's level.
+            row = case["one_left"]
+            left = int(np.flatnonzero(~np.isnan(p[row]))[0])
+            theirs = _numbers(reference["adjusted"]).reshape(p.shape)
+            assert theirs[row, left] == 0.0
+            q = adjust_p_values(screen, "bh")
+            factor = screen.size / np.count_nonzero(q <= case["alpha"])
+            assert ours[row, left] == pytest.approx(
+                min(1.0, p[row, left] * factor), rel=1e-14
+            )
+            others = np.arange(p.shape[0]) != row
+            np.testing.assert_allclose(ours[others], theirs[others], rtol=1e-14)
+            continue
+        if "error" in reference:
+            # stageR's "holm" fails on one hypothesis; CytePool multiplies by 1.
+            assert case["m"] == 1 and case["method"] == "holm"
+            none = stage_wise_adjusted_p_values(
+                screen, p, alpha=case["alpha"], method="none"
+            )
+            np.testing.assert_array_equal(ours, none)
+            continue
+        theirs = _numbers(reference["adjusted"]).reshape(p.shape)
+        np.testing.assert_array_equal(np.isnan(ours), np.isnan(theirs))
+        np.testing.assert_allclose(ours, theirs, rtol=1e-14, atol=0)
+        compared += 1
+    # Every case but stageR's failures and the deliberate difference.
+    assert compared == 19
+
+
+def test_the_level_changes_the_features_called() -> None:
+    """The stageR fixture calls more features at alpha 0.1 than at 0.05, so it checks
+    the scaling by G / R at two values of R."""
+    data = json.loads((DOSE_CONTRASTS / "stager.json").read_text())
+    counts: dict[tuple[int, float], int] = {}
+    for case in data["cases"]:
+        if case["method"] != "holm" or case["label"].startswith("a screen"):
+            continue
+        screen = _numbers(case["screen"])
+        q = adjust_p_values(screen, "bh")
+        counts[(case["m"], case["alpha"])] = int(np.count_nonzero(q <= case["alpha"]))
+    for m in (2, 3, 5, 8):
+        assert counts[(m, 0.1)] > counts[(m, 0.05)] > 0
+
+
+def test_stage_wise_by_hand() -> None:
+    """Ten genes; Benjamini-Hochberg calls five at 0.05 (q = 1e-5, 5e-4, 3.3e-3, 0.01,
+    0.04), so G / R = 2. Gene 1's p-values (1e-5, 0.01, 0.2) sorted take Holm's
+    multipliers with Shaffer's first step, (2, 2, 1): 2e-5, 0.02 and 0.2, times 2."""
+    screen = np.array([1e-6, 1e-4, 1e-3, 4e-3, 0.02, 0.3, 0.5, 0.7, 0.9, 1.0])
+    p = np.array(
+        [
+            [1e-5, 0.01, 0.2],
+            [0.003, 0.003, 0.6],
+            [0.04, 0.5, 1e-4],
+            [0.2, 0.3, 0.02],
+            [0.01, 0.01, 0.01],
+        ]
+        + [[0.5, 0.5, 0.5]] * 5
+    )
+    expected = np.full((10, 3), np.nan)
+    expected[:5] = [
+        [4e-5, 0.04, 0.4],
+        [0.012, 0.012, 1.0],  # 0.6 x 1 x 2 is capped at 1
+        [0.16, 1.0, 4e-4],  # 0.5 x 1 x 2 = 1.0
+        [0.8, 0.8, 0.08],  # 0.2 x 2 x 2 = 0.8; 0.3 x 1 x 2 = 0.6 below the running 0.8
+        [0.04, 0.04, 0.04],  # ties: 0.01 x 2 x 2 at each
+    ]
+    ours = stage_wise_adjusted_p_values(screen, p)
+    np.testing.assert_allclose(ours, expected, rtol=1e-14)
+    np.testing.assert_array_equal(np.isnan(ours), np.isnan(expected))
+
+
+def test_stage_wise_follows_the_closure() -> None:
+    """The calls equal those of the closed test, coded here: a hypothesis is rejected
+    when every intersection of the hypotheses that holds it is, the intersection of
+    all m by the screen and the others by Bonferroni at R alpha / G."""
+    from itertools import combinations
+
+    rng = np.random.default_rng(11)
+    for m in (1, 2, 3, 4, 6):
+        screen = np.concatenate(
+            [10.0 ** rng.uniform(-8, -2, 30), rng.uniform(0, 1, 30)]
+        )
+        p = rng.uniform(0, 1, (60, m)) ** 4
+        p[rng.uniform(size=p.shape) < 0.1] = np.nan
+        for alpha in (0.05, 0.2):
+            ours = stage_wise_adjusted_p_values(screen, p, alpha=alpha)
+            q = adjust_p_values(screen, "bh")
+            selected = np.flatnonzero(q <= alpha)
+            level = selected.size * alpha / screen.size
+            expected = np.zeros(p.shape, dtype=bool)
+            for i in selected:
+                present = [j for j in range(m) if not np.isnan(p[i, j])]
+                if len(present) == 1:
+                    # One hypothesis left: Bonferroni at the level.
+                    expected[i, present] = p[i, present] <= level
+                    continue
+                subsets = [
+                    s
+                    for size in range(1, len(present))
+                    for s in combinations(present, size)
+                ]
+                for j in present:
+                    expected[i, j] = all(
+                        min(p[i, list(s)]) <= level / len(s) for s in subsets if j in s
+                    )
+            np.testing.assert_array_equal(
+                np.nan_to_num(ours, nan=2.0) <= alpha, expected
+            )
+
+
+def test_stage_wise_edge_cases() -> None:
+    screen = np.array([1e-8, 1e-7, np.nan, 0.9])
+    p = np.array([[np.nan, np.nan], [0.01, np.nan], [1e-9, 1e-9], [1e-9, 1e-9]])
+    ours = stage_wise_adjusted_p_values(screen, p)
+    # G = 3 (the missing screen p-value leaves the family) and R = 2; a gene with no
+    # p-value gets none; one with one hypothesis left takes the multiplier 1.
+    np.testing.assert_array_equal(np.isnan(ours[0]), [True, True])
+    assert ours[1, 0] == pytest.approx(0.01 * 3 / 2, rel=1e-15)
+    assert np.isnan(ours[1, 1]) and np.isnan(ours[2:]).all()
+    nothing = stage_wise_adjusted_p_values(np.array([0.5, 0.9]), np.zeros((2, 3)))
+    assert np.isnan(nothing).all()
+    empty = stage_wise_adjusted_p_values(np.zeros(0), np.zeros((0, 3)))
+    assert empty.shape == (0, 3)
+    # p-values already adjusted within each gene: G / R only.
+    none = stage_wise_adjusted_p_values(screen, p, method="none")
+    assert none[1, 0] == pytest.approx(0.015, rel=1e-15)
+    # A screen's adjusted p-value equal to alpha calls the gene, as stageR counts:
+    # 0.25 x 2 / 1 = 0.5 exactly, so G / R = 2 and the dose's 0.1 becomes 0.2.
+    edge = stage_wise_adjusted_p_values(
+        np.array([0.25, 0.9]), np.array([[0.1], [0.1]]), alpha=0.5
+    )
+    assert edge[0, 0] == 0.2 and np.isnan(edge[1, 0])
+
+
+@pytest.mark.parametrize(
+    ("screen", "p", "options", "error", "message"),
+    [
+        (np.zeros(3), np.zeros(3), {}, ValueError, r"p_values\[:, None\]"),
+        (np.zeros(3), np.zeros((2, 2)), {}, ValueError, "one row per screen"),
+        (np.zeros((3, 1)), np.zeros((3, 2)), {}, ValueError, "1-D"),
+        (np.array([0.1, 1.5]), np.zeros((2, 1)), {}, ValueError, r"in \[0, 1\]"),
+        (np.zeros(2), np.array([[0.1], [-0.1]]), {}, ValueError, r"in \[0, 1\]"),
+        (np.zeros(2), np.array([[0.1], [np.inf]]), {}, ValueError, r"in \[0, 1\]"),
+        (np.zeros(2), np.zeros((2, 1)), {"alpha": 0.0}, ValueError, "between 0 and 1"),
+        (np.zeros(2), np.zeros((2, 1)), {"alpha": 1.0}, ValueError, "between 0 and 1"),
+        (np.zeros(2), np.zeros((2, 1)), {"alpha": "0.05"}, TypeError, "alpha"),
+        (
+            np.zeros(2),
+            np.zeros((2, 1)),
+            {"method": "bonferroni"},
+            ValueError,
+            "'holm', 'none'",
+        ),
+        (np.array(["0.1", "0.2"]), np.zeros((2, 1)), {}, TypeError, "numbers"),
+    ],
+)
+def test_stage_wise_refuses(screen, p, options, error, message) -> None:
+    with pytest.raises(error, match=message):
+        stage_wise_adjusted_p_values(screen, p, **options)
+
+
+def test_the_mcp_step_matches_mcttest_and_glht() -> None:
+    """The MCP step on seeded estimates with integer df, singular correlations
+    included (five shapes on two and three treated doses): the contrasts and |t| of
+    DoseFinding's MCTtest, the signed t of multcomp's glht on its contrasts, and
+    glht's p-values from 1e-3 within 5.5 combined standard errors, mvtnorm's being
+    its error attribute over 3."""
+    from cytepool import CandidateShapes
+
+    data = json.loads((DOSE_CONTRASTS / "dosefinding.json").read_text())
+    z = []
+    for case in data["mct"]:
+        shapes = CandidateShapes(**case["shapes"])
+        means = dict(zip(shapes.names, shapes.means(case["doses"]), strict=True))
+        matrix = optimal_contrasts(means, np.asarray(case["S"])).matrix[1:]
+        matrix = matrix / np.linalg.norm(matrix, axis=0)
+        reference = case["reference"]
+        np.testing.assert_allclose(
+            matrix, _numbers(reference["contrasts"]).reshape(matrix.shape), atol=1e-12
+        )
+        test = multiple_contrast_test(
+            np.asarray(case["theta"]),
+            np.asarray(case["V"]),
+            matrix,
+            df=case["df"],
+            rng=case["seed"],
+        )
+        np.testing.assert_allclose(test.t[0], _numbers(reference["glht_t"]), rtol=1e-10)
+        np.testing.assert_allclose(
+            np.abs(test.t[0]), _numbers(reference["t"]), rtol=1e-10
+        )
+        for ours, error, theirs in zip(
+            test.p_value[0], test.p_value_error[0], reference["p"], strict=True
+        ):
+            if theirs >= 1e-3:
+                z.append((ours - theirs) / math.hypot(error, reference["error"] / 3))
+    assert len(z) > 600
+    assert np.max(np.abs(z)) <= CALIBRATED

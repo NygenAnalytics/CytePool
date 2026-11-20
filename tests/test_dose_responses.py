@@ -10,10 +10,15 @@ themselves, identities of the tests derived by hand, the rules that choose the t
 and the spline's size, invariants, refusals and the records.
 """
 
+import contextlib
 import functools
+import io
 import json
+import math
 import pickle
 import re
+import zlib
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +28,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 
 import cytepool
 from cytepool import (
+    CandidateShapes,
     Cube,
     Design,
     DoseAxis,
@@ -35,8 +41,11 @@ from cytepool import (
     simulate_dose_series,
     write_cube,
 )
+from cytepool import dose_responses
 from cytepool.dose_designs import DoseDesignReport
+from cytepool.dose_responses import _dose_group_estimates
 from cytepool.stats.distributions import t_ppf
+from cytepool.stats.multiple_contrasts import multiple_contrast_test
 from cytepool.stats.multiple_testing import adjust_p_values
 
 DATA = Path(__file__).parent / "data" / "dose_response_tests"
@@ -1511,3 +1520,852 @@ def test_the_chapter_example_runs() -> None:
     assert namespace["ax"].get_xlabel() == "Dose (ug/kg, log10 axis)"
     with pytest.raises(ValueError, match="'stellate' compares"):
         result.curve("stellate", at=[30.0])
+
+
+# Trend contrasts, the MCP step and the lowest effective dose.
+
+CONTRAST_DATA = Path(__file__).parent / "data" / "dose_contrasts"
+CONTRAST_TESTS = ("dunnett", "williams", "mcp")
+CALIBRATED = 5.5  # combined standard errors, as validation/dose_contrasts.py
+
+
+@functools.cache
+def contrast_reference() -> dict[str, Any]:
+    found: dict[str, Any] = json.loads((CONTRAST_DATA / "r_tests.json").read_text())
+    return found
+
+
+@functools.cache
+def contrast_cube() -> Cube:
+    """The series of validation/dose_contrasts.py's fixture: the vehicle and 5 doses
+    from 0.1 to 10 ug/kg x 3, 200 genes, a cell type of every sample and one that
+    loses the top dose and a sample of 3 ug/kg."""
+    series = contrast_reference()["series"]
+    cell_types = series["cell_types"]
+    groups = list(cell_types)
+    return Cube(
+        {
+            "counts": np.stack(
+                [np.array(cell_types[g]["counts"], dtype=np.int64).T for g in groups]
+            )
+        },
+        samples=series["samples"],
+        groups={"group_id": groups},
+        features={"feature_id": [f"gene_{j + 1:03d}" for j in range(200)]},
+        n_cells=np.column_stack(
+            [np.array(cell_types[g]["n_cells"], dtype=np.int64) for g in groups]
+        ),
+    )
+
+
+@functools.cache
+def contrast_result(analysis: str) -> DoseResponseResult:
+    cube = contrast_cube()
+    return dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("dose_groups", *CONTRAST_TESTS),
+        analysis=limma_trend if analysis == "trend" else limma_voom,
+        rng=20261216,
+    )
+
+
+def contrast_weights(result: DoseResponseResult, group: str, test: str) -> tuple:
+    """A test's contrast names and weights on the treated doses, from the record."""
+    entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
+    contrasts = entry["contrast_tests"][test]["contrasts"]
+    return list(contrasts), np.array(list(contrasts.values()))
+
+
+def numbers(values: Any) -> np.ndarray:
+    array = np.array(values, dtype=object)
+    return np.array(
+        [np.nan if v is None else v for v in array.ravel()], dtype=np.float64
+    ).reshape(array.shape)
+
+
+@pytest.mark.parametrize("analysis", ["voom", "trend"])
+def test_multiple_contrast_tests_match_r(analysis: str) -> None:
+    """Contrasts, each gene's largest |t|, the contrast it belongs to and df against R:
+    limma fitted from the counts, multcomp's contrMat and DoseFinding's optContr from
+    the doses and samples R counted, and glht(parm()) on R's estimates."""
+    result = contrast_result(analysis)
+    for theirs in contrast_reference()["cell_types"]:
+        if theirs["analysis"] != analysis:
+            continue
+        group = theirs["group"]
+        entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
+        assert entry["doses"] == pytest.approx(theirs["doses"], rel=0)
+        assert entry["samples"] == theirs["n"]
+        assert result.table(group, "dunnett")["feature_id"].tolist() == [
+            f"gene_{g + 1:03d}" for g in theirs["genes"]
+        ]
+        for test in CONTRAST_TESTS:
+            names, weights = contrast_weights(result, group, test)
+            assert_allclose(weights, numbers(theirs["contrasts"][test]), atol=1e-13)
+            table = result.table(group, test)
+            assert_scaled(table["t"], theirs["t"][test])
+            chosen = [names.index(name) for name in table["contrast"].tolist()]
+            assert chosen == theirs["chosen"][test]
+            assert_allclose(table["df"], theirs["df"], rtol=1e-12)
+        assert_p_values(
+            result.table(group, "dose_groups")["p_value"], theirs["f_p"], 1e-9
+        )
+
+
+def test_multiple_contrast_p_values_match_scipy() -> None:
+    """The p-values of limma-voom's fit at its non-integer df against scipy's
+    multivariate t on R's statistics, within 5.5 combined standard errors."""
+    result = contrast_result("voom")
+    found = 0
+    for case in contrast_reference()["scipy"]:
+        table = result.table(case["group"], case["test"])
+        row = table["feature_id"].tolist().index(case["feature_id"])
+        error = math.hypot(table["p_value_error"][row], case["error"])
+        assert abs(table["p_value"][row] - case["p_value"]) <= CALIBRATED * error
+        found += 1
+    assert found >= 100
+
+
+def test_lowest_effective_doses_match_stager() -> None:
+    """R's own dose-group test and per-dose tests, through stageR's
+    stageWiseAdjustment('holm'): the lowest dose called, its stage-wise adjusted
+    p-value, the doses called and the screen's calls."""
+    found = 0
+    for theirs in contrast_reference()["cell_types"]:
+        result = contrast_result(theirs["analysis"])
+        group = theirs["group"]
+        ours = result.lowest_effective_doses(group, screen="dose_groups")
+        doses = np.array(theirs["doses"][1:])
+        adjusted = numbers(theirs["stage_wise"]).reshape(len(theirs["genes"]), -1)
+        called = np.nan_to_num(adjusted, nan=2.0) <= 0.05
+        some = called.any(axis=1)
+        first = np.argmax(called, axis=1)
+        assert_array_equal(
+            ours["lowest_effective_dose"], np.where(some, doses[first], np.nan)
+        )
+        assert_allclose(
+            ours["stage_wise_adjusted_p_value"],
+            np.where(some, adjusted[np.arange(first.size), first], np.nan),
+            rtol=1e-12,
+        )
+        assert_array_equal(ours["n_doses_called"], called.sum(axis=1))
+        q = adjust_p_values(numbers(theirs["f_p"]), "bh")
+        assert_array_equal(ours["responds"], q <= 0.05)
+        found += int(np.count_nonzero(some))
+    assert found > 50
+
+
+def test_dunnett_t_is_each_dose_s_t() -> None:
+    """Dunnett's contrasts are the doses themselves, so each gene's largest |t| is
+    the t of that dose in the table of each dose, from the analysis's own contrast
+    tables; and the Wald F of all doses from the estimates and their covariance is
+    the dose-group F. Under limma-voom, limma's standard errors, limma-trend and
+    dream."""
+    cube, _ = simulate_dose_series(
+        [0, 0.1, 1, 10], replicates=3, cell_types=1, n_genes=120, donor_sd=0.3, rng=6
+    )
+    results = {
+        "voom": dose_response(
+            cube,
+            Design(cube.samples, "~ 1"),
+            dose=AXIS,
+            tests=("dose_groups", "dunnett"),
+        ),
+        "trend": dose_response(
+            cube,
+            Design(cube.samples, "~ 1"),
+            dose=AXIS,
+            tests=("dose_groups", "dunnett"),
+            analysis=limma_trend,
+        ),
+        "dream": dose_response(
+            cube,
+            Design(cube.samples, "~ 1", random="(1 | donor)"),
+            dose=AXIS,
+            tests=("dose_groups", "dunnett"),
+            analysis=dream_voom,
+        ),
+    }
+    for name, result in results.items():
+        dunnett = result.table("cell_type_1", "dunnett")
+        each = result.table("cell_type_1", "each_dose")
+        k = len(dunnett)
+        t = by_dose(each, "t", 3)
+        names = ["0.1 - vehicle", "1 - vehicle", "10 - vehicle"]
+        picked = np.array([names.index(c) for c in dunnett["contrast"].tolist()])
+        assert_allclose(dunnett["t"], t[np.arange(k), picked], rtol=1e-10)
+        assert_array_equal(picked, np.argmax(np.abs(t), axis=1))
+        if name == "dream":
+            df = np.asarray(each["df"], dtype=float).reshape(3, -1).T.min(axis=1)
+            assert_allclose(dunnett["df"], df, rtol=1e-12)
+        fit = result.fit("cell_type_1")
+        estimates = _dose_group_estimates(
+            fit, [f"dose_{d:.12g}" for d in (0.1, 1.0, 10.0)]
+        )
+        covariance = estimates.covariance * estimates.posterior_variance[:, None, None]
+        wald = (
+            np.einsum(
+                "gi,gi->g",
+                estimates.theta,
+                np.linalg.solve(covariance, estimates.theta[:, :, None])[:, :, 0],
+            )
+            / 3
+        )
+        # dream's F takes the doses' own df (lmerTest's rule); its statistic is the
+        # Wald F all the same.
+        assert_allclose(
+            wald, result.table("cell_type_1", "dose_groups")["f_statistic"], rtol=1e-9
+        )
+
+
+def test_contrasts_follow_the_cell_type_s_samples() -> None:
+    """The depleted cell type keeps 3, 3, 3, 3 and 2 samples of the vehicle and four
+    doses: the Williams-type weights are its samples over the pooled sum, and the MCP
+    step's contrasts are n_k (mu_k - the size-weighted mean of mu), derived by hand,
+    with the vehicle's weight dropped and scaled to unit length."""
+    result = contrast_result("voom")
+    entry = next(e for e in result.provenance["groups"] if e["group_id"] == "depleted")
+    n = np.array(entry["samples"], dtype=float)
+    assert n.tolist() == [3, 3, 3, 3, 2]
+    names, williams = contrast_weights(result, "depleted", "williams")
+    assert names == [
+        "3 - vehicle",
+        "1 to 3 - vehicle",
+        "0.3 to 3 - vehicle",
+        "0.1 to 3 - vehicle",
+    ]
+    expected = np.zeros((4, 4))
+    for j in range(4):
+        pooled = slice(3 - j, 4)
+        expected[j, pooled] = n[1:][pooled] / n[1:][pooled].sum()
+    assert_allclose(williams, expected, rtol=1e-15)
+    shapes = result.candidates
+    assert shapes is not None
+    means = shapes.means(entry["doses"])
+    mean = (means * n).sum(axis=1, keepdims=True) / n.sum()
+    by_hand = (n * (means - mean))[:, 1:]
+    by_hand /= np.linalg.norm(by_hand, axis=1, keepdims=True)
+    names, mcp = contrast_weights(result, "depleted", "mcp")
+    assert names == list(shapes.names)
+    assert_allclose(mcp, by_hand, rtol=1e-12, atol=1e-15)
+
+
+def test_lowest_effective_doses_by_the_closed_test() -> None:
+    """Each gene's doses called equal those of the closure of Bonferroni tests coded
+    here, every intersection enumerated; and the lowest effective dose lies below an
+    uncalled dose for some gene, which a run of called doses from the top would miss."""
+    result = contrast_result("voom")
+    for group in ("full", "depleted"):
+        for screen in ("dose_groups", "mcp"):
+            ours = result.lowest_effective_doses(group, screen=screen, alpha=0.2)
+            p = by_dose(
+                result.table(group, "each_dose"),
+                "p_value",
+                len(result.provenance["groups"][0]["doses"]) - 1
+                if group == "full"
+                else 4,
+            )
+            screened = np.asarray(result.table(group, screen)["p_value"])
+            q = adjust_p_values(screened, "bh")
+            selected = q <= 0.2
+            level = selected.sum() * 0.2 / screened.size
+            doses = np.array(
+                next(e for e in result.provenance["groups"] if e["group_id"] == group)[
+                    "doses"
+                ][1:]
+            )
+            m = doses.size
+            change = by_dose(result.table(group, "each_dose"), "log2_fold_change", m)
+            subsets = [s for size in range(1, m) for s in combinations(range(m), size)]
+            gaps = 0
+            for g in np.flatnonzero(selected):
+                rejected = [
+                    all(min(p[g, list(s)]) <= level / len(s) for s in subsets if j in s)
+                    for j in range(m)
+                ]
+                assert ours["n_doses_called"][g] == sum(rejected)
+                lowest = doses[rejected.index(True)] if any(rejected) else np.nan
+                assert ours["lowest_effective_dose"][g] == pytest.approx(
+                    lowest, nan_ok=True
+                )
+                # The change from the vehicle at that dose, from the table of each dose.
+                at = change[g, rejected.index(True)] if any(rejected) else np.nan
+                np.testing.assert_equal(ours["log2_fold_change"][g], at)
+                if any(rejected):
+                    first = rejected.index(True)
+                    gaps += not all(rejected[first:])
+            assert_array_equal(np.isnan(ours["lowest_effective_dose"][~selected]), True)
+            assert_array_equal(np.isnan(ours["log2_fold_change"][~selected]), True)
+            assert gaps > 0
+
+
+def test_lowest_effective_doses_at_extreme_levels() -> None:
+    result = contrast_result("trend")
+    none = result.lowest_effective_doses("full", alpha=1e-300, screen="dose_groups")
+    assert not np.any(none["responds"])
+    assert np.isnan(none["lowest_effective_dose"]).all()
+    assert_array_equal(none["n_doses_called"], 0)
+    lenient = result.lowest_effective_doses("full", alpha=0.5, screen="dose_groups")
+    strict = result.lowest_effective_doses("full", alpha=0.05, screen="dose_groups")
+    assert np.sum(lenient["responds"]) > np.sum(strict["responds"])
+    # A larger level calls each called dose again: the lowest effective dose can only
+    # move down.
+    both = ~np.isnan(strict["lowest_effective_dose"])
+    assert np.all(
+        lenient["lowest_effective_dose"][both] <= strict["lowest_effective_dose"][both]
+    )
+
+
+def test_contrast_tests_do_not_depend_on_threads_order_or_other_cell_types() -> None:
+    cube = contrast_cube()
+    design = Design(cube.samples, "~ 1")
+    base = contrast_result("voom")
+    seed = base.settings["seed"]
+    assert seed == 20261216
+    alone = dose_response(
+        cube,
+        design,
+        dose=AXIS,
+        tests=("dose_groups", *CONTRAST_TESTS),
+        groups=["depleted"],
+        rng=seed,
+    )
+    four = dose_response(
+        cube,
+        Design(cube.samples.take(np.arange(cube.n_samples)[::-1]), "~ 1"),
+        dose=AXIS,
+        tests=("dose_groups", *CONTRAST_TESTS),
+        rng=seed,
+        n_threads=4,
+    )
+    within = [
+        "feature_id",
+        "average_log2_cpm",
+        "contrast",
+        "t",
+        "df",
+        "p_value",
+        "p_value_error",
+        "adjusted_p_value",
+    ]
+    for test in CONTRAST_TESTS:
+        # Run alone, the cell type is its own family across cell types.
+        assert (
+            alone.table("depleted", test)
+            .select(within)
+            .equals(base.table("depleted", test).select(within))
+        )
+        for group in ("full", "depleted"):
+            assert_allclose(
+                four.table(group, test)["p_value"],
+                base.table(group, test)["p_value"],
+                rtol=1e-12,
+            )
+    # A test named alone draws the random numbers it draws beside the others: the
+    # test's position counts among every multiple contrast test, not those named.
+    for test in ("williams", "mcp"):
+        named_alone = dose_response(cube, design, dose=AXIS, tests=(test,), rng=seed)
+        for group in ("full", "depleted"):
+            assert_array_equal(
+                named_alone.table(group, test)["p_value"],
+                base.table(group, test)["p_value"],
+            )
+    # Each cell type and test draws from numpy.random.default_rng([seed, CRC-32 of the
+    # cell type's name, the test's position]).
+    fit = base.fit("full")
+    entry = next(e for e in base.provenance["groups"] if e["group_id"] == "full")
+    estimates = _dose_group_estimates(
+        fit, [f"dose_{d:.12g}" for d in entry["doses"][1:]]
+    )
+    names, weights = contrast_weights(base, "full", "williams")
+    direct = multiple_contrast_test(
+        estimates.theta,
+        estimates.covariance * estimates.posterior_variance[:, None, None],
+        dict(zip(names, weights, strict=True)),
+        df=estimates.df_total,
+        rng=np.random.default_rng([seed, zlib.crc32(b"full"), 1]),
+    )
+    assert_array_equal(
+        direct.table()["p_value"], base.table("full", "williams")["p_value"]
+    )
+    # A generator gives its first draw of [0, 2^63) as the seed, which reproduces it.
+    drawn = int(np.random.default_rng(7).integers(0, 2**63))
+    again = dose_response(
+        cube,
+        design,
+        dose=AXIS,
+        tests=("mcp",),
+        groups=["full"],
+        rng=np.random.default_rng(7),
+    )
+    assert again.settings["seed"] == drawn
+    repeat = dose_response(
+        cube, design, dose=AXIS, tests=("mcp",), groups=["full"], rng=drawn
+    )
+    assert repeat.table("full", "mcp").equals(again.table("full", "mcp"))
+
+
+def test_contrast_tests_follow_the_dose_s_unit() -> None:
+    """Doses in ng/kg: the candidate shapes scale, the tests and the calls do not, and
+    the lowest effective doses are a thousand times larger."""
+    cube = contrast_cube()
+    base = contrast_result("voom")
+    scaled_samples = cube.samples.with_columns(
+        {"dose": np.asarray(cube.samples["dose"]) * 1000.0}
+    )
+    scaled_cube = Cube(
+        {"counts": np.stack([cube.layer("counts", g) for g in range(cube.n_groups)])},
+        samples=scaled_samples,
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=cube.n_cells,
+    )
+    scaled = dose_response(
+        scaled_cube,
+        Design(scaled_samples, "~ 1"),
+        dose=DoseAxis("dose", unit="ng/kg", metric="administered"),
+        tests=("dose_groups", *CONTRAST_TESTS),
+        rng=20261216,
+    )
+    for test in CONTRAST_TESTS:
+        assert_allclose(
+            scaled.table("full", test)["t"], base.table("full", test)["t"], rtol=1e-9
+        )
+        assert_allclose(
+            scaled.table("full", test)["p_value"],
+            base.table("full", test)["p_value"],
+            rtol=1e-6,
+        )
+    ours = scaled.lowest_effective_doses("full", screen="dose_groups")
+    theirs = base.lowest_effective_doses("full", screen="dose_groups")
+    assert_allclose(
+        ours["lowest_effective_dose"],
+        1000 * theirs["lowest_effective_dose"],
+        rtol=1e-12,
+    )
+
+
+def test_few_dose_groups() -> None:
+    # The vehicle and two doses: five shapes span two dimensions, and the printout
+    # says so; the p-values of two contrasts need no random numbers.
+    result = run((0, 1, 10), tests=("dunnett", "williams", "mcp"))
+    for test in CONTRAST_TESTS:
+        assert np.isfinite(result.table("cell_type_1", test)["p_value"]).all()
+    assert (
+        "mcp: 5 candidate shapes on 2 treated doses, whose contrasts span 2"
+        in " ".join(repr(result).split())
+    )
+    # One treated dose: the MCP step is refused, and Dunnett's and the Williams-type
+    # test are each dose's t-test.
+    with pytest.raises(ValueError, match="the design has 1"):
+        run((0, 10), tests=("mcp",))
+    one = run((0, 10), tests=("dunnett", "williams"))
+    assert one.tests == ("dunnett", "williams")
+    assert ("cell_type_1", "dose_groups") not in one.tables
+    each = one.table("cell_type_1", "each_dose")
+    for test in ("dunnett", "williams"):
+        table = one.table("cell_type_1", test)
+        assert_allclose(table["t"], each["t"], rtol=1e-12)
+        assert_allclose(table["p_value"], each["p_value"], rtol=1e-12)
+        assert np.all(table["p_value_error"] == 0.0)
+
+
+def test_a_cell_type_that_compares_one_dose_does_not_run_the_mcp_step() -> None:
+    """The sparse cell type keeps no cells at 10 and 100 ug/kg: it compares the vehicle
+    and one dose, where the MCP step has no shape to tell apart, and runs Dunnett's
+    and the Williams-type test, each the dose's t-test."""
+    cube, _ = simulate_dose_series(
+        [0, 1, 10, 100],
+        replicates=3,
+        cell_types=["full", "sparse"],
+        cells=[300.0, 300.0],
+        n_genes=100,
+        composition={"sparse": [1.0, 1.0, 0.0, 0.0]},
+        rng=9,
+    )
+    result = dose_response(
+        cube, Design(cube.samples, "~ 1"), dose=AXIS, tests=CONTRAST_TESTS, rng=1
+    )
+    entry = next(e for e in result.provenance["groups"] if e["group_id"] == "sparse")
+    assert entry["doses"] == [0.0, 1.0]
+    assert "mcp" not in entry["contrast_tests"]
+    with pytest.raises(KeyError, match="compares one, 1"):
+        result.table("sparse", "mcp")
+    assert result.summary.filter(group_id="sparse")["tests_not_run"].tolist() == ["mcp"]
+    each = result.table("sparse", "each_dose")
+    for test in ("dunnett", "williams"):
+        assert_allclose(result.table("sparse", test)["t"], each["t"], rtol=1e-12)
+    assert ("full", "mcp") in result.tables
+
+
+def test_a_flat_shape_is_left_out() -> None:
+    """A narrow beta shape peaking at 50 is 0 in double precision at 1 and 10, so a
+    cell type that loses the top dose leaves it out, with the reason, and tests the
+    other shapes."""
+    cube, _ = simulate_dose_series(
+        [0, 1, 10, 50],
+        replicates=3,
+        cell_types=["full", "depleted"],
+        cells=[300.0, 300.0],
+        n_genes=100,
+        composition={"depleted": [1.0, 1.0, 1.0, 0.01]},
+        rng=8,
+    )
+    shapes = CandidateShapes(
+        emax=[1.0, 10.0], beta=[(2000.0, 2000.0)], beta_scale=100.0
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("mcp",),
+        candidates=shapes,
+        rng=1,
+    )
+    entry = next(e for e in result.provenance["groups"] if e["group_id"] == "depleted")
+    assert entry["doses"] == [0.0, 1.0, 10.0]
+    mcp = entry["contrast_tests"]["mcp"]
+    assert list(mcp["contrasts"]) == ["emax_1", "emax_2"]
+    assert mcp["shapes_left_out"] == {
+        "beta": "it does not change at the doses this cell type compares"
+    }
+    full = next(e for e in result.provenance["groups"] if e["group_id"] == "full")
+    assert list(full["contrast_tests"]["mcp"]["contrasts"]) == [
+        "emax_1",
+        "emax_2",
+        "beta",
+    ]
+    only_beta = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("mcp",),
+        candidates=CandidateShapes(beta=[(2000.0, 2000.0)], beta_scale=100.0),
+        rng=1,
+    )
+    with pytest.raises(KeyError, match="no candidate shape changes at the doses"):
+        only_beta.table("depleted", "mcp")
+    assert "mcp" in only_beta.summary.filter(group_id="depleted")["tests_not_run"][0]
+    assert "mcp: beta left out, flat at the doses compared" in " ".join(
+        repr(result).split()
+    )
+    # A beta shape whose largest change at 1 and 10 is subnormal, about 1e-310, is
+    # flat to double precision and left out; one of about 3e-178 is kept, and its
+    # contrast is n_k (mu_k - the size-weighted mean of mu) of its means, by hand,
+    # where squaring the means would underflow.
+    for delta, flat in ((698.0, True), (400.0, False)):
+        shapes = CandidateShapes(
+            emax=[1.0, 10.0], beta=[(delta, delta)], beta_scale=100.0
+        )
+        means = shapes.means([0.0, 1.0, 10.0])[2]
+        assert (0.0 < means.max() < np.finfo(np.float64).tiny) == flat
+        tiny = dose_response(
+            cube,
+            Design(cube.samples, "~ 1"),
+            dose=AXIS,
+            tests=("mcp",),
+            candidates=shapes,
+            groups=["depleted"],
+            rng=1,
+        )
+        (entry,) = tiny.provenance["groups"]
+        mcp = entry["contrast_tests"]["mcp"]
+        assert list(mcp["shapes_left_out"]) == (["beta"] if flat else [])
+        assert np.isfinite(tiny.table("depleted", "mcp")["p_value"]).all()
+        if not flat:
+            n = np.array(entry["samples"])
+            mu = means / means.max()
+            by_hand = (n * (mu - (n * mu).sum() / n.sum()))[1:]
+            assert_allclose(
+                mcp["contrasts"]["beta"], by_hand / np.linalg.norm(by_hand), rtol=1e-13
+            )
+
+
+def test_contrast_test_arguments_are_refused_with_a_fix() -> None:
+    cube = contrast_cube()
+    design = Design(cube.samples, "~ 1")
+    shapes = CandidateShapes(emax=[1.0])
+    with pytest.raises(ValueError, match="add 'mcp' to tests"):
+        dose_response(cube, design, dose=AXIS, tests=("dunnett",), candidates=shapes)
+    with pytest.raises(ValueError, match="add 'mcp' to tests"):
+        dose_response(cube, design, dose=AXIS, candidates=shapes)
+    with pytest.raises(TypeError, match="candidates must be a CandidateShapes"):
+        dose_response(
+            cube, design, dose=AXIS, tests=("mcp",), candidates={"emax": [1.0]}
+        )
+    with pytest.raises(ValueError, match="below the design's top dose"):
+        dose_response(
+            cube,
+            design,
+            dose=AXIS,
+            tests=("mcp",),
+            candidates=CandidateShapes(beta=[(1.0, 1.0)], beta_scale=5.0),
+        )
+    with pytest.raises(ValueError, match="did you mean 'mcp'"):
+        dose_response(cube, design, dose=AXIS, tests=("mpc",))
+    for test in CONTRAST_TESTS:
+        with pytest.raises(ValueError, match="limma's approximate standard errors"):
+            dose_response(
+                cube,
+                design,
+                dose=AXIS,
+                tests=("dose_groups", test),
+                contrast_standard_errors="limma",
+            )
+    with pytest.raises(TypeError, match="rng must be"):
+        dose_response(cube, design, dose=AXIS, tests=("mcp",), rng="1")
+    with pytest.raises(ValueError, match="non-negative seed"):
+        dose_response(cube, design, dose=AXIS, rng=-1)
+    result = contrast_result("trend")
+    with pytest.raises(ValueError, match="not any response"):
+        result.lowest_effective_doses("full", screen="linear_trend")
+    with pytest.raises(ValueError, match="not any response"):
+        result.lowest_effective_doses("full", screen="nonlinearity")
+    with pytest.raises(ValueError, match="is not a test"):
+        result.lowest_effective_doses("full", screen="dose")
+    with pytest.raises(TypeError, match="screen must be a test name"):
+        result.lowest_effective_doses("full", screen=1)  # type: ignore[arg-type]
+    for alpha in (0.0, 1.0, -0.1, np.nan):
+        with pytest.raises(ValueError, match="alpha"):
+            result.lowest_effective_doses("full", alpha=alpha)
+    with pytest.raises(TypeError, match="alpha"):
+        result.lowest_effective_doses("full", alpha="0.05")  # type: ignore[arg-type]
+    # The spline, the default screen, was not run: the message names those that were.
+    with pytest.raises(KeyError, match="'spline' was not run in 'full'.*'dose_groups'"):
+        result.lowest_effective_doses("full")
+    with pytest.raises(ValueError, match="name one with group"):
+        result.lowest_effective_doses()
+    # A test passed as the cell type, a group that is not a string, and a misspelt
+    # test, as the result's other methods refuse them.
+    with pytest.raises(KeyError, match="'mcp' is a table, not a cell type"):
+        result.lowest_effective_doses("mcp")
+    with pytest.raises(TypeError, match="group must be a cell type"):
+        result.lowest_effective_doses(1)  # type: ignore[arg-type]
+    with pytest.raises(KeyError, match="'williams' is a table, not a cell type"):
+        result.table("williams")
+    with pytest.raises(KeyError, match="no table 'dunett'.*did you mean 'dunnett'"):
+        result.table("full", "dunett")
+
+
+def test_the_contrast_tests_read_back() -> None:
+    result = contrast_result("voom")
+    assert result.tests == ("dose_groups", "dunnett", "williams", "mcp")
+    assert result.candidates == CandidateShapes.spread(AXIS, contrast_cube().samples)
+    assert result.settings["candidates"] == result.candidates.to_dict()
+    table = result.table("full", "mcp")
+    assert table.columns == (
+        "feature_id",
+        "average_log2_cpm",
+        "contrast",
+        "t",
+        "df",
+        "p_value",
+        "p_value_error",
+        "adjusted_p_value",
+        "adjusted_p_value_across_groups",
+    )
+    for group in ("full", "depleted"):
+        for test in CONTRAST_TESTS:
+            found = result.table(group, test)
+            assert_allclose(
+                found["adjusted_p_value"],
+                adjust_p_values(np.asarray(found["p_value"]), "bh"),
+                rtol=1e-15,
+            )
+    stacked = np.concatenate(
+        [result.table(g, "mcp")["p_value"] for g in ("full", "depleted")]
+    )
+    assert_allclose(
+        np.concatenate(
+            [
+                result.table(g, "mcp")["adjusted_p_value_across_groups"]
+                for g in ("full", "depleted")
+            ]
+        ),
+        adjust_p_values(stacked, "bh"),
+        rtol=1e-15,
+    )
+    entry = next(e for e in result.provenance["groups"] if e["group_id"] == "full")
+    assert entry["contrast_tests"]["mcp"]["dimensions"] == 5
+    assert entry["contrast_tests"]["mcp"]["shapes_left_out"] == {}
+    again = pickle.loads(pickle.dumps(result))
+    assert again.candidates == result.candidates
+    assert again.table("full", "williams").equals(result.table("full", "williams"))
+    assert again.lowest_effective_doses("full", screen="mcp").equals(
+        result.lowest_effective_doses("full", screen="mcp")
+    )
+    text = repr(result)
+    assert "mcp" in text and "williams" in text
+    no_contrasts = fixture_result("trend")
+    assert no_contrasts.candidates is None
+    assert no_contrasts.settings["seed"] is None
+
+
+def test_the_lowest_effective_doses_of_an_untested_cell_type_are_refused() -> None:
+    result = mixed_result()
+    untested = next(
+        group
+        for group, tested in zip(result.groups, result.summary["tested"], strict=True)
+        if not tested
+    )
+    with pytest.raises(KeyError, match="was not tested"):
+        result.lowest_effective_doses(untested, screen="dose_groups")
+
+
+def test_the_contrast_tables_carry_the_genes_symbols() -> None:
+    """With symbols in the cube's feature table, the tables of the multiple contrast
+    tests and the lowest effective doses carry each gene's own symbol."""
+    base = contrast_cube()
+    ids = base.features["feature_id"].tolist()
+    symbols = [f"Gene{j}" for j in range(len(ids))]
+    cube = Cube(
+        {"counts": np.stack([base.layer("counts", g) for g in range(base.n_groups)])},
+        samples=base.samples,
+        groups=base.groups,
+        features={"feature_id": ids, "symbol": symbols},
+        n_cells=base.n_cells,
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("dose_groups", "dunnett"),
+        rng=1,
+    )
+    of_gene = dict(zip(ids, symbols, strict=True))
+    for table in (
+        result.table("full", "dunnett"),
+        result.lowest_effective_doses("full", screen="dose_groups"),
+    ):
+        assert table.columns[:2] == ("feature_id", "symbol")
+        assert table["symbol"].tolist() == [
+            of_gene[g] for g in table["feature_id"].tolist()
+        ]
+
+
+def test_a_beta_scale_at_the_top_dose_is_accepted() -> None:
+    """DoseFinding takes a beta model's scale equal to the top dose, and so does
+    dose_response, where the beta shape is 0 at the top dose."""
+    cube = contrast_cube()
+    shapes = CandidateShapes(emax=[1.0], beta=[(1.0, 1.0)], beta_scale=10.0)
+    assert float(np.max(cube.samples["dose"])) == 10.0
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        tests=("mcp",),
+        candidates=shapes,
+        groups=["full"],
+        rng=1,
+    )
+    assert np.isfinite(result.table("full", "mcp")["p_value"]).all()
+    assert result.candidates == shapes
+
+
+def test_the_contrast_tests_follow_the_thread_limit(monkeypatch: Any) -> None:
+    """n_threads among the analysis's options reaches every multiple contrast test."""
+    calls: list[Any] = []
+    original = dose_responses.multiple_contrast_test
+
+    def recorded(*args: Any, **options: Any) -> Any:
+        calls.append(options.get("n_threads"))
+        return original(*args, **options)
+
+    monkeypatch.setattr(dose_responses, "multiple_contrast_test", recorded)
+    run((0, 1, 10, 100), tests=CONTRAST_TESTS, n_threads=2)
+    assert calls == [2, 2, 2]
+
+
+def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
+    """The code of the chapter's sections on the multiple contrast tests and the
+    lowest effective dose, on the series of its section on the tests; the printouts
+    and the numbers its text states, against the simulator's truth."""
+    text = CHAPTER.read_text()
+
+    def section(label: str) -> str:
+        return text.split(f"({label})=")[1].split("\n(")[0]
+
+    setup = re.findall(r"```python\n(.*?)```", section("dose-response-tests"), re.S)
+    contrasts, lowest = (
+        section("dose-response-contrasts"),
+        section("lowest-effective-dose"),
+    )
+    blocks = [
+        *re.findall(r"```python\n(.*?)```", contrasts, re.S),
+        *re.findall(r"```python\n(.*?)```", lowest, re.S),
+    ]
+    assert len(blocks) == 5
+    namespace: dict[str, Any] = {"cp": cytepool}
+    exec(setup[0].replace("print(result)\n", ""), namespace)  # noqa: S102
+    printed = []
+    for block in blocks:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec(block, namespace)  # noqa: S102
+        printed.append(output.getvalue())
+    # What each block prints is in the chapter, as printed: the result, and the
+    # lowest effective doses of five genes, rounded.
+    result = namespace["result"]
+    assert printed[0] == repr(result) + "\n" and repr(result) in contrasts
+    assert printed[1] == printed[2] == printed[4] == ""
+    assert printed[3].count("\n") == 5 and printed[3] in lowest
+    # Each dose's own p-value: at 10 ug/kg for every gene, and the smallest over the
+    # doses is the gene's p-value in "dunnett"'s table, within their errors.
+    at_ten = namespace["at_ten"]
+    dunnett = result.table("hepatocyte", "dunnett")
+    assert at_ten["feature_id"].tolist() == dunnett["feature_id"].tolist()
+    whole = namespace["per_dose"].table()
+    error = np.hypot(dunnett["p_value_error"], whole["p_value_error"])
+    assert np.all(np.abs(whole["p_value"] - dunnett["p_value"]) <= CALIBRATED * error)
+    assert len(namespace["doses"]) == 8
+    truth = namespace["truth"].table("hepatocyte")
+    ids = truth["feature_id"].tolist()
+    responds = dict(zip(ids, (np.asarray(truth["max_log2_change"]) != 0).tolist()))
+    shape = dict(zip(ids, truth["shape"].tolist()))
+    tested = result.table("hepatocyte", "spline")["feature_id"].tolist()
+    bells = [g for g in tested if shape[g] == "log_gauss_probit"]
+    found = {}
+    for test in ("spline", "dunnett", "williams", "mcp"):
+        table = result.table("hepatocyte", test)
+        called = np.asarray(table["feature_id"])[
+            np.asarray(table["adjusted_p_value"]) < 0.05
+        ].tolist()
+        found[test] = (
+            len(called),
+            sum(responds[g] for g in called),
+            sum(g in called for g in bells),
+        )
+    assert found == {
+        "spline": (88, 85, 21),
+        "dunnett": (69, 67, 17),
+        "williams": (73, 69, 12),
+        "mcp": (92, 89, 19),
+    }
+    assert len(bells) == 33
+    assert (
+        "the MCP step calls 92 genes, 89 of which respond in truth, the spline 88 (85), "
+        "the Williams-type test 73 (69) and Dunnett's test 69 (67)"
+    ) in contrasts
+    assert (
+        "Of the 33 responsive genes with bell-shaped responses, the spline calls 21, "
+        "the MCP step 19, Dunnett's test 17 and the Williams-type test 12"
+    ) in contrasts
+    assert namespace["guessed"].table("hepatocyte", "mcp")["contrast"][0] in (
+        namespace["shapes"].names
+    )
+    # The lowest effective doses: the genes with a dose called, and every dose called.
+    with_dose = np.count_nonzero(
+        ~np.isnan(np.asarray(namespace["called"]["lowest_effective_dose"]))
+    )
+    assert (len(namespace["called"]), with_dose) == (88, 69)
+    assert (
+        "Of the 88 genes the spline calls in the hepatocytes, 69 have a dose" in lowest
+    )
+    calls = namespace["calls"]
+    assert int(calls.sum()) == 167 and "here 167 gene-dose calls" in lowest
+    assert_array_equal(
+        calls.any(axis=1),
+        ~np.isnan(np.asarray(namespace["lowest"]["lowest_effective_dose"])),
+    )

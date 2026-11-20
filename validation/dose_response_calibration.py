@@ -28,13 +28,25 @@ design supports and the spline's default size.
   true change, for flat and responsive genes and by shape, against the band's own
   target, the spline fitted by least squares to the true means of the dose groups,
   and against each dose's 95% interval from the table of each dose.
+- Multiple contrast rows: ``dunnett``, ``williams`` and ``mcp``, which take about a
+  millisecond per gene, on the first 200 null datasets of each design cell
+  (``--contrast-datasets``) and on the power datasets, with the rows of the other tests.
+  A control row on the same null datasets: calls of each dose at an unadjusted p-value
+  below 0.05, which must call a dose in most null cell types.
+- Stage-wise rows: the calls of ``lowest_effective_doses`` with the spline as screen,
+  on the power datasets. The overall false discovery proportion, the share of the genes
+  called with a false call, a flat gene's or a call at a dose where the true change is
+  exactly 0, as below a step's dose; the share of false gene-dose calls among all of
+  them; the share of the genes the screen calls that get a lowest effective dose; and
+  the lowest effective dose against the gene's true 1.1-fold benchmark dose.
 
 Seeds: ``numpy.random.default_rng([20261201, kind, design_cell, dataset])``, with kind 0
 for power, 1 for null and 2 for the band's datasets, the design cells numbered in the
-order of the grid, as each row prints, and the band's design numbered 0. Each
-estimate comes with its Monte Carlo standard error between datasets and, for shares
-of p-values, the binomial bound of that error, which p-values that a dataset's
-moderation ties together exceed. Every row is information.
+order of the grid, as each row prints, and the band's design numbered 0; the multiple
+contrast tests of a dataset take their seed from kind 3. Each estimate comes with its
+Monte Carlo standard error between datasets and, for shares of p-values, the binomial
+bound of that error, which p-values that a dataset's moderation ties together exceed.
+Every row is information but the control row, which fails the run when it fails.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root.
@@ -42,6 +54,7 @@ Requirements:
 Usage:
     PYTHONPATH=. python validation/dose_response_calibration.py
     PYTHONPATH=. python validation/dose_response_calibration.py --null-datasets 100
+    PYTHONPATH=. python validation/dose_response_calibration.py --contrast-datasets 50
 """
 
 import argparse
@@ -56,9 +69,10 @@ from cytepool.dose_axes import DoseAxis
 from cytepool.dose_responses import dose_response
 from cytepool.simulated_dose_series import simulate_dose_series
 from cytepool.stats.distributions import t_ppf
+from cytepool.stats.multiple_contrasts import stage_wise_adjusted_p_values
 
 SEED = 20261201
-POWER, NULL, BAND = 0, 1, 2
+POWER, NULL, BAND, CONTRASTS = 0, 1, 2, 3
 FDR = 0.05
 AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
 DOSES = {
@@ -72,6 +86,7 @@ GENES = 1000
 RESPONSIVE = 0.2
 POWER_DATASETS = 10
 TESTS = ("spline", "nonlinearity", "linear_trend", "dose_groups")
+CONTRAST_TESTS = ("dunnett", "williams", "mcp")
 BAND_DATASETS = 12
 BAND_CELLS = 3000.0
 BAND_GENES = 600
@@ -173,8 +188,26 @@ def null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
             quantile = (np.argsort(np.argsort(values)) + 0.5) / values.size
             calls = np.asarray(tested["adjusted_p_value"]) < FDR
             found.sd_quantiles.extend(quantile[calls].tolist())
+    rows = summary_rows(cell, found, TESTS, datasets)
+    rows.append(
+        (
+            f"{cell.label}: what the null calls share, {datasets:,} datasets",
+            f"seed [{SEED}, {NULL}, {cell.number}, dataset]",
+            null_calls(found),
+            "n/a",
+            "info",
+        )
+    )
+    return rows
+
+
+def summary_rows(
+    cell: DesignCell, found: Null, tests: tuple[str, ...], datasets: int
+) -> list[tuple[str, ...]]:
+    """Per test: the Kolmogorov-Smirnov distance, the shares of p-values below 0.05
+    and 0.01, and the share of cell types with a call."""
     rows = []
-    for test in TESTS:
+    for test in tests:
         if test not in found.p_values:
             continue
         p = np.sort(np.concatenate(found.p_values[test]))
@@ -207,15 +240,6 @@ def null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
                 "info",
             )
         )
-    rows.append(
-        (
-            f"{cell.label}: what the null calls share, {datasets:,} datasets",
-            f"seed [{SEED}, {NULL}, {cell.number}, dataset]",
-            null_calls(found),
-            "n/a",
-            "info",
-        )
-    )
     return rows
 
 
@@ -240,6 +264,47 @@ def null_calls(found: Null) -> str:
         ),
     ]
     return "; ".join(parts)
+
+
+def contrast_seed(cell: DesignCell, dataset: int) -> np.random.Generator:
+    """The generator from which dose_response draws the seed of a dataset's multiple
+    contrast tests."""
+    return np.random.default_rng([SEED, CONTRASTS, cell.number, dataset])
+
+
+def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
+    """The multiple contrast tests on the first null datasets of a design cell, and
+    the control row of each dose's calls at an unadjusted 0.05."""
+    found = Null()
+    any_dose = []
+    for dataset in range(datasets):
+        cube, _ = series(cell, NULL, dataset)
+        result = analyse(cube, tests=CONTRAST_TESTS, rng=contrast_seed(cell, dataset))
+        for group in result.groups:
+            for test in CONTRAST_TESTS:
+                table = result.table(group, test)
+                p = np.asarray(table["p_value"], dtype=float)
+                found.p_values.setdefault(test, []).append(p)
+                found.shares.setdefault(test, []).append(
+                    (float(np.mean(p < 0.05)), float(np.mean(p < 0.01)))
+                )
+                calls = np.asarray(table["adjusted_p_value"]) < FDR
+                found.any_call.setdefault(test, []).append(bool(np.any(calls)))
+            each = np.asarray(result.table(group, "each_dose")["p_value"], dtype=float)
+            any_dose.append(bool(np.any(each < 0.05)))
+    rows = summary_rows(cell, found, CONTRAST_TESTS, datasets)
+    share = float(np.mean(any_dose))
+    rows.append(
+        (
+            f"{cell.label}: a call of each dose at an unadjusted p-value below 0.05, "
+            f"under the null, {datasets:,} datasets",
+            f"seed [{SEED}, {NULL}, {cell.number}, dataset]",
+            f"cell types with a call: {share:.3f} ({len(any_dose):,} cell types)",
+            "above 0.5",
+            "control" if share > 0.5 else "FAIL",
+        )
+    )
+    return rows
 
 
 # The power rows.
@@ -348,6 +413,133 @@ def power_rows(cell: DesignCell) -> list[tuple[str, ...]]:
             f"{POWER_DATASETS} datasets",
             f"seed [{SEED}, {POWER}, {cell.number}, dataset]",
             "; ".join(f"{size}: {mean(by_size[size])}" for size in sizes),
+            "n/a",
+            "info",
+        )
+    )
+    return rows
+
+
+def contrast_power_rows(cell: DesignCell) -> list[tuple[str, ...]]:
+    """The multiple contrast tests and the stage-wise calls on the power datasets."""
+    power: dict[tuple[str, str], list[float]] = {}
+    within: dict[str, list[float]] = {}
+    overall: list[float] = []  # per cell type, the false discovery proportion of genes
+    pairs = [0, 0]  # gene-dose calls, and those false
+    screened = [0, 0]  # genes the screen calls, and those with a dose called
+    distance: list[float] = []  # log10 of the lowest effective dose over the BMD
+    for dataset in range(POWER_DATASETS):
+        cube, truth = series(cell, POWER, dataset)
+        result = analyse(
+            cube, tests=("spline", *CONTRAST_TESTS), rng=contrast_seed(cell, dataset)
+        )
+        for group in result.groups:
+            table = truth.table(group)
+            ids = table["feature_id"].tolist()
+            shape = dict(zip(ids, table["shape"].tolist(), strict=True))
+            change = dict(
+                zip(ids, np.abs(table["max_log2_change"]).tolist(), strict=True)
+            )
+            for test in CONTRAST_TESTS:
+                tested = result.table(group, test)
+                genes = tested["feature_id"].tolist()
+                hits = called(tested)
+                responsive = [g for g in genes if change[g] > 0]
+                for name in sorted({shape[g] for g in responsive}):
+                    members = [g for g in responsive if shape[g] == name]
+                    power.setdefault((test, name), []).append(
+                        sum(g in hits for g in members) / len(members)
+                    )
+                power.setdefault((test, "all"), []).append(
+                    sum(g in hits for g in responsive) / len(responsive)
+                )
+                false = sum(change[g] == 0 for g in hits)
+                within.setdefault(test, []).append(false / max(len(hits), 1))
+            # Every dose called in the genes the spline calls, from the building
+            # block; a call is false where the true change at the dose is exactly 0.
+            spline = result.table(group, "spline")
+            each = result.table(group, "each_dose")
+            genes = spline["feature_id"].tolist()
+            entry = next(
+                e for e in result.provenance["groups"] if e["group_id"] == group
+            )
+            doses = np.asarray(entry["doses"][1:], dtype=np.float64)
+            p = np.asarray(each["p_value"], dtype=np.float64).reshape(doses.size, -1).T
+            adjusted = stage_wise_adjusted_p_values(
+                np.asarray(spline["p_value"]), p, alpha=FDR
+            )
+            dose_calls = np.nan_to_num(adjusted, nan=2.0) <= FDR
+            true = truth.curve(group, genes, at=doses)
+            lowest = result.lowest_effective_doses(group)
+            responds = np.asarray(lowest["responds"], dtype=bool)
+            flat = np.array([change[g] == 0 for g in genes])
+            wrong = dose_calls & (true == 0.0)
+            false_genes = (responds & flat) | wrong.any(axis=1)
+            overall.append(float(false_genes.sum() / max(responds.sum(), 1)))
+            pairs[0] += int(dose_calls.sum())
+            pairs[1] += int(wrong.sum())
+            screened[0] += int(responds.sum())
+            led = np.asarray(lowest["lowest_effective_dose"], dtype=np.float64)
+            screened[1] += int(np.count_nonzero(responds & ~np.isnan(led)))
+            bmd = np.asarray(table["bmd_fold_change"], dtype=np.float64)
+            rows_ids = [ids.index(g) for g in genes]
+            both = ~np.isnan(led) & np.isfinite(bmd[rows_ids]) & ~flat
+            distance += np.log10(led[both] / bmd[rows_ids][both]).tolist()
+    rows = []
+
+    def mean(values: list[float]) -> str:
+        values_array = np.asarray(values)
+        error = np.std(values_array, ddof=1) / np.sqrt(values_array.size)
+        return f"{np.mean(values_array):.3f} (SE {error:.3f})"
+
+    reference = f"seed [{SEED}, {POWER}, {cell.number}, dataset]"
+    for test in CONTRAST_TESTS:
+        shapes = sorted(name for t, name in power if t == test and name != "all")
+        by_shape = ", ".join(
+            f"{name} {np.mean(power[test, name]):.2f}" for name in shapes
+        )
+        rows.append(
+            (
+                f"{cell.label}: {test}, power at 5% FDR, {POWER_DATASETS} datasets",
+                reference,
+                f"{mean(power[test, 'all'])}; by shape: {by_shape}",
+                "n/a",
+                "info",
+            )
+        )
+        rows.append(
+            (
+                f"{cell.label}: {test}, the mean false discovery proportion at 5% FDR",
+                reference,
+                f"within cell types {mean(within[test])}",
+                "n/a",
+                "info",
+            )
+        )
+    rows.append(
+        (
+            f"{cell.label}: lowest_effective_doses, the overall false discovery "
+            f"proportion at 5%, {POWER_DATASETS} datasets",
+            reference,
+            f"{mean(overall)}: genes the spline calls with a false call, a flat gene's "
+            "or a dose's where the true change is 0",
+            "n/a",
+            "info",
+        )
+    )
+    distance_text = (
+        f"median {np.median(distance):.2f}, quartiles {np.quantile(distance, 0.25):.2f} "
+        f"and {np.quantile(distance, 0.75):.2f}, {len(distance):,} genes"
+        if distance
+        else "no gene"
+    )
+    rows.append(
+        (
+            f"{cell.label}: lowest_effective_doses, calls and doses",
+            reference,
+            f"false gene-dose calls {pairs[1]:,} of {pairs[0]:,}; genes the spline calls "
+            f"with a dose called {screened[1]:,} of {screened[0]:,}; log10 of the "
+            f"lowest effective dose over the true 1.1-fold BMD: {distance_text}",
             "n/a",
             "info",
         )
@@ -479,18 +671,27 @@ def main() -> int:
         default=1000,
         help="null datasets per design cell (1,000 in the core grid)",
     )
+    parser.add_argument(
+        "--contrast-datasets",
+        type=int,
+        default=200,
+        help="null datasets per design cell of the multiple contrast tests (200)",
+    )
     arguments = parser.parse_args()
     rows = []
     for cell in grid():
         rows += null_rows(cell, arguments.null_datasets)
         rows += power_rows(cell)
+        rows += contrast_null_rows(cell, arguments.contrast_datasets)
+        rows += contrast_power_rows(cell)
     rows += band_rows()
     print("| check | reference | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- |")
     for row in rows:
         print("| " + " | ".join(row) + " |")
-    print(f"{len(rows)} checks, 0 failed")
-    return 0
+    failed = sum(row[4] == "FAIL" for row in rows)
+    print(f"{len(rows)} checks, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

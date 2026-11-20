@@ -24,7 +24,16 @@ cube that supports tests, in one call
    ``dose_groups``, whether any dose group differs from the vehicle, the one-way
    analysis of variance of the dose groups with moderated variances: the moderated
    counterpart of the ANOVA gate of NTP's genomic dose-response approach, which at
-   least one gene must pass for a data set to be analysed further (NTP 2018).
+   least one gene must pass for a data set to be analysed further (NTP 2018). When
+   named, three multiple contrast tests refer the largest of several correlated
+   moderated t-statistics to the multivariate t distribution: ``dunnett``, each dose
+   against the vehicle (Dunnett 1955); ``williams``, the Williams-type test of the
+   vehicle against the pooled top doses (Bretz 2006); and ``mcp``, the MCP step, the
+   multiple comparison procedure, of MCP-Mod (multiple comparison procedure and
+   modelling): the contrasts that best detect each of a few candidate shapes (Bretz,
+   Pinheiro and Branson 2005; Pinheiro et al. 2014).
+4. On demand, the lowest effective dose of each gene: the lowest dose called by
+   stage-wise testing after a screen (Heller et al. 2009; Van den Berge et al. 2017).
 
 The spline:
     In each cell type the spline is fitted by least squares to the means of the dose
@@ -44,7 +53,9 @@ Adjustment for multiple testing:
     Benjamini-Hochberg (Benjamini and Hochberg 1995), as limma's ``topTable`` does,
     and ``adjusted_p_value_across_groups`` adjusts them over every cell type that ran
     the test, stacked into one family. The tests of each dose against the vehicle
-    are adjusted within the cell type and dose only.
+    are adjusted within the cell type and dose only. A multiple contrast test's
+    ``p_value`` is already adjusted for the gene's contrasts (single-step, Hothorn,
+    Bretz and Westfall 2008), and its adjusted p-values adjust it across genes.
 
 References:
     Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
@@ -77,10 +88,41 @@ References:
     Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
     and powerful approach to multiple testing. Journal of the Royal Statistical
     Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
+
+    Dunnett CW (1955). A multiple comparison procedure for comparing several
+    treatments with a control. Journal of the American Statistical Association 50,
+    1096-1121. doi:10.1080/01621459.1955.10501294
+
+    Bretz F (2006). An extension of the Williams trend test to general unbalanced
+    linear models. Computational Statistics and Data Analysis 50, 1735-1748.
+    doi:10.1016/j.csda.2005.02.005
+
+    Bretz F, Pinheiro JC, Branson M (2005). Combining multiple comparisons and
+    modeling techniques in dose-response studies. Biometrics 61, 738-748.
+    doi:10.1111/j.1541-0420.2005.00344.x
+
+    Pinheiro J, Bornkamp B, Glimm E, Bretz F (2014). Model-based dose finding under
+    model uncertainty using general parametric models. Statistics in Medicine 33,
+    1646-1661. doi:10.1002/sim.6052
+
+    Hothorn T, Bretz F, Westfall P (2008). Simultaneous inference in general
+    parametric models. Biometrical Journal 50, 346-363. doi:10.1002/bimj.200810425
+
+    Heller R, Manduchi E, Grant GR, Ewens WJ (2009). A flexible two-stage procedure
+    for identifying gene sets that are differentially expressed. Bioinformatics 25,
+    1019-1025. doi:10.1093/bioinformatics/btp076
+
+    Van den Berge K, Soneson C, Robinson MD, Clement L (2017). stageR: a general
+    stage-wise method for controlling the gene-level false discovery rate in
+    differential expression and differential transcript usage. Genome Biology 18,
+    151. doi:10.1186/s13059-017-1277-0
 """
 
 import inspect
 import json
+import numbers
+import operator
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -97,12 +139,13 @@ from ._analysis_records import (
     software_versions,
 )
 from ._columns import text_column
-from ._doses import SAME_DOSE, checked_doses, dose_group_column, dose_text
+from ._doses import SAME_DOSE, checked_doses, dose_group_column, dose_label, dose_text
 from ._group_fits import COUNTS_LAYER, FITTED
 from ._linear_algebra import column_space
 from ._masked_arrays import reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
-from ._options import positive_integer
+from ._options import positive_integer, random_generator, real_number
+from .candidate_shapes import BETA_SCALE_FACTOR, CandidateShapes
 from .cube import Cube
 from .design import Contrasts, Design
 from .design.formula import quote_name
@@ -116,6 +159,14 @@ from .differential_expression import (
 from .dose_axes import DoseAxis
 from .dose_designs import INFERENTIAL, DoseDesignReport, check_dose_design
 from .stats.distributions import t_ppf
+from .stats.dream import ModeratedFixedEffectTests
+from .stats.multiple_contrasts import (
+    dunnett_contrasts,
+    multiple_contrast_test,
+    optimal_contrasts,
+    stage_wise_adjusted_p_values,
+    williams_contrasts,
+)
 from .stats.multiple_testing import adjust_p_values
 from .stats.smoothing import NaturalSplineBasis
 from .table import Table
@@ -132,6 +183,13 @@ SPLINE, NONLINEARITY, LINEAR_TREND, DOSE_GROUPS = (
 )
 TESTS = (SPLINE, NONLINEARITY, LINEAR_TREND, DOSE_GROUPS)
 """The tests, in the order of tables and printouts; ``spline`` is read first."""
+DUNNETT, WILLIAMS, MCP = "dunnett", "williams", "mcp"
+CONTRAST_TESTS = (DUNNETT, WILLIAMS, MCP)
+"""The multiple contrast tests, run only when named, in the order of tables and
+printouts."""
+_ALL_TESTS = (*TESTS, *CONTRAST_TESTS)
+SCREENS = (SPLINE, DOSE_GROUPS, *CONTRAST_TESTS)
+"""The tests of any response, which can screen the genes whose doses are called."""
 EACH_DOSE = "each_dose"
 """The table of each dose against the vehicle."""
 # Of two tests of the same hypothesis in a cell type, the first of this order runs
@@ -153,6 +211,11 @@ _CURVE_POINTS = 100
 # The names of the contrasts of the spline's coefficients, after the column of the
 # dose axis they weigh, such as "spline_dose_s1".
 _SPLINE_PREFIX = "spline_"
+# The vehicle's name in the names of the multiple contrast tests' contrasts.
+_VEHICLE = "vehicle"
+# A candidate shape whose largest change at a cell type's treated doses is below the
+# smallest normal double does not change there, to double precision.
+_FLAT = float(np.finfo(np.float64).tiny)
 
 
 class _Estimates(NamedTuple):
@@ -162,7 +225,8 @@ class _Estimates(NamedTuple):
     ``theta`` holds each gene's estimates, ``(n_genes, n_doses)``; ``covariance``
     their unscaled covariance, ``(n_genes, n_doses, n_doses)``, which times
     ``posterior_variance`` is their covariance; and ``df_total`` the degrees of
-    freedom of the moderated t-tests.
+    freedom of the moderated t-tests: one per gene, ``(n_genes,)``, under limma, and
+    one per gene and dose, ``(n_genes, n_doses)``, under dream.
     """
 
     theta: FloatArray
@@ -193,11 +257,27 @@ class DoseResponseResult:
       ``standard_error`` (not for dream), ``average_log2_cpm``, ``t``, ``p_value``,
       ``adjusted_p_value``, ``adjusted_p_value_across_groups`` and ``log_odds``;
       dream adds ``df`` and ``z_statistic``.
+    - ``"dunnett"``, ``"williams"`` and ``"mcp"``: multiple contrast tests, each
+      gene as a whole, with ``feature_id``, ``symbol``, ``average_log2_cpm``,
+      ``contrast`` (the contrast with the largest \\|t\\|, such as ``"10 - vehicle"``,
+      ``"3 to 30 - vehicle"`` or a candidate shape's name: for the MCP step, the
+      candidate whose contrast best matches the observed changes, not a fitted
+      shape, since the shapes' contrasts are strongly correlated and fitting a shape
+      is MCP-Mod's modelling step, not implemented yet), its ``t``, ``df`` (of
+      the multivariate t), ``p_value`` (adjusted for the gene's contrasts, the
+      single-step max-t test) and ``p_value_error`` (its Monte Carlo standard
+      error), ``adjusted_p_value`` (Benjamini-Hochberg over the cell type's genes)
+      and ``adjusted_p_value_across_groups``. Each contrast's weights on the treated
+      doses are in the cell type's entry of ``provenance["groups"]``
+      (``contrast_tests``).
     - ``"each_dose"``: each treated dose the cell type compares against the vehicle,
       the rows of a dose together, doses ascending, each dose's genes in the cube's
       feature order: ``feature_id``, ``symbol``, ``dose`` (in the axis's unit), then
       the columns of the analysis's table of a contrast, adjusted within the cell
       type and dose.
+
+    :meth:`lowest_effective_doses` calls each dose against the vehicle in the genes
+    that a screen calls, and gives each gene's lowest effective dose.
 
     ``summary`` has one row per cell type checked: ``group_id``; ``status``, the
     check's (``"inferential"``, ``"descriptive"`` or ``"refused"``); ``tested``;
@@ -330,8 +410,9 @@ class DoseResponseResult:
     @property
     def tests(self) -> tuple[str, ...]:
         """The tests of the design, those named or, when none were, those it
-        supports, in the order spline, nonlinearity, linear_trend and
-        dose_groups."""
+        supports, in the order spline, nonlinearity, linear_trend and dose_groups,
+        then the multiple contrast tests named, in the order dunnett, williams and
+        mcp."""
         return tuple(json.loads(self._record)["tests"])
 
     @property
@@ -352,15 +433,25 @@ class DoseResponseResult:
         return None if basis is None else NaturalSplineBasis(**basis)
 
     @property
+    def candidates(self) -> CandidateShapes | None:
+        """The candidate shapes of the MCP step, given or spread over the design's
+        doses; None when ``"mcp"`` was not named."""
+        record = self.settings["candidates"]
+        return None if record is None else CandidateShapes(**record)
+
+    @property
     def settings(self) -> dict[str, Any]:
         """The settings of the analysis, as a new dict, also in the provenance.
 
         They hold the axis (``dose``, as :meth:`DoseAxis.to_dict` gives it), the
         spline's basis (``spline_basis``, as
         :meth:`~cytepool.stats.smoothing.NaturalSplineBasis.to_dict` gives it), the
-        tests and ``spline_df`` as given, the analysis, and ``batch``, ``groups``,
-        ``min_cells`` and ``min_counts``. The analysis's other options are in the
-        provenance's ``analysis_settings``, as the analysis records them.
+        tests and ``spline_df`` as given, the candidate shapes of ``"mcp"``
+        (``candidates``, as :meth:`CandidateShapes.to_dict` gives them; None without
+        ``"mcp"``), the seed of the multiple contrast tests (``seed``; None when none
+        ran), the analysis, and ``batch``, ``groups``, ``min_cells`` and
+        ``min_counts``. The analysis's other options are in the provenance's
+        ``analysis_settings``, as the analysis records them.
         """
         settings: dict[str, Any] = json.loads(self._record)["settings"]
         return settings
@@ -379,9 +470,12 @@ class DoseResponseResult:
         doses it compares with their samples, the contrasts of each test it ran
         (``tests``), the tests it did not run with the reasons, the numerator
         degrees of freedom of each test it ran (``f_test_df1``), the weights of
-        every contrast of its fit on the model's columns (``contrasts``), and the
-        analysis's record of its fit (``fit``: the samples used and left out, the
-        features tested, the span of voom's trend and the warnings).
+        every contrast of its fit on the model's columns (``contrasts``), the
+        weights on the treated doses of each multiple contrast test's contrasts, with
+        the dimensions the MCP step's contrasts span and the candidate shapes it left
+        out (``contrast_tests``), and the analysis's record of its fit (``fit``: the
+        samples used and left out, the features tested, the span of voom's trend and
+        the warnings).
         """
         record: dict[str, Any] = json.loads(self._record)
         return record
@@ -392,8 +486,9 @@ class DoseResponseResult:
         Args:
             group: A cell type; it may be left out when one cell type was checked.
             name: A test the cell type ran, ``"spline"``, ``"nonlinearity"``,
-                ``"linear_trend"`` or ``"dose_groups"``, or ``"each_dose"`` for each
-                dose against the vehicle. The class documentation gives the columns.
+                ``"linear_trend"``, ``"dose_groups"``, ``"dunnett"``, ``"williams"``
+                or ``"mcp"``, or ``"each_dose"`` for each dose against the vehicle.
+                The class documentation gives the columns.
 
         Raises:
             ValueError: If ``group`` is left out and several cell types were
@@ -414,7 +509,8 @@ class DoseResponseResult:
             )
         raise KeyError(
             f"no table {name!r}; the tables are: "
-            f"{listing([*self.tests, EACH_DOSE])}{close_matches(str(name), TESTS)}"
+            f"{listing([*self.tests, EACH_DOSE])}"
+            f"{close_matches(str(name), _ALL_TESTS)}"
         )
 
     def fit(self, group: str | None = None) -> GroupFit:
@@ -563,6 +659,127 @@ class DoseResponseResult:
             }
         )
 
+    def lowest_effective_doses(
+        self,
+        group: str | None = None,
+        *,
+        screen: str | None = None,
+        alpha: float = 0.05,
+    ) -> Table:
+        """Return the lowest dose from which each gene of a cell type responds, by
+        stage-wise calls of each dose against the vehicle.
+
+        The calls of the stage-wise procedure of stageR (Heller et al. 2009; Van den
+        Berge et al. 2017): ``screen``, a test of any response of the gene, calls the
+        genes whose Benjamini-Hochberg adjusted p-value over the cell type's genes is
+        at most ``alpha``, R of the G genes it tested; in each gene called, the
+        moderated t-tests of each dose against the vehicle, those of the table
+        ``"each_dose"``, are called by Holm's step-down procedure with Shaffer's
+        first step at the level R alpha / G, through
+        :func:`~cytepool.stats.multiple_contrasts.stage_wise_adjusted_p_values`. The
+        lowest effective dose is the lowest dose called. The calls control the
+        overall false discovery rate (OFDR) at ``alpha``: the expected share of the
+        genes called with at least one false call, the screen's or a dose's, proved
+        under independence between genes (Heller et al. 2009) and expected wherever
+        Benjamini-Hochberg controls the false discovery rate (Van den Berge et al.
+        2017).
+
+        An effective dose here is a dose whose change is detectable at the stage-wise
+        level, with no threshold on its size: toxicology's lowest observed effect
+        level (LOEL), and the ICH E4 sense of a dose that shows an effect; the
+        clinical minimum effective dose usually adds a clinically relevant size. It
+        is a tested dose, not a potency between doses, and it moves with the
+        replicates, the spacing of the doses and ``alpha``. A gene can respond with
+        no dose called. The values hold only at the ``alpha`` given; a call is a
+        value at most ``alpha``, as stageR counts
+        (https://docs.nygen.io/CytePool/statistics/dose-response#lowest-effective-dose).
+
+        Args:
+            group: A cell type that was tested; it may be left out when one cell type
+                was checked.
+            screen: The test of any response that calls the genes, one the cell type
+                ran: None, the default, means ``"spline"``; or ``"dose_groups"``,
+                ``"dunnett"``, ``"williams"`` or ``"mcp"``. ``"linear_trend"`` and
+                ``"nonlinearity"`` test a straight line or a departure from one, not
+                any response.
+            alpha: The level of the calls, between 0 and 1.
+
+        Returns:
+            A table of one row per gene tested in the cell type, in the cube's
+            feature order, with ``feature_id``, ``symbol`` (when the cube's feature
+            table has one), ``responds`` (the screen calls the gene),
+            ``lowest_effective_dose`` (in the axis's unit; NaN when no dose is
+            called), ``log2_fold_change`` and ``stage_wise_adjusted_p_value`` (that
+            dose's change from the vehicle and its stage-wise adjusted p-value; NaN
+            with the dose), and ``n_doses_called``.
+
+        Raises:
+            ValueError: If ``group`` is left out and several cell types were
+                checked, ``screen`` is not a test of any response, or ``alpha`` is
+                not between 0 and 1.
+            KeyError: If the cell type was not checked or not tested, or the screen
+                was not run there; the message says why and which tests ran.
+            TypeError: If ``group`` or ``screen`` is not a string, or ``alpha`` not
+                a real number.
+        """
+        group = self._group(group)
+        level = real_number(alpha, "alpha", finite=True)
+        if not 0.0 < level < 1.0:
+            raise ValueError(f"alpha must be between 0 and 1, got {level}")
+        test = SPLINE if screen is None else screen
+        if not isinstance(test, str):
+            raise TypeError(f"screen must be a test name, got {type(test).__name__}")
+        if test not in SCREENS:
+            reason = (
+                "tests a straight line or a departure from one, not any response"
+                if test in (LINEAR_TREND, NONLINEARITY)
+                else "is not a test" + close_matches(test, SCREENS)
+            )
+            raise ValueError(
+                f"screen {test!r} {reason}; the screens are {quoted(SCREENS)}"
+            )
+        entry = self._tested(group)
+        found = self._tables.get((group, test))
+        if found is None:
+            ran = [name for name in SCREENS if (group, name) in self._tables]
+            why = entry["tests_not_run"].get(test, "tests did not name it")
+            raise KeyError(
+                f"the screen {test!r} was not run in {group!r}: {why}; the tests of any "
+                f"response run there are {quoted(ran) or 'none'}: pass one as screen, "
+                f"or name {test!r} in dose_response's tests"
+            )
+        doses = np.array(entry["doses"][1:], dtype=np.float64)
+        each = self._tables[(group, EACH_DOSE)]
+        genes = len(found)
+
+        def by_dose(column: str) -> FloatArray:
+            values = np.asarray(each[column], dtype=np.float64)
+            return values.reshape(doses.size, genes).T
+
+        screened = np.asarray(found["p_value"], dtype=np.float64)
+        adjusted = stage_wise_adjusted_p_values(
+            screened, by_dose("p_value"), alpha=level, method="holm"
+        )
+        called = adjusted <= level
+        lowest = np.argmax(called, axis=1)
+        rows = np.arange(genes)
+        some = called.any(axis=1)
+        columns = [name for name in ("feature_id", "symbol") if name in found]
+        return Table(
+            {
+                **{name: found[name] for name in columns},
+                "responds": np.asarray(found["adjusted_p_value"]) <= level,
+                "lowest_effective_dose": np.where(some, doses[lowest], np.nan),
+                "log2_fold_change": np.where(
+                    some, by_dose("log2_fold_change")[rows, lowest], np.nan
+                ),
+                "stage_wise_adjusted_p_value": np.where(
+                    some, adjusted[rows, lowest], np.nan
+                ),
+                "n_doses_called": called.sum(axis=1).astype(np.int64),
+            }
+        )
+
     def _group(self, group: Any) -> str:
         """A cell type that was checked; the only one when ``group`` is left out."""
         groups = list(self.groups)
@@ -574,7 +791,7 @@ class DoseResponseResult:
             )
         if name in groups:
             return name
-        if name in (*TESTS, EACH_DOSE):
+        if name in (*_ALL_TESTS, EACH_DOSE):
             raise KeyError(
                 f"{name!r} is a table, not a cell type; pass name={name!r}, with the "
                 "cell type as group, which may be left out when one was checked"
@@ -632,6 +849,10 @@ class DoseResponseResult:
             )
             if entry["tests_not_run"]:
                 text += "; not run: " + ", ".join(entry["tests_not_run"])
+            mcp = entry["contrast_tests"].get(MCP)
+            notes = [] if mcp is None else _mcp_notes(mcp, len(entry["doses"]) - 1)
+            if notes:
+                text += "; mcp: " + ", and ".join(notes)
             lines.append(text)
         return fitted_lines("\n".join(lines))
 
@@ -641,6 +862,21 @@ class DoseResponseResult:
         return int(np.count_nonzero(adjusted < _FDR))
 
 
+def _mcp_notes(record: Mapping[str, Any], treated: int) -> list[str]:
+    """What a printout says of the MCP step in a cell type: the shapes it left out,
+    and more shapes than the dimensions their contrasts span."""
+    notes = []
+    if record["shapes_left_out"]:
+        left_out = listing(list(record["shapes_left_out"]))
+        notes.append(f"{left_out} left out, flat at the doses compared")
+    if len(record["contrasts"]) > record["dimensions"]:
+        notes.append(
+            f"{len(record['contrasts'])} candidate shapes on {treated} treated doses, "
+            f"whose contrasts span {record['dimensions']} dimensions"
+        )
+    return notes
+
+
 def dose_response(
     cube: Cube,
     design: Design,
@@ -648,11 +884,13 @@ def dose_response(
     dose: DoseAxis,
     tests: str | Sequence[str] | None = None,
     spline_df: int | None = None,
+    candidates: CandidateShapes | None = None,
     analysis: Callable[..., DifferentialExpressionResult] = limma_voom,
     batch: str | None = None,
     groups: str | Sequence[str] | None = None,
     min_cells: int = 10,
     min_counts: float = 0,
+    rng: Any = None,
     **options: Any,
 ) -> DoseResponseResult:
     """Test which genes respond to a dose in every cell type of a cube.
@@ -687,6 +925,33 @@ def dose_response(
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-tests
     explains the tests and how to read them.
 
+    Three multiple contrast tests run when named, each two-sided, with one error
+    rate for the gene's contrasts (the single-step max-t test, from the multivariate
+    t distribution on the gene's df) and Benjamini-Hochberg across genes:
+
+    - ``"dunnett"``: each dose against the vehicle (Dunnett 1955).
+    - ``"williams"``: the Williams-type test (Bretz 2006), the vehicle against the
+      mean of the top one, two or more doses, weighted by the cell type's samples,
+      which detects changes that grow in dose order. It is not Williams' (1971)
+      trend test of BMDExpress and NTP's rules, which compares each dose with the
+      vehicle after fitting means that change in dose order.
+    - ``"mcp"``: the MCP step of MCP-Mod, multiple comparison procedure and
+      modelling (Bretz, Pinheiro and Branson 2005; Pinheiro et al. 2014): the
+      optimal contrasts of the ``candidates`` for the cell type's doses and samples.
+
+    None runs by default: on 20,000 genes of the vehicle and 7 doses in three
+    replicates, on two threads, Dunnett's test and the MCP step each added about
+    10 s to the 0.9 s of the default tests and the Williams-type test 23 s; with 3
+    doses the MCP step took 0.6 ms per gene and the other two under 0.1 ms. Each
+    gene's covariance of its doses' estimates, voom's weights included, sets the
+    contrasts' correlation, so limma's approximate standard errors
+    (``contrast_standard_errors="limma"``) are refused with them. Under dream the
+    multivariate t takes the smallest df of the gene's doses, an approximation:
+    contrasts that combine doses can have fewer.
+    https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-contrasts
+    explains them. :meth:`DoseResponseResult.lowest_effective_doses` then gives the
+    lowest dose from which each gene responds.
+
     The design is checked first by :func:`~cytepool.check_dose_design`, with
     ``batch``, ``groups``, ``min_cells`` and ``min_counts``, and the check is kept as
     the result's ``design_report``: cell types that it calls descriptive or refused
@@ -707,17 +972,25 @@ def dose_response(
         dose: The :class:`~cytepool.DoseAxis` of the series. The dose groups are the
             distinct doses of the design's samples.
         tests: A test name, or a list of them, among ``"spline"``,
-            ``"nonlinearity"``, ``"linear_trend"`` and ``"dose_groups"``; None runs
-            every test the design supports, leaving out in each cell type a test of
-            the same hypothesis as another, which happens when the dose groups are
-            few. ``"spline"`` and ``"linear_trend"`` need two doses on the axis
-            (the treated doses when the vehicle is a group of its own, every dose
-            when it is on the axis), and ``"nonlinearity"`` a spline of two columns
-            or more.
+            ``"nonlinearity"``, ``"linear_trend"``, ``"dose_groups"``, ``"dunnett"``,
+            ``"williams"`` and ``"mcp"``; None runs the first four that the design
+            supports, leaving out in each cell type a test of the same hypothesis as
+            another, which happens when the dose groups are few. ``"spline"`` and
+            ``"linear_trend"`` need two doses on the axis (the treated doses when the
+            vehicle is a group of its own, every dose when it is on the axis),
+            ``"nonlinearity"`` a spline of two columns or more, and ``"mcp"`` two
+            treated doses; a cell type that compares one treated dose does not run
+            ``"mcp"``, with the reason.
         spline_df: The number of spline columns, at least 1 and at most the doses on
             the axis minus 1; None gives 2 when the axis holds 4 doses or more, and
             1 otherwise. The knots are placed by :meth:`DoseAxis.spline_basis` with
             its rule ``"levels"``, in the restricted cubic form.
+        candidates: The :class:`~cytepool.CandidateShapes` of ``"mcp"``, with a
+            ``beta_scale`` of at least the top dose; None spreads the default shapes
+            over the design's doses, ``CandidateShapes.spread(dose,
+            design.samples)``. Given only with ``"mcp"``. A shape that does not
+            change at a cell type's doses is left out there, with the reason in the
+            record.
         analysis: :func:`~cytepool.limma_voom` (by default),
             :func:`~cytepool.limma_trend` or :func:`~cytepool.dream_voom`; a design
             with random intercepts needs ``dream_voom``.
@@ -730,11 +1003,19 @@ def dose_response(
         min_counts: The fewest counts, summed over all features, a sample needs in a
             cell type, as in :func:`~cytepool.limma_voom`; for the check and the
             fits.
+        rng: A numpy random generator, an integer seed, or None, for the Monte Carlo
+            error of the multiple contrast tests' p-values. dose_response takes one
+            seed, the integer given or one drawn from the generator, and records it
+            in ``settings["seed"]``; each cell type and test draws from a generator
+            seeded by it, the cell type's name and the test, so that
+            ``rng=<recorded seed>`` gives the same p-values whatever the other cell
+            types, the other tests named and the threads. Tests of two contrasts or
+            fewer use no random numbers.
         **options: The analysis's other options, such as ``prior_weights``,
             ``quality_weights``, ``robust``, ``expression_filter``,
-            ``contrast_standard_errors``, ``n_threads``, ``prior_count``
-            (``limma_trend``) or ``df_method`` (``dream_voom``); their values are
-            checked by the analysis.
+            ``contrast_standard_errors``, ``n_threads`` (which the multiple contrast
+            tests also follow), ``prior_count`` (``limma_trend``) or ``df_method``
+            (``dream_voom``); their values are checked by the analysis.
 
     Returns:
         The tables of every cell type tested, the summary, the design check, each
@@ -747,23 +1028,48 @@ def dose_response(
     Raises:
         TypeError: If ``analysis`` is not one of the three functions, an option is
             one the analysis does not take or one that dose_response sets
-            (``contrasts``, ``f_tests``, ``adjust_across_groups``), ``tests`` or
-            ``spline_df`` has the wrong type, or an argument is of a type that
-            :func:`~cytepool.check_dose_design` or the analysis refuses.
+            (``contrasts``, ``f_tests``, ``adjust_across_groups``), ``tests``,
+            ``spline_df``, ``candidates`` or ``rng`` has the wrong type, or an
+            argument is of a type that :func:`~cytepool.check_dose_design` or the
+            analysis refuses.
         ValueError: If ``tests`` names no test or a test twice, or names a test
             that the design cannot support; ``spline_df`` is below 1 or above the
-            doses on the axis minus 1, or given without two doses on the axis; the
-            design names contrasts, has random intercepts with an analysis of
-            limma or none with ``dream_voom``; the sample table already holds a
-            column of the name of a dose group's indicator; or as
+            doses on the axis minus 1, or given without two doses on the axis;
+            ``candidates`` are given without ``"mcp"`` or with a ``beta_scale``
+            below the top dose; a multiple contrast test is named with
+            ``contrast_standard_errors="limma"``; ``rng`` is a negative seed; the
+            design names contrasts, has random intercepts with an analysis of limma
+            or none with ``dream_voom``; the sample table already holds a column of
+            the name of a dose group's indicator; or as
             :func:`~cytepool.check_dose_design` and the analysis raise.
         KeyError: If a group is not in the cube.
     """
     given = _tests_setting(tests)
+    linear = None if given is None else [test for test in given if test in TESTS]
+    named = [test for test in CONTRAST_TESTS if given is not None and test in given]
     if spline_df is not None:
         spline_df = positive_integer(spline_df, "spline_df")
+    if candidates is not None and not isinstance(candidates, CandidateShapes):
+        raise TypeError(
+            "candidates must be a CandidateShapes, such as CandidateShapes.spread(axis, "
+            f"design.samples) gives, got {type(candidates).__name__}"
+        )
+    if candidates is not None and MCP not in named:
+        raise ValueError(
+            "candidates are the shapes of the MCP step, and tests does not name 'mcp'; "
+            "add 'mcp' to tests, or leave candidates out"
+        )
+    # The seed is checked whatever the tests, and recorded when one draws on it.
+    seed = _seed(rng)
     method = _analysis_name(analysis, design)
     _check_options(method, options)
+    if named and options.get("contrast_standard_errors") == "limma":
+        raise ValueError(
+            f"the multiple contrast tests, {quoted(named)}, need each gene's covariance "
+            "of its doses' estimates, which limma's approximate standard errors "
+            "(contrast_standard_errors='limma') do not give, so multiple_contrast_test "
+            "refuses them too; leave contrast_standard_errors out, for the exact default"
+        )
     if isinstance(design, Design) and len(design.contrasts):
         raise ValueError(
             f"the design names contrasts ({quoted(list(design.contrasts.names))}), "
@@ -781,7 +1087,8 @@ def dose_response(
         groups=groups,
     )
     levels = np.unique(report.doses["dose"])
-    splines = _splines(dose, design.samples, levels, given, spline_df)
+    splines = _splines(dose, design.samples, levels, linear, spline_df)
+    shapes = _candidates(candidates, dose, design, levels) if MCP in named else None
     statuses = report.summary["status"].tolist()
     reasons = report.summary["reason"].tolist()
     model = _dose_group_model(design, dose, levels) if INFERENTIAL in statuses else None
@@ -793,22 +1100,40 @@ def dose_response(
             continue
         assert model is not None  # built when a cell type supports tests
         comparison = _comparison(
-            report.doses.filter(group_id=group), dose, splines, given is None
+            report.doses.filter(group_id=group),
+            dose,
+            splines,
+            given is None,
+            named,
+            shapes,
         )
-        fits.append(
-            _fit_cell_type(
-                cube,
-                model,
-                group,
-                comparison,
-                analysis,
-                min_cells=min_cells,
-                min_counts=min_counts,
-                options=options,
-            )
+        fit = _fit_cell_type(
+            cube,
+            model,
+            group,
+            comparison,
+            analysis,
+            min_cells=min_cells,
+            min_counts=min_counts,
+            options=options,
         )
-    _adjust_across_groups(fits, splines.tests)
-    return _result(cube, report, model, splines, fits, given, spline_df, method)
+        if fit.result is not None and comparison.contrast_tests:
+            _run_contrast_tests(fit, seed, options.get("n_threads"))
+        fits.append(fit)
+    _adjust_across_groups(fits, (*splines.tests, *named))
+    return _result(
+        cube,
+        report,
+        model,
+        splines,
+        fits,
+        given,
+        spline_df,
+        method,
+        shapes,
+        seed if named else None,
+        named,
+    )
 
 
 # The checks of the arguments.
@@ -821,9 +1146,10 @@ def _tests_setting(value: Any) -> list[str] | None:
     if value is None:
         return None
     named = [value] if isinstance(value, str) else value
+    every = _ALL_TESTS
     if isinstance(named, Mapping) or not isinstance(named, Sequence | np.ndarray):
         raise TypeError(
-            f"tests must be a test name or a list of them, among {quoted(TESTS)}, or "
+            f"tests must be a test name or a list of them, among {quoted(every)}, or "
             f"None for every test the design supports, got {type(value).__name__}"
         )
     listed = list(named)
@@ -837,15 +1163,54 @@ def _tests_setting(value: Any) -> list[str] | None:
             raise TypeError(
                 f"tests must be test names (str), got {type(name).__name__} {name!r}"
             )
-        if name not in TESTS:
+        if name not in every:
             raise ValueError(
                 f"tests names {name!r}, which is not a test"
-                f"{close_matches(name, TESTS)}; the tests are {quoted(TESTS)}"
+                f"{close_matches(name, every)}; the tests are {quoted(every)}"
             )
     repeated = sorted({name for name in listed if listed.count(name) > 1})
     if repeated:
         raise ValueError(f"tests names {quoted(repeated)} more than once")
     return listed
+
+
+def _seed(rng: Any) -> int:
+    """The seed of the multiple contrast tests: an integer seed as given, or one drawn
+    from a generator, or from fresh entropy for None, so that the record reproduces
+    the p-values."""
+    generator = random_generator(rng)
+    if isinstance(rng, numbers.Integral) and not isinstance(rng, bool | np.bool_):
+        return operator.index(rng)
+    return int(generator.integers(0, 2**63))
+
+
+def _candidates(
+    candidates: CandidateShapes | None,
+    axis: DoseAxis,
+    design: Design,
+    levels: npt.NDArray[np.float64],
+) -> CandidateShapes:
+    """The candidate shapes of the MCP step: those given, or spread over the doses of
+    the design's samples; the design needs two treated doses, and beta shapes a scale
+    of at least the top dose."""
+    treated = levels[levels > 0.0]
+    if treated.size < 2:
+        raise ValueError(
+            "the MCP step compares candidate shapes along the treated doses, and the "
+            f"design has {treated.size}: {dose_text(treated, axis.unit)}; leave 'mcp' "
+            "out of tests, or test each dose with 'dunnett'"
+        )
+    if candidates is None:
+        return CandidateShapes.spread(axis, design.samples)
+    top = float(levels[-1])
+    if candidates.beta_scale is not None and candidates.beta_scale < top:
+        raise ValueError(
+            f"the candidates' beta_scale, {candidates.beta_scale:g} {axis.unit}, is "
+            f"below the design's top dose, {top:g} {axis.unit}, where the beta shapes "
+            "are not defined; give a beta_scale of at least the top dose, such as "
+            f"{BETA_SCALE_FACTOR:g} times it ({BETA_SCALE_FACTOR * top:g})"
+        )
+    return candidates
 
 
 def _analysis_name(analysis: Any, design: Any) -> str:
@@ -945,7 +1310,8 @@ def _splines(
                 f"{'needs' if one else 'need'} two doses on it, and the design has "
                 f"{'one' if m else 'none'}{where}; {fix}"
             )
-        return _Splines(None, None, (DOSE_GROUPS,))
+        wanted = given is None or DOSE_GROUPS in given
+        return _Splines(None, None, (DOSE_GROUPS,) if wanted else ())
     df = spline_df if spline_df is not None else (2 if m >= 4 else 1)
     try:
         basis = axis.spline_basis(samples, df=df)
@@ -1021,10 +1387,29 @@ class _Comparison:
     contrasts: dict[str, npt.NDArray[np.float64]]
     tests: dict[str, list[str]]  # each test run, in the order of TESTS: its contrasts
     not_run: dict[str, str]  # each test of the design not run here: why
+    # Each multiple contrast test run here, in the order of CONTRAST_TESTS.
+    contrast_tests: dict[str, "_ContrastSet"]
+
+
+@dataclass(frozen=True)
+class _ContrastSet:
+    """The contrasts of a multiple contrast test in one cell type: their names, their
+    weights on the treated doses' differences from the vehicle, ``(n_doses,
+    n_contrasts)``, and what the record keeps besides the weights: for the MCP step,
+    the dimensions its contrasts span and the shapes it left out."""
+
+    names: tuple[str, ...]
+    weights: npt.NDArray[np.float64]
+    extras: dict[str, Any]
 
 
 def _comparison(
-    rows: Table, axis: DoseAxis, splines: _Splines, by_default: bool
+    rows: Table,
+    axis: DoseAxis,
+    splines: _Splines,
+    by_default: bool,
+    named: Sequence[str],
+    shapes: CandidateShapes | None,
 ) -> _Comparison:
     """The dose groups that a cell type compares, from its rows of the check's doses
     table, and its tests as contrasts of the treated doses against the vehicle.
@@ -1078,9 +1463,94 @@ def _comparison(
         tests[DOSE_GROUPS] = names
     if by_default:
         _leave_out_repeats(tests, contrasts, not_run)
+    sets: dict[str, _ContrastSet] = {}
+    for test in named:
+        found = _contrast_set(test, levels, samples, shapes)
+        if isinstance(found, str):
+            not_run[test] = found
+        else:
+            sets[test] = found
     ordered = {test: tests[test] for test in TESTS if test in tests}
-    reasons = {test: not_run[test] for test in TESTS if test in not_run}
-    return _Comparison(levels, samples, names, contrasts, ordered, reasons)
+    reasons = {test: not_run[test] for test in _ALL_TESTS if test in not_run}
+    return _Comparison(levels, samples, names, contrasts, ordered, reasons, sets)
+
+
+def _contrast_set(
+    test: str,
+    doses: npt.NDArray[np.float64],
+    samples: npt.NDArray[np.float64],
+    shapes: CandidateShapes | None,
+) -> "_ContrastSet | str":
+    """The contrasts of a multiple contrast test on a cell type's treated doses, from
+    the doses it compares and their samples, or why the test does not run there.
+
+    Dunnett's contrasts are the doses themselves; Williams-type contrasts weigh the
+    top doses by their samples (Bretz 2006).
+    """
+    groups = [_VEHICLE, *(dose_label(dose) for dose in doses[1:])]
+    if test == MCP:
+        assert shapes is not None  # dose_response places them when mcp is named
+        return _mcp_contrast_set(doses, samples, shapes, groups)
+    contrasts = (
+        dunnett_contrasts(groups)
+        if test == DUNNETT
+        else williams_contrasts(
+            dict(zip(groups, (int(n) for n in samples), strict=True))
+        )
+    )
+    return _ContrastSet(contrasts.names, np.ascontiguousarray(contrasts.matrix[1:]), {})
+
+
+def _mcp_contrast_set(
+    doses: npt.NDArray[np.float64],
+    samples: npt.NDArray[np.float64],
+    shapes: CandidateShapes,
+    groups: list[str],
+) -> "_ContrastSet | str":
+    """The MCP step's contrasts on a cell type's treated doses, or why it does not run
+    there: the optimal contrasts of the candidate shapes that change at its doses,
+    for groups of its samples, c proportional to n_k (mu_k - the size-weighted mean
+    of mu), with the vehicle's weight dropped and each scaled to unit length, as
+    DoseFinding's placebo-adjusted contrasts (Pinheiro et al. 2014)."""
+    if doses.size < 3:
+        return (
+            "the MCP step compares candidate shapes along the treated doses, and "
+            f"this cell type compares one, {groups[1]}"
+        )
+    means = shapes.means(doses)
+    flat = np.abs(means[:, 1:]).max(axis=1) < _FLAT
+    if flat.all():
+        return (
+            "no candidate shape changes at the doses this cell type compares, "
+            f"{listing(groups[1:])}"
+        )
+    contrasts = optimal_contrasts(
+        {
+            name: values
+            for name, values, gone in zip(shapes.names, means, flat, strict=True)
+            if not gone
+        },
+        np.diag(1.0 / samples),
+        groups=groups,
+    )
+    weights = contrasts.matrix[1:] / np.linalg.norm(contrasts.matrix[1:], axis=0)
+    left_out = {
+        name: "it does not change at the doses this cell type compares"
+        for name, gone in zip(shapes.names, flat, strict=True)
+        if gone
+    }
+    return _ContrastSet(
+        contrasts.names,
+        weights,
+        {"dimensions": len(column_space(weights).kept), "shapes_left_out": left_out},
+    )
+
+
+def _weights_record(
+    names: Sequence[str], weights: npt.NDArray[np.float64]
+) -> dict[str, list[float]]:
+    """Each contrast's weights on the treated doses, by name, for the record."""
+    return {name: weights[:, j].tolist() for j, name in enumerate(names)}
 
 
 def _leave_out_repeats(
@@ -1230,6 +1700,57 @@ def _fit_cell_type(
     return _CellTypeFit(group, INFERENTIAL, "", comparison, result, tables)
 
 
+def _run_contrast_tests(fit: _CellTypeFit, seed: int, n_threads: Any) -> None:
+    """Run the multiple contrast tests of a fitted cell type and add their tables.
+
+    Each gene's dose-group estimates and their moderated covariance come from the
+    cell type's fit, computed again; the multivariate t takes one df per gene, the
+    smallest of its doses' under dream. Each test draws its random numbers from
+    ``numpy.random.default_rng([seed, crc32 of the cell type's name, its position in
+    CONTRAST_TESTS])``, so that its p-values depend neither on the other cell types
+    nor on the order of the run.
+    """
+    comparison, result = fit.comparison, fit.result
+    assert comparison is not None and result is not None
+    group_fit = result.fit(fit.group)
+    estimates = _dose_group_estimates(group_fit, comparison.indicators)
+    df = estimates.df_total
+    if df.ndim == 2:
+        df = df.min(axis=1)
+    covariances = estimates.covariance * estimates.posterior_variance[:, None, None]
+    genes = fit.tables[EACH_DOSE].take(np.arange(estimates.theta.shape[0]))
+    columns = [name for name in ("feature_id", "symbol") if name in genes]
+    for position, test in enumerate(CONTRAST_TESTS):
+        found = comparison.contrast_tests.get(test)
+        if found is None:
+            continue
+        generator = np.random.default_rng(
+            [seed, zlib.crc32(fit.group.encode("utf-8")), position]
+        )
+        outcome = multiple_contrast_test(
+            estimates.theta,
+            covariances,
+            dict(zip(found.names, found.weights.T, strict=True)),
+            df=df,
+            alternative="two-sided",
+            rng=generator,
+            n_threads=n_threads,
+        )
+        table = outcome.table()
+        fit.tables[test] = Table(
+            {
+                **{name: genes[name] for name in columns},
+                "average_log2_cpm": genes["average_log2_cpm"],
+                "contrast": table["contrast"],
+                "t": table["t"],
+                "df": outcome.df,
+                "p_value": table["p_value"],
+                "p_value_error": table["p_value_error"],
+                "adjusted_p_value": table["adjusted_p_value"],
+            }
+        )
+
+
 def _contrasts(
     model: Design, comparison: _Comparison
 ) -> tuple[dict[str, npt.NDArray[np.float64]], dict[str, list[str]]]:
@@ -1311,6 +1832,9 @@ def _result(
     given: list[str] | None,
     spline_df: int | None,
     method: str,
+    shapes: CandidateShapes | None,
+    seed: int | None,
+    named: Sequence[str],
 ) -> DoseResponseResult:
     check = report.settings
     first = next((fit.result for fit in fits if fit.result is not None), None)
@@ -1326,6 +1850,8 @@ def _result(
         "spline_basis": None if splines.basis is None else splines.basis.to_dict(),
         "tests": given,
         "spline_df": spline_df,
+        "candidates": None if shapes is None else shapes.to_dict(),
+        "seed": seed,
         "analysis": method,
         "batch": check["batch"],
         "groups": check["groups"],
@@ -1340,7 +1866,7 @@ def _result(
         "design": design,
         "settings": settings,
         "analysis_settings": None if first is None else first.settings,
-        "tests": list(splines.tests),
+        "tests": [*splines.tests, *named],
         "groups": [_group_record(fit) for fit in fits],
     }
     tables = {
@@ -1387,6 +1913,7 @@ def _group_record(fit: _CellTypeFit) -> dict[str, Any]:
         "tests_not_run": {},
         "f_test_df1": {},
         "contrasts": {},
+        "contrast_tests": {},
         "fit": None,
     }
     if result is not None:
@@ -1399,6 +1926,13 @@ def _group_record(fit: _CellTypeFit) -> dict[str, Any]:
         df1 = {**group["f_test_df1"], **trend}
         entry["f_test_df1"] = {test: df1[test] for test in TESTS if test in df1}
         entry["contrasts"] = record["design"]["contrasts"]
+        entry["contrast_tests"] = {
+            test: {
+                "contrasts": _weights_record(found.names, found.weights),
+                **found.extras,
+            }
+            for test, found in comparison.contrast_tests.items()
+        }
         entry["fit"] = group
     return entry
 
@@ -1455,16 +1989,28 @@ def _summary(fits: list[_CellTypeFit], report: DoseDesignReport) -> Table:
 
 def _dose_group_estimates(fit: GroupFit, names: Sequence[str]) -> _Estimates:
     """The estimates of a cell type's dose groups against the vehicle, gene by gene,
-    from its fit by limma-voom or limma-trend.
+    from its fit.
 
     ``names`` are the contrasts of the dose groups, as the fit names them. Their
     unscaled covariance is each gene's own under voom's weights, the one shared by
     every gene without weights or with sample weights, and, with limma's standard
     errors (``contrast_standard_errors="limma"``), each gene's unscaled standard
     errors with the correlation of the design without weights, as limma's
-    ``contrasts.fit`` combines them.
+    ``contrasts.fit`` combines them. Under dream, each gene's covariance of the
+    contrasts over the variance it moderates (dream's sigma^2), so that times the
+    posterior variance it is the covariance of the moderated t-tests.
     """
     moderated = fit.moderated
+    if isinstance(moderated, ModeratedFixedEffectTests):
+        tests = moderated.tests
+        columns = [tests.contrast_names.index(name) for name in names]
+        scale = moderated.residual_variance_at_mean_weight[:, None, None]
+        return _Estimates(
+            np.asarray(tests.estimate[:, columns], dtype=np.float64),
+            np.asarray(tests.covariance[:, columns][:, :, columns] / scale),
+            np.asarray(moderated.posterior_variance, dtype=np.float64),
+            np.asarray(moderated.df_total[:, columns], dtype=np.float64),
+        )
     model = moderated.fit
     index = [model.coefficient_names.index(name) for name in names]
     theta = model.coefficients[:, index]

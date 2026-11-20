@@ -18,7 +18,7 @@ Designs, linear models and contrasts [@wilkinson1973; @chambers1992; @becker1988
 
 Empirical Bayes moderation [@smyth2004; @loennstedt2002; @phipson2016; @mccarthy2009; @chen2025].
 
-Multiple testing [@holm1979; @hochberg1988; @hommel1988; @simes1986; @benjamini1995; @benjamini2001; @bourgon2010; @crowell2020; @storey2002; @storey2003; @storey2004], with several contrasts of one gene and multivariate t probabilities [@dunnett1955; @williams1971; @bretz2006; @hothorn2008; @vandenberge2017; @genz1992; @genz2002; @owen2019; @ding2016; @piessens1983].
+Multiple testing [@holm1979; @hochberg1988; @hommel1988; @simes1986; @benjamini1995; @benjamini2001; @bourgon2010; @crowell2020; @storey2002; @storey2003; @storey2004], with several contrasts of one gene and multivariate t probabilities [@dunnett1955; @williams1971; @bretz2006; @hothorn2008; @vandenberge2017; @heller2009; @shaffer1986; @genz1992; @genz2002; @owen2019; @ding2016; @piessens1983].
 
 ## Differential expression
 
@@ -36,7 +36,7 @@ Mixed models and dream [@bates2015; @patterson1971; @harville1977; @henderson197
 
 ## Dose response
 
-Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022], the dose tests of each cell type [@desquilbet2010; @harrell2015; @law2014; @ntp2018; @tukey1985; @delignettemuller2023], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
+Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022], the dose tests of each cell type [@desquilbet2010; @harrell2015; @law2014; @ntp2018; @tukey1985; @delignettemuller2023], trends, candidate shapes and lowest effective doses [@dunnett1955; @bretz2006; @bretz2005; @pinheiro2014; @hothorn2008; @bornkamp2026; @ema2014; @duda2022; @ich1994; @holm1979; @shaffer1986; @heller2009; @vandenberge2017], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
 
 ## Gene sets and pathways
 

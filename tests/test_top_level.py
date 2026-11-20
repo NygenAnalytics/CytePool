@@ -17,6 +17,7 @@ import cytepool
 # The module that implements each name of the top level.
 MODULES = {
     "cytepool.activity": ("Activities", "mlm", "ulm", "weighted_aggregate"),
+    "cytepool.candidate_shapes": ("CandidateShapes",),
     "cytepool.composition": ("CompositionResult", "propeller"),
     "cytepool.cube.collection": ("CubeCollection",),
     "cytepool.cube.cube": ("Cube",),
@@ -70,8 +71,8 @@ OPTIONAL = ("anndata", "matplotlib", "mudata", "pandas")
 
 def test_the_top_level_lists_the_names_of_its_docstring() -> None:
     documented = re.findall(r":(?:class|func):`(\w+)`", cytepool.__doc__ or "")
-    assert len(documented) == len(set(documented)) == 63
-    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 64
+    assert len(documented) == len(set(documented)) == 64
+    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 65
     assert set(cytepool.__all__) == {*documented, "__version__"}
     assert isinstance(cytepool.__version__, str) and cytepool.__version__
 

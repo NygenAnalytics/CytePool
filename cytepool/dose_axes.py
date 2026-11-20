@@ -28,28 +28,24 @@ References:
 """
 
 import dataclasses
-from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from ._columns import is_data_frame
 from ._doses import (
     checked_doses,
-    column_doses,
     distinct_doses,
     dose_text,
     real_vector,
+    sample_doses,
     spline_column,
     treated_column,
 )
 from ._masked_arrays import reject_masked
 from ._options import checked_choice, positive_finite_number, positive_integer
-from .cube import Cube
 from .stats.smoothing import NaturalSplineBasis
-from .table import Table
 
 __all__ = ["DoseAxis"]
 
@@ -264,7 +260,7 @@ class DoseAxis:
                 f"knots must be a rule, one of {', '.join(map(repr, RULES))}, or the "
                 f"interior knots as doses in {self.unit}, got {knots!r}"
             )
-        doses = self._sample_doses(samples)
+        doses = sample_doses(samples, self.column)
         positions = self._positions(doses)
         on_axis = ~np.isnan(positions)
         levels = distinct_doses(doses[on_axis], self.unit)
@@ -360,7 +356,7 @@ class DoseAxis:
                 f"{self.column}_treated already give; build it without one, as "
                 "spline_basis() does"
             )
-        doses = self._sample_doses(samples)
+        doses = sample_doses(samples, self.column)
         positions = self._positions(doses)
         values = basis.matrix(positions)
         values[np.isnan(positions)] = 0.0
@@ -392,18 +388,6 @@ class DoseAxis:
             np.log10(doses[treated]) if self.scale == "log10" else doses[treated]
         )
         return positions
-
-    def _sample_doses(self, samples: Any) -> FloatArray:
-        """The checked doses of a sample table's dose column."""
-        reject_masked(samples, "samples", missing="None or NaN")
-        if not (isinstance(samples, Table | Mapping) or is_data_frame(samples)):
-            hint = "; pass cube.samples" if isinstance(samples, Cube) else ""
-            raise TypeError(
-                "samples must be a Table, a mapping of column names to 1-D values or "
-                f"a pandas DataFrame, got {type(samples).__name__}{hint}"
-            )
-        table = samples if isinstance(samples, Table) else Table(samples)
-        return column_doses(table, self.column)
 
     def _knot_positions(self, knots: npt.ArrayLike, levels: FloatArray) -> FloatArray:
         """The positions of interior knots given as doses, which must lie strictly

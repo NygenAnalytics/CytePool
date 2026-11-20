@@ -16,6 +16,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
 
+**Candidate shapes.** The guesses of a dose response that the MCP step of MCP-Mod tests, each a curve of the change from the vehicle along dose in a model family such as Emax or the beta model's umbrella shape. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
+
 **Competitive and self-contained tests.** A competitive gene-set test asks whether a set's genes change more than the other genes, and a self-contained test whether they change at all. [Competitive or self-contained](../statistics/gene_set_tests.md#competitive-and-self-contained)
 
 **Confidence band (pointwise).** Intervals around a fitted curve, one at each dose, each of which holds with the stated probability, such as 95%, the curve that the model fits to the true means; that is the true curve where the response has the model's shape, and over the whole range at once the curve stays inside less often. [Curves with a band](../statistics/dose_response.md#dose-response-curves)
@@ -98,6 +100,10 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **LOWESS span.** The share of the genes that each local fit of a LOWESS trend uses, which voom chooses from the number of genes. [The span](../statistics/limma_voom.md#voom-span)
 
+**Lowest effective dose.** The lowest dose whose difference from the vehicle is called, in a gene that a screen calls, with no threshold on the size of the change: toxicology's lowest observed effect level (LOEL); the clinical minimum effective dose usually adds a clinically relevant size. [From which dose a gene responds](../statistics/dose_response.md#lowest-effective-dose)
+
+**MCP step.** The multiple comparison procedure of MCP-Mod (multiple comparison procedure and modelling), its test step: each candidate shape becomes its optimal contrast of the dose groups, and the largest of their t-statistics is referred to the multivariate t distribution, which says whether the response follows any of the shapes. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
+
 **Moderated F-statistic.** A test that several coefficients or contrasts of a gene are all zero at once, from their moderated t-statistics and the correlation of their estimates, on the number of independent contrasts and the gene's residual plus prior degrees of freedom. With dose groups alone in the design, it is a one-way ANOVA with moderated variances. [Moderated F-statistics](../statistics/empirical_bayes.md#moderated-f-statistics)
 
 **Moderated t-statistic.** A coefficient or contrast divided by a standard error that uses the gene's moderated variance, tested on the gene's residual degrees of freedom plus the prior's. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
@@ -117,6 +123,10 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Normalization factor and size factor.** Corrections for sequencing depth and composition: edgeR multiplies library sizes by normalization factors, such as TMM's, and DESeq2 replaces them by size factors. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
 **Normalized enrichment score.** A GSEA score divided by the mean of the scores of random sets of its sign, so that sets of different sizes compare. [p-values from random sets](../statistics/over_representation_and_gsea.md#gsea-p-values)
+
+**Optimal contrast.** The contrast of group means that best detects an expected shape, the one whose t-statistic has the largest non-centrality: for independent groups, each group's weight is proportional to its samples times the difference between the shape's mean in the group and the shape's mean weighted by the groups' samples. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
+
+**Overall false discovery rate (OFDR).** The expected share of the genes called with at least one false call, the screen's or one of their contrasts', which stage-wise testing controls. [Calling contrasts across genes](../statistics/multiple_testing.md#stage-wise-testing)
 
 **Over-representation analysis.** A test of whether the genes called significant hold more of a set's genes than chance would give, by the hypergeometric distribution over a universe of genes. [Over-representation analysis](../statistics/over_representation_and_gsea.md#over-representation)
 
@@ -164,9 +174,13 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Source record.** The caller's record of where a cube's data came from, kept in its provenance as it was given. [Provenance records](cube_files.md#provenance-keys)
 
+**Stage-wise testing.** Calling the genes first, by a screen of any change at a false discovery rate, then their contrasts, each gene's adjusted for its own contrasts at the level the screen leaves. [Calling contrasts across genes](../statistics/multiple_testing.md#stage-wise-testing)
+
 **SumRank.** A test of replication that ranks the genes within each study and sums every gene's ranks across the studies, so that a gene must rank high in study after study. [SumRank](../statistics/replication.md#sum-of-ranks)
 
 **TREAT.** A test that a fold change exceeds a threshold, rather than that it is not zero. [Testing against a fold-change threshold](../statistics/empirical_bayes.md#treat-test)
+
+**Umbrella shape.** A dose response that rises to a peak and falls, or falls to a trough and rises, which the beta model of the candidate shapes describes. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
 
 **Universe.** The genes that an over-representation analysis could have selected, by default the genes tested. [The universe](../statistics/over_representation_and_gsea.md#over-representation-universe)
 
