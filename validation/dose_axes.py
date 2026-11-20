@@ -54,6 +54,7 @@ correlation of the coefficients of Hmisc's nearly collinear columns, whose round
 grows with the square of the condition number of R's design, while the two forms'
 agreement ties them to ``ns()``'s at the exact tier. R's and numpy's ``log10`` can
 differ in the last bit.
+
 F-statistics, curves and moderated F-tests are compared with R's where R's design has
 a condition number of at most 1e5, so that rounding stays below the tier; above it, as
 for Hmisc's columns on a linear axis over doses that span decades, the cases are

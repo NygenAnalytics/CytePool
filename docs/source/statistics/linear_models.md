@@ -53,7 +53,7 @@ Default knots differ between tools, so a curve cannot be reproduced without its 
 | --- | --- | --- |
 | `"quantiles"` | K interior knots at the quantiles of the values with probabilities k / (K + 1), K being `df - 1` without an intercept and `df - 2` with one; the boundary knots at the range of the values | `attr(ns(x, df), "knots")` |
 | `"levels"` | The same rule on the distinct values, each counted once, so that a dose with more replicates pulls no knot towards it; these knots never coincide while two or more distinct values lie within the boundary knots | `attr(ns(unique(x), df), "knots")` |
-| `"harrell"` | All `df + 1` knots, boundary knots included, at percentiles from 10% to 90% for 3 knots, 5% to 95% for 4 to 6, 2.5% to 97.5% for more, equally spaced, with the 5th smallest and largest values as the outer knots below 100 values | `rcspline.eval(x, nk = df + 1, knots.only = TRUE)`, or `rcs(x, df + 1)` |
+| `"harrell"` | All `df + 1` knots without an intercept and `df` with one, boundary knots included, at percentiles from 10% to 90% for 3 knots, 5% to 95% for 4 to 6, 2.5% to 97.5% for more, equally spaced, with the 5th smallest and largest values as the outer knots below 100 values | `rcspline.eval(x, nk = df + 1, knots.only = TRUE)`, or `rcs(x, df + 1)` |
 | Given values | Where given, strictly inside the boundary knots | `ns(x, knots = k, Boundary.knots = b)` |
 
 (dose-axes)=

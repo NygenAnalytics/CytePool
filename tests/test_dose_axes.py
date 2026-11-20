@@ -356,6 +356,8 @@ def test_both_forms_give_the_moderated_f_tests_of_one_model_where_doses_crowd() 
     # count every column. Harrell's truncated cubes made the correlation of the
     # coefficients so nearly singular that limma's rule dropped a dimension: F-tests
     # up to 89% off, and 33 calls among the treated doses instead of 44 by limma-voom.
+    # The exposures of validation/dose_axes.py, which draws the replicates of its
+    # ladder first.
     rng = np.random.default_rng(20261124)
     rng.integers(2, 4, 8)
     doses = np.r_[np.zeros(6), np.sort(rng.lognormal(0.0, 1.0, 24))]

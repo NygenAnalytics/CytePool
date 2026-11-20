@@ -22,7 +22,6 @@ MODULES = {
     "cytepool.cube.cube": ("Cube",),
     "cytepool.cube.pool": ("from_bulk", "from_cells"),
     "cytepool.design.design": ("Design",),
-    "cytepool.dose_axes": ("DoseAxis",),
     "cytepool.differential_expression": (
         "DifferentialExpressionResult",
         "GroupFit",
@@ -30,6 +29,7 @@ MODULES = {
         "limma_trend",
         "limma_voom",
     ),
+    "cytepool.dose_axes": ("DoseAxis",),
     "cytepool.gene_set_enrichment": ("gsea",),
     "cytepool.gene_set_tests": ("camera", "fry"),
     "cytepool.gene_sets": ("GeneSets", "read_gmt", "write_gmt"),

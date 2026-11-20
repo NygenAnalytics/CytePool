@@ -1467,11 +1467,11 @@ conda create -p $REF/r-progeny --override-channels -c conda-forge -c bioconda \
     r-base=4.4.3 bioconductor-progeny=1.28.0 r-jsonlite=2.0.0
 ```
 
-`smoothing.py` and `dose_axes.py` run R 4.4.3's `splines` and `stats` with Hmisc 5.3-1 and rms 8.2-1, and `dose_axes.py` limma 3.62.1 and edgeR, in the environment that holds the dose-response references: R 4.4.3 with DESeq2 1.46.0, limma 3.62.1, SummarizedExperiment 1.36.0 and stageR 1.28.0 (Bioconductor 3.20), tcplfit2 0.1.9, mvtnorm 1.4-2, multcomp 1.4-32, jsonlite 2.0.0 and TMB 1.9.19 from conda-forge and bioconda; and Hmisc 5.3-1, rms 8.2-1, DoseFinding 1.4-2, drc 4.0-0, DRomics 2.6.3, MuMIn 1.48.19 and muscat 1.20.0, which conda does not build for R 4.4, built from their CRAN and Bioconductor 3.20 source tarballs, whose dependencies come from conda unpinned. TMB is pinned at the version conda-forge's glmmTMB 1.1.14 for R 4.4 was built with, and lme4 is left free (2.0-6), with which variancePartition's `dream` fails, as above. The validation scripts of this page need R, Hmisc and rms from it, and `dose_axes.py` also limma and edgeR, which the command installs unpinned (4.4.0 in the run reported here):
+`smoothing.py` and `dose_axes.py` run R 4.4.3's `splines` and `stats` with Hmisc 5.3-1 and rms 8.2-1, and `dose_axes.py` limma 3.62.1 and edgeR, in the environment that holds the dose-response references: R 4.4.3 with DESeq2 1.46.0, limma 3.62.1, SummarizedExperiment 1.36.0 and stageR 1.28.0 (Bioconductor 3.20), tcplfit2 0.1.9, mvtnorm 1.4-2, multcomp 1.4-32, jsonlite 2.0.0 and TMB 1.9.19 from conda-forge and bioconda; and Hmisc 5.3-1, rms 8.2-1, DoseFinding 1.4-2, drc 4.0-0, DRomics 2.6.3, MuMIn 1.48.19 and muscat 1.20.0, which conda does not build for R 4.4, built from their CRAN and Bioconductor 3.20 source tarballs, whose dependencies come from conda unpinned. TMB is pinned at the version conda-forge's glmmTMB 1.1.14 for R 4.4 was built with, and lme4 is left free (2.0-6), with which variancePartition's `dream` fails, as above. The validation scripts of this page need R, Hmisc and rms from it, and `dose_axes.py` also limma and edgeR; the command leaves edgeR unpinned (4.4.0 in the run reported here):
 
 ```bash
-conda create -p $REF/r-dose -c conda-forge -c bioconda r-base=4.4.3 \
-    bioconductor-deseq2=1.46.0 bioconductor-limma=3.62.1 \
+conda create -p $REF/r-dose --override-channels -c conda-forge -c bioconda \
+    r-base=4.4.3 bioconductor-deseq2=1.46.0 bioconductor-limma=3.62.1 \
     bioconductor-summarizedexperiment=1.36.0 bioconductor-stager=1.28.0 \
     r-tcplfit2=0.1.9 r-mvtnorm=1.4_2 r-multcomp=1.4_32 r-jsonlite=2.0.0 r-tmb=1.9.19 \
     r-cluster r-rpart r-nnet r-foreign r-gtable r-gridextra r-data.table r-htmltable \

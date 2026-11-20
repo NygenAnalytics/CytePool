@@ -63,7 +63,6 @@ from .activity import Activities, mlm, ulm, weighted_aggregate  # noqa: E402
 from .composition import CompositionResult, propeller  # noqa: E402
 from .cube import Cube, CubeCollection, from_bulk, from_cells  # noqa: E402
 from .design import Design  # noqa: E402
-from .dose_axes import DoseAxis  # noqa: E402
 from .differential_expression import (  # noqa: E402
     DifferentialExpressionResult,
     GroupFit,
@@ -71,6 +70,7 @@ from .differential_expression import (  # noqa: E402
     limma_trend,
     limma_voom,
 )
+from .dose_axes import DoseAxis  # noqa: E402
 from .gene_set_enrichment import gsea  # noqa: E402
 from .gene_set_tests import camera, fry  # noqa: E402
 from .gene_sets import GeneSets, read_gmt, write_gmt  # noqa: E402

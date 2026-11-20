@@ -38,7 +38,7 @@ predicted at the new points (tier exact, relative to the largest prediction), in
 the cases where the basis has full column rank.
 
 Harrell's rule (``"harrell"``) is compared with Hmisc's ``rcspline.eval(x, nk,
-knots.only = TRUE)`` for nk from 2 to 9 on 25 seeded datasets: samples of 6 to 200
+knots.only = TRUE)`` for nk from 2 to 9 on 26 seeded datasets: samples of 6 to 200
 values, NaN, dose ladders and values tied at an extreme or between the extremes. Its
 knots must be identical; where Hmisc returns fewer knots than asked, switches to the
 method it uses for values tied at an extreme, or drops a repeated knot, CytePool
