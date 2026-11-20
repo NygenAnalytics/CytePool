@@ -344,6 +344,22 @@ def test_p_values_never_decrease_as_t_becomes_less_extreme() -> None:
     assert np.all(test.p_value <= np.minimum(1.0, 3.0 * unadjusted) + slack)
 
 
+def test_a_less_extreme_contrast_never_gets_a_smaller_p_value() -> None:
+    """Monte Carlo noise can put the estimate of a less extreme contrast below that of a
+    more extreme one, which the data above rarely show; the running maximum raises it
+    to that p-value, with that p-value's error."""
+    from cytepool.stats.multiple_contrasts import _monotone
+
+    p_value = np.array([[0.010, 0.009, 0.5], [0.2, 0.3, 0.1]])
+    error = np.array([[1e-4, 2e-4, 3e-3], [1e-3, 2e-3, 5e-4]])
+    extremeness = np.array([[2.0, 1.9, 0.3], [1.0, 0.5, 2.0]])
+    raised, raised_error = _monotone(p_value, error, extremeness)
+    np.testing.assert_array_equal(raised, [[0.010, 0.010, 0.5], [0.2, 0.3, 0.1]])
+    np.testing.assert_array_equal(
+        raised_error, [[1e-4, 1e-4, 3e-3], [1e-3, 2e-3, 5e-4]]
+    )
+
+
 def test_two_contrasts_need_no_random_numbers() -> None:
     means, covariances, names = _groups()
     contrasts = dunnett_contrasts(names[:3])
