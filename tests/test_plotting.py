@@ -1421,7 +1421,7 @@ def test_plot_dose_response_draws_the_curves(placement: str) -> None:
     result = dose_result(placement)
     axis = result.dose
     genes = top_genes(result, 5)
-    ax = plotting.plot_dose_response(result, "cell_type_1", genes, ax=axes())
+    ax = plotting.plot_dose_response(result, "cell_type_1", genes=genes, ax=axes())
     curves, bands, dots = (artists(ax, gid) for gid in ("curve", "band", "doses"))
     assert len(curves) == len(bands) == len(dots) == 5
     # 100 doses evenly spaced along the axis over the doses compared: from the lowest
@@ -1468,17 +1468,17 @@ def test_plot_dose_response_refuses_what_it_cannot_draw() -> None:
     result = dose_result()
     genes = top_genes(result, 9)
     with pytest.raises(ValueError, match="9 genes, more than the 8 colours"):
-        plotting.plot_dose_response(result, None, genes, ax=axes())
+        plotting.plot_dose_response(result, genes=genes, ax=axes())
     with pytest.raises(ValueError, match="genes is empty"):
-        plotting.plot_dose_response(result, None, [], ax=axes())
-    with pytest.raises(TypeError, match="feature id or a list"):
-        plotting.plot_dose_response(result, None, 3, ax=axes())  # type: ignore[arg-type]
+        plotting.plot_dose_response(result, genes=[], ax=axes())
+    with pytest.raises(TypeError, match="feature id or symbol, or a list"):
+        plotting.plot_dose_response(result, genes=3, ax=axes())  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="DoseResponseResult"):
-        plotting.plot_dose_response(object(), None, genes[:1], ax=axes())  # type: ignore[arg-type]
+        plotting.plot_dose_response(object(), genes=genes[:1], ax=axes())  # type: ignore[arg-type]
     with pytest.raises(KeyError, match="was not tested"):
-        plotting.plot_dose_response(result, None, ["nope"], ax=axes())
-    # One gene, by its id alone.
-    one = plotting.plot_dose_response(result, None, genes[0], ax=axes())
+        plotting.plot_dose_response(result, genes=["nope"], ax=axes())
+    # One gene, by its id alone, with the cell type left out.
+    one = plotting.plot_dose_response(result, genes=genes[0], ax=axes())
     assert len(artists(one, "curve")) == 1
     # A cell type that was not tested: every sample has 3 cells.
     cube, _ = simulate_dose_series(
@@ -1487,4 +1487,68 @@ def test_plot_dose_response_refuses_what_it_cannot_draw() -> None:
     axis = DoseAxis("dose", unit="ug/kg", metric="administered")
     untested = dose_response(cube, Design(cube.samples, "~ 1"), dose=axis)
     with pytest.raises(KeyError, match="'cell_type_1' was not tested"):
-        plotting.plot_dose_response(untested, "cell_type_1", ["gene_01"], ax=axes())
+        plotting.plot_dose_response(
+            untested, "cell_type_1", genes=["gene_01"], ax=axes()
+        )
+
+
+def test_plot_dose_response_takes_symbols() -> None:
+    # Genes named by symbol draw what their feature ids draw, and the legend shows
+    # the symbols.
+    cube, _ = simulate_dose_series(
+        [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=200,
+        rng=3,
+    )
+    ids = cube.features["feature_id"].tolist()
+    named = Cube(
+        {"counts": np.stack([cube.layer("counts", g) for g in range(cube.n_groups)])},
+        samples=cube.samples,
+        groups=cube.groups,
+        features={"feature_id": ids, "symbol": [f"Sym{i}" for i in range(len(ids))]},
+        n_cells=cube.n_cells,
+    )
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    result = dose_response(named, Design(named.samples, "~ 1"), dose=axis)
+    genes = top_genes(result, 2)
+    symbols = [f"Sym{ids.index(gene)}" for gene in genes]
+    by_id = plotting.plot_dose_response(result, genes=genes, ax=axes())
+    by_symbol = plotting.plot_dose_response(result, genes=symbols, ax=axes())
+    for gid in ("curve", "doses"):
+        for ours, theirs in zip(
+            artists(by_symbol, gid), artists(by_id, gid), strict=True
+        ):
+            data = (
+                (ours.get_offsets(), theirs.get_offsets())
+                if gid == "doses"
+                else (ours.get_xydata(), theirs.get_xydata())
+            )
+            assert_array_equal(*data)
+    for ax in (by_id, by_symbol):
+        assert [t.get_text() for t in ax.get_legend().get_texts()] == symbols
+
+
+def test_plot_dose_response_leaves_out_labels_that_would_overlap() -> None:
+    # On a linear axis, doses from 0.001 to 10 uM crowd at its low end: a tick
+    # stays at every dose, and the labels that would overlap one before them are
+    # left out, keeping the vehicle's and the top dose's.
+    cube, _ = simulate_dose_series(
+        [0.0, 0.001, 0.01, 0.1, 1.0, 10.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=100,
+        unit="uM",
+        rng=4,
+    )
+    axis = DoseAxis("dose", unit="uM", metric="nominal", scale="linear")
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=axis)
+    ax = plotting.plot_dose_response(result, genes=top_genes(result, 1), ax=axes())
+    ax.figure.draw_without_rendering()
+    assert ax.get_xticks().size == 6
+    shown = [label for label in ax.get_xticklabels() if label.get_text()]
+    assert shown[0].get_text() == "vehicle" and shown[-1].get_text() == "10"
+    assert len(shown) < 6
+    boxes = [label.get_window_extent() for label in shown]
+    assert all(left.x1 <= right.x0 for left, right in zip(boxes, boxes[1:]))

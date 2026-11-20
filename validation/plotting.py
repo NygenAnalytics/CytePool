@@ -906,7 +906,7 @@ def dose_series():
 def check_dose_response(theirs, result, genes):
     """The drawn curves, bands and points of plot_dose_response against limma-trend's
     spline in R."""
-    ax = plotting.plot_dose_response(result, "cell_type_1", genes, ax=axes())
+    ax = plotting.plot_dose_response(result, "cell_type_1", genes=genes, ax=axes())
     curves, bands, dots = (artists(ax, gid) for gid in ("curve", "band", "doses"))
     grid = np.log10(column(theirs["grid"]))
     estimate = matrix_of(theirs["estimate"], len(genes))

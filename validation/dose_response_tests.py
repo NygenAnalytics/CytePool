@@ -20,7 +20,8 @@ prior.count = 3)``, ``lmFit`` and ``eBayes(trend = TRUE)`` (limma-trend). It pla
 the knots with R's own rule (``attr(ns(unique(x), df), "knots")`` on the positions of
 the design's samples), fits the spline to the means of the dose groups with its own
 columns, ``ns()`` for the spline, Hmisc's ``rcspline.eval`` for the non-linearity and
-the line ``x - min(x)`` for the slope, each group weighted by its samples, and tests
+the line ``x - min(x)`` for the linear trend, each group weighted by its samples, and
+tests
 the rows of A = (Z'NZ)^-1 Z'N as contrasts: ``contrasts.fit``, ``eBayes``,
 ``topTable(sort.by = "none")`` for t-tests and ``classifyTestsF`` for F-tests, with
 p-values from ``pf`` per gene, as ``topTable`` of several columns refers every gene
@@ -71,7 +72,9 @@ import numpy as np
 
 from cytepool.cube import Cube
 from cytepool.design import Design
+from cytepool.design.formula import quote_name
 from cytepool.differential_expression import dream_voom, limma_trend, limma_voom
+from cytepool._doses import dose_group_column
 from cytepool.dose_axes import DoseAxis
 from cytepool.dose_responses import dose_response
 from cytepool.simulated_dose_series import simulate_dose_series
@@ -87,7 +90,7 @@ CURVE_POINTS = 50
 FIXTURE_CURVE_POINTS = 30
 FIXTURE_CURVE_GENES = 20  # the genes whose curves the fixture keeps
 RMS_GENES = 50
-TESTS = ("spline", "nonlinearity", "slope", "dose_groups")
+TESTS = ("spline", "nonlinearity", "linear_trend", "dose_groups")
 
 LIMMA = r"""
 suppressPackageStartupMessages({
@@ -144,9 +147,9 @@ for (name in names(input$jobs)) {
       Ar <- least_squares(cbind(1, treated_column(compared), rcs_at(compared)), n)
       if (!is.null(Ar)) rows$nonlinearity <- Ar[-seq_len(2 + own), -1, drop = FALSE]
     }
-    if ("slope" %in% job$tests) {
+    if ("linear_trend" %in% job$tests) {
       A1 <- least_squares(cbind(1, treated_column(compared), line_at(compared)), n)
-      if (!is.null(A1)) rows$slope <- A1[nrow(A1), -1, drop = FALSE]
+      if (!is.null(A1)) rows$linear_trend <- A1[nrow(A1), -1, drop = FALSE]
     }
     if ("dose_groups" %in% job$tests) rows$dose_groups <- diag(k)
     rows$each_dose <- diag(k)
@@ -171,7 +174,7 @@ for (name in names(input$jobs)) {
                 df_prior = eb$df.prior, s2_post = s2, df_total = eb$df.total, tests = list())
     for (test in setdiff(names(rows), "each_dose")) {
       cols <- which(owner == test)
-      if (test == "slope") {
+      if (test == "linear_trend") {
         top <- topTable(eb, coef = cols, sort.by = "none", number = Inf)
         r <- list(logFC = top$logFC, t = top$t, p = top$P.Value, adj = top$adj.P.Val,
                   se = eb$stdev.unscaled[, cols] * sqrt(s2), B = top$B)
@@ -334,7 +337,9 @@ cell_type_of <- function(case, ct, df, tests, min_cells) {
     rows$nonlinearity <- crossprod(M, A[-seq_len(1 + own), -1, drop = FALSE])
   }
   A1 <- least_squares(cbind(1, tr(compared), columns_of(position, knots[c(1, length(knots))], "line")(compared)), n)
-  if ("slope" %in% tests && !is.null(A1)) rows$slope <- A1[nrow(A1), -1, drop = FALSE]
+  if ("linear_trend" %in% tests && !is.null(A1)) {
+    rows$linear_trend <- A1[nrow(A1), -1, drop = FALSE]
+  }
   if ("dose_groups" %in% tests) rows$dose_groups <- diag(length(treated))
   list(data = d, counts = y[, used, drop = FALSE], indicators = ind, compared = compared,
        n = n, rows = rows, knots = knots, position = position, own = own)
@@ -604,7 +609,11 @@ def series() -> list[Series]:
         AXIS,
         [
             Job(
-                "four_groups voom", "voom", 1, ("spline", "slope", "dose_groups"), True
+                "four_groups voom",
+                "voom",
+                1,
+                ("spline", "linear_trend", "dose_groups"),
+                True,
             ),
             Job("four_groups trend, 2 columns", "trend", 2, every, curves=True),
         ],
@@ -714,8 +723,12 @@ def given_rows(result: Any) -> dict[str, dict[str, list[list[float]]]]:
         if not entry["tested"]:
             continue
         ct = entry["group_id"]
-        positions = [columns.index(f"dose_{dose:.12g}") for dose in entry["doses"][1:]]
-        tests = result.fits[ct].f_tests
+        # The design names a column as its formula does, in backticks where needed.
+        positions = [
+            columns.index(quote_name(dose_group_column("dose", dose)))
+            for dose in entry["doses"][1:]
+        ]
+        tests = entry["tests"]
         found[ct] = {
             test: [
                 [entry["contrasts"][member][p] for p in positions]
@@ -849,10 +862,13 @@ def scaled(ours: Any, reference: Any) -> float:
 
 
 def p_scaled(ours: Any, reference: Any) -> float:
-    """The largest difference of p-values over p max(1, |log p|)."""
+    """The largest difference of p-values over p max(1, |log p|); infinite when the
+    shapes or the NaNs differ."""
     a, b = np.asarray(ours, dtype=float), np.asarray(reference, dtype=float)
-    if a.shape != b.shape:
+    if a.shape != b.shape or not np.array_equal(np.isnan(a), np.isnan(b)):
         return np.inf
+    present = ~np.isnan(b)
+    a, b = a[present], b[present]
     if not a.size:
         return 0.0
     both_zero = (a == 0.0) & (b == 0.0)
@@ -877,6 +893,8 @@ class Checks:
     ratios: list[float] = field(default_factory=list)
 
     def record(self, family: str, value: float) -> None:
+        # A NaN difference fails: max() would keep whichever value comes first.
+        value = np.inf if np.isnan(value) else value
         self.largest[family] = max(self.largest.get(family, 0.0), value)
         self.counts[family] = self.counts.get(family, 0) + 1
 
@@ -929,16 +947,17 @@ def compare_limma(
                 and entry["fit"]["samples"] == list(np.atleast_1d(theirs["samples"]))
                 and entry["doses"] == vector(theirs["doses"]).tolist()
                 and entry["samples"] == vector(theirs["n"]).tolist()
-                and result.table(ct, "each_dose")["feature_id"][
-                    : int(vector(theirs["genes"]).size)
-                ].tolist()
-                == features[vector(theirs["genes"]).astype(int) - 1].tolist(),
+                and result.table(ct, "each_dose")["feature_id"].tolist()
+                == np.tile(
+                    features[vector(theirs["genes"]).astype(int) - 1],
+                    len(entry["doses"]) - 1,
+                ).tolist(),
             )
             for test, values in theirs["tests"].items():
                 table = result.table(ct, test)
                 prefix = "exact_" if exact else ""
                 across = table["adjusted_p_value_across_groups"]
-                if test == "slope":
+                if test == "linear_trend":
                     se = values[prefix + "se"] if exact else values["se"]
                     t = values["exact_t"] if exact else values["t"]
                     p = values["exact_p"] if exact else values["p"]
@@ -1035,7 +1054,7 @@ def compare_limma(
                     ),
                 )
             if "rms" in theirs and kind == "exact":
-                fit = result.fits[ct].fit(ct)
+                fit = result.fit(ct)
                 s2 = fit.moderated.posterior_variance[
                     : vector(theirs["rms"]["total"]).size
                 ]
@@ -1070,7 +1089,7 @@ def compare_dream(item: Series, job: Job, reference: dict, checks: Checks) -> No
         )
         for test, values in theirs["tests"].items():
             table = result.table(ct, test)
-            if test == "slope":
+            if test == "linear_trend":
                 checks.record(
                     "dream: F-statistics, slopes and t",
                     max(

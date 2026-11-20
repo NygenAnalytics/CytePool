@@ -205,7 +205,6 @@ import numpy as np
 import numpy.typing as npt
 
 from ._masked_arrays import real_array, reject_masked, unmasked_array
-from ._analysis_records import only_key
 from ._messages import listing, quoted
 from ._options import (
     checked_choice,
@@ -2258,15 +2257,12 @@ def plot_p_values(
 
 # Dose response.
 
-# The doses at which a figure draws a fitted curve, evenly spaced along the dose axis.
-_CURVE_POINTS = 100
-
 
 def plot_dose_response(
     result: DoseResponseResult,
-    group: str | None,
-    genes: str | Sequence[str],
+    group: str | None = None,
     *,
+    genes: str | Sequence[str],
     ax: "Axes | None" = None,
 ) -> "Axes":
     """Plot how genes respond to dose in a cell type: each dose group's estimate, the
@@ -2277,10 +2273,11 @@ def plot_dose_response(
     vehicle at 0, and the fitted spline as a change from the vehicle
     (:meth:`~cytepool.DoseResponseResult.curve`) on 100 doses spaced evenly along
     the dose axis over the doses the cell type compares, with its pointwise 95% band.
-    The x axis is the dose axis, labelled in doses; with the vehicle in a group of
-    its own, the vehicle sits one median step of the doses below the lowest dose,
-    beyond a break in the axis. Up to 8 genes take the module's hues in order, and
-    beyond 3, each also a marker of its own.
+    The x axis is the dose axis, labelled in doses, a label left out where it would
+    overlap the one before it; with the vehicle in a group of its own, the vehicle
+    sits one median step of the doses below the lowest dose, beyond a break in the
+    axis. Up to 8 genes take the module's hues in order, and beyond 3, each also a
+    marker of its own.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-curves
     explains the curve and its band.
 
@@ -2291,8 +2288,8 @@ def plot_dose_response(
         result: The result of ``dose_response`` by ``limma_voom`` or
             ``limma_trend``.
         group: A cell type that was tested; None when the result checked one.
-        genes: A feature id or a list of up to 8 of them, among the genes tested in
-            the cell type.
+        genes: A feature id or symbol, or a list of up to 8 of them, among the genes
+            tested in the cell type.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
@@ -2300,10 +2297,11 @@ def plot_dose_response(
 
     Raises:
         TypeError: If ``result`` is not a DoseResponseResult, or ``genes`` is not a
-            feature id or a list of them, or is a numpy masked array.
+            feature id or symbol or a list of them, or is a numpy masked array.
         ValueError: If ``genes`` is empty or names more than 8 genes, or as
             :meth:`~cytepool.DoseResponseResult.curve` raises: for a result of
-            ``dream_voom``, or a cell type whose doses cannot estimate the spline.
+            ``dream_voom``, a cell type whose doses cannot estimate the spline, or a
+            symbol that names several genes.
         KeyError: If the cell type was not tested, or a gene was not tested there.
     """
     _check_axes(ax)
@@ -2319,7 +2317,8 @@ def plot_dose_response(
         names = list(genes)
     else:
         raise TypeError(
-            f"genes must be a feature id or a list of them, got {type(genes).__name__}"
+            "genes must be a feature id or symbol, or a list of them, got "
+            f"{type(genes).__name__}"
         )
     if not names:
         raise ValueError("genes is empty; name the genes whose curves to draw")
@@ -2328,35 +2327,32 @@ def plot_dose_response(
             f"genes names {len(names)} genes, more than the {len(_CATEGORICAL)} "
             "colours that stay distinguishable; draw them in several figures"
         )
-    group = only_key(group, list(result.groups), "group", "cell types")
     # The table of each dose, which raises for a cell type not checked or not tested.
     each = result.table(group, "each_dose")
+    # The curve on its default doses, the genes in the order given.
+    curve = result.curve(group, names)
     axis = result.dose
-    entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
-    treated = np.array(entry["doses"][1:], dtype=np.float64)
+    treated = np.unique(np.asarray(each["dose"], dtype=np.float64))
     own_group = axis.vehicle == "own_group"
-    # The curve's doses, from the lowest dose compared, or the vehicle on the axis,
-    # to the highest.
-    low = float(treated[0]) if own_group else 0.0
-    ends = axis.positions(np.array([low, treated[-1]]))
-    grid = axis.doses(np.linspace(ends[0], ends[1], _CURVE_POINTS))
-    grid[0], grid[-1] = low, treated[-1]
-    curve = result.curve(group, names, at=grid)
+    n = len(curve) // len(names)
+    x = axis.positions(np.asarray(curve["dose"][:n], dtype=np.float64))
     positions = axis.positions(treated)
     if own_group:
         steps = np.diff(positions)
         vehicle = positions[0] - (float(np.median(steps)) if steps.size else 1.0)
     else:
         vehicle = float(axis.positions(np.zeros(1))[0])
-    x = axis.positions(grid)
     labels = each["symbol"] if "symbol" in each else each["feature_id"]
     label_of = dict(zip(each["feature_id"].tolist(), labels.tolist(), strict=True))
+    features = curve["feature_id"].tolist()[::n]
     shapes = _shapes(names, "genes") if len(names) > _SCATTER_HUES else {}
     ax = _axes(ax, (6.5, 4.0))
     ax.axhline(0.0, color=_GREY, linewidth=0.8, zorder=1)
     handles = []
-    for gene, color in zip(names, _CATEGORICAL, strict=False):
-        rows = curve["feature_id"] == gene
+    for i, (gene, feature, color) in enumerate(
+        zip(names, features, _CATEGORICAL, strict=False)
+    ):
+        rows = slice(i * n, (i + 1) * n)
         ax.fill_between(
             x,
             curve["ci_lower"][rows],
@@ -2370,7 +2366,7 @@ def plot_dose_response(
         ax.plot(
             x, curve["log2_fold_change"][rows], color=color, linewidth=1.6, gid="curve"
         )
-        mine = each["feature_id"] == gene
+        mine = each["feature_id"] == feature
         marker = shapes.get(gene, _MARKERS[0])
         ax.scatter(
             np.r_[vehicle, axis.positions(each["dose"][mine])],
@@ -2384,12 +2380,13 @@ def plot_dose_response(
             gid="doses",
         )
         handles.append(
-            _key(str(label_of[gene]), marker=marker, color=color, linestyle="-")
+            _key(str(label_of[feature]), marker=marker, color=color, linestyle="-")
         )
     ax.set_xticks(
         [vehicle, *positions.tolist()],
         ["vehicle", *(f"{dose:g}" for dose in treated)],
     )
+    _space_tick_labels(ax)
     if own_group:
         # A break in the axis between the vehicle and the lowest dose.
         ax.text(
@@ -2408,6 +2405,23 @@ def plot_dose_response(
     ax.set_ylabel("log2 fold change from the vehicle")
     _legend(ax, handles, inside=True)
     return ax
+
+
+def _space_tick_labels(ax: "Axes") -> None:
+    """Leave out each x tick label that would overlap the label kept before it, as
+    the doses crowded at the low end of a linear axis would; the ticks stay."""
+    ax.figure.figure.draw_without_rendering()  # the Figure, also of a subfigure
+    pad = 4.0  # pixels between two labels
+    kept_right = -np.inf
+    texts = []
+    for label in ax.get_xticklabels():
+        box = label.get_window_extent()
+        if box.x0 < kept_right + pad:
+            texts.append("")
+            continue
+        kept_right = box.x1
+        texts.append(label.get_text())
+    ax.set_xticks(ax.get_xticks(), texts)
 
 
 # Gene sets.

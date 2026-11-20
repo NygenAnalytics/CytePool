@@ -1074,13 +1074,13 @@ def test_arguments_are_refused_with_a_fix() -> None:
     for name in names:
         columns = {**samples, **{n: np.arange(9.0) for n in names if n != "dose"}}
         with pytest.raises(
-            ValueError, match=f"the design uses '{name}', but .* adds the dose groups"
+            ValueError, match=f"the design uses '{name}', but the dose groups are added"
         ):
             check_dose_design(cube, Design(columns, f"~ {name}"), dose=AXIS)
     # Names that only start like them are other terms.
     columns = {**samples, "dose_s1x": np.arange(9.0), "dosed": np.arange(9.0)}
     check_dose_design(cube, Design(columns, "~ dose_s1x + dosed"), dose=AXIS)
-    with pytest.raises(ValueError, match="'dose'.*adds the dose groups itself"):
+    with pytest.raises(ValueError, match="'dose'.*added from the dose axis"):
         check_dose_design(cube, Design(samples, "~ 1", random="(1 | dose)"), dose=AXIS)
     with pytest.raises(ValueError, match="random slopes"):
         check_dose_design(

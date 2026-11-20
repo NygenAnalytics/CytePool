@@ -20,10 +20,11 @@ cube that supports tests, in one call
    one moderated variance: ``spline``, whether the gene responds at all, along a
    natural cubic spline of dose (Desquilbet and Mariotti 2010; Harrell 2015);
    ``nonlinearity``, whether the spline departs from a straight line along the dose
-   axis; ``slope``, the slope of a straight line along the axis; and
+   axis; ``linear_trend``, the slope of a straight line along the axis; and
    ``dose_groups``, whether any dose group differs from the vehicle, the one-way
-   analysis of variance of the dose groups with moderated variances, which NTP's
-   genomic dose-response approach runs as a prefilter (NTP 2018).
+   analysis of variance of the dose groups with moderated variances: the moderated
+   counterpart of the ANOVA gate of NTP's genomic dose-response approach, which at
+   least one gene must pass for a data set to be analysed further (NTP 2018).
 
 The spline:
     In each cell type the spline is fitted by least squares to the means of the dose
@@ -123,19 +124,19 @@ __all__ = ["DoseResponseResult", "dose_response"]
 
 FloatArray = npt.NDArray[np.float64]
 
-SPLINE, NONLINEARITY, SLOPE, DOSE_GROUPS = (
+SPLINE, NONLINEARITY, LINEAR_TREND, DOSE_GROUPS = (
     "spline",
     "nonlinearity",
-    "slope",
+    "linear_trend",
     "dose_groups",
 )
-TESTS = (SPLINE, NONLINEARITY, SLOPE, DOSE_GROUPS)
+TESTS = (SPLINE, NONLINEARITY, LINEAR_TREND, DOSE_GROUPS)
 """The tests, in the order of tables and printouts; ``spline`` is read first."""
 EACH_DOSE = "each_dose"
 """The table of each dose against the vehicle."""
 # Of two tests of the same hypothesis in a cell type, the first of this order runs
 # when the tests are chosen by default.
-_PRIORITY = (SPLINE, DOSE_GROUPS, SLOPE, NONLINEARITY)
+_PRIORITY = (SPLINE, DOSE_GROUPS, LINEAR_TREND, NONLINEARITY)
 _ANALYSES: dict[str, Callable[..., DifferentialExpressionResult]] = {
     "limma_voom": limma_voom,
     "limma_trend": limma_trend,
@@ -147,6 +148,8 @@ _ACROSS_GROUPS = "adjusted_p_value_across_groups"
 # The level of the calls a printout counts, and of the confidence bands.
 _FDR = 0.05
 _LEVEL = 0.95
+# The doses of a curve by default, evenly spaced along the dose axis.
+_CURVE_POINTS = 100
 # The names of the contrasts of the spline's coefficients, after the column of the
 # dose axis they weigh, such as "spline_dose_s1".
 _SPLINE_PREFIX = "spline_"
@@ -183,12 +186,13 @@ class DoseResponseResult:
       denominator degrees of freedom with the same p-value. The numerator degrees of
       freedom are in the cell type's entry of ``provenance["groups"]``
       (``f_test_df1``).
-    - ``"slope"``: the analysis's table of a contrast, whose ``log2_fold_change`` is
-      the slope, the change in log2 expression per log10 unit of dose on a log10
-      axis or per unit of dose on a linear one, with ``standard_error`` (not for
-      dream), ``average_log2_cpm``, ``t``, ``p_value``, ``adjusted_p_value``,
-      ``adjusted_p_value_across_groups`` and ``log_odds``; dream adds ``df`` and
-      ``z_statistic``.
+    - ``"linear_trend"``: the analysis's table of a contrast, whose
+      ``log2_fold_change`` is the slope of the straight line, the change in log2
+      expression per log10 unit of dose on a log10 axis (of dose plus the offset,
+      with the vehicle on the axis) or per unit of dose on a linear one, with
+      ``standard_error`` (not for dream), ``average_log2_cpm``, ``t``, ``p_value``,
+      ``adjusted_p_value``, ``adjusted_p_value_across_groups`` and ``log_odds``;
+      dream adds ``df`` and ``z_statistic``.
     - ``"each_dose"``: each treated dose the cell type compares against the vehicle,
       the rows of a dose together, doses ascending, each dose's genes in the cube's
       feature order: ``feature_id``, ``symbol``, ``dose`` (in the axis's unit), then
@@ -204,11 +208,12 @@ class DoseResponseResult:
     dream), NaN where not tested; and ``tests_not_run``, the tests of the design
     that a tested cell type did not run, whose reasons :meth:`table` gives.
 
-    Built by :func:`dose_response`, which keeps each cell type's fit
-    (``fits``, the analysis's results without their tables, from which
-    :meth:`curve` computes the fit again) and the design check
-    (``design_report``). A pickled result carries the cube: a cube read from a cube
-    file refers to its file, and a cube in memory carries its arrays. Immutable.
+    Built by :func:`dose_response` from the summary, the tables, the design check
+    (``design_report``), the provenance and, as ``fits``, each tested cell type's
+    result of the analysis without its tables, from which :meth:`fit` and
+    :meth:`curve` compute the cell type's fit again. A pickled result carries the
+    cube: a cube read from a cube file refers to its file, and a cube in memory
+    carries its arrays. Immutable.
 
     Raises:
         TypeError: If ``summary`` is not a ``Table``, ``tables`` not a mapping of
@@ -313,13 +318,6 @@ class DoseResponseResult:
         return self._tables
 
     @property
-    def fits(self) -> Mapping[str, DifferentialExpressionResult]:
-        """The analysis's result of each cell type tested, without its tables:
-        :meth:`DifferentialExpressionResult.fit` computes the cell type's fit
-        again."""
-        return self._fits
-
-    @property
     def design_report(self) -> DoseDesignReport:
         """The check of the design, from :func:`~cytepool.check_dose_design`."""
         return self._report
@@ -332,7 +330,8 @@ class DoseResponseResult:
     @property
     def tests(self) -> tuple[str, ...]:
         """The tests of the design, those named or, when none were, those it
-        supports, in the order spline, nonlinearity, slope and dose_groups."""
+        supports, in the order spline, nonlinearity, linear_trend and
+        dose_groups."""
         return tuple(json.loads(self._record)["tests"])
 
     @property
@@ -359,8 +358,9 @@ class DoseResponseResult:
         They hold the axis (``dose``, as :meth:`DoseAxis.to_dict` gives it), the
         spline's basis (``spline_basis``, as
         :meth:`~cytepool.stats.smoothing.NaturalSplineBasis.to_dict` gives it), the
-        tests and ``spline_df`` as given, the analysis, the options given to it, and
-        ``batch``, ``groups``, ``min_cells`` and ``min_counts``.
+        tests and ``spline_df`` as given, the analysis, and ``batch``, ``groups``,
+        ``min_cells`` and ``min_counts``. The analysis's other options are in the
+        provenance's ``analysis_settings``, as the analysis records them.
         """
         settings: dict[str, Any] = json.loads(self._record)["settings"]
         return settings
@@ -376,11 +376,12 @@ class DoseResponseResult:
         the settings, and the analysis's settings in full (``analysis_settings``,
         null when no cell type was fitted); the tests of the design; and, for every
         cell type (``groups``), its status, whether it was tested and why not, the
-        doses it compares with their samples, the tests it did not run with the
-        reasons, the numerator degrees of freedom of each test it ran
-        (``f_test_df1``), the weights of every contrast of its fit on the model's
-        columns, and the analysis's record of its fit (``fit``: the samples used and
-        left out, the features tested, the span of voom's trend and the warnings).
+        doses it compares with their samples, the contrasts of each test it ran
+        (``tests``), the tests it did not run with the reasons, the numerator
+        degrees of freedom of each test it ran (``f_test_df1``), the weights of
+        every contrast of its fit on the model's columns (``contrasts``), and the
+        analysis's record of its fit (``fit``: the samples used and left out, the
+        features tested, the span of voom's trend and the warnings).
         """
         record: dict[str, Any] = json.loads(self._record)
         return record
@@ -391,26 +392,22 @@ class DoseResponseResult:
         Args:
             group: A cell type; it may be left out when one cell type was checked.
             name: A test the cell type ran, ``"spline"``, ``"nonlinearity"``,
-                ``"slope"`` or ``"dose_groups"``, or ``"each_dose"`` for each dose
-                against the vehicle. The class documentation gives the columns.
+                ``"linear_trend"`` or ``"dose_groups"``, or ``"each_dose"`` for each
+                dose against the vehicle. The class documentation gives the columns.
 
         Raises:
             ValueError: If ``group`` is left out and several cell types were
                 checked, or ``name`` is left out.
+            TypeError: If ``group`` is not a string.
             KeyError: If the cell type was not checked or not tested, or the test was
                 not run there; the message says why.
         """
-        group = only_key(group, list(self.groups), "group", "cell types")
+        group = self._group(group)
         name = only_key(name, [*self.tests, EACH_DOSE], "name", "tables")
         found = self._tables.get((group, name))
         if found is not None:
             return found
-        entry = self._entry(group)
-        if not entry["tested"]:
-            raise KeyError(
-                f"cell type {group!r} was not tested ({entry['status']}): "
-                f"{entry['reason']}"
-            )
+        entry = self._tested(group)
         if name in entry["tests_not_run"]:
             raise KeyError(
                 f"{name!r} was not run in {group!r}: {entry['tests_not_run'][name]}"
@@ -420,12 +417,39 @@ class DoseResponseResult:
             f"{listing([*self.tests, EACH_DOSE])}{close_matches(str(name), TESTS)}"
         )
 
+    def fit(self, group: str | None = None) -> GroupFit:
+        """Compute the fit of a tested cell type again: its values, weights and
+        moderated tests.
+
+        The fit of the cell type's model of the dose groups, as
+        :meth:`DifferentialExpressionResult.fit` computes it again from the cube and
+        settings the result keeps; it takes the time of the cell type's analysis.
+        Its moderated tests are those of the contrasts in the cell type's entry of
+        ``provenance["groups"]``: each dose against the vehicle, named after its
+        indicator such as ``dose_0.1``, the spline's coefficients and the linear
+        trend.
+
+        Args:
+            group: A cell type that was tested; it may be left out when one cell
+                type was checked.
+
+        Raises:
+            ValueError: If ``group`` is left out and several cell types were
+                checked, or the fit no longer gives what the result records (a lazy
+                cube whose source changed).
+            TypeError: If ``group`` is not a string.
+            KeyError: If the cell type was not checked or not tested.
+        """
+        group = self._group(group)
+        self._tested(group)
+        return self._fits[group].fit(group)
+
     def curve(
         self,
         group: str | None = None,
         genes: str | Sequence[str] | None = None,
         *,
-        at: npt.ArrayLike,
+        at: npt.ArrayLike | None = None,
     ) -> Table:
         """Return the fitted spline of genes against the vehicle, with a 95% band.
 
@@ -447,38 +471,39 @@ class DoseResponseResult:
         Args:
             group: A cell type that was tested; it may be left out when one cell
                 type was checked.
-            genes: A feature id or a list of them, among the genes tested there;
-                None for every gene tested.
+            genes: A feature id or symbol, or a list of them, among the genes tested
+                there; None for every gene tested.
             at: Doses in the axis's unit: the vehicle's 0, and doses from the lowest
                 to the highest dose the cell type compares, or from 0 when the
-                vehicle sits on the axis. The curve is not extrapolated.
+                vehicle sits on the axis. The curve is not extrapolated. None gives
+                100 doses evenly spaced along the dose axis, from the lowest dose
+                the cell type compares, or from the vehicle when it sits on the
+                axis, to the highest; a vehicle in a group of its own, where the
+                curve is 0, is left out.
 
         Returns:
             One row per gene and dose, the genes in the order given and each gene's
-            doses in the order of ``at``: ``feature_id``, ``dose``,
-            ``log2_fold_change``, ``standard_error``, ``ci_lower`` and ``ci_upper``.
+            doses in the order of ``at``: ``feature_id``, ``symbol`` (when the
+            cube's feature table has one), ``dose``, ``log2_fold_change``,
+            ``standard_error``, ``ci_lower`` and ``ci_upper``.
 
         Raises:
-            TypeError: If ``genes`` is not a feature id or a list of them, or ``at``
-                is not real-valued, or either is or holds a numpy masked array.
+            TypeError: If ``group`` is not a string, ``genes`` is not a feature id
+                or symbol or a list of them, or ``at`` is not real-valued, or either
+                is or holds a numpy masked array.
             ValueError: If ``group`` is left out and several cell types were
                 checked; the result is of ``dream_voom``, whose fits do not keep
                 the degrees of freedom a band needs; the cell type's doses cannot
-                estimate the spline, or no spline is placed; or a dose of ``at`` is
-                not finite, is negative, or lies outside the doses the cell type
-                compares.
-            KeyError: If the cell type was not tested, or a gene was not tested
-                there.
+                estimate the spline, or no spline is placed; a symbol names several
+                genes tested there; or a dose of ``at`` is not finite, is negative,
+                or lies outside the doses the cell type compares.
+            KeyError: If the cell type was not checked or not tested, or a gene was
+                not tested there.
         """
         reject_masked(genes, "genes")
         reject_masked(at, "at")
-        group = only_key(group, list(self.groups), "group", "cell types")
-        entry = self._entry(group)
-        if not entry["tested"]:
-            raise KeyError(
-                f"cell type {group!r} was not tested ({entry['status']}): "
-                f"{entry['reason']}"
-            )
+        group = self._group(group)
+        entry = self._tested(group)
         if self.method == "dream_voom":
             raise ValueError(
                 "curve() needs each curve point's degrees of freedom, which dream's "
@@ -495,11 +520,15 @@ class DoseResponseResult:
             raise ValueError(
                 f"no curve in {group!r}: {_no_spline_reason(axis, basis, doses)}"
             )
-        at_doses = _curve_doses(at, axis, doses, group)
+        at_doses = (
+            _curve_grid(axis, doses)
+            if at is None
+            else _curve_doses(at, axis, doses, group)
+        )
         fit = self._fits[group].fit(group)
         names = [dose_group_column(axis.column, dose) for dose in doses[1:]]
         estimates = _dose_group_estimates(fit, names)
-        rows = _gene_rows(genes, fit.features["feature_id"].tolist(), group)
+        rows = _gene_rows(genes, fit.features, group)
         columns = axis.design_columns({axis.column: at_doses}, basis)
         z = np.column_stack([np.ones(at_doses.size), *columns.values()])
         # The curve's weights on the treated doses: f(x) - mu_0 = c(x)'theta. With
@@ -519,10 +548,13 @@ class DoseResponseResult:
             t_ppf(0.5 + _LEVEL / 2.0, estimates.df_total[rows]), dtype=np.float64
         )
         margin = quantile[:, None] * error
-        ids = np.asarray(fit.features["feature_id"])[rows]
-        return Table(
+        # The genes' columns repeated by position, which keeps them as they were
+        # checked.
+        genes_of_rows = fit.features.take(np.repeat(rows, at_doses.size))
+        return genes_of_rows.select(
+            [name for name in ("feature_id", "symbol") if name in genes_of_rows]
+        ).with_columns(
             {
-                "feature_id": np.repeat(ids, at_doses.size),
                 "dose": np.tile(at_doses, rows.size),
                 "log2_fold_change": estimate.ravel(),
                 "standard_error": error.ravel(),
@@ -531,16 +563,38 @@ class DoseResponseResult:
             }
         )
 
-    def _entry(self, group: str) -> dict[str, Any]:
-        """The record of a cell type."""
-        for entry in self.provenance["groups"]:
-            if entry["group_id"] == group:
-                found: dict[str, Any] = entry
-                return found
+    def _group(self, group: Any) -> str:
+        """A cell type that was checked; the only one when ``group`` is left out."""
+        groups = list(self.groups)
+        name = only_key(group, groups, "group", "cell types")
+        if not isinstance(name, str):
+            reject_masked(name, "group")
+            raise TypeError(
+                f"group must be a cell type (str), got {type(name).__name__}"
+            )
+        if name in groups:
+            return name
+        if name in (*TESTS, EACH_DOSE):
+            raise KeyError(
+                f"{name!r} is a table, not a cell type; pass name={name!r}, with the "
+                "cell type as group, which may be left out when one was checked"
+            )
         raise KeyError(
-            f"no cell type {group!r} was checked; cell types are: "
-            f"{listing(list(self.groups)) or '(none)'}"
+            f"no cell type {name!r} was checked; cell types are: "
+            f"{listing(groups) or '(none)'}"
         )
+
+    def _tested(self, group: str) -> dict[str, Any]:
+        """The record of a checked cell type, which must have been tested."""
+        entry: dict[str, Any] = next(
+            e for e in self.provenance["groups"] if e["group_id"] == group
+        )
+        if not entry["tested"]:
+            raise KeyError(
+                f"cell type {group!r} was not tested ({entry['status']}): "
+                f"{entry['reason']}"
+            )
+        return entry
 
     def __repr__(self) -> str:
         record = self.provenance
@@ -549,11 +603,14 @@ class DoseResponseResult:
         tested = int(np.count_nonzero(self._summary["tested"]))
         n_groups = len(self._summary)
         names = [f"{t} (read first)" if t == SPLINE else t for t in self.tests]
+        dose = "  dose: " + _axis_text(axis, settings["spline_basis"])
+        if LINEAR_TREND in self.tests:
+            dose += f"; linear_trend slopes {_slope_unit(axis)}"
         lines = [
             f"DoseResponseResult ({record['method']}): {n_groups:,} cell "
             f"type{'' if n_groups == 1 else 's'}, {tested:,} tested; tests: "
             + ", ".join(names),
-            "  dose: " + _axis_text(axis, settings["spline_basis"]),
+            dose,
         ]
         for entry, row in zip(record["groups"], range(n_groups), strict=True):
             group = entry["group_id"]
@@ -565,7 +622,6 @@ class DoseResponseResult:
             genes = int(self._summary["n_features_tested"][row])
             calls = [
                 f"{test} {self._calls(group, test):,}"
-                + (f" ({_slope_unit(axis)})" if test == SLOPE else "")
                 for test in self.tests
                 if (group, test) in self._tables
             ]
@@ -607,23 +663,25 @@ def dose_response(
     the model):
 
     - ``"spline"``: whether the gene responds at all, by the F-test of a natural
-      cubic spline of dose fitted to the means of the dose groups, with
-      ``{column}_treated`` when the vehicle is a group of its own. Read it first.
+      cubic spline of dose fitted to the means of the dose groups, with a jump from
+      the vehicle to the lowest dose (the axis's ``dose_treated`` column, for a dose
+      column named ``dose``) when the vehicle is a group of its own. Read it first.
     - ``"nonlinearity"``: whether the spline departs from a straight line along the
       axis, by the F-test of its restricted cubic columns after the first; with the
       vehicle in its own group, the line runs through the treated doses.
-    - ``"slope"``: the slope of a straight line fitted to the means along the axis,
-      by a moderated t-test, as a change in log2 expression per log10 unit of dose
-      on a log10 axis or per unit of dose on a linear one. With the vehicle in a
-      group of its own, the line runs through the treated doses only, so a gene that
-      jumps at the lowest dose and then stays flat has a slope near 0, and the
-      vehicle's difference is tested by the other two; with the vehicle on the axis,
-      it runs through every dose, the regression on log dose of Tukey's trend test
-      (Tukey, Ciminera and Heyse 1985).
+    - ``"linear_trend"``: the slope of a straight line fitted to the means along the
+      axis, by a moderated t-test, as a change in log2 expression per log10 unit of
+      dose on a log10 axis (of dose plus the offset, with the vehicle on the axis)
+      or per unit of dose on a linear one. With the vehicle in a group of its own,
+      the line runs through the treated doses only, so a gene that jumps at the
+      lowest dose and then stays flat has a slope near 0, and the vehicle's
+      difference is tested by ``spline`` and ``dose_groups``; with the vehicle on
+      the axis, it runs through every dose, the regression on log dose of Tukey's
+      trend test (Tukey, Ciminera and Heyse 1985).
     - ``"dose_groups"``: whether any dose group differs from the vehicle, by the
       F-test of every dose against the vehicle, the one-way analysis of variance of
-      the dose groups with moderated variances: the counterpart of the ANOVA
-      prefilter of NTP's genomic dose-response approach (NTP 2018).
+      the dose groups with moderated variances: the moderated counterpart of the
+      ANOVA gate of NTP's genomic dose-response approach (NTP 2018).
 
     Each dose against the vehicle is also tested, in the table ``"each_dose"``.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-tests
@@ -649,12 +707,13 @@ def dose_response(
         dose: The :class:`~cytepool.DoseAxis` of the series. The dose groups are the
             distinct doses of the design's samples.
         tests: A test name, or a list of them, among ``"spline"``,
-            ``"nonlinearity"``, ``"slope"`` and ``"dose_groups"``; None runs every
-            test the design supports, leaving out in each cell type a test of the
-            same hypothesis as another, which happens when the dose groups are few.
-            ``"spline"`` and ``"slope"`` need two doses on the axis (the treated
-            doses when the vehicle is a group of its own, every dose when it is on
-            the axis), and ``"nonlinearity"`` a spline of two columns or more.
+            ``"nonlinearity"``, ``"linear_trend"`` and ``"dose_groups"``; None runs
+            every test the design supports, leaving out in each cell type a test of
+            the same hypothesis as another, which happens when the dose groups are
+            few. ``"spline"`` and ``"linear_trend"`` need two doses on the axis
+            (the treated doses when the vehicle is a group of its own, every dose
+            when it is on the axis), and ``"nonlinearity"`` a spline of two columns
+            or more.
         spline_df: The number of spline columns, at least 1 and at most the doses on
             the axis minus 1; None gives 2 when the axis holds 4 doses or more, and
             1 otherwise. The knots are placed by :meth:`DoseAxis.spline_basis` with
@@ -686,8 +745,8 @@ def dose_response(
             cannot be estimated in a cell type.
 
     Raises:
-        TypeError: If ``analysis`` is not one of the three, an option is one the
-            analysis does not take or one that dose_response sets
+        TypeError: If ``analysis`` is not one of the three functions, an option is
+            one the analysis does not take or one that dose_response sets
             (``contrasts``, ``f_tests``, ``adjust_across_groups``), ``tests`` or
             ``spline_df`` has the wrong type, or an argument is of a type that
             :func:`~cytepool.check_dose_design` or the analysis refuses.
@@ -699,8 +758,6 @@ def dose_response(
             column of the name of a dose group's indicator; or as
             :func:`~cytepool.check_dose_design` and the analysis raise.
         KeyError: If a group is not in the cube.
-        RuntimeError: If a fit used other samples than the check, or cannot estimate
-            a dose group that the check calls estimable.
     """
     given = _tests_setting(tests)
     if spline_df is not None:
@@ -751,9 +808,7 @@ def dose_response(
             )
         )
     _adjust_across_groups(fits, splines.tests)
-    return _result(
-        cube, report, model, splines, fits, given, spline_df, method, options
-    )
+    return _result(cube, report, model, splines, fits, given, spline_df, method)
 
 
 # The checks of the arguments.
@@ -800,8 +855,12 @@ def _analysis_name(analysis: Any, design: Any) -> str:
         (name for name, known in _ANALYSES.items() if analysis is known), None
     )
     if method is None:
+        given = (
+            f"the name {analysis!r}" if isinstance(analysis, str) else repr(analysis)
+        )
         raise TypeError(
-            f"analysis must be limma_voom, limma_trend or dream_voom, got {analysis!r}"
+            "analysis must be one of the functions limma_voom, limma_trend and "
+            f"dream_voom, such as analysis=cytepool.limma_trend, got {given}"
         )
     if not isinstance(design, Design):
         return method  # check_dose_design refuses it, with its own message
@@ -825,8 +884,6 @@ def _check_options(method: str, options: Mapping[str, Any]) -> None:
     before anything runs."""
     for name, value in options.items():
         reject_masked(value, name)
-    # The record keeps the options as given, so they must be values JSON can write.
-    json.dumps(dict(options), default=_plain)
     accepted = [
         name
         for name, parameter in inspect.signature(_ANALYSES[method]).parameters.items()
@@ -870,34 +927,34 @@ def _splines(
     """The spline bases on the design's doses, and the tests the design supports:
     those given, refused with the reason when it cannot support them, or every test
     it supports."""
-    on_axis = levels if axis.vehicle == "on_axis" else levels[levels > 0.0]
-    m = on_axis.size
-    where = (
-        " (the treated doses: the vehicle is a group of its own)"
-        if axis.vehicle == "own_group"
-        else ""
-    )
-    doses = f"{dose_text(on_axis, axis.unit)}" if m else "none"
-    if m < 2:
-        if spline_df is not None:
-            raise ValueError(
-                f"a spline needs two doses on the axis, and the design has {m}, "
-                f"{doses}{where}; leave spline_df out"
-            )
+    own_group = axis.vehicle == "own_group"
+    m = np.count_nonzero(levels > 0.0) if own_group else levels.size
+    if m < 2 and spline_df is None:
         along = [test for test in (given or []) if test != DOSE_GROUPS]
         if along:
+            one = len(along) == 1
+            where, fix = "", "a dose series needs the vehicle and a treated dose"
+            if levels.size >= 2:  # the vehicle in a group of its own, and one dose
+                where = " (the treated doses: the vehicle is a group of its own)"
+                fix = (
+                    "test dose_groups, or place the vehicle on the axis with "
+                    "DoseAxis(..., vehicle='on_axis')"
+                )
             raise ValueError(
-                f"{quoted(along)} run along the dose axis and need two doses on it, "
-                f"and the design has {m}, {doses}{where}; test dose_groups, or place "
-                "the vehicle on the axis with DoseAxis(..., vehicle='on_axis')"
+                f"{quoted(along)} {'runs' if one else 'run'} along the dose axis and "
+                f"{'needs' if one else 'need'} two doses on it, and the design has "
+                f"{'one' if m else 'none'}{where}; {fix}"
             )
         return _Splines(None, None, (DOSE_GROUPS,))
     df = spline_df if spline_df is not None else (2 if m >= 4 else 1)
-    if df > m - 1:
-        raise ValueError(
-            f"spline_df={df} needs {df + 1} distinct doses on the axis, and the design "
-            f"has {m}, {doses}{where}; lower spline_df to at most {m - 1}"
+    try:
+        basis = axis.spline_basis(samples, df=df)
+    except ValueError as error:
+        error.add_note(
+            "(df is dose_response's spline_df; left out, it is chosen from the doses "
+            "on the axis)"
         )
+        raise
     if given is not None and NONLINEARITY in given and df < 2:
         fix = (
             "pass spline_df=2"
@@ -908,7 +965,6 @@ def _splines(
             "nonlinearity tests the spline's columns after the first, so it needs a "
             f"spline of two columns or more, and the spline has {df}; {fix}"
         )
-    basis = axis.spline_basis(samples, df=df)
     slope_basis = axis.spline_basis(samples, df=1)
     supported = [test for test in TESTS if test != NONLINEARITY or df >= 2]
     chosen = supported if given is None else [t for t in TESTS if t in given]
@@ -918,50 +974,35 @@ def _splines(
 # The model of the dose groups.
 
 
-@dataclass(frozen=True)
-class _Model:
-    """The design of the dose groups, with the names of the treated doses'
-    indicators."""
-
-    design: Design
-    column: str  # the dose column
-    unit: str  # the doses' unit
-    indicators: dict[float, str]  # dose -> the name of its indicator column
-
-
 def _dose_group_model(
     design: Design, axis: DoseAxis, levels: npt.NDArray[np.float64]
-) -> _Model:
+) -> Design:
     """The design's terms, an intercept, and an indicator of each treated dose."""
     samples = design.samples
     doses = np.asarray(samples[axis.column], dtype=np.float64)
-    indicators = {
-        float(level): dose_group_column(axis.column, level)
-        for level in levels
-        if level > 0.0
-    }
-    taken = [name for name in indicators.values() if name in samples]
+    treated = levels[levels > 0.0]
+    indicators = [dose_group_column(axis.column, level) for level in treated]
+    taken = [name for name in indicators if name in samples]
     if taken:
         raise ValueError(
             f"the sample table already has the column(s) {quoted(taken)}, the names "
             "dose_response gives the indicators of the dose groups; rename them"
         )
     columns = {
-        name: (doses == level).astype(np.float64) for level, name in indicators.items()
+        name: (doses == level).astype(np.float64)
+        for level, name in zip(treated, indicators, strict=True)
     }
     # "+ 1" keeps the vehicle's mean as the intercept, even under "~ 0".
     formula = (
-        f"{design.formula} + 1 + "
-        f"{' + '.join(quote_name(name) for name in indicators.values())}"
+        f"{design.formula} + 1 + {' + '.join(quote_name(name) for name in indicators)}"
     )
     random = [str(effect) for effect in design.random] or None
-    model = Design(
+    return Design(
         samples.with_columns(columns),
         formula,
         random=random,
         levels={name: list(values) for name, values in design.levels.items()},
     )
-    return _Model(model, axis.column, axis.unit, indicators)
 
 
 # One cell type: what it compares, its contrasts, and its fit.
@@ -973,8 +1014,10 @@ class _Comparison:
 
     doses: npt.NDArray[np.float64]  # the vehicle first, then the treated doses
     samples: npt.NDArray[np.float64]  # the samples of each
+    indicators: list[str]  # the names of the treated doses' indicator columns
     # Each contrast's weights on the treated doses, by name: each dose against the
-    # vehicle, named after its indicator; the spline's coefficients; the slope.
+    # vehicle, named after its indicator; the spline's coefficients; the linear
+    # trend.
     contrasts: dict[str, npt.NDArray[np.float64]]
     tests: dict[str, list[str]]  # each test run, in the order of TESTS: its contrasts
     not_run: dict[str, str]  # each test of the design not run here: why
@@ -1019,25 +1062,25 @@ def _comparison(
                 # The restricted cubic columns after the first.
                 first = 2 if axis.vehicle == "own_group" else 1
                 tests[NONLINEARITY] = labels[first:]
-    if SLOPE in wanted:
-        assert splines.slope_basis is not None  # the design supports the slope
+    if LINEAR_TREND in wanted:
+        assert splines.slope_basis is not None  # the design supports the trend
         line = _spline_weights(axis, splines.slope_basis, levels, samples)
         if line is None:
-            not_run[SLOPE] = (
-                "with the vehicle in a group of its own, the slope runs along the "
-                "treated doses, and this cell type compares one, "
+            not_run[LINEAR_TREND] = (
+                "with the vehicle in a group of its own, the linear trend runs along "
+                "the treated doses, and this cell type compares one, "
                 f"{dose_text(levels[1:], axis.unit)}"
             )
         else:
-            contrasts[SLOPE] = line[-1, 1:]
-            tests[SLOPE] = [SLOPE]
+            contrasts[LINEAR_TREND] = line[-1, 1:]
+            tests[LINEAR_TREND] = [LINEAR_TREND]
     if DOSE_GROUPS in wanted:
         tests[DOSE_GROUPS] = names
     if by_default:
         _leave_out_repeats(tests, contrasts, not_run)
     ordered = {test: tests[test] for test in TESTS if test in tests}
     reasons = {test: not_run[test] for test in TESTS if test in not_run}
-    return _Comparison(levels, samples, contrasts, ordered, reasons)
+    return _Comparison(levels, samples, names, contrasts, ordered, reasons)
 
 
 def _leave_out_repeats(
@@ -1145,7 +1188,7 @@ class _CellTypeFit:
 
 def _fit_cell_type(
     cube: Cube,
-    model: _Model,
+    model: Design,
     group: str,
     comparison: _Comparison,
     analysis: Callable[..., DifferentialExpressionResult],
@@ -1154,11 +1197,16 @@ def _fit_cell_type(
     min_counts: Any,
     options: Mapping[str, Any],
 ) -> _CellTypeFit:
-    """Fit a cell type's dose groups and run its tests, as contrasts of the fit."""
+    """Fit a cell type's dose groups and run its tests, as contrasts of the fit.
+
+    The check and the fit choose a cell type's samples alike, so the fit compares
+    the dose groups the check counted; a contrast the fit could not estimate would
+    make ``result.table`` raise, with the reason.
+    """
     contrasts, f_tests = _contrasts(model, comparison)
     result = analysis(
         cube,
-        model.design,
+        model,
         groups=[group],
         contrasts=contrasts,
         f_tests=f_tests or None,
@@ -1170,76 +1218,47 @@ def _fit_cell_type(
     (entry,) = result.provenance["groups"]
     if entry["status"] != FITTED:
         return _CellTypeFit(group, INFERENTIAL, entry["reason"], comparison)
-    _check_agreement(entry, model, comparison, group)
     tables: dict[str, Table] = {}
     for test in comparison.tests:
         table = result.table(group, test)
-        if test != SLOPE:
+        if test != LINEAR_TREND:
             table = table.select(
                 [c for c in table.columns if not c.startswith("log2_fold_change_")]
             )
         tables[test] = table
-    tables[EACH_DOSE] = _each_dose_table(result, group, model, comparison)
+    tables[EACH_DOSE] = _each_dose_table(result, group, comparison)
     return _CellTypeFit(group, INFERENTIAL, "", comparison, result, tables)
 
 
 def _contrasts(
-    model: _Model, comparison: _Comparison
+    model: Design, comparison: _Comparison
 ) -> tuple[dict[str, npt.NDArray[np.float64]], dict[str, list[str]]]:
     """A cell type's contrasts on the columns of the model of the dose groups, by
     name, and its F-tests, the tests of more than one contrast."""
-    columns = list(model.design.columns)
-    positions = [
-        columns.index(model.indicators[float(dose)]) for dose in comparison.doses[1:]
-    ]
+    columns = list(model.columns)
+    # The design names a column as its formula does, quoting a name such as
+    # "dose_1e-09" in backticks.
+    positions = [columns.index(quote_name(name)) for name in comparison.indicators]
     contrasts = {}
     for name, weights in comparison.contrasts.items():
         vector = np.zeros(len(columns))
         vector[positions] = weights
         contrasts[name] = vector
     f_tests = {
-        test: members for test, members in comparison.tests.items() if test != SLOPE
+        test: members
+        for test, members in comparison.tests.items()
+        if test != LINEAR_TREND
     }
     return contrasts, f_tests
 
 
-def _check_agreement(
-    entry: Mapping[str, Any], model: _Model, comparison: _Comparison, group: str
-) -> None:
-    """Raise unless the fit used as many samples of each dose group as the check
-    counted, which set the weights of the spline, and estimated every contrast."""
-    doses = dict(
-        zip(
-            model.design.samples["sample_id"].tolist(),
-            np.asarray(model.design.samples[model.column], dtype=np.float64).tolist(),
-            strict=True,
-        )
-    )
-    used = [doses[sample] for sample in entry["samples"]]
-    counted = [used.count(float(dose)) for dose in comparison.doses]
-    expected = comparison.samples.astype(int).tolist()
-    if counted != expected or entry["not_estimable"]:
-        missing = list(entry["not_estimable"])
-        raise RuntimeError(
-            f"the fit of {group!r} used {counted} samples of the dose groups "
-            f"{dose_text(comparison.doses, model.unit)}, where the check counted "
-            f"{expected}"
-            + (f", and could not estimate {quoted(missing)}" if missing else "")
-            + ": the check and the analysis disagree, as they can when a lazy cube's "
-            "source changes between them; analyse the cube again"
-        )
-
-
 def _each_dose_table(
-    result: DifferentialExpressionResult,
-    group: str,
-    model: _Model,
-    comparison: _Comparison,
+    result: DifferentialExpressionResult, group: str, comparison: _Comparison
 ) -> Table:
     """The table of each treated dose against the vehicle: the analysis's tables of
     its indicators, stacked in dose order, with each row's dose after the gene."""
     doses = comparison.doses[1:]
-    tables = [result.table(group, model.indicators[float(dose)]) for dose in doses]
+    tables = [result.table(group, name) for name in comparison.indicators]
     first = tables[0]
     genes = [name for name in ("feature_id", "symbol") if name in first]
     # The genes' columns repeated by position, which keeps them as they were checked;
@@ -1286,21 +1305,20 @@ def _adjust_across_groups(fits: list["_CellTypeFit"], tests: Sequence[str]) -> N
 def _result(
     cube: Cube,
     report: DoseDesignReport,
-    model: _Model | None,
+    model: Design | None,
     splines: _Splines,
     fits: list[_CellTypeFit],
     given: list[str] | None,
     spline_df: int | None,
     method: str,
-    options: Mapping[str, Any],
 ) -> DoseResponseResult:
     check = report.settings
     first = next((fit.result for fit in fits if fit.result is not None), None)
     design = None
     if model is not None:
-        columns = model.design.columns
+        columns = model.columns
         record = (mixed_design_record if method == "dream_voom" else design_record)(
-            model.design, Contrasts(np.empty((len(columns), 0)), (), columns)
+            model, Contrasts(np.empty((len(columns), 0)), (), columns)
         )
         design = {key: value for key, value in record.items() if key != "contrasts"}
     settings = {
@@ -1309,7 +1327,6 @@ def _result(
         "tests": given,
         "spline_df": spline_df,
         "analysis": method,
-        "options": json.loads(json.dumps(dict(options), default=_plain)),
         "batch": check["batch"],
         "groups": check["groups"],
         "min_cells": check["min_cells"],
@@ -1333,16 +1350,6 @@ def _result(
         fit.group: _without_tables(fit.result) for fit in fits if fit.result is not None
     }
     return DoseResponseResult(_summary(fits, report), tables, kept, report, provenance)
-
-
-def _plain(value: Any) -> Any:
-    """A numpy scalar among the options, as the Python number JSON writes."""
-    if isinstance(value, np.generic):
-        return value.item()
-    raise TypeError(
-        "the options must hold numbers, strings, lists and mappings, which the record "
-        f"keeps, got {type(value).__name__}"
-    )
 
 
 def _without_tables(
@@ -1376,15 +1383,20 @@ def _group_record(fit: _CellTypeFit) -> dict[str, Any]:
         "reason": fit.reason,
         "doses": [] if comparison is None else comparison.doses.tolist(),
         "samples": [] if comparison is None else comparison.samples.tolist(),
-        "tests_not_run": dict(comparison.not_run) if tested and comparison else {},
+        "tests": {},
+        "tests_not_run": {},
         "f_test_df1": {},
         "contrasts": {},
         "fit": None,
     }
     if result is not None:
+        assert comparison is not None  # a tested cell type compares dose groups
+        entry["tests"] = {test: list(names) for test, names in comparison.tests.items()}
+        entry["tests_not_run"] = dict(comparison.not_run)
         record = result.provenance
         (group,) = record["groups"]
-        df1 = {**group["f_test_df1"], **({SLOPE: 1} if SLOPE in fit.tables else {})}
+        trend = {LINEAR_TREND: 1} if LINEAR_TREND in fit.tables else {}
+        df1 = {**group["f_test_df1"], **trend}
         entry["f_test_df1"] = {test: df1[test] for test in TESTS if test in df1}
         entry["contrasts"] = record["design"]["contrasts"]
         entry["fit"] = group
@@ -1476,6 +1488,19 @@ def _dose_group_estimates(fit: GroupFit, names: Sequence[str]) -> _Estimates:
     )
 
 
+def _curve_grid(axis: DoseAxis, doses: npt.NDArray[np.float64]) -> FloatArray:
+    """The doses of a curve by default: evenly spaced along the axis over the doses a
+    cell type compares, from the lowest treated dose, or from the vehicle when it
+    sits on the axis, to the highest."""
+    low = float(doses[1]) if axis.vehicle == "own_group" else 0.0
+    high = float(doses[-1])
+    ends = axis.positions(np.array([low, high]))
+    grid = axis.doses(np.linspace(ends[0], ends[1], _CURVE_POINTS))
+    # The ends exactly, which reading positions back as doses can round.
+    grid[0], grid[-1] = low, high
+    return grid
+
+
 def _curve_doses(
     at: Any, axis: DoseAxis, doses: npt.NDArray[np.float64], group: str
 ) -> npt.NDArray[np.float64]:
@@ -1500,29 +1525,44 @@ def _curve_doses(
     return values
 
 
-def _gene_rows(genes: Any, tested: list[str], group: str) -> npt.NDArray[np.intp]:
-    """The rows of the genes asked for among those tested, in the order given."""
+def _gene_rows(genes: Any, features: Table, group: str) -> npt.NDArray[np.intp]:
+    """The rows of the genes asked for among those tested, by feature id or, when the
+    features have one, symbol, in the order given."""
+    ids = features["feature_id"].tolist()
     if genes is None:
-        return np.arange(len(tested))
+        return np.arange(len(ids))
     named = [genes] if isinstance(genes, str) else genes
     if isinstance(named, Mapping) or not isinstance(named, Sequence | np.ndarray):
         raise TypeError(
-            "genes must be a feature id or a list of them, or None for every gene "
-            f"tested, got {type(genes).__name__}"
+            "genes must be a feature id or symbol, or a list of them, or None for "
+            f"every gene tested, got {type(genes).__name__}"
         )
-    index = {feature: row for row, feature in enumerate(tested)}
+    by_id = {feature: row for row, feature in enumerate(ids)}
+    by_symbol: dict[Any, list[int]] = {}
+    if "symbol" in features:
+        for row, symbol in enumerate(features["symbol"].tolist()):
+            by_symbol.setdefault(symbol, []).append(row)
     rows = []
     for gene in list(named):
         if not isinstance(gene, str):
             raise TypeError(
-                f"genes must be feature ids (str), got {type(gene).__name__} {gene!r}"
+                "genes must be feature ids or symbols (str), got "
+                f"{type(gene).__name__} {gene!r}"
             )
-        if gene not in index:
+        found = [by_id[gene]] if gene in by_id else by_symbol.get(gene, [])
+        if len(found) > 1:
+            raise ValueError(
+                f"the symbol {gene!r} names {len(found)} genes tested in {group!r}, "
+                f"{quoted([ids[row] for row in found])}; give their feature ids"
+            )
+        if not found:
+            kind = "feature id or symbol" if "symbol" in features else "feature id"
             raise KeyError(
-                f"gene {gene!r} was not tested in {group!r}: it is not a feature of "
-                "the cube, or did not pass the expression filter there"
+                f"gene {gene!r} was not tested in {group!r}: no gene tested there has "
+                f"this {kind}; it is not in the cube, or did not pass the expression "
+                "filter there"
             )
-        rows.append(index[gene])
+        rows.append(found[0])
     return np.array(rows, dtype=np.intp)
 
 
@@ -1559,5 +1599,10 @@ def _axis_text(axis: DoseAxis, basis: Mapping[str, Any] | None) -> str:
 
 
 def _slope_unit(axis: DoseAxis) -> str:
-    """The unit of the slope, for the printout."""
-    return "per log10 dose" if axis.scale == "log10" else f"per {axis.unit}"
+    """The unit of the linear trend's slope, for the printout: per unit of the axis's
+    position."""
+    if axis.scale == "linear":
+        return f"per {axis.unit}"
+    if axis.offset is None:
+        return "per log10 unit of dose"
+    return f"per log10 unit of dose plus {axis.offset:g} {axis.unit}"

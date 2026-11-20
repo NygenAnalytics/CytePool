@@ -274,8 +274,8 @@ def simulated_dose_series(downloads: Path, output: Path) -> None:
     """A dose series drawn by ``simulate_dose_series`` from known curves, 3 replicates
     of the vehicle and eight doses, four cell types of 800, 150, 40 and 8 cells per
     profile and 2,000 genes, of which 20%, 15%, 5% and 10% respond. Writes the cube
-    and, for each cell type, the columns of its truth table, which ``DoseTruth``
-    rebuilds."""
+    and the truth as the arguments of ``DoseTruth`` in JSON, which
+    ``DoseTruth(**json.loads(text))`` rebuilds."""
     cube, truth = simulate_dose_series(
         list(DOSE_SERIES_DOSES),
         replicates=3,
@@ -291,21 +291,21 @@ def simulated_dose_series(downloads: Path, output: Path) -> None:
         rng=20261226,
     )
     write_cube(cube, output / "simulated_dose_series.cube.zarr", overwrite=True)
-    columns = {
-        f"{cell_type}/{name}": np.asarray(values)
-        for cell_type in DOSE_SERIES_CELL_TYPES
-        for name, values in truth.table(cell_type).to_dict().items()
-    }
-    np.savez_compressed(
-        output / "simulated_dose_series_truth.npz",
-        doses=np.array(truth.doses),
-        unit=np.array(truth.unit),
-        metric=np.array(truth.metric),
-        **{
-            key: value.astype(str) if value.dtype == object else value
-            for key, value in columns.items()
+    arguments = {
+        "doses": list(truth.doses),
+        "tables": {
+            cell_type: {
+                name: np.asarray(values).tolist()
+                for name, values in truth.table(cell_type).to_dict().items()
+            }
+            for cell_type in truth.cell_types
         },
-    )
+        "unit": truth.unit,
+        "metric": truth.metric,
+    }
+    # Python's json writes the parameters a shape does not use as NaN, and reads them
+    # back.
+    (output / "simulated_dose_series_truth.json").write_text(json.dumps(arguments))
 
 
 # Six case-control cohorts of one disease: name, cases, controls, cells per sample
@@ -727,8 +727,8 @@ DATASETS = {
             files={
                 "simulated_dose_series.cube.zarr": "sha256:"
                 "2442bbd7ef86c5d604d78cd21be10f334d2b4349fec4b811778c3c51e0d2eace",
-                "simulated_dose_series_truth.npz": "sha256:"
-                "96e793b9e83412a45681f800c7556ccb25c59abf5a006f7be99d03bf5c4f0ced",
+                "simulated_dose_series_truth.json": "sha256:"
+                "f3d8dc29c70b18c8c96b3ca44028574dbccf94a2d90b496d228be93258715822",
             },
             build=simulated_dose_series,
         ),

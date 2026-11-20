@@ -3124,6 +3124,10 @@ NO_ARRAY_INPUT = {
         ("group", "name"),
         "a cell type and a table name, looked up",
     ),
+    "cytepool.dose_responses.DoseResponseResult.fit": (
+        ("group",),
+        "a cell type, looked up",
+    ),
     "cytepool.dose_designs.DoseDesignReport.status": (
         ("group",),
         "a group id, looked up",

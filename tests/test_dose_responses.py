@@ -35,7 +35,6 @@ from cytepool import (
     simulate_dose_series,
     write_cube,
 )
-from cytepool import dose_responses as module
 from cytepool.dose_designs import DoseDesignReport
 from cytepool.stats.distributions import t_ppf
 from cytepool.stats.multiple_testing import adjust_p_values
@@ -45,7 +44,7 @@ AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
 ON_AXIS = DoseAxis(
     "dose", unit="ug/kg", metric="administered", vehicle="on_axis", offset=0.001
 )
-TESTS = ("spline", "nonlinearity", "slope", "dose_groups")
+TESTS = ("spline", "nonlinearity", "linear_trend", "dose_groups")
 NORMAL_QUANTILE = 1.959963984540054  # the 0.975 quantile of the standard normal
 
 
@@ -115,17 +114,27 @@ def check_against_r(
     """Every table of a result against R's: the samples, dose groups and genes, each
     test's statistics and p-values within and across cell types, and each dose."""
     features = reference()["series"]["features"]
+    summary = result.summary
     for group, theirs in reference()["jobs"][job]["cell_types"].items():
         entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
         assert entry["fit"]["samples"] == theirs["samples"]
         assert entry["doses"] == theirs["doses"]
         assert entry["samples"] == theirs["n"]
         genes = [features[i - 1] for i in theirs["genes"]]
+        row = summary["group_id"].tolist().index(group)
+        assert summary["n_features_tested"][row] == len(genes)
+        assert summary["n_dose_groups_tested"][row] == len(theirs["doses"])
+        assert_allclose(summary["df_prior"][row], theirs["df_prior"], rtol=1e-10)
+        # The posterior variances and the degrees of freedom of the t-tests, which
+        # the bands use, from the fit computed again.
+        fit = result.fit(group)
+        assert_scaled(fit.moderated.posterior_variance, theirs["s2_post"])
+        assert_scaled(fit.moderated.df_total, theirs["df_total"])
         prefix = "exact_" if exact else ""
         for test, values in theirs["tests"].items():
             table = result.table(group, test)
             assert table["feature_id"].tolist() == genes
-            if test == "slope":
+            if test == "linear_trend":
                 assert_scaled(table["log2_fold_change"], values["logFC"])
                 assert_scaled(table["standard_error"], values[prefix + "se"])
                 assert_scaled(table["t"], values[prefix + "t"])
@@ -135,15 +144,20 @@ def check_against_r(
                     table["adjusted_p_value_across_groups"],
                     values[prefix + "p_across"],
                 )
+                if not exact:
+                    assert_scaled(table["log_odds"], values["B"])
                 continue
+            # limma's F of the rows CytePool tests, under limma's standard errors;
+            # a key of this test's own, so that the next tests keep the prefix.
+            key = prefix
             if given and test in theirs.get("given", {}):
-                values, prefix = theirs["given"][test], ""
+                values, key = theirs["given"][test], ""
             assert entry["f_test_df1"][test] == values["df1"]
-            assert_scaled(table["f_statistic"], values[prefix + "F"])
-            assert_p_values(table["p_value"], values[prefix + "p"])
-            assert_p_values(table["adjusted_p_value"], values[prefix + "adj"])
+            assert_scaled(table["f_statistic"], values[key + "F"])
+            assert_p_values(table["p_value"], values[key + "p"])
+            assert_p_values(table["adjusted_p_value"], values[key + "adj"])
             assert_p_values(
-                table["adjusted_p_value_across_groups"], values[prefix + "p_across"]
+                table["adjusted_p_value_across_groups"], values[key + "p_across"]
             )
             if "df2" in values:
                 assert_scaled(table["df"], values["df2"])
@@ -152,6 +166,7 @@ def check_against_r(
         assert (
             each["dose"].tolist() == np.repeat(theirs["doses"][1:], len(genes)).tolist()
         )
+        assert each["feature_id"].tolist() == np.tile(genes, k).tolist()
         assert_scaled(
             by_dose(each, "log2_fold_change", k), theirs["each_dose"]["logFC"]
         )
@@ -176,6 +191,18 @@ def test_tests_match_limma() -> None:
     check_against_r(
         fixture_result("voom", "limma"), "fixture voom", exact=False, given=True
     )
+    # Without weights, an F-statistic times its numerator degrees of freedom and the
+    # posterior variance is the partial sum of squares of rms's anova, for 50 genes.
+    result = fixture_result("trend")
+    for group, theirs in reference()["jobs"]["fixture trend"]["cell_types"].items():
+        df1 = next(e for e in result.provenance["groups"] if e["group_id"] == group)[
+            "f_test_df1"
+        ]
+        s2 = result.fit(group).moderated.posterior_variance
+        for test, key in (("spline", "total"), ("nonlinearity", "nonlinear")):
+            m = len(theirs["rms"][key])
+            sums = result.table(group, test)["f_statistic"][:m] * df1[test] * s2[:m]
+            assert_allclose(sums, theirs["rms"][key], rtol=1e-10)
 
 
 def test_the_default_f_matches_weighted_least_squares() -> None:
@@ -239,7 +266,7 @@ def test_a_saturated_spline_is_the_dose_group_test() -> None:
 
 def least_squares_values(result: DoseResponseResult, group: str) -> tuple:
     """The values limma-trend fitted, and each sample's dose, of a cell type."""
-    fit = result.fits[group].fit(group)
+    fit = result.fit(group)
     return np.asarray(fit.log2_cpm), np.asarray(fit.samples["dose"], dtype=float)
 
 
@@ -265,14 +292,14 @@ def test_without_weights_the_spline_is_the_least_squares_spline() -> None:
         assert_allclose(
             curve["log2_fold_change"].reshape(-1, at.size), expected, atol=1e-12
         )
-        # The slope: a straight line along the treated doses, with the vehicle
-        # apart.
+        # The linear trend: a straight line along the treated doses, with the
+        # vehicle apart.
         line = axis.spline_basis(Design(fixture_cube().samples, "~ 1").samples, df=1)
         first = axis.design_columns({"dose": doses}, line)
         x1 = np.column_stack([np.ones(doses.size), *first.values()])
         slope = np.linalg.lstsq(x1, y, rcond=None)[0][-1]
         assert_allclose(
-            result.table(group, "slope")["log2_fold_change"], slope, atol=1e-12
+            result.table(group, "linear_trend")["log2_fold_change"], slope, atol=1e-12
         )
 
 
@@ -346,6 +373,139 @@ def test_a_dropped_dose_group_is_left_out() -> None:
         assert_allclose(each["t"][rows], mine["t"], rtol=1e-12)
 
 
+def least_squares_curve(
+    result: DoseResponseResult, group: str, at: np.ndarray
+) -> np.ndarray:
+    """The spline that least squares fits to a cell type's samples, minus the
+    vehicle's mean, at doses (limma-trend under "~ 1"), genes x doses."""
+    y, doses = least_squares_values(result, group)
+    axis, basis = result.dose, result.spline_basis
+    assert basis is not None
+    columns = axis.design_columns({axis.column: doses}, basis)
+    x = np.column_stack([np.ones(doses.size), *columns.values()])
+    beta = np.linalg.lstsq(x, y, rcond=None)[0]
+    grid = axis.design_columns({axis.column: at}, basis)
+    rows = np.column_stack([np.ones(at.size), *grid.values()])
+    found: np.ndarray = (rows @ beta - beta[0]).T
+    return found
+
+
+@pytest.mark.parametrize(
+    ("lost", "kept"),
+    [(0.1, [0.0, 0.3, 1.0, 3.0, 10.0]), (1.0, [0.0, 0.1, 0.3, 3.0, 10.0])],
+)
+def test_a_cell_type_that_loses_a_low_or_middle_dose(
+    lost: float, kept: list[float]
+) -> None:
+    # The samples of the lowest, or a middle, dose keep 5 cells in one cell type:
+    # its contrasts weigh the indicators of the doses it keeps, and its curve is the
+    # spline that least squares fits to its samples.
+    doses = [0.0, 0.1, 0.3, 1.0, 3.0, 10.0]
+    cube, _ = simulate_dose_series(
+        doses,
+        replicates=3,
+        cell_types=["all", "lost"],
+        cells=300.0,
+        n_genes=150,
+        rng=11,
+    )
+    cube = recelled(
+        cube, {"lost": [5 if dose == lost else 300 for dose in np.repeat(doses, 3)]}
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        spline_df=2,
+        analysis=limma_trend,
+    )
+    entry = result.provenance["groups"][1]
+    assert entry["doses"] == kept
+    assert entry["f_test_df1"]["dose_groups"] == 4
+    each = result.table("lost", "each_dose")
+    assert sorted(set(each["dose"].tolist())) == kept[1:]
+    at = np.array([0.0, kept[1], 2.0, 10.0])
+    found = result.curve("lost", at=at)["log2_fold_change"].reshape(-1, at.size)
+    assert_allclose(found, least_squares_curve(result, "lost", at), atol=1e-12)
+    if lost < kept[1]:
+        with pytest.raises(ValueError, match="outside the doses that 'lost' compares"):
+            result.curve("lost", at=[lost])
+
+
+def test_doses_a_millionth_apart_are_two_dose_groups() -> None:
+    # 1 and 1.000001 ug/kg differ by more than the 1e-8 that makes two doses one, so
+    # each has an indicator of its own: its estimate is the mean of its samples
+    # minus the vehicle's, and the curve the spline that least squares fits to the
+    # samples, also when the dose-group test is not run.
+    doses = [0.0, 1.0, 1.000001, 10.0, 100.0]
+    cube, _ = simulate_dose_series(
+        doses, replicates=3, cell_types=1, cells=300.0, n_genes=150, rng=2
+    )
+    design = Design(cube.samples, "~ 1")
+    result = dose_response(cube, design, dose=AXIS, analysis=limma_trend)
+    assert result.provenance["design"]["columns"] == [
+        "(Intercept)",
+        "dose_1",
+        "dose_1.000001",
+        "dose_10",
+        "dose_100",
+    ]
+    y, sample_doses = least_squares_values(result, "cell_type_1")
+    vehicle = y[sample_doses == 0.0].mean(axis=0)
+    means = np.column_stack(
+        [y[sample_doses == dose].mean(axis=0) - vehicle for dose in doses[1:]]
+    )
+    each = result.table("cell_type_1", "each_dose")
+    assert_allclose(by_dose(each, "log2_fold_change", 4), means, atol=1e-12)
+    along = dose_response(
+        cube, design, dose=AXIS, tests=["spline", "linear_trend"], analysis=limma_trend
+    )
+    at = np.array([0.0, 1.0, 5.0, 100.0])
+    found = along.curve("cell_type_1", at=at)["log2_fold_change"]
+    assert_allclose(
+        found.reshape(-1, at.size),
+        least_squares_curve(along, "cell_type_1", at),
+        atol=1e-12,
+    )
+
+
+def test_molar_doses_and_a_dose_column_that_needs_quoting() -> None:
+    # Doses in M, from 1e-9, name indicators such as dose_1e-09, and a dose column
+    # named "dose (nM)" names dose (nM)_1: the design quotes both in backticks. The
+    # tests are those of the same series in nM, and so are the curves.
+    nanomolar = [0.0, 1.0, 10.0, 100.0, 1000.0]
+    cube, _ = simulate_dose_series(
+        nanomolar, replicates=3, cell_types=1, cells=300.0, n_genes=150, rng=6
+    )
+    doses = np.asarray(cube.samples["dose"], dtype=float)
+
+    def tested(column: str, unit: str, scale: float) -> DoseResponseResult:
+        samples = cube.samples.with_columns({column: doses * scale})
+        axis = DoseAxis(column, unit=unit, metric="nominal")
+        return dose_response(cube, Design(samples, "~ 1"), dose=axis)
+
+    reference = tested("dose", "nM", 1.0)
+    for result, scale in (
+        (tested("dose", "M", 1e-9), 1e-9),
+        (tested("dose (nM)", "nM", 1.0), 1.0),
+    ):
+        for test in TESTS:
+            assert_allclose(
+                result.table("cell_type_1", test)["p_value"],
+                reference.table("cell_type_1", test)["p_value"],
+                rtol=1e-10,
+            )
+        at = np.array([0.0, 3.0, 300.0])
+        assert_allclose(
+            result.curve("cell_type_1", at=at * scale)["ci_upper"],
+            reference.curve("cell_type_1", at=at)["ci_upper"],
+            rtol=1e-10,
+            atol=1e-12,
+        )
+    columns = tested("dose (nM)", "nM", 1.0).provenance["design"]["columns"]
+    assert "`dose (nM)_1`" in columns
+
+
 # The tests and the spline's size the design chooses.
 
 
@@ -378,17 +538,22 @@ def ran(result: DoseResponseResult) -> list[str]:
         # 5 treated doses: 2 columns, every test.
         ((0, 0.1, 1, 10, 30, 100), AXIS, list(TESTS), {}),
         # 3 treated doses: 1 column, so no non-linearity.
-        ((0, 0.1, 1, 10), AXIS, ["spline", "slope", "dose_groups"], {}),
+        ((0, 0.1, 1, 10), AXIS, ["spline", "linear_trend", "dose_groups"], {}),
         # 2 treated doses: the spline, its treated column and the intercept pass
         # through the 3 groups, so it is the dose-group test, which runs as the
         # spline.
-        ((0, 1, 10), AXIS, ["spline", "slope"], {"dose_groups": "spline"}),
+        ((0, 1, 10), AXIS, ["spline", "linear_trend"], {"dose_groups": "spline"}),
         # One treated dose: nothing runs along the axis.
         ((0, 10), AXIS, ["dose_groups"], {}),
         # The vehicle on the axis, 2 doses: one t-test, which runs as the spline.
-        ((0, 10), ON_AXIS, ["spline"], {"slope": "spline", "dose_groups": "spline"}),
+        (
+            (0, 10),
+            ON_AXIS,
+            ["spline"],
+            {"linear_trend": "spline", "dose_groups": "spline"},
+        ),
         # 3 doses on the axis: a spline of 1 column is the straight line.
-        ((0, 1, 10), ON_AXIS, ["spline", "dose_groups"], {"slope": "spline"}),
+        ((0, 1, 10), ON_AXIS, ["spline", "dose_groups"], {"linear_trend": "spline"}),
         # 4 doses on the axis: 2 columns, every test.
         ((0, 0.1, 1, 10), ON_AXIS, list(TESTS), {}),
     ],
@@ -429,16 +594,33 @@ def test_a_test_named_alone_is_the_same_test() -> None:
 
 
 def test_named_tests_the_design_cannot_support_are_refused() -> None:
-    with pytest.raises(ValueError, match="need two doses on it, and the design has 1"):
-        run((0, 10), tests=["slope"])
+    with pytest.raises(
+        ValueError,
+        match=r"'linear_trend' runs along the dose axis and needs two doses on it, "
+        r"and the design has one \(the treated doses",
+    ):
+        run((0, 10), tests=["linear_trend"])
+    with pytest.raises(ValueError, match="'spline' and 'linear_trend' run along"):
+        run((0, 10), tests=["spline", "linear_trend"])
+    # A design of the vehicle's samples alone, on the axis: nothing can be tested.
+    cube = series((0, 1, 10))
+    vehicle = cube.samples.filter(cube.samples["dose"] == 0.0)
+    with pytest.raises(
+        ValueError, match="the design has one; a dose series needs the vehicle and a"
+    ):
+        dose_response(cube, Design(vehicle, "~ 1"), dose=ON_AXIS, tests="spline")
     with pytest.raises(ValueError, match="spline of two columns or more.*spline_df=2"):
         run((0, 0.1, 1, 10), tests=["nonlinearity"])
     with pytest.raises(ValueError, match="needs three doses on the axis"):
         run((0, 1, 10), tests=["nonlinearity"])
-    with pytest.raises(ValueError, match="leave spline_df out"):
+    # The spline's size is DoseAxis.spline_basis's to refuse, with a note on
+    # spline_df.
+    with pytest.raises(ValueError, match="at least two distinct doses") as error:
         run((0, 10), spline_df=1)
-    with pytest.raises(ValueError, match="lower spline_df to at most 3"):
+    assert "spline_df" in "".join(error.value.__notes__)
+    with pytest.raises(ValueError, match="lower df to at most 3") as error:
         run((0, 0.1, 1, 10, 100), spline_df=4)
+    assert "spline_df" in "".join(error.value.__notes__)
     # At the limit, the spline passes through every treated dose.
     assert run((0, 0.1, 1, 10, 100), spline_df=3).spline_basis.df == 3
 
@@ -533,7 +715,8 @@ def test_descriptive_and_refused_cell_types_are_not_tested() -> None:
     assert np.isnan(summary["df_residual"][1]) and np.isnan(summary["df_prior"][2])
     for group in ("single", "no_vehicle"):
         assert not any(key[0] == group for key in result.tables)
-        assert group not in result.fits
+        with pytest.raises(KeyError, match=f"{group!r} was not tested"):
+            result.fit(group)
         with pytest.raises(KeyError, match=f"{group!r} was not tested"):
             result.table(group, "dose_groups")
         with pytest.raises(KeyError, match=f"{group!r} was not tested"):
@@ -542,15 +725,15 @@ def test_descriptive_and_refused_cell_types_are_not_tested() -> None:
 
 def test_a_cell_type_whose_doses_cannot_estimate_the_spline() -> None:
     # "low" keeps the vehicle, 0.1 and 0.3 ug/kg: a spline of 2 columns beside the
-    # treated column needs 4 dose groups. Its slope and dose-group test still run,
-    # and it is out of the spline's family across cell types.
+    # treated column needs 4 dose groups. Its linear trend and dose-group test still
+    # run, and it is out of the spline's family across cell types.
     result = mixed_result()
     entry = result.provenance["groups"][3]
     assert entry["doses"] == [0.0, 0.1, 0.3]
     reason = entry["tests_not_run"]["spline"]
     assert "needs 4 dose groups" in reason and "compares 3" in reason
     assert entry["tests_not_run"]["nonlinearity"] == reason
-    assert sorted(entry["f_test_df1"]) == ["dose_groups", "slope"]
+    assert sorted(entry["f_test_df1"]) == ["dose_groups", "linear_trend"]
     with pytest.raises(KeyError, match="'spline' was not run in 'low'"):
         result.table("low", "spline")
     with pytest.raises(ValueError, match="no curve in 'low'.*needs 4 dose groups"):
@@ -565,11 +748,13 @@ def test_a_cell_type_whose_doses_cannot_estimate_the_spline() -> None:
     assert "low: 3 dose groups" in repr(result)
     assert "not run: spline, nonlinearity\n" in repr(result) + "\n"
     # "one_dose" keeps the vehicle and 0.1 ug/kg: with the vehicle in a group of its
-    # own the slope runs along the treated doses, and one cannot place a line.
+    # own the linear trend runs along the treated doses, and one cannot place a
+    # line.
     entry = result.provenance["groups"][4]
     assert entry["doses"] == [0.0, 0.1]
-    reason = entry["tests_not_run"]["slope"]
-    assert "slope runs along the treated doses" in reason and "compares one" in reason
+    reason = entry["tests_not_run"]["linear_trend"]
+    assert "linear trend runs along the treated doses" in reason
+    assert "compares one" in reason
     assert entry["f_test_df1"] == {"dose_groups": 1}
 
 
@@ -588,7 +773,7 @@ def test_doses_below_the_second_knot_cannot_estimate_a_larger_spline() -> None:
     assert len(entry["doses"]) == 5
     reason = entry["tests_not_run"]["spline"]
     assert reason.startswith("the spline's columns are linearly dependent at the doses")
-    assert "slope" in entry["f_test_df1"]
+    assert "linear_trend" in entry["f_test_df1"]
 
 
 def test_no_spline_with_one_treated_dose() -> None:
@@ -599,18 +784,18 @@ def test_no_spline_with_one_treated_dose() -> None:
         result.curve("cell_type_1", at=[10.0])
 
 
-def test_the_options_are_recorded_as_plain_values() -> None:
+def test_the_options_are_recorded_by_the_analysis() -> None:
+    # The analysis records its options, a numpy integer among them, as plain values.
     cube = fixture_cube()
-    design = Design(cube.samples, "~ 1")
     result = dose_response(
-        cube, design, dose=AXIS, groups="full", n_threads=np.int64(1)
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        groups="full",
+        n_threads=np.int64(1),
     )
-    assert result.settings["options"] == {"n_threads": 1}
-    # A value JSON cannot write is refused before anything is fitted.
-    with pytest.raises(TypeError, match="numbers, strings, lists and mappings"):
-        dose_response(
-            cube, design, dose=AXIS, expression_filter={"min_count": object()}
-        )
+    assert result.provenance["analysis_settings"]["n_threads"] == 1
+    assert "options" not in result.settings
 
 
 def test_adjusted_across_groups() -> None:
@@ -677,7 +862,6 @@ def test_options_reach_the_analysis() -> None:
             cube, Design(cube.samples, "~ 1"), dose=AXIS, groups="full", **option
         )
         entry = result.provenance["groups"][0]
-        tests = result.fits["full"].f_tests
         by_hand = limma_voom(
             cube,
             model,
@@ -685,7 +869,11 @@ def test_options_reach_the_analysis() -> None:
             contrasts={
                 name: np.array(weights) for name, weights in entry["contrasts"].items()
             },
-            f_tests={test: list(members) for test, members in tests.items()},
+            f_tests={
+                test: members
+                for test, members in entry["tests"].items()
+                if test != "linear_trend"
+            },
             **option,
         )
         found = result.table("full", "spline")["f_statistic"]
@@ -693,14 +881,65 @@ def test_options_reach_the_analysis() -> None:
             found, by_hand.table("full", "spline")["f_statistic"], rtol=1e-12
         )
         assert not np.allclose(found, plain)
-        assert result.settings["options"] == option
+        # Recorded as limma_voom records the option given to it.
+        (name,) = option
+        assert result.provenance["analysis_settings"][name] == by_hand.settings[name]
+
+
+def test_a_design_with_other_terms_is_limma_voom_on_the_dose_groups() -> None:
+    # "~ sex", with 2 females and 2 males at each of 5 doses and males expressing the
+    # first 50 genes 3 times as much: the dose-group test and each dose's test are
+    # limma_voom's on a model of the dose groups written by hand, with 20 samples
+    # less 6 coefficients, 14, residual degrees of freedom.
+    doses = [0.0, 0.1, 1.0, 10.0, 30.0]
+    cube, _ = simulate_dose_series(
+        doses, replicates=4, cell_types=1, cells=300.0, n_genes=150, rng=14
+    )
+    ids = cube.samples["sample_id"].tolist()
+    sex = np.array(["F" if sample.endswith(("_r1", "_r2")) else "M" for sample in ids])
+    counts = np.stack([cube.layer("counts", g) for g in range(cube.n_groups)])
+    counts[:, sex == "M", :50] *= 3
+    samples = cube.samples.with_columns({"sex": sex})
+    cube = Cube(
+        {"counts": counts},
+        samples=samples,
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=cube.n_cells,
+    )
+    result = dose_response(cube, Design(samples, "~ sex"), dose=AXIS)
+    given = np.asarray(samples["dose"], dtype=float)
+    names = {0.1: "d01", 1.0: "d1", 10.0: "d10", 30.0: "d30"}
+    hand = samples.with_columns(
+        {name: (given == dose).astype(float) for dose, name in names.items()}
+    )
+    by_hand = limma_voom(
+        cube,
+        Design(hand, "~ sex + " + " + ".join(names.values())),
+        contrasts=list(names.values()),
+        f_tests={"groups": list(names.values())},
+    )
+    assert result.summary["df_residual"][0] == 14.0
+    assert by_hand.summary["df_residual"][0] == 14.0
+    assert_allclose(
+        result.table("cell_type_1", "dose_groups")["f_statistic"],
+        by_hand.table("cell_type_1", "groups")["f_statistic"],
+        rtol=1e-12,
+    )
+    each = result.table("cell_type_1", "each_dose")
+    for dose, name in names.items():
+        assert_allclose(
+            each["t"][each["dose"] == dose],
+            by_hand.table("cell_type_1", name)["t"],
+            rtol=1e-12,
+        )
 
 
 def test_the_dream_route() -> None:
     # Donors crossed with 4 doses 1 mg/kg apart on a linear axis with the vehicle on
-    # it, all samples kept: the slope through the 4 means, each of 3 samples, weighs
-    # them (x - 1.5) / 5, so the doses' differences from the vehicle by (-0.1, 0.1,
-    # 0.3), derived by hand.
+    # it, all samples kept: the linear trend through the 4 means, each of 3 samples,
+    # weighs them (x - 1.5) / 5, so the doses' differences from the vehicle by
+    # (-0.1, 0.1, 0.3), derived by hand.
     cube, _ = simulate_dose_series(
         [0, 1, 2, 3],
         replicates=3,
@@ -716,7 +955,11 @@ def test_the_dream_route() -> None:
     )
     design = Design(cube.samples, "~ 1", random="(1 | donor)")
     result = dose_response(
-        cube, design, dose=axis, tests=["slope", "dose_groups"], analysis=dream_voom
+        cube,
+        design,
+        dose=axis,
+        tests=["linear_trend", "dose_groups"],
+        analysis=dream_voom,
     )
     doses = np.asarray(cube.samples["dose"])
     samples = cube.samples.with_columns(
@@ -729,7 +972,7 @@ def test_the_dream_route() -> None:
         f_tests={"groups": ["d1", "d2", "d3"]},
     )
     ours, theirs = (
-        result.table("cell_type_1", "slope"),
+        result.table("cell_type_1", "linear_trend"),
         by_hand.table("cell_type_1", "slope"),
     )
     for column in ("log2_fold_change", "t", "df", "p_value"):
@@ -742,6 +985,8 @@ def test_the_dream_route() -> None:
     with pytest.raises(ValueError, match="dream's fits do not keep"):
         result.curve("cell_type_1", at=[1.0])
     assert result.method == "dream_voom"
+    # The printout gives the slope's unit on a linear axis.
+    assert "linear_trend slopes per mg/kg" in " ".join(repr(result).split())
 
 
 def test_results_do_not_depend_on_order_units_or_threads() -> None:
@@ -759,7 +1004,7 @@ def test_results_do_not_depend_on_order_units_or_threads() -> None:
             rtol=1e-10,
         )
     # Doses in ng/kg, a thousand times larger: the tests are unchanged, the slope
-    # per log10 dose too, and the curves are the same at the same doses.
+    # per log10 unit of dose too, and the curves are the same at the same doses.
     scaled_samples = cube.samples.with_columns(
         {"dose": np.asarray(cube.samples["dose"]) * 1000.0}
     )
@@ -775,15 +1020,15 @@ def test_results_do_not_depend_on_order_units_or_threads() -> None:
         scaled_cube, Design(scaled_samples, "~ 1"), dose=axis, spline_df=2
     )
     for test in TESTS:
-        column = "t" if test == "slope" else "f_statistic"
+        column = "t" if test == "linear_trend" else "f_statistic"
         assert_allclose(
             scaled.table("depleted", test)[column],
             base.table("depleted", test)[column],
             rtol=1e-9,
         )
     assert_allclose(
-        scaled.table("full", "slope")["log2_fold_change"],
-        base.table("full", "slope")["log2_fold_change"],
+        scaled.table("full", "linear_trend")["log2_fold_change"],
+        base.table("full", "linear_trend")["log2_fold_change"],
         rtol=1e-9,
     )
     at = np.array([0.0, 0.2, 3.0])
@@ -831,7 +1076,7 @@ def test_curve_refuses_doses_outside_the_tested_range() -> None:
         result.curve("full", ["nope"], at=[1.0])
     with pytest.raises(TypeError, match="feature ids"):
         result.curve("full", [1], at=[1.0])
-    with pytest.raises(TypeError, match="feature id or a list"):
+    with pytest.raises(TypeError, match="feature id or symbol, or a list"):
         result.curve("full", 3.0, at=[1.0])  # type: ignore[arg-type]
     # The ends of the range, up to the rounding of a unit conversion.
     assert (
@@ -842,6 +1087,87 @@ def test_curve_refuses_doses_outside_the_tested_range() -> None:
         )
         == 2
     )
+
+
+def test_curves_keep_the_order_of_genes_and_doses() -> None:
+    # The genes in the order given and each gene's doses in the order of at, repeats
+    # included: each row is the curve of its gene at its dose alone.
+    result = fixture_result("trend")
+    tested = result.table("full", "spline")["feature_id"].tolist()
+    first, second = tested[5], tested[1]
+    curve = result.curve("full", [first, second], at=[10.0, 0.1, 10.0])
+    assert curve["feature_id"].tolist() == [first] * 3 + [second] * 3
+    assert curve["dose"].tolist() == [10.0, 0.1, 10.0] * 2
+    for row in range(len(curve)):
+        alone = result.curve(
+            "full", str(curve["feature_id"][row]), at=[float(curve["dose"][row])]
+        )
+        for column in ("log2_fold_change", "ci_lower", "ci_upper"):
+            assert_allclose(alone[column][0], curve[column][row], rtol=1e-13)
+
+
+def test_genes_by_symbol() -> None:
+    # A cube whose features have symbols: genes are named by feature id or symbol,
+    # the curve carries the symbol, and a symbol of several genes is refused.
+    base = fixture_cube()
+    ids = base.features["feature_id"].tolist()
+    symbols = [f"Gene{i}" for i in range(len(ids))]
+    # Two genes that the cell type tests, which R's filter keeps too.
+    kept = reference()["jobs"]["fixture trend"]["cell_types"]["full"]["genes"]
+    a, b, c, d = (ids[i - 1] for i in kept[:4])
+    symbols[kept[2] - 1] = symbols[kept[3] - 1] = "Shared"
+    cube = Cube(
+        {"counts": np.stack([base.layer("counts", g) for g in range(base.n_groups)])},
+        samples=base.samples,
+        groups=base.groups,
+        features={"feature_id": ids, "symbol": symbols},
+        n_cells=base.n_cells,
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        groups="full",
+        analysis=limma_trend,
+    )
+    by_symbol = result.curve(
+        "full", [symbols[kept[1] - 1], symbols[kept[0] - 1]], at=[1.0, 3.0]
+    )
+    by_id = result.curve("full", [b, a], at=[1.0, 3.0])
+    assert by_symbol.equals(by_id)
+    assert by_symbol.columns[:3] == ("feature_id", "symbol", "dose")
+    assert by_symbol["feature_id"].tolist() == [b, b, a, a]
+    assert (
+        by_symbol["symbol"].tolist()
+        == [symbols[kept[1] - 1]] * 2 + [symbols[kept[0] - 1]] * 2
+    )
+    with pytest.raises(ValueError, match=f"'Shared' names 2 genes.*'{c}' and '{d}'"):
+        result.curve("full", "Shared", at=[1.0])
+    assert len(result.curve("full", c, at=[1.0])) == 1
+    with pytest.raises(KeyError, match="no gene tested there has this feature id or"):
+        result.curve("full", "Nope", at=[1.0])
+
+
+def test_a_curve_by_default_spans_the_doses_compared() -> None:
+    # 100 doses evenly spaced on the log10 axis, from the lowest dose the cell type
+    # compares to its highest; from the vehicle when it sits on the axis.
+    result = fixture_result("trend")
+    for group, high in (("full", 10.0), ("depleted", 3.0)):
+        curve = result.curve(group, "gene_001")
+        doses = np.asarray(curve["dose"])
+        assert doses.size == 100 and doses[0] == 0.1 and doses[-1] == high
+        steps = np.diff(np.log10(doses))
+        assert_allclose(steps, np.log10(high / 0.1) / 99, rtol=1e-10)
+        assert curve.equals(result.curve(group, "gene_001", at=doses))
+    on_axis = run((0, 0.1, 1, 10), ON_AXIS)
+    # The printout gives the linear trend's slope per log10 unit of the dose plus
+    # the offset.
+    printout = " ".join(repr(on_axis).split())
+    assert "linear_trend slopes per log10 unit of dose plus 0.001 ug/kg" in printout
+    doses = np.asarray(on_axis.curve("cell_type_1", "gene_001")["dose"])
+    assert doses[0] == 0.0 and doses[-1] == 10.0 and doses.size == 100
+    steps = np.diff(np.log10(doses + 0.001))
+    assert_allclose(steps, np.log10(10.001 / 0.001) / 99, rtol=1e-10)
 
 
 def test_infinite_prior_degrees_of_freedom_give_bands_on_the_pooled_df() -> None:
@@ -883,21 +1209,76 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
     settings = result.settings
     assert settings["tests"] == list(TESTS) and settings["spline_df"] == 2
     assert settings["dose"] == AXIS.to_dict()
-    assert settings["min_cells"] == 10 and settings["options"] == {
-        "contrast_standard_errors": "exact"
-    }
+    assert settings["min_cells"] == 10 and "options" not in settings
     record = result.provenance
     assert record["cube"]["fingerprint"] == fixture_cube().fingerprint()
     # The cube is recorded once, not in each cell type's fit.
     assert "cube" not in record["groups"][0]["fit"]
-    assert "cube" not in result.fits["full"].provenance
-    assert record["groups"][0]["f_test_df1"] == {
+    entry = record["groups"][0]
+    assert entry["f_test_df1"] == {
         "spline": 3,
         "nonlinearity": 1,
-        "slope": 1,
+        "linear_trend": 1,
         "dose_groups": 5,
     }
+    # Each test's contrasts, named by the rules of the module: the spline's
+    # coefficients after the columns of the axis, each dose after its indicator.
+    spline = ["spline_dose_treated", "spline_dose_s1", "spline_dose_s2"]
+    doses = ["dose_0.1", "dose_0.3", "dose_1", "dose_3", "dose_10"]
+    assert entry["tests"] == {
+        "spline": spline,
+        "nonlinearity": spline[2:],
+        "linear_trend": ["linear_trend"],
+        "dose_groups": doses,
+    }
+    assert sorted(entry["contrasts"]) == sorted([*doses, *spline, "linear_trend"])
     assert record["analysis_settings"]["contrast_standard_errors"] == "exact"
+    # The fit computed again tests those contrasts.
+    fit = result.fit("full")
+    assert sorted(fit.moderated.fit.coefficient_names) == sorted(entry["contrasts"])
+    # The columns of each table, as the class documents them.
+    f_columns = (
+        "feature_id",
+        "average_log2_cpm",
+        "f_statistic",
+        "df",
+        "p_value",
+        "adjusted_p_value",
+        "adjusted_p_value_across_groups",
+        "standardized_f_statistic",
+    )
+    for test in ("spline", "nonlinearity", "dose_groups"):
+        assert result.table("full", test).columns == f_columns
+    assert result.table("full", "linear_trend").columns == (
+        "feature_id",
+        "log2_fold_change",
+        "standard_error",
+        "average_log2_cpm",
+        "t",
+        "p_value",
+        "adjusted_p_value",
+        "adjusted_p_value_across_groups",
+        "log_odds",
+    )
+    assert result.table("full", "each_dose").columns == (
+        "feature_id",
+        "dose",
+        "log2_fold_change",
+        "standard_error",
+        "average_log2_cpm",
+        "t",
+        "p_value",
+        "adjusted_p_value",
+        "log_odds",
+    )
+    assert result.curve("full", "gene_001", at=[1.0]).columns == (
+        "feature_id",
+        "dose",
+        "log2_fold_change",
+        "standard_error",
+        "ci_lower",
+        "ci_upper",
+    )
     # Keys left out, and keys that do not exist.
     with pytest.raises(ValueError, match="2 cell types; name one"):
         result.table(None, "spline")
@@ -907,15 +1288,28 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
         result.table("liver", "spline")
     with pytest.raises(KeyError, match="no table 'splines'.*did you mean 'spline'"):
         result.table("full", "splines")
-    # The printout: the knots in doses, the tests and the calls of each cell type.
-    text = repr(result)
+    with pytest.raises(TypeError, match=r"group must be a cell type \(str\)"):
+        result.table(3, "spline")  # type: ignore[arg-type]
+    with pytest.raises(KeyError, match="no cell type 'liver' was checked"):
+        result.fit("liver")
+    # The printout: the knots in doses, the tests, the linear trend's unit and the
+    # calls of each cell type.
+    text = " ".join(repr(result).split())
     assert text.startswith("DoseResponseResult (limma_voom): 2 cell types, 2 tested")
     assert "spline of 2 columns, knots at 1 ug/kg, boundary knots at 0.1 and 10" in text
-    calls = int(
-        np.count_nonzero(result.table("full", "spline")["adjusted_p_value"] < 0.05)
+    assert "; linear_trend slopes per log10 unit of dose full:" in text
+    calls = {
+        test: int(
+            np.count_nonzero(result.table("full", test)["adjusted_p_value"] < 0.05)
+        )
+        for test in TESTS
+    }
+    assert (
+        "calls at 5% FDR: "
+        + ", ".join(f"{test} {count}" for test, count in calls.items())
+        + " depleted:"
+        in text
     )
-    assert f"spline {calls}" in text
-    assert "slope" in text and "(per log10 dose)" in text
     # Pickled, with the cube in memory and with a cube read from a file.
     again = pickle.loads(pickle.dumps(result))
     assert again.provenance == result.provenance
@@ -931,6 +1325,11 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
     assert restored.curve("full", "gene_001", at=[1.0]).equals(
         from_file.curve("full", "gene_001", at=[1.0])
     )
+    # With one cell type checked, a table name given as the cell type is pointed
+    # to name=.
+    assert from_file.table(name="spline").equals(from_file.table("full", "spline"))
+    with pytest.raises(KeyError, match="'spline' is a table, not a cell type"):
+        from_file.table("spline")
     # Immutable.
     with pytest.raises(AttributeError, match="immutable"):
         result.summary = None  # type: ignore[misc]
@@ -940,13 +1339,8 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
 
 def test_the_result_refuses_fields_of_the_wrong_type() -> None:
     result = fixture_result("trend")
-    good = (
-        result.summary,
-        result.tables,
-        result.fits,
-        result.design_report,
-        result.provenance,
-    )
+    # The fields of a result, as pickling passes them to the constructor.
+    good = result.__reduce__()[1]
     for position, bad, message in (
         (0, {}, "summary must be a Table"),
         (1, [], "tables must be a mapping"),
@@ -984,11 +1378,21 @@ def test_arguments_are_refused_with_a_fix() -> None:
         ({"tests": [1]}, TypeError, r"test names \(str\)"),
         ({"tests": ["levels"]}, ValueError, "'levels', which is not a test"),
         ({"tests": ["splines"]}, ValueError, "did you mean 'spline'"),
-        ({"tests": ["slope", "slope"]}, ValueError, "'slope' more than once"),
+        (
+            {"tests": ["linear_trend", "linear_trend"]},
+            ValueError,
+            "'linear_trend' more than once",
+        ),
+        ({"tests": ["slope"]}, ValueError, "'slope', which is not a test"),
         ({"spline_df": 0}, ValueError, "spline_df"),
         ({"spline_df": 1.5}, TypeError, "spline_df"),
-        ({"spline_df": 5}, ValueError, "lower spline_df to at most 4"),
-        ({"analysis": len}, TypeError, "limma_voom, limma_trend or dream_voom"),
+        ({"spline_df": 5}, ValueError, "lower df to at most 4"),
+        ({"analysis": len}, TypeError, "the functions limma_voom, limma_trend and"),
+        (
+            {"analysis": "limma_trend"},
+            TypeError,
+            "analysis=cytepool.limma_trend, got the name 'limma_trend'",
+        ),
         ({"analysis": dream_voom}, ValueError, "dream_voom fits random effects"),
         ({"contrasts": ["x"]}, TypeError, "dose_response sets contrasts itself"),
         ({"f_tests": {}}, TypeError, "dose_response sets f_tests itself"),
@@ -1021,6 +1425,7 @@ def test_arguments_are_refused_with_a_fix() -> None:
             "already has the column.*'dose_10'",
         ),
         ({"dose": "dose"}, TypeError, "dose must be a DoseAxis"),
+        ({"design": "~ 1"}, TypeError, "design must be a Design of the terms other"),
     ]
     for options, error, message in cases:
         if "dose" in options:
@@ -1036,33 +1441,6 @@ def test_arguments_are_refused_with_a_fix() -> None:
         call(groups=np.ma.masked_array(["full"], mask=[True]))
     with pytest.raises(TypeError, match="masked"):
         call(tests=np.ma.masked_array(["spline"], mask=[True]))
-
-
-def test_a_check_that_the_fit_contradicts_is_refused(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The weights of the spline come from the check's samples of each dose group:
-    # a fit that used others stops the analysis.
-    cube = fixture_cube()
-    real = module.check_dose_design
-
-    def wrong(*args: Any, **options: Any) -> DoseDesignReport:
-        report = real(*args, **options)
-        doses = report.doses
-        counted = np.array(doses["n_samples_used"], copy=True)
-        counted[1] += 1
-        return DoseDesignReport(
-            report.summary,
-            doses.with_columns({"n_samples_used": counted}),
-            report.samples,
-            report.minimums,
-            report.design_check,
-            report.settings,
-        )
-
-    monkeypatch.setattr(module, "check_dose_design", wrong)
-    with pytest.raises(RuntimeError, match="the check and the analysis disagree"):
-        dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, groups="full")
 
 
 def test_a_fit_that_stops_leaves_the_cell_type_untested() -> None:
@@ -1127,9 +1505,9 @@ def test_the_chapter_example_runs() -> None:
     stellate = result.provenance["groups"][1]
     assert stellate["f_test_df1"]["dose_groups"] == 7
     assert 30.0 not in stellate["doses"]
-    # The curves of four genes on 50 doses, and the figure.
+    # The curves of four genes on 100 doses by default, and the figure.
     curve = namespace["curve"]
-    assert len(curve) == 4 * 50
+    assert len(curve) == 4 * 100
     assert namespace["ax"].get_xlabel() == "Dose (ug/kg, log10 axis)"
     with pytest.raises(ValueError, match="'stellate' compares"):
         result.curve("stellate", at=[30.0])

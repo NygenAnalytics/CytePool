@@ -65,11 +65,11 @@ Use {api}`check_dose_design` before fitting a dose series: it reports, for every
 
 ## Which genes respond to dose in each cell type?
 
-Use {api}`dose_response` on a dose series: in every cell type that supports tests, it tests whether each gene responds along a natural spline of dose, read first, whether the response bends away from a straight line, its slope along the dose axis, and whether any dose group differs from the vehicle, as contrasts of one moderated fit of the dose groups [@law2014], with FDR within and across cell types and the fitted curve with a 95% band ({api}`plot_dose_response`). It runs {api}`check_dose_design` first. Switch to:
+Use {api}`dose_response` on a dose series: in every cell type that supports tests, it tests whether each gene responds along a natural spline of dose, read first, whether the response bends away from a straight line, its linear trend along the dose axis, and whether any dose group differs from the vehicle, as contrasts of one moderated fit of the dose groups [@law2014], with FDR within and across cell types and the fitted curve with a 95% band ({api}`plot_dose_response`). It runs {api}`check_dose_design` first. Switch to:
 
 - `analysis=dream_voom` with random intercepts in the design for several samples of each donor or animal;
-- `tests="dose_groups"` for the dose groups alone, the moderated counterpart of the ANOVA that the National Toxicology Program runs as a filter [@ntp2018];
-- {api}`limma_voom` with columns from {api}`DoseAxis` for a spline beside other covariates of your own.
+- `tests="dose_groups"` for the dose groups alone, the moderated counterpart of the ANOVA that the National Toxicology Program runs as a gate [@ntp2018];
+- {api}`limma_voom` with columns from {api}`DoseAxis` for a model that `dose_response` does not build, such as a spline that differs by another term, dose by sex, or a spline on knots of your own; covariates such as sex go in the design that `dose_response` takes.
 
 See [Dose response](dose_response.md) and [Dose response per cell type](../guides/dose_response.ipynb).
 
