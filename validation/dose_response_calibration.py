@@ -33,7 +33,26 @@ design supports and the spline's default size.
   (``--contrast-datasets``) and on the power datasets, with the rows of the other tests.
   A control row on the same null datasets: calls of each dose at an unadjusted p-value
   below 0.05, which must call a dose in most null cell types.
-- Stage-wise rows: the calls of ``lowest_effective_doses`` with the spline as screen,
+- Gate rows: the share of null cell types in which a gate passes any gene at 5% FDR:
+  the default gate, the spline test, and the dose-group gate, counted on the null
+  datasets above, and the gate of a 1.5-fold change by TREAT, on the same datasets.
+  Each against 5% plus 4 binomial standard errors of 1,000 datasets, 7.76%: a check
+  at 3 replicates, and a known limit, printed with the bound, at 2. Then
+  ``permutation_check`` with 100 runs of the default gate on the first 100 null
+  datasets of each design cell (``--check-datasets``): the mean share of its runs
+  that pass genes against the null datasets' share, within 4 standard errors of the
+  difference plus 2 / 101, and the share of cell types whose p-value is at most 0.05,
+  at most 5% plus 4 binomial standard errors. A control row: the unadjusted
+  Williams-type gate, any gene at a p-value below 0.05 with no adjustment across
+  genes, on the multiple contrast tests' null datasets, must exceed 7.76%. On the
+  power datasets, the 1.5-fold gate's power by maximal change and its false discovery
+  proportion, a false call being a gene whose true change never exceeds 1.5-fold at
+  the cell type's doses, and the check's p-values. And the design of Lee et al.
+  (2024), vehicle-only data placed in 4 mock dose groups of 6 samples, 200 datasets:
+  the default gate's share, and the share with a gene at an unadjusted Williams-type
+  p-value below 0.05 and a change of 1.5-fold at a dose, the prefilter of their
+  study (information).
+- Stage-wise rows: the calls of ``lowest_effective_doses`` with the spline as gate,
   on the power datasets. The overall false discovery proportion, the share of the genes
   called with a false call, a flat gene's or a call at a dose where the true change is
   exactly 0, as below a step's dose; the share of false gene-dose calls among all of
@@ -41,12 +60,14 @@ design supports and the spline's default size.
   the lowest effective dose against the gene's true 1.1-fold benchmark dose.
 
 Seeds: ``numpy.random.default_rng([20261201, kind, design_cell, dataset])``, with kind 0
-for power, 1 for null and 2 for the band's datasets, the design cells numbered in the
-order of the grid, as each row prints, and the band's design numbered 0; the multiple
-contrast tests of a dataset take their seed from kind 3. Each estimate comes with its
+for power, 1 for null, 2 for the band's and 4 for the vehicle-only datasets, the design
+cells numbered in the order of the grid, as each row prints, and the band's and the
+vehicle-only design numbered 0; the multiple contrast tests of a dataset take their
+seed from kind 3, and the permutation checks theirs from kind 5. Each estimate comes with its
 Monte Carlo standard error between datasets and, for shares of p-values, the binomial
 bound of that error, which p-values that a dataset's moderation ties together exceed.
-Every row is information but the control row, which fails the run when it fails.
+Every row is information but the gate rows at 3 replicates, the permutation check's
+rows and the control rows, which fail the run when they fail.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root.
@@ -55,6 +76,7 @@ Usage:
     PYTHONPATH=. python validation/dose_response_calibration.py
     PYTHONPATH=. python validation/dose_response_calibration.py --null-datasets 100
     PYTHONPATH=. python validation/dose_response_calibration.py --contrast-datasets 50
+    PYTHONPATH=. python validation/dose_response_calibration.py --check-datasets 20
 """
 
 import argparse
@@ -67,12 +89,13 @@ import numpy as np
 from cytepool.design import Design
 from cytepool.dose_axes import DoseAxis
 from cytepool.dose_responses import dose_response
+from cytepool.permutation_checks import permutation_check
 from cytepool.simulated_dose_series import simulate_dose_series
 from cytepool.stats.distributions import t_ppf
 from cytepool.stats.multiple_contrasts import stage_wise_adjusted_p_values
 
 SEED = 20261201
-POWER, NULL, BAND, CONTRASTS = 0, 1, 2, 3
+POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS = 0, 1, 2, 3, 4, 5
 FDR = 0.05
 AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
 DOSES = {
@@ -91,6 +114,15 @@ BAND_DATASETS = 12
 BAND_CELLS = 3000.0
 BAND_GENES = 600
 BAND_RESPONSIVE = 0.3
+FOLD_CHANGE = 1.5
+CHECK_RUNS = 100
+# The bound of a gate's share of null cell types with a call: 5% plus 4 binomial
+# standard errors of 1,000 datasets.
+GATE_BOUND = 0.05 + 4 * np.sqrt(0.05 * 0.95 / 1000)
+# The vehicle-only design of Lee et al. (2024): 4 mock dose groups of 6 samples.
+VEHICLE_ONLY_DOSES = [0.0, 0.1, 1.0, 10.0]
+VEHICLE_ONLY_REPLICATES = 6
+VEHICLE_ONLY_DATASETS = 200
 
 
 @dataclass(frozen=True)
@@ -147,22 +179,45 @@ class Null:
     infinite_prior: list[bool] = field(default_factory=list)
     called_by_any: list[bool] = field(default_factory=list)
     sd_quantiles: list[float] = field(default_factory=list)
+    # Per dataset and gate, whether each cell type's gate passes a gene; per cell
+    # type of the checked datasets, the share of the check's runs that pass genes
+    # and its p-value.
+    gates: dict[str, list[list[bool]]] = field(default_factory=dict)
+    check_shares: list[list[float]] = field(default_factory=list)
+    check_p_values: list[float] = field(default_factory=list)
 
 
-def null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
+def null_rows(cell: DesignCell, datasets: int, checked: int) -> list[tuple[str, ...]]:
     found = Null()
     for dataset in range(datasets):
         cube, truth = series(cell, NULL, dataset)
         result = analyse(cube)
+        changes = analyse(cube, tests="dose_groups", gate={"fold_change": FOLD_CHANGE})
+        for gate, source in (
+            ("spline", result),
+            ("dose_groups", result),
+            ("fold_change", changes),
+        ):
+            found.gates.setdefault(gate, []).append(
+                [gate_calls(source, group, gate) for group in result.groups]
+            )
+        if dataset < checked:
+            check = permutation_check(
+                result, n_permutations=CHECK_RUNS, rng=check_seed(cell, dataset)
+            )
+            found.check_shares.append(
+                check.summary["share_of_runs_with_passing_genes"].tolist()
+            )
+            found.check_p_values += check.summary["p_value"].tolist()
         for (group, test), table in result.tables.items():
-            if test == "each_dose":
+            if test in ("each_dose", "gate"):
                 continue
             p = np.asarray(table["p_value"], dtype=float)
             found.p_values.setdefault(test, []).append(p)
             found.shares.setdefault(test, []).append(
                 (float(np.mean(p < 0.05)), float(np.mean(p < 0.01)))
             )
-            called = bool(np.any(np.asarray(table["adjusted_p_value"]) < FDR))
+            called = bool(np.any(np.asarray(table["adjusted_p_value"]) <= FDR))
             found.any_call.setdefault(test, []).append(called)
         for row, group in enumerate(result.groups):
             if (group, "dose_groups") not in result.tables:
@@ -170,9 +225,9 @@ def null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
             found.infinite_prior.append(bool(np.isinf(result.summary["df_prior"][row])))
             found.called_by_any.append(
                 any(
-                    bool(np.any(np.asarray(table["adjusted_p_value"]) < FDR))
+                    bool(np.any(np.asarray(table["adjusted_p_value"]) <= FDR))
                     for (owner, test), table in result.tables.items()
-                    if owner == group and test != "each_dose"
+                    if owner == group and test not in ("each_dose", "gate")
                 )
             )
             tested = result.table(group, "dose_groups")
@@ -186,7 +241,7 @@ def null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
             )
             values = np.array([sd[gene] for gene in tested["feature_id"].tolist()])
             quantile = (np.argsort(np.argsort(values)) + 0.5) / values.size
-            calls = np.asarray(tested["adjusted_p_value"]) < FDR
+            calls = np.asarray(tested["adjusted_p_value"]) <= FDR
             found.sd_quantiles.extend(quantile[calls].tolist())
     rows = summary_rows(cell, found, TESTS, datasets)
     rows.append(
@@ -196,6 +251,100 @@ def null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]:
             null_calls(found),
             "n/a",
             "info",
+        )
+    )
+    return rows + gate_null_rows(cell, found, datasets, checked)
+
+
+def gate_calls(result: Any, group: str, gate: str) -> bool:
+    """Whether a gate passes a gene of a cell type at 5% FDR: the result's own gate,
+    or the gate of the dose groups' test, whose adjusted p-values it calls."""
+    if gate == "dose_groups":
+        table = result.table(group, "dose_groups")
+        return bool(np.any(np.asarray(table["adjusted_p_value"]) <= FDR))
+    return bool(np.any(result.table(group, "gate")["passes_gate"]))
+
+
+def check_seed(cell: DesignCell, dataset: int) -> np.random.Generator:
+    """The generator from which a dataset's permutation check draws its seed."""
+    return np.random.default_rng([SEED, CHECKS, cell.number, dataset])
+
+
+def share_text(calls: np.ndarray) -> tuple[float, float, str]:
+    """The share of cell types with a call over datasets x cell types, its standard
+    error between datasets, and the text of both with the binomial bound."""
+    share = float(np.mean(calls))
+    between = float(np.std(np.mean(calls, axis=1), ddof=1) / np.sqrt(len(calls)))
+    binomial = float(np.sqrt(share * (1 - share) / calls.size))
+    text = (
+        f"{share:.4f} (SE between datasets {between:.4f}; binomial {binomial:.4f}, "
+        f"{calls.size:,} cell types)"
+    )
+    return share, between, text
+
+
+def gate_null_rows(
+    cell: DesignCell, found: Null, datasets: int, checked: int
+) -> list[tuple[str, ...]]:
+    """The gates' shares of null cell types with a gene passing, and the permutation
+    check's agreement with the default gate's share."""
+    rows = []
+    labels = {
+        "spline": "the default gate, the spline test,",
+        "dose_groups": "the dose-group gate",
+        "fold_change": f"the {FOLD_CHANGE:g}-fold gate, by TREAT,",
+    }
+    reference = f"seed [{SEED}, {NULL}, {cell.number}, dataset]"
+    shares = {}
+    for gate, label in labels.items():
+        calls = np.array(found.gates[gate], dtype=float)
+        share, between, text = share_text(calls)
+        shares[gate] = (share, between)
+        if cell.replicates >= 3:
+            result = "pass" if share <= GATE_BOUND else "FAIL"
+        else:
+            result = "known limit" if share > GATE_BOUND else "pass"
+        rows.append(
+            (
+                f"{cell.label}: {label} at 5% FDR under the null, {datasets:,} "
+                "datasets: cell types with a gene passing",
+                reference,
+                text,
+                f"at most {GATE_BOUND:.4f}",
+                result,
+            )
+        )
+    if not checked:
+        return rows
+    per_cell_type = np.array(found.check_shares, dtype=float)
+    mean = float(np.mean(per_cell_type))
+    error = float(np.std(np.mean(per_cell_type, axis=1), ddof=1) / np.sqrt(checked))
+    null, null_error = shares["spline"]
+    bound = 4 * np.sqrt(error**2 + null_error**2) + 2 / (CHECK_RUNS + 1)
+    difference = abs(mean - null)
+    rows.append(
+        (
+            f"{cell.label}: permutation_check, {CHECK_RUNS} runs of the default gate "
+            f"on the first {checked:,} null datasets: the mean share of runs that pass "
+            "genes, against the null datasets' share",
+            f"seed [{SEED}, {CHECKS}, {cell.number}, dataset]",
+            f"{mean:.4f} (SE {error:.4f}) against {null:.4f} (SE {null_error:.4f}); "
+            f"difference {difference:.4f}",
+            f"at most {bound:.4f}",
+            "pass" if difference <= bound else "FAIL",
+        )
+    )
+    p = np.array(found.check_p_values, dtype=float)
+    share = float(np.mean(p <= 0.05))
+    limit = 0.05 + 4 * np.sqrt(0.05 * 0.95 / p.size)
+    rows.append(
+        (
+            f"{cell.label}: permutation_check on the same datasets: cell types with a "
+            "p-value at most 0.05",
+            f"seed [{SEED}, {CHECKS}, {cell.number}, dataset]",
+            f"{share:.4f} ({p.size:,} cell types); p-values of 1 in {np.mean(p == 1):.3f}",
+            f"at most {limit:.4f}",
+            "pass" if share <= limit else "FAIL",
         )
     )
     return rows
@@ -277,6 +426,7 @@ def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]
     the control row of each dose's calls at an unadjusted 0.05."""
     found = Null()
     any_dose = []
+    unadjusted = []  # a gene at a Williams-type p-value below 0.05, unadjusted
     for dataset in range(datasets):
         cube, _ = series(cell, NULL, dataset)
         result = analyse(cube, tests=CONTRAST_TESTS, rng=contrast_seed(cell, dataset))
@@ -288,10 +438,12 @@ def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]
                 found.shares.setdefault(test, []).append(
                     (float(np.mean(p < 0.05)), float(np.mean(p < 0.01)))
                 )
-                calls = np.asarray(table["adjusted_p_value"]) < FDR
+                calls = np.asarray(table["adjusted_p_value"]) <= FDR
                 found.any_call.setdefault(test, []).append(bool(np.any(calls)))
             each = np.asarray(result.table(group, "each_dose")["p_value"], dtype=float)
             any_dose.append(bool(np.any(each < 0.05)))
+            williams = np.asarray(result.table(group, "williams")["p_value"])
+            unadjusted.append(bool(np.any(williams < 0.05)))
     rows = summary_rows(cell, found, CONTRAST_TESTS, datasets)
     share = float(np.mean(any_dose))
     rows.append(
@@ -304,6 +456,18 @@ def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]
             "control" if share > 0.5 else "FAIL",
         )
     )
+    share = float(np.mean(unadjusted))
+    rows.append(
+        (
+            f"{cell.label}: the unadjusted Williams-type gate, a gene at a p-value below "
+            f"0.05 with no adjustment across genes, under the null, {datasets:,} datasets",
+            f"seed [{SEED}, {NULL}, {cell.number}, dataset]",
+            f"cell types with a gene passing: {share:.3f} ({len(unadjusted):,} cell "
+            "types)",
+            f"above {GATE_BOUND:.4f}",
+            "control" if share > GATE_BOUND else "FAIL",
+        )
+    )
     return rows
 
 
@@ -311,7 +475,7 @@ def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]
 
 
 def called(table: Any, column: str = "adjusted_p_value") -> set[str]:
-    rows = np.asarray(table[column]) < FDR
+    rows = np.asarray(table[column]) <= FDR
     return set(np.asarray(table["feature_id"])[rows].tolist())
 
 
@@ -471,7 +635,7 @@ def contrast_power_rows(cell: DesignCell) -> list[tuple[str, ...]]:
             dose_calls = np.nan_to_num(adjusted, nan=2.0) <= FDR
             true = truth.curve(group, genes, at=doses)
             lowest = result.lowest_effective_doses(group)
-            responds = np.asarray(lowest["responds"], dtype=bool)
+            responds = np.asarray(lowest["passes_gate"], dtype=bool)
             flat = np.array([change[g] == 0 for g in genes])
             wrong = dose_calls & (true == 0.0)
             false_genes = (responds & flat) | wrong.any(axis=1)
@@ -545,6 +709,145 @@ def contrast_power_rows(cell: DesignCell) -> list[tuple[str, ...]]:
         )
     )
     return rows
+
+
+def gate_power_rows(cell: DesignCell) -> list[tuple[str, ...]]:
+    """The fold-change gate on the power datasets: its power by maximal change and
+    its false discovery proportion, a false call a gene whose true change never
+    exceeds the fold change at the cell type's doses; and the permutation check of
+    the default gate there."""
+    power: dict[float, list[float]] = {}
+    false: list[float] = []
+    p_values: list[float] = []
+    shares: list[float] = []
+    threshold = np.log2(FOLD_CHANGE)
+    for dataset in range(POWER_DATASETS):
+        cube, truth = series(cell, POWER, dataset)
+        result = analyse(cube, tests="dose_groups", gate={"fold_change": FOLD_CHANGE})
+        for group in result.groups:
+            gate = result.table(group, "gate")
+            genes = gate["feature_id"].tolist()
+            passed = np.asarray(gate["passes_gate"], dtype=bool)
+            entry = next(
+                e for e in result.provenance["groups"] if e["group_id"] == group
+            )
+            doses = np.asarray(entry["doses"][1:], dtype=float)
+            beyond = np.abs(truth.curve(group, genes, at=doses)).max(axis=1) > threshold
+            table = truth.table(group)
+            change = dict(
+                zip(
+                    table["feature_id"].tolist(),
+                    np.abs(table["max_log2_change"]).tolist(),
+                    strict=True,
+                )
+            )
+            sizes = np.array([change[gene] for gene in genes])
+            for size in np.unique(sizes[sizes > 0]):
+                members = sizes == size
+                power.setdefault(float(size), []).append(
+                    float(np.mean(passed[members]))
+                )
+            false.append(float(np.sum(passed & ~beyond) / max(np.sum(passed), 1)))
+        default = analyse(cube)
+        check = permutation_check(
+            default, n_permutations=CHECK_RUNS, rng=check_seed(cell, dataset)
+        )
+        p_values += check.summary["p_value"].tolist()
+        shares += check.summary["share_of_runs_with_passing_genes"].tolist()
+
+    def mean(values: list[float]) -> str:
+        array = np.asarray(values)
+        error = np.std(array, ddof=1) / np.sqrt(array.size)
+        return f"{np.mean(array):.3f} (SE {error:.3f})"
+
+    reference = f"seed [{SEED}, {POWER}, {cell.number}, dataset]"
+    by_size = ", ".join(
+        f"{size:g} log2: {mean(v)}" for size, v in sorted(power.items())
+    )
+    return [
+        (
+            f"{cell.label}: the {FOLD_CHANGE:g}-fold gate, power at 5% FDR by maximal "
+            f"change, {POWER_DATASETS} datasets",
+            reference,
+            by_size,
+            "n/a",
+            "info",
+        ),
+        (
+            f"{cell.label}: the {FOLD_CHANGE:g}-fold gate, the mean false discovery "
+            f"proportion, a false call a gene never beyond {FOLD_CHANGE:g}-fold at the "
+            "doses",
+            reference,
+            mean(false),
+            "n/a",
+            "info",
+        ),
+        (
+            f"{cell.label}: permutation_check of the default gate on the power datasets",
+            reference,
+            f"p-values at most 0.05 in {np.mean(np.asarray(p_values) <= 0.05):.3f} of "
+            f"{len(p_values)} cell types; runs that pass genes: median share "
+            f"{np.median(shares):.2f}",
+            "n/a",
+            "info",
+        ),
+    ]
+
+
+def vehicle_only_rows(datasets: int) -> list[tuple[str, ...]]:
+    """The design of Lee et al. (2024), vehicle-only data in 4 mock dose groups of 6
+    samples: the default gate, and their prefilter, a gene at an unadjusted
+    Williams-type p-value below 0.05 and a 1.5-fold change at some dose."""
+    gate: list[list[bool]] = []
+    prefilter: list[list[bool]] = []
+    threshold = np.log2(FOLD_CHANGE)
+    for dataset in range(datasets):
+        rng = np.random.default_rng([SEED, VEHICLE_ONLY, 0, dataset])
+        cube, _ = simulate_dose_series(
+            VEHICLE_ONLY_DOSES,
+            replicates=VEHICLE_ONLY_REPLICATES,
+            cell_types=CELL_TYPES,
+            cells=CELLS,
+            n_genes=GENES,
+            responsive=0.0,
+            rng=rng,
+        )
+        result = analyse(
+            cube,
+            tests=("spline", "williams"),
+            rng=np.random.default_rng([SEED, CONTRASTS, 99, dataset]),
+        )
+        gate.append([gate_calls(result, group, "spline") for group in result.groups])
+        found = []
+        for group in result.groups:
+            p = np.asarray(result.table(group, "williams")["p_value"])
+            each = result.table(group, "each_dose")
+            k = len(np.unique(each["dose"]))
+            changes = np.abs(np.asarray(each["log2_fold_change"])).reshape(k, -1).T
+            found.append(bool(np.any((p < 0.05) & (changes >= threshold).any(axis=1))))
+        prefilter.append(found)
+    reference = f"seed [{SEED}, {VEHICLE_ONLY}, 0, dataset]"
+    label = (
+        f"vehicle-only data in 4 mock dose groups of {VEHICLE_ONLY_REPLICATES} "
+        f"samples (Lee et al. 2024), {datasets} datasets"
+    )
+    return [
+        (
+            f"{label}: the default gate, cell types with a gene passing",
+            reference,
+            share_text(np.array(gate, dtype=float))[2],
+            "n/a",
+            "info",
+        ),
+        (
+            f"{label}: a gene at an unadjusted Williams-type p-value below 0.05 and a "
+            f"{FOLD_CHANGE:g}-fold change at a dose, cell types with one",
+            reference,
+            share_text(np.array(prefilter, dtype=float))[2],
+            "n/a",
+            "info",
+        ),
+    ]
 
 
 # The band rows.
@@ -677,13 +980,31 @@ def main() -> int:
         default=200,
         help="null datasets per design cell of the multiple contrast tests (200)",
     )
+    parser.add_argument(
+        "--check-datasets",
+        type=int,
+        default=100,
+        help="null datasets per design cell of the permutation checks (100)",
+    )
+    parser.add_argument(
+        "--vehicle-only-datasets",
+        type=int,
+        default=VEHICLE_ONLY_DATASETS,
+        help="datasets of the vehicle-only design (200)",
+    )
     arguments = parser.parse_args()
     rows = []
     for cell in grid():
-        rows += null_rows(cell, arguments.null_datasets)
+        rows += null_rows(
+            cell,
+            arguments.null_datasets,
+            min(arguments.check_datasets, arguments.null_datasets),
+        )
         rows += power_rows(cell)
+        rows += gate_power_rows(cell)
         rows += contrast_null_rows(cell, arguments.contrast_datasets)
         rows += contrast_power_rows(cell)
+    rows += vehicle_only_rows(arguments.vehicle_only_datasets)
     rows += band_rows()
     print("| check | reference | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- |")
