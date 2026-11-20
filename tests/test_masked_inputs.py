@@ -362,13 +362,15 @@ def _dose_response(context: Context) -> dict[str, Any]:
         "cube": from_bulk(COUNTS, samples=samples),
         "design": Design(samples, "~ 1"),
         "dose": DOSE_AXIS,
-        "tests": ["dose_groups"],
+        "tests": ["dose_groups", "mcp"],
         "spline_df": 1,
+        "candidates": CandidateShapes(emax=[1.0]),
         "analysis": limma_voom,
         "batch": "lane",
         "groups": ["bulk"],
         "min_cells": 10,
         "min_counts": 1,
+        "rng": 1,
         # An option of the analysis, which dose_response passes on.
         "expression_filter": {"min_count": 5},
     }
@@ -2256,8 +2258,8 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.dose_responses.dose_response": Entry(
         _dose_response,
         {"groups": None, "min_cells": None, "tests": None, "expression_filter": None},
-        options=("spline_df", "batch", "min_counts"),
-        objects=("cube", "design", "dose", "analysis"),
+        options=("spline_df", "batch", "min_counts", "rng"),
+        objects=("cube", "design", "dose", "candidates", "analysis"),
     ),
     "cytepool.dose_responses.DoseResponseResult.curve": Entry(
         lambda c: {
@@ -3255,6 +3257,10 @@ NO_ARRAY_INPUT = {
     "cytepool.dose_responses.DoseResponseResult.fit": (
         ("group",),
         "a cell type, looked up",
+    ),
+    "cytepool.dose_responses.DoseResponseResult.lowest_effective_doses": (
+        ("group", "screen", "alpha"),
+        "a cell type and a test, looked up, and a level",
     ),
     "cytepool.dose_designs.DoseDesignReport.status": (
         ("group",),
