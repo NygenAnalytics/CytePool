@@ -1,21 +1,30 @@
 """Tests for LOWESS, its span rule and natural cubic spline bases.
 
 Reference values in ``tests/data/smoothing`` come from R's ``stats::lowess``
-and ``splines::ns``, written by ``validation/smoothing.py``. The span rule is
-checked here against values derived by hand, and in ``tests/test_voom.py``
-against limma's ``chooseLowessSpan``. The weighted LOWESS behind the trend of the
-likelihood estimator is checked here against values derived by hand from its rules,
-and in ``tests/test_empirical_bayes.py`` against limma's ``weightedLowess``, directly
-and through the trend.
+and ``splines::ns`` (bases, knots, knots on the distinct values and ``predict`` at new
+points), Hmisc's ``rcspline.eval`` (knots by Harrell's rule and restricted cubic
+columns) and rms's ``anova(ols(y ~ rcs(x, nk)))``, written by
+``validation/smoothing.py``. The span rule is checked here against values derived by
+hand, and in ``tests/test_voom.py`` against limma's ``chooseLowessSpan``. The weighted
+LOWESS behind the trend of the likelihood estimator is checked here against values
+derived by hand from its rules, and in ``tests/test_empirical_bayes.py`` against
+limma's ``weightedLowess``, directly and through the trend.
 """
 
+import dataclasses
+import doctest
+import json
+import pickle
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
+from numpy.testing import assert_allclose, assert_array_equal
 
+from cytepool.stats import smoothing
 from cytepool.stats.smoothing import (
+    NaturalSplineBasis,
     _anchor_spacing,
     _weighted_lowess,
     choose_lowess_span,
@@ -638,3 +647,431 @@ def test_anchor_spacing_leaves_out_large_gaps() -> None:
     # with npts + 1 values, the smallest gap: one pair shares an anchor
     x = np.sort(np.random.default_rng(3).uniform(0.0, 1.0, 201))
     assert _anchor_spacing(x, 200) == np.min(np.diff(x))
+
+
+# Bases that keep their knots: R's rules, Harrell's rule, both forms.
+
+
+@pytest.fixture(scope="module")
+def spline_arrays() -> dict[str, np.ndarray]:
+    """Every array of natural_splines.npz, by key."""
+    with np.load(DATA / "natural_splines.npz") as data:
+        return {key: data[key] for key in data.files}
+
+
+@pytest.fixture(scope="module")
+def hmisc() -> dict[str, np.ndarray]:
+    """Every array of restricted_cubic_splines.npz (Hmisc and rms), by key."""
+    with np.load(DATA / "restricted_cubic_splines.npz") as data:
+        return {key: data[key] for key in data.files}
+
+
+def all_knots(basis: NaturalSplineBasis) -> np.ndarray:
+    """The knots of a basis, the boundary knots included, in order."""
+    lower, upper = basis.boundary_knots
+    return np.array([lower, *basis.knots, upper])
+
+
+def basis_of(data: dict[str, Any], **options: Any) -> NaturalSplineBasis:
+    """The basis that natural_spline_basis builds for a fixture case."""
+    keywords = dict(data["keywords"])
+    knots = keywords.pop("knots", "quantiles")
+    return NaturalSplineBasis(data["x"], knots=knots, **keywords, **options)
+
+
+def test_quantile_knots_are_rs_to_the_last_bit(
+    spline_reference: dict[str, Any], spline_arrays: dict[str, np.ndarray]
+) -> None:
+    # R's quantile arithmetic, with its position counted from 1: counted from 0, the
+    # knots of two_distinct_values and of normal150 at df 7 (below) move in the last
+    # bit.
+    compared = 0
+    for name, data in spline_reference.items():
+        keywords = data["keywords"]
+        if data["basis"] is None or keywords["df"] is None or "knots" in keywords:
+            continue
+        basis = basis_of(data)
+        assert_array_equal(basis.knots, spline_arrays[f"{name}__r_knots"], name)
+        assert_array_equal(
+            basis.boundary_knots, spline_arrays[f"{name}__r_boundary_knots"], name
+        )
+        compared += 1
+    assert compared == 18
+
+
+@pytest.mark.parametrize("rule", ["quantiles", "levels"])
+def test_knots_of_seeded_datasets_are_rs(
+    rule: str, spline_arrays: dict[str, np.ndarray]
+) -> None:
+    # attr(ns(x, df), "knots") and attr(ns(unique(x), df), "knots") at df 2 to 8, with
+    # and without an intercept, on samples, dose ladders and ties; where R fails, so
+    # must CytePool.
+    key = "knots" if rule == "quantiles" else "levels"
+    compared = failed = 0
+    for name in spline_arrays["knot_datasets"]:
+        x = spline_arrays[f"knots__{name}__x"]
+        for df in range(2, 9):
+            for intercept in (False, True):
+                prefix = f"knots__{name}__df{df}_{int(intercept)}"
+                if f"{prefix}__{key}" not in spline_arrays:
+                    with pytest.raises(ValueError, match="knot"):
+                        NaturalSplineBasis(x, df, knots=rule, intercept=intercept)
+                    failed += 1
+                    continue
+                basis = NaturalSplineBasis(x, df, knots=rule, intercept=intercept)
+                label = f"{name} df={df} intercept={intercept}"
+                assert_array_equal(
+                    basis.knots, spline_arrays[f"{prefix}__{key}"], label
+                )
+                if rule == "quantiles":
+                    boundary = spline_arrays[f"{prefix}__boundary"]
+                    assert_array_equal(basis.boundary_knots, boundary, label)
+                compared += 1
+    assert compared + failed == 9 * 14 and compared > 100
+
+
+def test_level_knots_are_rs_on_the_distinct_values(
+    spline_reference: dict[str, Any], spline_arrays: dict[str, np.ndarray]
+) -> None:
+    compared = 0
+    for name, data in spline_reference.items():
+        if f"{name}__r_levels" not in spline_arrays:
+            continue
+        basis = basis_of(data | {"keywords": data["keywords"] | {"knots": "levels"}})
+        assert_array_equal(basis.knots, spline_arrays[f"{name}__r_levels"], name)
+        compared += 1
+    assert compared >= 15
+
+
+def test_the_basis_at_new_points_matches_rs_predict(
+    spline_reference: dict[str, Any], spline_arrays: dict[str, np.ndarray]
+) -> None:
+    # Random responses fitted at x on either basis, and predicted at new points: inside
+    # the boundary knots, at the knots, beyond both boundary knots, and NaN.
+    rng = np.random.default_rng(13)
+    compared = 0
+    for name, data in spline_reference.items():
+        if f"{name}__r_newx" not in spline_arrays:
+            continue
+        train = data["basis"]
+        complete = ~np.isnan(train).any(axis=1)
+        if np.linalg.matrix_rank(train[complete]) < train.shape[1]:
+            continue
+        basis = basis_of(data)
+        newx = spline_arrays[f"{name}__r_newx"]
+        responses = rng.normal(0.0, 1.0, (int(complete.sum()), 2))
+        r_fit = np.linalg.lstsq(train[complete], responses, rcond=None)[0]
+        fit = np.linalg.lstsq(basis.matrix(data["x"])[complete], responses, rcond=None)[
+            0
+        ]
+        expected = spline_arrays[f"{name}__r_newx_basis"] @ r_fit
+        predicted = basis.matrix(newx) @ fit
+        missing = np.isnan(expected[:, 0])
+        assert_array_equal(np.isnan(predicted[:, 0]), missing, name)
+        assert newx[~missing].min() < basis.boundary_knots[0] < basis.boundary_knots[1]
+        assert newx[~missing].max() > basis.boundary_knots[1]
+        scale = np.max(np.abs(expected[~missing]))
+        assert_allclose(
+            predicted[~missing],
+            expected[~missing],
+            rtol=0,
+            atol=1e-10 * scale,
+            err_msg=name,
+        )
+        compared += 1
+    assert compared >= 20
+
+
+# Datasets that tie at an extreme in 5% of their values or more, with no value between
+# the extremes as often (derived by hand from each dataset's design): Hmisc's help page
+# says that it then places the knots by another method, which CytePool refuses.
+TIED_AT_AN_EXTREME = {
+    "ties_at_min_10pct",  # 10 zeros of 100
+    "ties_at_min_5pct",  # 10 zeros of 200, at the threshold
+    "ties_at_max_10pct",
+    "ties_at_both_ends",
+    "ties_at_min_n46",  # 6 zeros of 46
+    "ties_at_min_few_values",  # 20 zeros, then 1 to 5 once each
+    "ties_at_max_few_values",
+    "ties_at_min_seven_values",  # 30 zeros, then 1 to 6 once each
+}
+# 9 zeros of 200 (4.5%) and ties between the extremes: Harrell's percentiles apply.
+NOT_TIED = {"ties_at_min_4.5pct", "ties_at_min_and_between"}
+
+
+def test_harrell_knots_match_hmisc(hmisc: dict[str, np.ndarray]) -> None:
+    assert TIED_AT_AN_EXTREME | NOT_TIED <= set(hmisc["harrell_datasets"])
+    identical = refused_ties = 0
+    for name in hmisc["harrell_datasets"]:
+        x = hmisc[f"harrell__{name}__x"]
+        m = np.unique(x[~np.isnan(x)]).size
+        for nk in range(2, 10):
+            hmisc_knots = hmisc.get(f"harrell__{name}__nk{nk}")
+            tied = name in TIED_AT_AN_EXTREME and 3 <= nk < m - 2
+            label = f"{name} nk={nk}"
+            try:
+                basis = NaturalSplineBasis(x, nk - 1, knots="harrell")
+            except ValueError as error:
+                # Refused only where Hmisc fails, places fewer knots than asked, or
+                # switches to its method for tied values.
+                assert hmisc_knots is None or hmisc_knots.size < nk or tied, label
+                if tied:
+                    assert "tie at the" in str(error), label
+                    refused_ties += 1
+                continue
+            assert not tied, label
+            assert hmisc_knots is not None, label
+            assert_array_equal(all_knots(basis), hmisc_knots, label)
+            identical += 1
+    assert identical >= 80 and refused_ties >= 25
+
+
+def test_harrell_knots_of_small_samples_and_ladders(
+    hmisc: dict[str, np.ndarray],
+) -> None:
+    # Fewer than 100 values: the outer knots are the 5th smallest and largest values,
+    # sorted with the percentiles; 100 values take the percentiles. At nk = m - 2 the
+    # knots are the distinct values but the extremes. The ladder at 5 knots, Hmisc's
+    # default, needs the probabilities as R's seq() computes them.
+    small = hmisc["harrell__uniform12__x"]
+    knots = all_knots(NaturalSplineBasis(small, 4, knots="harrell"))
+    ordered = np.sort(small)
+    # Here the 5th smallest value lies above the 27.5th percentile, which the sort
+    # makes the lower boundary knot, as in Hmisc.
+    assert {ordered[4], ordered[-5]} <= set(knots) and knots[0] < ordered[4]
+    assert_array_equal(knots, hmisc["harrell__uniform12__nk5"])
+    large = hmisc["harrell__exponential100__x"]
+    assert (
+        NaturalSplineBasis(large, 2, knots="harrell").boundary_knots[0]
+        != np.sort(large)[4]
+    )
+    five = np.repeat([1.0, 2.0, 3.0, 4.0, 5.0], 4)
+    assert NaturalSplineBasis(five, 2, knots="harrell").knots == (3.0,)
+    ladder = NaturalSplineBasis(hmisc["harrell__ladder__x"], 4, knots="harrell")
+    assert_array_equal(all_knots(ladder), hmisc["harrell__ladder__nk5"])
+
+
+@pytest.mark.parametrize(
+    ("x", "df", "message"),
+    [
+        (np.r_[np.zeros(10), np.linspace(0.1, 1.0, 90)], 4, "10.0% of the values of x tie at the smallest value, 0.0"),
+        (np.r_[np.linspace(0.0, 0.9, 90), np.ones(10)], 4, "tie at the largest value, 1.0"),
+        (np.r_[np.zeros(10), np.linspace(0.1, 0.9, 80), np.ones(10)], 3, "tie at the smallest value"),
+        (np.repeat([1.0, 2.0, 3.0, 4.0], 10), 2, "3 knots strictly inside the range of x only among at least 5 distinct values, and x has 4; Hmisc would place 2"),
+        (np.linspace(0.0, 1.0, 9), 7, "x has 9; Hmisc would place 7"),
+        # The 5th smallest value and the median are both 5.
+        (np.r_[1.0, 2.0, 3.0, 4.0, np.full(10, 5.0), np.arange(6.0, 12.0)], 2, "two knots at 5.0, where Hmisc would drop one"),
+        (np.linspace(0.0, 1.0, 50), 1, "at least 3 knots, so df must be at least 2 with intercept=False, got 1"),
+    ],
+)  # fmt: skip
+def test_harrell_refuses_where_hmisc_departs(
+    x: np.ndarray, df: int, message: str
+) -> None:
+    with pytest.raises(ValueError, match="Harrell's rule|tie at the"):
+        NaturalSplineBasis(x, df, knots="harrell")
+    with pytest.raises(ValueError) as error:
+        NaturalSplineBasis(x, df, knots="harrell")
+    assert message in str(error.value)
+
+
+def test_restricted_cubic_columns_match_hmisc(hmisc: dict[str, np.ndarray]) -> None:
+    # rcspline.eval(x, knots, inclx = TRUE): x first, whose counterpart here is x minus
+    # the lower boundary knot; 3 to 8 knots, points to 50, far beyond the last knot.
+    compared = 0
+    for name in hmisc["restricted_cubic_cases"]:
+        knots = hmisc[f"rcs__{name}__knots"]
+        newx = hmisc[f"rcs__{name}__newx"]
+        if name == "repeated_knot":
+            with pytest.raises(ValueError, match="needs distinct knots"):
+                NaturalSplineBasis(
+                    knots=knots[1:-1],
+                    boundary_knots=knots[[0, -1]],
+                    form="restricted_cubic",
+                )
+            continue
+        ours = NaturalSplineBasis(
+            knots=knots[1:-1], boundary_knots=knots[[0, -1]], form="restricted_cubic"
+        ).matrix(newx)
+        reference = hmisc[f"rcs__{name}__basis"]
+        assert_array_equal(np.isnan(ours), np.isnan(reference))
+        ours[:, 0] += knots[0]
+        present = ~np.isnan(reference[:, 0])
+        scale = np.max(np.abs(reference[present]), axis=0)
+        assert np.max(np.abs(ours - reference)[present] / scale) <= 1e-10, name
+        compared += 1
+    assert compared == 7
+
+
+def test_restricted_cubic_values_by_hand() -> None:
+    # Knots 0, 1 and 2: N_1(x) = (x_+^3 - 2 (x - 1)_+^3 + (x - 2)_+^3) / 4, which is 0
+    # up to 0, 0.5^3 / 4 at 0.5, (1.5^3 - 2 x 0.5^3) / 4 at 1.5, and (27 - 16 + 1) / 4
+    # = 3 at 3, on the line through N_1(2) = 1.5 with slope 1.5.
+    basis = NaturalSplineBasis(
+        knots=[1.0], boundary_knots=[0.0, 2.0], form="restricted_cubic"
+    )
+    x = np.array([-1.0, 0.0, 0.5, 1.5, 3.0])
+    assert_allclose(basis.matrix(x)[:, 0], x, rtol=0, atol=0)
+    assert_allclose(
+        basis.matrix(x)[:, 1], [0.0, 0.0, 0.03125, 0.78125, 3.0], rtol=1e-15
+    )
+    with_intercept = NaturalSplineBasis(
+        knots=[1.0], boundary_knots=[0.0, 2.0], intercept=True, form="restricted_cubic"
+    )
+    assert_array_equal(with_intercept.matrix(x)[:, 0], 1.0)
+    assert with_intercept.df == 3
+
+
+def f_statistics(
+    design: np.ndarray, y: np.ndarray, dropped: list[list[int]]
+) -> list[float]:
+    """F-statistics of least squares fits that drop each list of columns."""
+
+    def rss(columns: np.ndarray) -> float:
+        residuals = y - columns @ np.linalg.lstsq(columns, y, rcond=None)[0]
+        return float(residuals @ residuals)
+
+    full, df_residual = rss(design), y.size - design.shape[1]
+    return [
+        ((rss(np.delete(design, columns, axis=1)) - full) / len(columns))
+        / (full / df_residual)
+        for columns in dropped
+    ]
+
+
+def test_spline_f_tests_match_rms(hmisc: dict[str, np.ndarray]) -> None:
+    # anova(ols(y ~ rcs(x, nk))): the overall F of all spline columns, the non-linear F
+    # of the columns after the first, and the overall F of the B-spline form on the
+    # same knots, since both forms span the same curves.
+    for name in hmisc["rms_cases"]:
+        x, y = hmisc[f"rms__{name}__x"], hmisc[f"rms__{name}__y"]
+        nk = int(hmisc[f"rms__{name}__nk"])
+        overall, nonlinear = hmisc[f"rms__{name}__anova"][:2]
+        basis = NaturalSplineBasis(x, nk - 1, knots="harrell", form="restricted_cubic")
+        assert_array_equal(all_knots(basis), hmisc[f"rms__{name}__knots"])
+        complete = ~np.isnan(x)
+        design = np.column_stack([np.ones(complete.sum()), basis.matrix(x[complete])])
+        found = f_statistics(
+            design, y[complete], [list(range(1, nk)), list(range(2, nk))]
+        )
+        assert_allclose(found, [overall, nonlinear], rtol=1e-10, err_msg=name)
+        b_spline = NaturalSplineBasis(
+            knots=basis.knots, boundary_knots=basis.boundary_knots
+        )
+        design = np.column_stack(
+            [np.ones(complete.sum()), b_spline.matrix(x[complete])]
+        )
+        found = f_statistics(design, y[complete], [list(range(1, nk))])
+        assert_allclose(found, [overall], rtol=1e-10, err_msg=name)
+
+
+@pytest.mark.parametrize("form", ["b_spline", "restricted_cubic"])
+@pytest.mark.parametrize("knots", [[], [0.5], [0.2, 0.45, 0.8]])
+def test_both_forms_span_the_truncated_power_basis(form: str, knots: list) -> None:
+    x = np.random.default_rng(43).uniform(-0.4, 1.3, 90)
+    basis = NaturalSplineBasis(
+        knots=knots, boundary_knots=[0.0, 1.0], intercept=True, form=form
+    )
+    reference = truncated_power_basis(x, np.array([0.0, *knots, 1.0]))
+    assert_same_column_space(basis.matrix(x), reference)
+
+
+@pytest.mark.parametrize("form", ["b_spline", "restricted_cubic"])
+def test_columns_vanish_at_the_lower_knot_and_are_linear_beyond(form: str) -> None:
+    x = np.random.default_rng(47).normal(0.0, 1.0, 40)
+    basis = NaturalSplineBasis(x, 4, form=form)
+    lower, upper = basis.boundary_knots
+    assert_allclose(basis.matrix([lower]), 0.0, atol=1e-15)
+    # Second differences of equally spaced points vanish below the lower boundary knot
+    # and beyond the upper one, where every column is a line.
+    for start, step in ((lower - 3.0, 0.5), (upper + 0.01, 0.5)):
+        columns = basis.matrix(start + step * np.arange(6))
+        second = np.diff(columns, n=2, axis=0)
+        assert np.max(np.abs(second)) <= 1e-11 * np.max(np.abs(columns)), start
+    # Within the knots the columns are not lines.
+    inside = basis.matrix(np.linspace(lower, upper, 6))
+    assert np.max(np.abs(np.diff(inside, n=2, axis=0))) > 1e-3
+
+
+def test_rows_of_missing_values_and_points_beyond_the_data() -> None:
+    x = np.random.default_rng(53).uniform(0.0, 3.0, 25)
+    basis = NaturalSplineBasis(x, 3, form="restricted_cubic")
+    columns = basis.matrix([np.nan, 1.0, -10.0, 100.0])
+    assert np.isnan(columns[0]).all() and np.isfinite(columns[1:]).all()
+    with pytest.raises(ValueError, match="infinite"):
+        basis.matrix([1.0, np.inf])
+    with pytest.raises(TypeError, match="x must hold real numbers"):
+        basis.matrix(["a"])
+    with pytest.raises(ValueError, match="1-D"):
+        basis.matrix([[1.0]])
+
+
+@pytest.mark.parametrize(
+    ("x", "keywords", "error", "message"),
+    [
+        ([1.0, 2.0, 3.0], {"knots": "splines"}, ValueError, "knots must be a rule, one of 'quantiles', 'levels', 'harrell', or the interior knots, got 'splines'"),
+        ([1.0, 2.0, 3.0], {"knots": None}, TypeError, "knots must be a rule"),
+        ([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], {"df": 2, "knots": "harrell", "boundary_knots": [0, 7]}, ValueError, "places the boundary knots itself"),
+        ([1.0, 2.0, 3.0], {"knots": "harrell"}, ValueError, "needs x, whose percentiles place the knots, and df"),
+        (None, {"df": 3}, ValueError, "places the knots on the values of x; give x"),
+        (None, {"knots": [0.5]}, ValueError, "give x or boundary_knots"),
+        (None, {"knots": [0.5, 0.5], "boundary_knots": [0, 1], "form": "restricted_cubic"}, ValueError, "needs distinct knots, and the knots given repeats 0.5"),
+        (np.repeat([0.0, 1.0, 2.0, 3.0], [1, 6, 1, 1]), {"df": 3, "form": "restricted_cubic"}, ValueError, "R's quantile rule repeats 1.0"),
+        ([1.0, 2.0, 3.0], {"form": "b-spline"}, ValueError, "form must be one of 'b_spline', 'restricted_cubic'"),
+        ([1.0, 2.0, 3.0], {"intercept": 1}, TypeError, "intercept must be True or False"),
+        ([1.0, 2.0, 3.0], {"df": 2.0}, TypeError, "df must be an integer"),
+        ([1.0, 2.0, 3.0], {"df": 1, "intercept": True}, ValueError, "at least 2 with intercept=True"),
+        ([1.0, np.inf], {}, ValueError, "infinite"),
+    ],
+)  # fmt: skip
+def test_rules_and_arguments_are_refused_with_a_fix(
+    x: Any, keywords: dict[str, Any], error: type[Exception], message: str
+) -> None:
+    with pytest.raises(error, match=message.replace("(", r"\(").replace(")", r"\)")):
+        NaturalSplineBasis(x, **keywords)
+
+
+@pytest.mark.parametrize("form", ["b_spline", "restricted_cubic"])
+def test_a_basis_survives_json_and_pickle(form: str) -> None:
+    # With an intercept and the restricted cubic form, a record that lost either
+    # would rebuild another basis.
+    x = np.random.default_rng(59).normal(0.0, 1.0, 30)
+    basis = NaturalSplineBasis(x, 4, knots="levels", intercept=True, form=form)
+    record = json.loads(json.dumps(basis.to_dict()))
+    assert set(record) == {"knots", "boundary_knots", "intercept", "form"}
+    rebuilt = NaturalSplineBasis(**record)
+    assert rebuilt == basis and hash(rebuilt) == hash(basis)
+    points = np.linspace(-4.0, 4.0, 17)
+    assert_array_equal(rebuilt.matrix(points), basis.matrix(points))
+    unpickled = pickle.loads(pickle.dumps(basis))
+    assert unpickled == basis
+    assert_array_equal(unpickled.matrix(points), basis.matrix(points))
+    # The repr names the knots and rebuilds the basis.
+    assert eval(repr(basis), {"NaturalSplineBasis": NaturalSplineBasis}) == basis
+    assert NaturalSplineBasis(**(record | {"intercept": False})) != basis
+    other_form = "b_spline" if form == "restricted_cubic" else "restricted_cubic"
+    assert NaturalSplineBasis(**(record | {"form": other_form})) != basis
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        basis.knots = ()  # type: ignore[misc]
+
+
+def test_natural_spline_basis_is_the_b_spline_form(
+    spline_reference: dict[str, Any],
+) -> None:
+    for name, data in spline_reference.items():
+        if data["basis"] is None:
+            continue
+        assert_array_equal(
+            natural_spline_basis(data["x"], **data["keywords"]),
+            basis_of(data).matrix(data["x"]),
+            name,
+        )
+    # Rules are the class's: the function keeps its knots as values or none.
+    with pytest.raises(TypeError, match=r"NaturalSplineBasis\(x, df, knots='levels'\)"):
+        natural_spline_basis(np.arange(10.0), 3, knots="levels")
+    # Without df or knots, no interior knots, as R's ns(x) gives (case no_knots).
+    assert NaturalSplineBasis(np.arange(10.0)).knots == ()
+    assert NaturalSplineBasis(np.arange(10.0), knots="levels").df == 1
+
+
+def test_the_examples_in_the_docstrings_run() -> None:
+    assert doctest.testmod(smoothing, raise_on_error=False).failed == 0

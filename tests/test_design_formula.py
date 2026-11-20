@@ -156,6 +156,11 @@ def test_quote_name_takes_only_text() -> None:
         ("~ I(age^2) + x", r"I\(age\^2\).*age_squared = age\*\*2"),
         ("~ factor(batch)", "text and boolean columns are factors already"),
         ("~ relevel(group, 'b')", "use levels= to choose the reference level"),
+        (
+            "~ ns(dose, 3)",
+            "DoseAxis.design_columns or cytepool.stats.smoothing.NaturalSplineBasis",
+        ),
+        ("~ poly(dose, 2)", "add the basis columns to the sample table"),
         ("~ condition + (1 | donor)", r"random-effect terms such as \(1 \| donor\)"),
         ("~ .", "'.' \\(all other columns\\) is not supported"),
         ("~ if + a", "'if' is a reserved word in R"),
