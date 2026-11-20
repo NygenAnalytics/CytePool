@@ -87,10 +87,10 @@ Methods:
       G(rho_in) - G(rho_out), where rho_in and rho_out are the distances from the
       origin at which the ray in direction theta enters and leaves the box (own
       algebra from these two facts). The average is computed by adaptive Gauss-Kronrod
-      quadrature (7 and 15 points) between the directions where the face of the box
-      that the ray meets changes, to a relative error of 1e-12 of the smaller of the
-      probability and its complement, with the difference of the two rules as the
-      error. One coordinate uses the t distribution directly.
+      quadrature (7 and 15 points; Piessens et al. 1983) between the directions where
+      the face of the box that the ray meets changes, to a relative error of 1e-12 of
+      the smaller of the probability and its complement, with the difference of the
+      two rules as the error. One coordinate uses the t distribution directly.
     - Quantiles. The equicoordinate quantile solves for the limit at which the
       probability, or the complement for probabilities of at least 1/2, reaches its
       target. It lies between the univariate quantile at the probability and the one
@@ -114,6 +114,9 @@ References:
     Owen AB, Maximov Y, Chertkov M (2019). Importance sampling the union of rare events
     with an application to power systems analysis. Electronic Journal of Statistics
     13, 231-254. doi:10.1214/18-EJS1527
+
+    Piessens R, de Doncker-Kapenga E, Überhuber CW, Kahaner DK (1983). Quadpack.
+    Springer, Berlin. doi:10.1007/978-3-642-61786-7
 """
 
 import math
@@ -181,9 +184,10 @@ _ABOVE, _WITHIN = 0, 1
 # has rare overlaps, and its draws are steered towards them.
 _RARE_OVERLAP = 1e-3
 
-# Gauss-Kronrod rule of 15 points with its embedded Gauss rule of 7 (Piessens et al.,
-# QUADPACK): the non-negative nodes of the Kronrod rule from the outside in, with the
-# Kronrod weights, and the Gauss weights of the nodes 1, 3 and 5 and of the centre.
+# Gauss-Kronrod rule of 15 points with its embedded Gauss rule of 7, from QUADPACK
+# (Piessens et al. 1983): the non-negative nodes of the Kronrod rule from the outside
+# in, with the Kronrod weights, and the Gauss weights of the nodes 1, 3 and 5 and of
+# the centre.
 _KRONROD_NODES = np.array(
     [
         0.991455371120812639206854697526329,

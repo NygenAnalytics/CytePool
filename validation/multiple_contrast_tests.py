@@ -54,8 +54,8 @@ Tiers: exact (1e-10, relative or relative to max(|reference|, 1) for statistics)
 (1e-6 relative); calibrated: the difference from the reference within 5.5 combined
 standard errors, the 99.994% point of the t distribution on 15 degrees of freedom, on
 which CytePool's errors are estimated from 16 random shifts (the two-sided tail of 4
-normal standard errors). Errors are standard errors, and the check is |ours -
-reference| <= 5.5 sqrt(ours^2 + reference^2).
+normal standard errors). With e the standard error of each value, the check is
+|ours - reference| <= 5.5 sqrt(e_ours^2 + e_reference^2).
 
 Checks:
 
