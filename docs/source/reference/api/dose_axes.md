@@ -6,7 +6,7 @@ myst:
 
 # Dose axes
 
-Dose axes record where each dose sits on the axis of a dose-response curve, and give the design columns of a spline of dose; [Dose axes and the vehicle](../statistics/linear-models/#dose-axes) explains them.
+Dose axes record where each dose sits on the axis of a dose-response curve, and give the design columns of a spline of dose; [Dose axes and the vehicle](../statistics/dose-response/#dose-axes) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.dose_axes

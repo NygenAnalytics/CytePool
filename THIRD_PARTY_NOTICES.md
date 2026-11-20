@@ -177,7 +177,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Test, validation and documentation data
 
-The files under `tests/data/` are written by the scripts in `validation/`. Except for the dataset below, their inputs are generated with fixed random seeds. Reference values in those files come from the packages each script names.
+The files under `tests/data/` are written by the scripts in `validation/`. Except for the two GEO series below, their inputs are generated with fixed random seeds. Reference values in those files come from the packages each script names.
 
 The pages of the documentation (`docs/source/`) read the datasets that `docs/datasets.py` prepares in a cache outside the repository: three simulated with fixed random seeds by that script, and the two below, GEO series GSE96583 and the MSigDB Hallmark interferon-alpha response set. No file of these datasets is in the repository; the script records the source, licence, citation and checksum of each. Two guides also download the networks CollecTRI and PROGENy, as their sections below say.
 
@@ -186,6 +186,14 @@ The pages of the documentation (`docs/source/`) read the datasets that `docs/dat
 `validation/interferon_stimulated_pbmcs.py` downloads `GSE96583_RAW.tar`, `GSE96583_batch2.genes.tsv.gz` and `GSE96583_batch2.total.tsne.df.tsv.gz` from the Gene Expression Omnibus (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE96583) into a cache outside the repository, and `tests/data/interferon_stimulated_pbmcs/limma.npz` holds pseudobulk counts derived from them. `docs/datasets.py` reads the same files, with the same checksums and from the same cache, and pools them into the cube that the documentation's pages read (`kang2018`), which it writes to its own cache outside the repository.
 
 Kang HM, Subramaniam M, Targ S, Nguyen M, Maliskova L, McCarthy E, Wan E, Wong S, Byrnes L, Lanata CM, Gate RE, Mostafavi S, Marson A, Zaitlen N, Criswell LA, Ye CJ (2018). Multiplexed droplet single-cell RNA-sequencing using natural genetic variation. Nature Biotechnology 36, 89-94. doi:10.1038/nbt.4042
+
+Terms, from NCBI's GEO disclaimer (https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html): "NCBI places no restrictions on the use or distribution of the GEO data. However, some submitters may claim patent, copyright, or other intellectual property rights in all or a portion of the data they have submitted. NCBI is not in a position to assess the validity of such claims, and therefore cannot provide comment or unrestricted permission concerning the use, copying, or distribution of the information contained in GEO."
+
+### GEO series GSE208161 (Sonigra et al. 2022)
+
+`validation/dose_design.py` downloads `GSE208161_Pt04_Pt11_Pt19_Pt21_integrated_metadata.csv.gz` (1,679,182 bytes, SHA-256 dd36521e006f18416d9c5a0db5741dd374966128bcd9b98510fd0a9c585af4fe), the per-cell metadata of a phase 1 trial, from the Gene Expression Omnibus (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE208161) into a cache outside the repository, and `tests/data/dose_design/gse208161.npz` holds the cells and summed RNA counts of each participant, day and Seurat cluster derived from it, with each participant's dose from GEO's sample records.
+
+Sonigra A, Nel HJ, Wehr P, Ramnoruth N, Patel S, van Schie KA, Bladen MW, Mehdi AM, Tesiram J, Talekar M, Rossjohn J, Reid HH, Stuurman FE, Roberts H, Vecchio P, Gourley I, Rigby M, Becart S, Toes REM, Scherer HU, Lê Cao KA, Campbell K, Thomas R (2022). Randomized phase I trial of antigen-specific tolerizing immunotherapy with peptide/calcitriol liposomes in ACPA+ rheumatoid arthritis. JCI Insight 7, e160964. doi:10.1172/jci.insight.160964
 
 Terms, from NCBI's GEO disclaimer (https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html): "NCBI places no restrictions on the use or distribution of the GEO data. However, some submitters may claim patent, copyright, or other intellectual property rights in all or a portion of the data they have submitted. NCBI is not in a position to assess the validity of such claims, and therefore cannot provide comment or unrestricted permission concerning the use, copying, or distribution of the information contained in GEO."
 

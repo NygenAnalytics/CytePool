@@ -1424,6 +1424,7 @@ def test_the_navigation_has_the_agreed_sections() -> None:
         "Foundations",
         "Differential expression",
         "Composition tests",
+        "Dose response",
         "Gene sets and pathways",
         "Several studies",
     ]

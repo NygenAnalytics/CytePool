@@ -24,7 +24,7 @@ from cytepool.stats.smoothing import NaturalSplineBasis
 
 DATA = Path(__file__).parent / "data" / "dose_axes"
 CHAPTER = (
-    Path(__file__).resolve().parents[1] / "docs/source/statistics/linear_models.md"
+    Path(__file__).resolve().parents[1] / "docs/source/statistics/dose_response.md"
 )
 # A ladder like the TCDD liver series: the vehicle and eight doses, 2 or 3 each.
 TCDD = np.array([0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0])

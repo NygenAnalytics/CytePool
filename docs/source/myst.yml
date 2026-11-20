@@ -95,6 +95,8 @@ project:
         title: Mixed models and dream
     - file: statistics/composition.md
       title: Composition tests
+    - file: statistics/dose_response.md
+      title: Dose response
     - title: Gene sets and pathways
       children:
       - file: statistics/gene_set_tests.md

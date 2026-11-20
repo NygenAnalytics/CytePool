@@ -61,4 +61,4 @@ Further reading:
 - @yi2024 benchmarked six differential abundance methods for condition-specific cell states, and gave recommendations by dataset.
 - @stephenson2021 profiled over 780,000 blood cells of 130 COVID-19 patients and related the expansion of cell populations to disease severity.
 
-[Gene-set tests](gene_set_tests.md) begins the part that turns the results for genes into results for pathways and regulators.
+[Dose response](dose_response.md) asks how each cell type responds to a dose, beginning with the design of a dose series.

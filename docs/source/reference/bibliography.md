@@ -34,6 +34,10 @@ Mixed models and dream [@bates2015; @patterson1971; @harville1977; @henderson197
 
 [@phipson2022; @buttner2021; @mangiola2023; @hoffman2026b; @dann2022; @yi2024; @stephenson2021]
 
+## Dose response
+
+Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022].
+
 ## Gene sets and pathways
 
 Gene-set tests [@goeman2007; @wu2012; @wu2010; @langsrud2005; @giner2016; @majewski2010; @phipson2010; @routledge1994; @barry2008; @liberzon2011; @liberzon2015; @gsea2026; @subramanian2005], with the z-scores of t-statistics that they use [@bailey1980; @hill1970; @brophy1987; @zar1999].

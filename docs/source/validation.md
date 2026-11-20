@@ -23,7 +23,6 @@ Each method is listed with the functions that implement it, the reference it is 
 | Fingerprints of cubes | {api}`Cube.fingerprint`, {api}`Cube.digests` | the documented encoding, with zarr-python 3.4.1 | exact: identical digests | [Cube fingerprints](#validation-cube-fingerprints) |
 | AnnData and MuData layouts of scanpy, decoupler and LIANA | {api}`to_anndata`, {api}`from_anndata`, {api}`to_mudata`, {api}`from_mudata` | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | exact: identical, 1e-10 for sums of normalized values | [Conversions to AnnData and MuData](#validation-anndata-conversion) |
 | Model matrices from R formulas, named contrasts, design checks | {api}`Design`, {api}`model_matrix`, {api}`make_contrasts`, {api}`Design.check` | R 4.4.3, limma 3.62.1, lme4 2.0-6 | exact: identical, 1e-10; 1e-8 (absolute) for the leverages of badly scaled designs | [Designs and contrasts](#validation-design) |
-| Dose axes: positions of the doses, the vehicle in a group of its own or on the axis at an offset, and the design columns of a spline of dose | {api}`DoseAxis` | R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; identical `dose_treated` and degrees of freedom; close: 1e-6 for limma's F-tests of Hmisc's columns | [Dose axes and their design columns](#validation-dose-axes) |
 | Simulated dose series with known curves: negative binomial counts per replicate and cell type with biological and donor effects, and their true curves, EC50s and benchmark doses | {api}`simulate_dose_series`, {api}`DoseTruth` | mpmath 1.3.0 | exact: 1e-10 for curves, EC50s and benchmark doses; calibrated: within 4 standard errors for the moments of cells and counts; identical allocation, seeds and threads | [Simulated dose series and their truths](#validation-simulate-dose-series) |
 | Linear models of every gene and their contrasts (limma's `lmFit`, `contrasts.fit`) | {api}`fit_linear_model`, {api}`contrasts_fit` | limma 3.62.1 | exact: 1e-10 | [Linear models](#validation-linear-models) |
 | Empirical Bayes moderation, moderated t and F, B-statistics, TREAT | {api}`moderated_statistics`, {api}`treat`, {api}`squeeze_variances`, {api}`fit_f_distribution`, {api}`fit_f_distribution_robust`, {api}`fit_f_distribution_likelihood` | limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust and likelihood priors | [Empirical Bayes moderation](#validation-empirical-bayes) |
@@ -43,6 +42,8 @@ Each method is listed with the functions that implement it, the reference it is 
 | dream on every cell type of a cube | {api}`dream_voom`, {api}`voom_with_dream_weights`, {api}`moderated_fixed_effect_tests` | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | close: 1e-6; 1e-5 for Satterthwaite's degrees of freedom and the p-values and z-statistics that use them; exact: 1e-10 for the likelihoods at given estimates | [dream's weights, fits and tests](#validation-dream) |
 | Variance partitioning (`fitExtractVarPartModel`) on every cell type of a cube, and its figures (`plotVarPart`, `plotPercentBars`) | {api}`variance_fractions`, {api}`variance_partitioning`, {api}`plot_variance_fractions`, {api}`plot_feature_variance_fractions` | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | close: 1e-6; exact: 1e-10 at given estimates, for linear models and for the figures; 1e-3 for the widths of the violins | [Variance partitioning](#validation-variance-partitioning) |
 | Cell-type composition (speckle's propeller) | {api}`propeller` | speckle 1.6.0, limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust prior | [Cell-type composition](#validation-composition-tests) |
+| Dose axes: positions of the doses, the vehicle in a group of its own or on the axis at an offset, and the design columns of a spline of dose | {api}`DoseAxis` | R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; identical `dose_treated` and degrees of freedom; close: 1e-6 for limma's F-tests of Hmisc's columns | [Dose axes and their design columns](#validation-dose-axes) |
+| Dose designs: the samples each dose group keeps after filtering, the dose groups that other terms or a batch absorb, statuses, ETAP's design minimums | {api}`check_dose_design` | scanpy 1.12.4, pandas 3.1.0, R 4.4.3, limma 3.62.1 | exact: identical, statuses and ETAP's minimums against the same rules coded in R; a pass row on published data | [Dose designs](#validation-dose-design) |
 | Gene-set tests camera and fry | {api}`camera`, {api}`fry` | limma 3.62.1 | exact: 1e-10; close: 1e-6 with robust moderation; 1e-3 for fry's default standardization, which differs on purpose; 0.1 (absolute) for fry's mixed p-values against random rotations | [Gene-set tests](#validation-gene-set-tests) |
 | Rotation gene-set tests roast, mroast and romer | {api}`roast`, {api}`mroast`, {api}`romer` | limma 3.62.1 | calibrated: within 4 standard deviations of the Monte Carlo difference, plus 2 / (B + 1) for B rotations; exact: 1e-12 given limma's rotations; 0.1 (absolute) for fry's mixed p-values against the rotation test | [Rotation gene-set tests](#validation-rotation-gene-set-tests) |
 | Gene-set files (GMT) read and written; collections matched to an analysis (limma's `ids2indices`) and filtered by size | {api}`read_gmt`, {api}`write_gmt`, {api}`GeneSets` | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | exact: identical, 1e-10 | [Gene-set files and over-representation](#validation-gene-set-files-and-ora) |
@@ -63,7 +64,7 @@ Each method is listed with the functions that implement it, the reference it is 
 | Tails and quantiles of distributions, special functions | {api}`cytepool.stats.distributions`, {api}`cytepool.stats.special` | mpmath 1.3.0 | exact: 1e-15 to 1e-12 | [Distributions and special functions](#validation-distributions) |
 | LOWESS; natural spline bases that keep their knots, in R's B-spline form and Harrell's restricted cubic form | {api}`lowess`, {api}`natural_spline_basis`, {api}`NaturalSplineBasis` | R 4.4.3, Hmisc 5.3-1, rms 8.2-1 | close: 1e-6 for LOWESS; exact: identical knots, 1e-10 for spline bases, restricted cubic columns and F-tests | [LOWESS and spline bases](#validation-smoothing) |
 
-In all, the scripts printed 2,891 checks: 2,499 pass, none failed; 234 information, 154 deliberate differences, 4 controls.
+In all, the scripts printed 2,932 checks: 2,538 pass, none failed; 236 information, 154 deliberate differences, 4 controls.
 
 Run time is the wall time of the whole script and peak memory the largest resident set of any of its processes, reference programs included, both of the second of two runs, one after the other, in the container described under [](#validation-timings). The first run downloaded the data that some scripts read and compiled CytePool's routines, which numba keeps in its cache for later runs. A first run in a new environment compiles them too: `differential_expression.py`, the first script in the container, took 52.7 s in its first run and 7.5 s in its second, and its peak memory fell from 578 to 362 MiB.
 
@@ -230,38 +231,6 @@ Deliberate differences:
 - Default level order is by code point in every locale, as R's is with `LC_COLLATE=C`. R's own default follows the session's collation, and agreed in 1 of the 4 formulas here.
 - Formulas that R accepts and CytePool rejects: a `-` that removes nothing (`~ a - b`, `~ x - z`, `~ a + (-b)`), `^` of a single term (`~ x^2`, which R reads as `x`), a fractional power (`~ (a + b)^2.5`), and function calls (`~ log(z)`, `~ I(x^2)`, `~ factor(w)`), which CytePool's formulas do not support; transform the column in the sample table instead.
 - Contrast expressions that limma turns into weights without meaning are rejected: limma gives `groupB - 1` the weights (-1, 0, -1, -1, -1), `groupA*groupB` (0, 0, 0, 0, 0), `groupA/groupB` (Inf, 0, NaN, NaN, NaN) and `groupA^2` (1, 0, 0, 0, 0).
-
-(validation-dose-axes)=
-### Dose axes and their design columns
-
-The script printed 234 checks (216 pass, 16 information and 2 deliberate differences) on 2026-11-20, in 20.2 s, with a peak memory of 346 MiB. [Dose axes and the vehicle](statistics/linear_models.md#dose-axes) explains what it checks.
-
-[`validation/dose_axes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_axes.py) builds `DoseAxis` designs for four dose series from fixed seeds (seeds 20261124 to 20261126): a ladder like the TCDD liver series, the vehicle and 0.01 to 30 ug/kg with 2 or 3 samples each; an in vitro half-log series, 6 vehicle wells and 4 doses in duplicate; an unbalanced ladder whose second dose has 10 of the 16 treated samples; and 24 measured exposures with 6 zeros. Each series is read on four axes, the vehicle in its own group or on the axis, on the log10 or the linear scale (on the log10 scale at an offset), with both forms of the spline and knots by `"levels"` and `"quantiles"` at df 1 to 8 and given as doses: 392 cases. R computes the positions, `dose_treated`, the knots with R's own functions (`ns(unique(x), df)`, `ns(x, df)`), the spline columns with `ns` or Hmisc's `rcspline.eval`, `model.matrix`, the F-statistics of nested `lm` fits of seeded responses (any dose, among the treated doses, departure from a line), `predict` of the full fit on a grid of doses from 0 to twice the highest, and limma-trend's moderated F-tests of the same columns on seeded counts of 200 genes (`cpm`, `lmFit`, `eBayes(trend = TRUE)` and `classifyTestsF`, which `topTable` of several columns calls), with their numerator degrees of freedom; CytePool runs `limma_trend` on the same counts. B-spline columns, whose basis differs from `ns()`'s, are compared through their column space. Restricted cubic columns are compared by their first column, element by element, and through Hmisc's columns as combinations of CytePool's, which differ from Hmisc's truncated cubes by a change of basis that keeps them well conditioned. R's F-statistics, curves and moderated F-tests are compared where R's design has a condition number of at most 1e5, so that rounding stays below the tier. limma computes the moderated F-tests of Hmisc's columns from the correlation of their coefficients, whose rounding grows with the square of that condition number, so those are compared at the close tier; the agreement of the two forms ties CytePool's restricted cubic F-tests to `ns()`'s at the exact tier. Reference: R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Positions of the doses, 4 series on 4 axes | `log10(dose)`, `log10(dose + offset)`, the dose | 0 | 1e-10 | 16 pass |
-| `dose_treated` with the vehicle in its own group | `as.numeric(dose > 0)` | 0 mismatches | 0 | 8 pass |
-| Knots and boundary knots, 380 cases | `ns` | 0 | 1e-10 | 16 pass |
-| First restricted cubic column, 190 cases | `rcspline.eval` | 0 | 1e-10 | 16 pass |
-| Hmisc's restricted cubic columns as combinations of CytePool's, 190 cases | `rcspline.eval` | 2.6e-14 | 1e-10 | 16 pass |
-| B-spline columns, by their column space, 190 cases | `ns` | 2.4e-14 | 1e-10 | 16 pass |
-| Design matrices of `Design`, 380 cases | `model.matrix` | 6.4e-14 | 1e-10 | 16 pass |
-| F-statistics of any dose, among the treated doses and of departure from a line, 338 cases | `anova(lm)` | 8.3e-13 | 1e-10 | 16 pass |
-| Fitted curves on a grid of doses, 338 cases | `predict(lm)` | 9.6e-12 | 1e-10 | 16 pass |
-| Moderated F-statistics of the B-spline form, 190 cases | limma's `classifyTestsF` of `ns()`'s columns | 6.9e-13 | 1e-10 | 16 pass |
-| Moderated F-statistics of the restricted cubic form, 135 cases | limma's `classifyTestsF` of Hmisc's columns | 2.4e-9 | 1e-6 | 16 pass |
-| Numerator degrees of freedom of the moderated F-tests, which count every column tested, 380 cases | the columns tested | 0 mismatches | 0 | 16 pass |
-| Moderated F-statistics of the two forms on the same knots, 190 pairs of cases | the B-spline form | 1.3e-12 | 1e-10 | 16 pass |
-| Cases where one program places knots and the other raises, other than the deliberate differences | R | 0 | 0 | 16 pass |
-| F-statistics, curves and moderated F-tests of the 42 cases whose R design has a condition number above 1e5, up to 9.7e10: Hmisc's columns, 39 on a linear axis and 3 on the log10 axis of the exposures with the vehicle on it; R's `lm` drops a column as aliased in 8 of them | `lm` | not compared | n/a | 8 information |
-| Largest condition number of the designs of each axis and form: CytePool's restricted cubic columns 23 to 1.3e3, Hmisc's 6.4e4 to 9.7e10; the B-spline form 25 to 710 in both programs | `model.matrix` | n/a | n/a | 8 information |
-| Deliberate differences, listed below | `ns`, limma | R places knots, or limma counts fewer degrees of freedom | n/a | 2 deliberate differences |
-
-Deliberate differences:
-
-- On the unbalanced ladder, R's quantile rule places two knots at 0.1 mg/kg in 12 cases, and `ns()` takes the repeated knot, which makes the curve less smooth there; `DoseAxis.spline_basis` raises an error that names the rule and the dose.
-- In 13 cases, 7 of them on a log10 axis and 4 of those on the default axis with `"levels"`, limma's F-tests of Hmisc's columns count fewer degrees of freedom than columns: the correlation of their coefficients has an eigenvalue below 1e-8 of the largest, at condition numbers of R's design from 2.3e4 to 9.2e4. CytePool's restricted cubic columns span the same curves, and its F-tests count every column and agree with those of the B-spline form.
 
 (validation-simulate-dose-series)=
 ### Simulated dose series and their truths
@@ -885,6 +854,59 @@ Each row compares every column that speckle reports, matched by cell type, and t
 
 CytePool computes the transforms as log((x + 0.5) / (N - x + 0.5 (I - 1))) and arctan2(sqrt(x), sqrt(N - x)), equal to speckle's formulas but without the cancellation in 1 - q and the loss of digits of arcsin near 1; on these data the two agree to rounding.
 
+## Dose response
+
+(validation-dose-axes)=
+### Dose axes and their design columns
+
+The script printed 234 checks (216 pass, 16 information and 2 deliberate differences) on 2026-11-20, in 18.6 s, with a peak memory of 346 MiB. [Dose axes and the vehicle](statistics/dose_response.md#dose-axes) explains what it checks.
+
+[`validation/dose_axes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_axes.py) builds `DoseAxis` designs for four dose series from fixed seeds (seeds 20261124 to 20261126): a ladder like the TCDD liver series, the vehicle and 0.01 to 30 ug/kg with 2 or 3 samples each; an in vitro half-log series, 6 vehicle wells and 4 doses in duplicate; an unbalanced ladder whose second dose has 10 of the 16 treated samples; and 24 measured exposures with 6 zeros. Each series is read on four axes, the vehicle in its own group or on the axis, on the log10 or the linear scale (on the log10 scale at an offset), with both forms of the spline and knots by `"levels"` and `"quantiles"` at df 1 to 8 and given as doses: 392 cases. R computes the positions, `dose_treated`, the knots with R's own functions (`ns(unique(x), df)`, `ns(x, df)`), the spline columns with `ns` or Hmisc's `rcspline.eval`, `model.matrix`, the F-statistics of nested `lm` fits of seeded responses (any dose, among the treated doses, departure from a line), `predict` of the full fit on a grid of doses from 0 to twice the highest, and limma-trend's moderated F-tests of the same columns on seeded counts of 200 genes (`cpm`, `lmFit`, `eBayes(trend = TRUE)` and `classifyTestsF`, which `topTable` of several columns calls), with their numerator degrees of freedom; CytePool runs `limma_trend` on the same counts. B-spline columns, whose basis differs from `ns()`'s, are compared through their column space. Restricted cubic columns are compared by their first column, element by element, and through Hmisc's columns as combinations of CytePool's, which differ from Hmisc's truncated cubes by a change of basis that keeps them well conditioned. R's F-statistics, curves and moderated F-tests are compared where R's design has a condition number of at most 1e5, so that rounding stays below the tier. limma computes the moderated F-tests of Hmisc's columns from the correlation of their coefficients, whose rounding grows with the square of that condition number, so those are compared at the close tier; the agreement of the two forms ties CytePool's restricted cubic F-tests to `ns()`'s at the exact tier. Reference: R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Positions of the doses, 4 series on 4 axes | `log10(dose)`, `log10(dose + offset)`, the dose | 0 | 1e-10 | 16 pass |
+| `dose_treated` with the vehicle in its own group | `as.numeric(dose > 0)` | 0 mismatches | 0 | 8 pass |
+| Knots and boundary knots, 380 cases | `ns` | 0 | 1e-10 | 16 pass |
+| First restricted cubic column, 190 cases | `rcspline.eval` | 0 | 1e-10 | 16 pass |
+| Hmisc's restricted cubic columns as combinations of CytePool's, 190 cases | `rcspline.eval` | 2.6e-14 | 1e-10 | 16 pass |
+| B-spline columns, by their column space, 190 cases | `ns` | 2.4e-14 | 1e-10 | 16 pass |
+| Design matrices of `Design`, 380 cases | `model.matrix` | 6.4e-14 | 1e-10 | 16 pass |
+| F-statistics of any dose, among the treated doses and of departure from a line, 338 cases | `anova(lm)` | 8.3e-13 | 1e-10 | 16 pass |
+| Fitted curves on a grid of doses, 338 cases | `predict(lm)` | 9.6e-12 | 1e-10 | 16 pass |
+| Moderated F-statistics of the B-spline form, 190 cases | limma's `classifyTestsF` of `ns()`'s columns | 6.9e-13 | 1e-10 | 16 pass |
+| Moderated F-statistics of the restricted cubic form, 135 cases | limma's `classifyTestsF` of Hmisc's columns | 2.4e-9 | 1e-6 | 16 pass |
+| Numerator degrees of freedom of the moderated F-tests, which count every column tested, 380 cases | the columns tested | 0 mismatches | 0 | 16 pass |
+| Moderated F-statistics of the two forms on the same knots, 190 pairs of cases | the B-spline form | 1.3e-12 | 1e-10 | 16 pass |
+| Cases where one program places knots and the other raises, other than the deliberate differences | R | 0 | 0 | 16 pass |
+| F-statistics, curves and moderated F-tests of the 42 cases whose R design has a condition number above 1e5, up to 9.7e10: Hmisc's columns, 39 on a linear axis and 3 on the log10 axis of the exposures with the vehicle on it; R's `lm` drops a column as aliased in 8 of them | `lm` | not compared | n/a | 8 information |
+| Largest condition number of the designs of each axis and form: CytePool's restricted cubic columns 23 to 1.3e3, Hmisc's 6.4e4 to 9.7e10; the B-spline form 25 to 710 in both programs | `model.matrix` | n/a | n/a | 8 information |
+| Deliberate differences, listed below | `ns`, limma | R places knots, or limma counts fewer degrees of freedom | n/a | 2 deliberate differences |
+
+Deliberate differences:
+
+- On the unbalanced ladder, R's quantile rule places two knots at 0.1 mg/kg in 12 cases, and `ns()` takes the repeated knot, which makes the curve less smooth there; `DoseAxis.spline_basis` raises an error that names the rule and the dose.
+- In 13 cases, 7 of them on a log10 axis and 4 of those on the default axis with `"levels"`, limma's F-tests of Hmisc's columns count fewer degrees of freedom than columns: the correlation of their coefficients has an eigenvalue below 1e-8 of the largest, at condition numbers of R's design from 2.3e4 to 9.2e4. CytePool's restricted cubic columns span the same curves, and its F-tests count every column and agree with those of the B-spline form.
+
+(validation-dose-design)=
+### Dose designs
+
+The script printed 41 checks (39 pass and 2 information) on 2026-11-20, in 6.5 s, with a peak memory of 520 MiB. [Checking a dose design](statistics/dose_response.md#dose-design-check) explains what it checks, and [ETAP's design minimums](statistics/dose_response.md#dose-rule-minimums) the minimums.
+
+[`validation/dose_design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_design.py) checks `check_dose_design` against three references and on published data. Counts (seeds 20261127 and 20261128): the cells of a TCDD-like series of 24 mice, the vehicle and 0.01 to 30 ug/kg in lanes of two mice, with 300 genes and 4 cell types: abundant hepatocytes, stellate cells that fall from about 60 per mouse to 6 at the top dose, cholangiocytes at about 9 per mouse, and macrophages that the vehicle mice lack. `from_cells` pools them; scanpy's `get.aggregate` sums the same cells per mouse and cell type, and pandas applies the filter (at least 10 cells, some counts, and `min_counts` 0 or 10,678, the median count of the stellate profiles of 10 cells or more) and groups the samples by cell type and dose. Aliasing and statuses: 20 designs with 27 cell types, among them the TCDD-like series with its lanes; a lane equal to the dose; two lanes that split the low and high doses; the vehicle in both lanes; a lane per sample; two vehicle samples, or two dose-1 samples, sharing a lane; the vehicle alone in its lane; sex and lane that absorb dose 1 only together; sex equal to the top dose's indicator; one sample per dose; a replicated vehicle with single doses; one participant per dose sampled before and after dosing, under `~ patient` and `~ patient + timepoint`; a bulk cube; the vehicle and one dose; two covariates that leave no residual degrees of freedom; `~ 0`; a covariate equal to the treated indicator; and no vehicle. R filters each cell type's samples from their cells and counts, builds the other terms with `model.matrix`, adds an intercept and an indicator of each treated dose group that keeps a sample, and takes the rank from `qr()`; a dose group is estimable when limma's `nonEstimable` does not name its column placed last, and confounded with the batch when it is estimable and `nonEstimable` names it once indicators of the batches, those of a single sample pooled into one, join the model. ETAP's minimums: 13 designs, the TCDD-like series with males only; a design of the vehicle and 0.03 to 300 mg/kg with 4 males and 4 females per dose, with cell types that keep every sample, keep one passing male at 1 mg/kg, or keep 2 female vehicle samples; the same with 3 females at one dose; and 10 ladders whose fourth step from the top is 2.5, 3, 10/3, 3.5, 3.6 or 4 and whose lowest step is 3, 8.5, 9 or 10, none within 1e-3 log10 of a bound of the tolerance. The statuses and ETAP's minimums are compared with the same rules coded again in R for this check, self-coded, which catches slips in either coding while the tests derive the rules by hand. Published data: GEO series GSE208161 [@sonigra2022], the per-cell metadata of a phase 1 trial with one participant per dose level, placebo included, sampled at day 1 and day 29, in 18 Seurat clusters; `from_cells` pools each cell's RNA count as the cube's one feature, and the doses (placebo, 0.3, 1 and 3 mL) come from GEO's sample records. Reference: scanpy 1.12.4, pandas 3.1.0, anndata 0.13.4; R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Cells, counts over every gene and use of each sample in each cell type, at `min_counts` 0 and 10,678, 96 samples each | scanpy's `get.aggregate`, pandas | 0 mismatches | 0 | 2 pass |
+| Samples used and left out, fewest cells and fewest counts of each dose group in each cell type, 36 groups each | scanpy's `get.aggregate`, pandas | 0 mismatches | 0 | 2 pass |
+| Samples used, residual degrees of freedom, estimable dose groups and statuses of 20 designs, and the dose groups confounded with the batch in the 9 that have one | R's `qr()`, limma's `nonEstimable`; statuses self-coded | 0 mismatches | 0 | 20 pass |
+| Met and observed text of each of ETAP's minimums, 128 rows of 13 designs | ETAP's minimums in R, self-coded | 0 mismatches | 0 | 13 pass |
+| GSE208161: cells and RNA counts of 8 samples x 18 clusters | sums of the metadata's rows | 0 mismatches | 0 | 1 pass |
+| GSE208161 with the baselines at dose 0 and `~ patient`: every cluster descriptive, 13 with one residual degree of freedom and 5 with none | the published design, one participant per dose level | 18 descriptive | 18 descriptive | 1 pass |
+| GSE208161 with `~ 1`: 18 descriptive; with the day-29 samples alone: 16 descriptive, and clusters 14 and 17 refused, whose placebo sample keeps 3 cells | the published design | n/a | n/a | 2 information |
+
+On GSE208161 a rule that asked only for residual degrees of freedom would call 13 clusters inferential on one degree of freedom, the placebo participant's change from baseline; the check calls them descriptive, since no dose has a second participant.
+
 ## Gene sets and pathways
 
 (validation-gene-set-tests)=
@@ -1372,6 +1394,11 @@ python validation/multiple_testing.py
 # Hmisc, rms, limma and edgeR, in the R environment of the dose-response references (below).
 RSCRIPT=$REF/r-dose/bin/Rscript python validation/smoothing.py
 RSCRIPT=$REF/r-dose/bin/Rscript python validation/dose_axes.py
+# limma in the same R environment, and scanpy; downloads 1.7 MB from GEO on its first
+# run, into ~/.cache/cytepool-validation/GSE208161 unless --data or GSE208161_DATA
+# names another directory outside the repository.
+SCANPY_PYTHON=$REF/python-scanpy/bin/python RSCRIPT=$REF/r-dose/bin/Rscript \
+    python validation/dose_design.py
 python validation/normalization.py
 python validation/design.py
 python validation/linear_models.py
