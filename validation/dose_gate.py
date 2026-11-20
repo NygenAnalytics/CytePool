@@ -986,19 +986,20 @@ def compare_assignments(
     themselves, against R's reading of the sample table."""
     kinds = [0, 0]
     counts = [0, 0]
-    large = 0.0
     for case in found:
         for entry in ours.checks[case.name].provenance["groups"]:
             theirs = blocks[case.name][entry["group_id"]]
             kinds[0] += entry.get("units") == theirs["kind"]
             kinds[1] += 1
-            count = entry.get("n_assignments")
+            # Every count here lies below 2^53, where R's doubles hold it exactly.
             reference = float(theirs["n_assignments"])
-            if reference < 2.0**53:
-                counts[0] += count == int(reference)
-                counts[1] += 1
-            else:
-                large = max(large, abs(count - reference) / reference)
+            if reference >= 2.0**53:
+                raise SystemExit(
+                    f"{case.name}: {reference:.3g} assignments, beyond the integers "
+                    "that R's doubles hold exactly; compare such counts relatively"
+                )
+            counts[0] += entry.get("n_assignments") == int(reference)
+            counts[1] += 1
     rows.identical(
         "the units permuted: samples, whole units or doses within units, every case "
         "and cell type",
@@ -1006,16 +1007,9 @@ def compare_assignments(
         *kinds,
     )
     rows.identical(
-        "assignments of the dose labels, every case and cell type, up to 2^53",
+        "assignments of the dose labels, every case and cell type, up to 1.4e11",
         "R: products of choose() over the blocks R builds",
         *counts,
-    )
-    rows.bounded(
-        "assignments of the dose labels above 2^53 (fixture, 1.4e11 and 1.7e8 within "
-        "doubles' 53 bits)",
-        "R: products of choose() in doubles",
-        large,
-        EXACT,
     )
     same = [0, 0]
     for (name, key), check in ours.every.items():
@@ -1219,11 +1213,20 @@ def write_fixtures(found: list[Case], limma: dict) -> None:
 def benchmark() -> None:
     """permutation_check of 100 runs of one cell type of 20,000 genes x 24 profiles,
     the vehicle and 7 doses x 3, with the spline gate and with a fold change, and of
-    5 runs with the Williams-type gate, against the ordinary least squares fit of
-    20,000 genes x 200 samples, the baseline of the epic's targets."""
+    5 runs with the Williams-type gate, against the baseline of the epic's targets:
+    the weighted fit of 20,000 genes x 200 samples, as multiple_contrast_tests.py
+    times it. The ordinary least squares fit that dose_contrasts.py times is printed
+    beside it."""
     rng = np.random.default_rng(1)
-    y = rng.normal(size=(200, 20_000))
-    x = np.column_stack([np.ones(200), rng.normal(size=(200, 3))])
+    n_samples = 200
+    groups = np.repeat(np.arange(4), n_samples // 4)
+    x = np.column_stack(
+        [np.ones(n_samples)]
+        + [(groups == g).astype(float) for g in (1, 2, 3)]
+        + [rng.normal(50.0, 10.0, n_samples), rng.normal(0.0, 1.0, n_samples)]
+    )
+    y = rng.normal(6.0, 1.0, (n_samples, 20_000))
+    weights = np.exp(rng.normal(0.0, 0.5, y.shape))
 
     def timed(run: Any, repeats: int = 3) -> float:
         run()
@@ -1234,9 +1237,11 @@ def benchmark() -> None:
             times.append(time.perf_counter() - start)
         return float(np.median(times))
 
-    baseline = timed(lambda: fit_linear_model(y, x))
+    baseline = timed(lambda: fit_linear_model(y, x, weights=weights))
+    ordinary = timed(lambda: fit_linear_model(y, x))
     print(
-        f"Baseline: ordinary least squares, 20,000 genes x 200 samples, {baseline:.3f} s"
+        "Baseline: weighted fit_linear_model, 20,000 genes x 200 samples, "
+        f"{baseline:.3f} s (ordinary least squares {ordinary:.3f} s)"
     )
     cube, _ = simulate_dose_series(
         [0.0, 0.01, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0],
@@ -1263,7 +1268,7 @@ def benchmark() -> None:
         per_run = seconds / (runs + 1)
         print(
             f"| {name} | {runs} | {seconds:.1f} | {per_run:.2f} | "
-            f"{seconds / baseline:.0f} | 350 per 100 runs |"
+            f"{seconds / baseline:.0f} | 350 per 100 runs, 525 at most |"
         )
 
 
