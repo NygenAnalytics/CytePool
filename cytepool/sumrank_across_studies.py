@@ -67,7 +67,7 @@ from ._columns import text_column
 from ._masked_arrays import reject_masked
 from ._messages import PACKAGE_DIRECTORY, fitted_lines, fitted_message, listing, quoted
 from ._options import index_integer, random_generator
-from ._reruns import changed_settings, recorded_options
+from ._reruns import recorded_options
 from ._study_statistics import (
     contrast_levels,
     signed_statistics,
@@ -584,8 +584,12 @@ def _check_rerun(rerun: _Rerun, result: DifferentialExpressionResult) -> None:
             f"cube, {record['cube']['fingerprint']}: analyse "
             f"collection.aligned_cube({rerun.study!r})"
         )
-    changed = changed_settings(record["settings"], rerun.settings)
-    if changed:
+    if record["settings"] != rerun.settings:
+        changed = [
+            name
+            for name in sorted(set(record["settings"]) | set(rerun.settings))
+            if record["settings"].get(name) != rerun.settings.get(name)
+        ]
         raise ValueError(  # pragma: no cover - the options are those recorded
             f"the analysis of study {rerun.study!r} could not be re-run with its "
             f"recorded settings; these differ: {listing(changed)}"

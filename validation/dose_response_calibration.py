@@ -36,15 +36,18 @@ design supports and the spline's default size.
 - Gate rows: the share of null cell types in which a gate passes any gene at 5% FDR:
   the default gate, the spline test, and the dose-group gate, counted on the null
   datasets above, and the gate of a 1.5-fold change by TREAT, on the same datasets.
-  Each against 5% plus 4 binomial standard errors of 1,000 datasets, 7.76%: a check
-  at 3 replicates, and a known limit, printed with the bound, at 2. Then
-  ``permutation_check`` with 100 runs of the default gate on the first 100 null
-  datasets of each design cell (``--check-datasets``): the mean share of its runs
-  that pass genes against the null datasets' share, within 4 standard errors of the
-  difference plus 2 / 101, and the share of cell types whose p-value is at most 0.05,
-  at most 5% plus 4 binomial standard errors. A control row: the unadjusted
-  Williams-type gate, any gene at a p-value below 0.05 with no adjustment across
-  genes, on the multiple contrast tests' null datasets, must exceed 7.76%. On the
+  Each against 5% plus 4 binomial standard errors of the cell types it counts, 6.95%
+  for the 2,000 cell types of 1,000 datasets: a check of the spline and fold-change
+  gates at 3 replicates, and a known limit, printed with the bound, for the
+  dose-group gate and at 2 replicates. Then ``permutation_check`` with 100 runs of the
+  default gate on the first 100 null datasets of each design cell
+  (``--check-datasets``): the mean share of its runs that pass genes against the
+  default gate's share on the other null datasets, within 4 standard errors of the
+  difference, and the share of cell types whose p-value is at most 0.05, at most 5%
+  plus 4 binomial standard errors. A control row: the unadjusted Williams-type gate,
+  any gene at a p-value below 0.05 with no adjustment across genes, on the multiple
+  contrast tests' null datasets, must exceed 5% by more than 4 binomial standard
+  errors of the cell types it counts. On the
   power datasets, the 1.5-fold gate's power by maximal change and its false discovery
   proportion, a false call being a gene whose true change never exceeds 1.5-fold at
   the cell type's doses, and the check's p-values. And the design of Lee et al.
@@ -66,8 +69,9 @@ vehicle-only design numbered 0; the multiple contrast tests of a dataset take th
 seed from kind 3, and the permutation checks theirs from kind 5. Each estimate comes with its
 Monte Carlo standard error between datasets and, for shares of p-values, the binomial
 bound of that error, which p-values that a dataset's moderation ties together exceed.
-Every row is information but the gate rows at 3 replicates, the permutation check's
-rows and the control rows, which fail the run when they fail.
+Every row is information but the spline and fold-change gates' rows at 3
+replicates, the permutation check's rows and the control rows, which fail the run
+when they fail.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root.
@@ -116,9 +120,6 @@ BAND_GENES = 600
 BAND_RESPONSIVE = 0.3
 FOLD_CHANGE = 1.5
 CHECK_RUNS = 100
-# The bound of a gate's share of null cell types with a call: 5% plus 4 binomial
-# standard errors of 1,000 datasets.
-GATE_BOUND = 0.05 + 4 * np.sqrt(0.05 * 0.95 / 1000)
 # The vehicle-only design of Lee et al. (2024): 4 mock dose groups of 6 samples.
 VEHICLE_ONLY_DOSES = [0.0, 0.1, 1.0, 10.0]
 VEHICLE_ONLY_REPLICATES = 6
@@ -256,6 +257,12 @@ def null_rows(cell: DesignCell, datasets: int, checked: int) -> list[tuple[str, 
     return rows + gate_null_rows(cell, found, datasets, checked)
 
 
+def null_bound(cell_types: int) -> float:
+    """The largest share of null cell types with a call that is in line with 5%: 5%
+    plus 4 binomial standard errors of the cell types counted."""
+    return float(0.05 + 4 * np.sqrt(0.05 * 0.95 / cell_types))
+
+
 def gate_calls(result: Any, group: str, gate: str) -> bool:
     """Whether a gate passes a gene of a cell type at 5% FDR: the result's own gate,
     or the gate of the dose groups' test, whose adjusted p-values it calls."""
@@ -295,22 +302,23 @@ def gate_null_rows(
         "fold_change": f"the {FOLD_CHANGE:g}-fold gate, by TREAT,",
     }
     reference = f"seed [{SEED}, {NULL}, {cell.number}, dataset]"
-    shares = {}
     for gate, label in labels.items():
         calls = np.array(found.gates[gate], dtype=float)
-        share, between, text = share_text(calls)
-        shares[gate] = (share, between)
-        if cell.replicates >= 3:
-            result = "pass" if share <= GATE_BOUND else "FAIL"
+        share, _, text = share_text(calls)
+        bound = null_bound(calls.size)
+        # The dose-group gate exceeds the bound at 3 replicates too.
+        known = cell.replicates < 3 or gate == "dose_groups"
+        if share <= bound:
+            result = "pass"
         else:
-            result = "known limit" if share > GATE_BOUND else "pass"
+            result = "known limit" if known else "FAIL"
         rows.append(
             (
                 f"{cell.label}: {label} at 5% FDR under the null, {datasets:,} "
                 "datasets: cell types with a gene passing",
                 reference,
                 text,
-                f"at most {GATE_BOUND:.4f}",
+                f"at most {bound:.4f}",
                 result,
             )
         )
@@ -319,14 +327,17 @@ def gate_null_rows(
     per_cell_type = np.array(found.check_shares, dtype=float)
     mean = float(np.mean(per_cell_type))
     error = float(np.std(np.mean(per_cell_type, axis=1), ddof=1) / np.sqrt(checked))
-    null, null_error = shares["spline"]
-    bound = 4 * np.sqrt(error**2 + null_error**2) + 2 / (CHECK_RUNS + 1)
+    # The default gate's share on the datasets the check did not run on, which are
+    # independent of the check's.
+    others = np.array(found.gates["spline"][checked:], dtype=float)
+    null, null_error, _ = share_text(others)
+    bound = 4 * np.sqrt(error**2 + null_error**2)
     difference = abs(mean - null)
     rows.append(
         (
             f"{cell.label}: permutation_check, {CHECK_RUNS} runs of the default gate "
             f"on the first {checked:,} null datasets: the mean share of runs that pass "
-            "genes, against the null datasets' share",
+            f"genes, against the default gate's share on the other {len(others):,}",
             f"seed [{SEED}, {CHECKS}, {cell.number}, dataset]",
             f"{mean:.4f} (SE {error:.4f}) against {null:.4f} (SE {null_error:.4f}); "
             f"difference {difference:.4f}",
@@ -336,7 +347,7 @@ def gate_null_rows(
     )
     p = np.array(found.check_p_values, dtype=float)
     share = float(np.mean(p <= 0.05))
-    limit = 0.05 + 4 * np.sqrt(0.05 * 0.95 / p.size)
+    limit = null_bound(p.size)
     rows.append(
         (
             f"{cell.label}: permutation_check on the same datasets: cell types with a "
@@ -457,6 +468,7 @@ def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]
         )
     )
     share = float(np.mean(unadjusted))
+    bound = null_bound(len(unadjusted))
     rows.append(
         (
             f"{cell.label}: the unadjusted Williams-type gate, a gene at a p-value below "
@@ -464,8 +476,8 @@ def contrast_null_rows(cell: DesignCell, datasets: int) -> list[tuple[str, ...]]
             f"seed [{SEED}, {NULL}, {cell.number}, dataset]",
             f"cell types with a gene passing: {share:.3f} ({len(unadjusted):,} cell "
             "types)",
-            f"above {GATE_BOUND:.4f}",
-            "control" if share > GATE_BOUND else "FAIL",
+            f"above {bound:.4f}",
+            "control" if share > bound else "FAIL",
         )
     )
     return rows
@@ -993,13 +1005,14 @@ def main() -> int:
         help="datasets of the vehicle-only design (200)",
     )
     arguments = parser.parse_args()
+    if arguments.check_datasets >= arguments.null_datasets:
+        parser.error(
+            "--check-datasets must be below --null-datasets: the checks are compared "
+            "with the null datasets they did not run on"
+        )
     rows = []
     for cell in grid():
-        rows += null_rows(
-            cell,
-            arguments.null_datasets,
-            min(arguments.check_datasets, arguments.null_datasets),
-        )
+        rows += null_rows(cell, arguments.null_datasets, arguments.check_datasets)
         rows += power_rows(cell)
         rows += gate_power_rows(cell)
         rows += contrast_null_rows(cell, arguments.contrast_datasets)

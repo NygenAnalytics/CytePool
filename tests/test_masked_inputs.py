@@ -3411,6 +3411,10 @@ RECORDS = {
 # Callables that modules with __all__ define but do not export.
 NOT_EXPORTED = {
     "cytepool.design.checks.check_design": "takes a Design; Design.check is public",
+    "cytepool.dose_responses.gate_text": (
+        "words a recorded gate for the printouts of DoseResponseResult and "
+        "PermutationCheck"
+    ),
 }
 COMPILED_SCALAR = "_scalar"  # the compiled routine behind each distribution function
 

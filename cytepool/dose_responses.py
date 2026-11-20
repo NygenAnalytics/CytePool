@@ -212,13 +212,17 @@ GATE_TESTS = (SPLINE, DOSE_GROUPS, *CONTRAST_TESTS)
 # Of two tests of the same hypothesis in a cell type, the first of this order runs
 # when the tests are chosen by default.
 _PRIORITY = (SPLINE, DOSE_GROUPS, LINEAR_TREND, NONLINEARITY)
-_ANALYSES: dict[str, Callable[..., DifferentialExpressionResult]] = {
+ANALYSES: dict[str, Callable[..., DifferentialExpressionResult]] = {
     "limma_voom": limma_voom,
     "limma_trend": limma_trend,
     "dream_voom": dream_voom,
 }
+"""The analyses of dose_response, by the name its results record."""
 # The options of the analysis that dose_response sets itself.
 _SET_HERE = ("contrasts", "f_tests", "adjust_across_groups")
+SET_BY_DOSE_RESPONSE = (*_SET_HERE, "groups", "min_cells", "min_counts")
+"""The options of the analysis that dose_response sets, or takes as arguments of its
+own, and so does not pass on from its other options."""
 _ACROSS_GROUPS = "adjusted_p_value_across_groups"
 # The settings of a gate.
 _GATE_SETTINGS = ("test", "fdr", "fold_change")
@@ -902,7 +906,7 @@ class DoseResponseResult:
             f"type{'' if n_groups == 1 else 's'}, {tested:,} tested; tests: "
             + ", ".join(self.tests),
             dose,
-            "  gate: " + _gate_text(settings["gate"]),
+            "  gate: " + gate_text(settings["gate"]),
         ]
         for entry, row in zip(record["groups"], range(n_groups), strict=True):
             group = entry["group_id"]
@@ -1039,20 +1043,21 @@ def dose_response(
     expression filter, which does not read the doses (Bourgon, Gentleman and Huber
     2010). Its calls are the table ``"gate"``, with ``passes_gate``; the genes it
     passes are those whose doses
-    :meth:`DoseResponseResult.lowest_effective_doses` calls, and
-    :func:`~cytepool.permutation_check` shows how often noise passes it at the
-    design. A fold change enters the null hypothesis of each dose against the
-    vehicle by TREAT (McCarthy and Smyth 2009), instead of a cut on the estimated
-    changes after the test, and a gene passes when its change beyond the fold change
-    at one dose or more is called: the smallest of its doses' TREAT p-values times
-    the doses (Bonferroni), then Benjamini-Hochberg. The gate is not the ANOVA gate
-    of NTP's and EPA's rules, a test of the data set that at least one gene must pass
-    before the set is analysed further, nor BMDExpress's prefilter, an unadjusted
-    trend p-value with a cut on the fold change. With 2 replicates per dose, a cell
-    type of 1,000 null genes had a gene pass the default gate at 5% FDR in 10% to 16%
-    of simulated series, against 7% with 3 replicates
+    :meth:`DoseResponseResult.lowest_effective_doses` calls. A fold change enters
+    the null hypothesis of each dose against the vehicle by TREAT (McCarthy and
+    Smyth 2009), and a gene passes when its change beyond the fold change at one dose
+    or more is called: the smallest of its doses' TREAT p-values times the doses
+    (Bonferroni), then Benjamini-Hochberg. The gate takes the place of BMDExpress's
+    prefilter, the step that picks the genes that go on to curves: BMDExpress's
+    default prefilter takes an unadjusted Williams p-value and cuts the estimated
+    fold change, where the gate adjusts its p-values and puts any fold change inside
+    the test. It is not the ANOVA gate of NTP's and EPA's rules, a test of the data
+    set that at least one gene must pass before the set is analysed further. With 2
+    replicates per dose, a cell type of 1,000 null genes had a gene pass the default
+    gate at 5% FDR in 10% to 16% of simulated series, against 7% with 3 replicates
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-gate):
-    check the calls of such designs with :func:`~cytepool.permutation_check`.
+    :func:`~cytepool.permutation_check` runs the gate again with the doses permuted
+    and tests whether the true doses pass more genes.
 
     The design is checked first by :func:`~cytepool.check_dose_design`, with
     ``batch``, ``groups``, ``min_cells`` and ``min_counts``, and the check is kept as
@@ -1082,7 +1087,11 @@ def dose_response(
             vehicle is a group of its own, every dose when it is on the axis),
             ``"nonlinearity"`` a spline of two columns or more, and ``"mcp"`` two
             treated doses; a cell type that compares one treated dose does not run
-            ``"mcp"``, with the reason.
+            ``"mcp"``, with the reason. The gate's test, the spline by default, also
+            runs when ``tests`` does not name it, and decides which genes pass the
+            gate and whose lowest effective doses are called: ``tests="williams"``
+            runs the spline too, and ``gate={"test": "williams"}`` makes the
+            Williams-type test decide.
         spline_df: The number of spline columns, at least 1 and at most the doses on
             the axis minus 1; None gives 2 when the axis holds 4 doses or more, and
             1 otherwise. The knots are placed by :meth:`DoseAxis.spline_basis` with
@@ -1331,10 +1340,14 @@ def _gate_setting(value: Any) -> dict[str, Any]:
             f"one, not any response; the gate's tests are {quoted(GATE_TESTS)}"
         )
     if test is not None and test not in (*GATE_TESTS, EACH_DOSE):
+        hint = (
+            " (the one-way ANOVA of the dose groups is 'dose_groups')"
+            if "anova" in test.lower()
+            else close_matches(test, (*GATE_TESTS, EACH_DOSE))
+        )
         raise ValueError(
-            f"gate['test'] is {test!r}, which is not a test of any response"
-            f"{close_matches(test, (*GATE_TESTS, EACH_DOSE))}; the gate's tests are "
-            f"{quoted(GATE_TESTS)}, and 'each_dose' with a fold change"
+            f"gate['test'] is {test!r}, which is not one of the gate's tests{hint}; "
+            f"they are {quoted(GATE_TESTS)}, and 'each_dose' with a fold change"
         )
     fdr = real_number(value.get("fdr", _FDR), "gate['fdr']", finite=True)
     if not 0.0 < fdr < 1.0:
@@ -1356,9 +1369,9 @@ def _gate_setting(value: Any) -> dict[str, Any]:
         )
     if test not in (None, EACH_DOSE):
         raise ValueError(
-            "a fold change enters the test of each dose against the vehicle by TREAT, "
-            f"and the gate's test {test!r} has no threshold; leave gate['test'] out, or "
-            "pass 'each_dose'"
+            f"the gate's test {test!r} takes no fold change; pass "
+            f"gate={{'fold_change': {change:g}}} alone, which tests each dose against "
+            "the vehicle beyond that fold change by TREAT"
         )
     return {"test": EACH_DOSE, "fdr": fdr, "fold_change": change}
 
@@ -1393,8 +1406,9 @@ def _gate(
     if test == EACH_DOSE and method == "dream_voom":
         raise ValueError(
             "a gate with a fold change tests each dose by TREAT on limma's moderated "
-            "t-tests, which dream_voom's tests are not; leave the fold change out, or "
-            "analyse with limma_voom"
+            "t-tests, which dream_voom's tests are not; leave the fold change out. "
+            "TREAT runs under limma_voom and limma_trend, which fit designs without "
+            "random effects"
         )
     return {**asked, "test": test}
 
@@ -1439,9 +1453,7 @@ def _candidates(
 def _analysis_name(analysis: Any, design: Any) -> str:
     """The name of the analysis, which must be one of the three and suit the
     design's random effects."""
-    method = next(
-        (name for name, known in _ANALYSES.items() if analysis is known), None
-    )
+    method = next((name for name, known in ANALYSES.items() if analysis is known), None)
     if method is None:
         given = (
             f"the name {analysis!r}" if isinstance(analysis, str) else repr(analysis)
@@ -1474,7 +1486,7 @@ def _check_options(method: str, options: Mapping[str, Any]) -> None:
         reject_masked(value, name)
     accepted = [
         name
-        for name, parameter in inspect.signature(_ANALYSES[method]).parameters.items()
+        for name, parameter in inspect.signature(ANALYSES[method]).parameters.items()
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY
     ]
     for name in options:
@@ -1485,8 +1497,7 @@ def _check_options(method: str, options: Mapping[str, Any]) -> None:
             )
         if name not in accepted:
             # The options to name are those dose_response neither sets nor takes.
-            taken = (*_SET_HERE, "groups", "min_cells", "min_counts")
-            others = [option for option in accepted if option not in taken]
+            others = [o for o in accepted if o not in SET_BY_DOSE_RESPONSE]
             raise TypeError(
                 f"{method} has no option {name!r}{close_matches(name, others)}; its "
                 f"options are: {listing(others, limit=len(others))}"
@@ -2011,7 +2022,7 @@ def _run_gate(fit: _CellTypeFit, gate: Mapping[str, Any], method: str) -> None:
             **{name: genes[name] for name in columns},
             "p_value": p_values,
             "adjusted_p_value": adjusted,
-            "passes_gate": np.nan_to_num(adjusted, nan=np.inf) <= gate["fdr"],
+            "passes_gate": adjusted <= gate["fdr"],
         }
     )
 
@@ -2164,12 +2175,7 @@ def _result(
         "design": model_record,
         "settings": settings,
         "analysis_settings": None if first is None else first.settings,
-        "gate_adjustment": (
-            "Benjamini-Hochberg within each cell type"
-            if gate["fold_change"] is None
-            else "the smallest of each gene's TREAT p-values of the doses times the "
-            "doses (Bonferroni), then Benjamini-Hochberg within each cell type"
-        ),
+        "gate_adjustment": _gate_adjustment(gate),
         "tests": [*splines.tests, *named],
         "groups": [_group_record(fit) for fit in fits],
     }
@@ -2479,16 +2485,22 @@ def _axis_text(axis: DoseAxis, basis: Mapping[str, Any] | None) -> str:
     )
 
 
-def _gate_text(gate: Mapping[str, Any]) -> str:
-    """The gate, for the printout: its test, its adjustments and its level."""
-    level = f"at {100.0 * gate['fdr']:g}% FDR"
+def gate_text(gate: Mapping[str, Any]) -> str:
+    """The gate in words, as printouts give it: its test, its adjustments for
+    multiple testing and its level."""
+    if gate["fold_change"] is None:
+        test = f"{gate['test']} test"
+    else:
+        test = f"TREAT beyond {gate['fold_change']:g}-fold at each dose"
+    return f"{test}, {_gate_adjustment(gate)}, at {100.0 * gate['fdr']:g}% FDR"
+
+
+def _gate_adjustment(gate: Mapping[str, Any]) -> str:
+    """The gate's adjustments for multiple testing, in words."""
     within = "Benjamini-Hochberg within each cell type"
     if gate["fold_change"] is None:
-        return f"{gate['test']} test, {within}, {level}"
-    return (
-        f"TREAT beyond {gate['fold_change']:g}-fold at each dose, Bonferroni over the "
-        f"cell type's doses, {within}, {level}"
-    )
+        return within
+    return f"Bonferroni over the cell type's doses, {within}"
 
 
 def _slope_unit(axis: DoseAxis) -> str:

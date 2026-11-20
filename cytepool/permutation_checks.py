@@ -4,8 +4,8 @@ gate at the series' own design.
 :func:`~cytepool.permutation_check` permutes the dose labels of each cell type among
 the samples that its design treats alike, runs :func:`~cytepool.dose_response` again
 on each permuted labelling with the result's settings, and counts the genes that pass
-the result's gate: how often the gate passes genes when the doses carry no
-information, and a permutation p-value for the genes the true doses pass
+the result's gate: how often the gate passes genes with the doses permuted, and a
+permutation p-value that tests whether the true doses pass more
 (https://docs.nygen.io/CytePool/statistics/dose-response#dose-permutation-check).
 
 Exchangeable units:
@@ -44,70 +44,57 @@ import json
 import math
 import zlib
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
 import numpy as np
-import numpy.typing as npt
 
-from ._analysis_records import only_key, software_versions
+from ._analysis_records import absence, only_key, software_versions
 from ._columns import text_column
+from ._group_fits import group_positions
 from ._masked_arrays import reject_masked
-from ._messages import close_matches, fitted_lines, listing, quoted
+from ._messages import close_matches, fitted_lines, listing
 from ._options import positive_integer, recorded_seed
-from ._reruns import changed_settings, recorded_options
+from ._reruns import recorded_options
 from .cube import Cube
 from .design import Design
-from .differential_expression import (
-    DifferentialExpressionResult,
-    dream_voom,
-    limma_trend,
-    limma_voom,
-)
 from .dose_axes import DoseAxis
 from .dose_responses import (
+    ANALYSES,
     DOSE_GROUPS,
-    DUNNETT,
     EACH_DOSE,
     GATE,
     MCP,
-    SPLINE,
-    TESTS,
+    SET_BY_DOSE_RESPONSE,
     DoseResponseResult,
     dose_response,
+    gate_text,
 )
 from .table import Table
 
 __all__ = ["PermutationCheck", "permutation_check"]
 
-FloatArray = npt.NDArray[np.float64]
-
-_ANALYSES: dict[str, Callable[..., DifferentialExpressionResult]] = {
-    "limma_voom": limma_voom,
-    "limma_trend": limma_trend,
-    "dream_voom": dream_voom,
-}
-# The options of the analysis that dose_response sets, or takes as arguments of its
-# own, which a rerun does not read back from the record.
-_SET_BY_DOSE_RESPONSE = (
-    "groups",
-    "contrasts",
-    "f_tests",
-    "adjust_across_groups",
-    "min_cells",
-    "min_counts",
-)
 # The third word of each cell type's seed sequence, a stream of its own beside those
 # of dose_response's multiple contrast tests (their positions, 0 to 2).
 _STREAM = 1000
-_SEED_BOUND = 2**63
+# The relative difference within which two gates' p-values are the same up to
+# rounding: runs of one labelling on other machines, or with other tests beside the
+# gate's, differ by about 1e-13.
+_ROUNDING = 1e-9
+# The statistics of a cell type's runs, NaN for a cell type not checked.
+_STATISTICS = (
+    "share_of_runs_with_passing_genes",
+    "mean_passing_genes_per_run",
+    "p_value",
+    "smallest_possible_p_value",
+)
 
 
 class PermutationCheck:
-    """How often the gate of a dose series passes genes with its doses permuted,
-    from :func:`permutation_check`.
+    """How often the gate of a dose series passes genes with its doses permuted, and
+    whether the true doses pass more, from :func:`permutation_check`.
 
     ``summary`` has one row per cell type asked for: ``group_id``; ``checked``;
     ``reason``, why a cell type was not checked, empty when checked;
@@ -118,20 +105,21 @@ class PermutationCheck:
     where the gate did not run); ``share_of_runs_with_passing_genes``;
     ``mean_passing_genes_per_run``; ``p_value``, (1 + b) / (1 + B) for the b of the
     B runs that pass at least as many genes as the true doses (Phipson and Smyth
-    2010); and ``smallest_p_value``, the smallest p-value the runs can give. With
-    random runs it is 1 / (B + 1); with every other assignment it is r / A, where A
-    counts the assignments and r those that only rename dose groups that the gate
-    cannot tell apart, the true one included, which pass the same genes: every
-    renaming of dose groups of equal sizes for the dose-group test and a spline that
-    passes through every group's mean; those of the treated doses for the
-    fold-change gate and Dunnett's test; none for the Williams-type test, the MCP
-    step and other splines. Statistics of cell types not checked are NaN, and their
-    ``n_runs`` 0.
+    2010); and ``smallest_possible_p_value``, the smallest p-value these runs can
+    give, (1 + t) / (1 + B) for the t runs whose gate gives the true doses' p-values
+    up to rounding and so passes the same genes whatever the data: runs that only
+    rename dose groups that the gate's test cannot tell apart, such as dose groups
+    of equal sizes under the dose-group test, and the reflection of doses that sit
+    symmetrically on the axis under the spline. With every other assignment run, B
+    is the number of assignments less one. Dunnett's test of three or more treated
+    doses, whose p-values come from Monte Carlo integration, gives its renamings
+    p-values apart by that error, so they do not count. Statistics of cell types not
+    checked are NaN, and their ``n_runs`` 0.
 
     :meth:`table` gives each run of a cell type, with ``run`` and
     ``n_genes_passing_gate``. The provenance records each run's assignment, so that
-    any run can be made again with :func:`~cytepool.dose_response`. Built by
-    :func:`permutation_check`; immutable.
+    any run can be made again with :func:`~cytepool.dose_response` and the result's
+    seed, which every run takes. Built by :func:`permutation_check`; immutable.
 
     Raises:
         TypeError: If ``summary`` is not a ``Table``, ``tables`` not a mapping of cell
@@ -211,15 +199,18 @@ class PermutationCheck:
         """A JSON-serialisable record of what produced every number, as a new dict.
 
         It holds the versions of the software; the settings; the result checked
-        (``result``): its cube's fingerprint, its gate and its seed; and, for every
-        cell type (``groups``), whether it was checked and why not, the kind of units
-        permuted (``"samples"``, ``"whole units"`` or ``"doses within units"``) and
-        the random effect's grouping (``unit``), the samples used, in the order of the
-        fit, the doses, each sample's dose as an index into them (``labels``), the
-        blocks of units, each unit given by its samples, the number of assignments as
-        an exact integer, the renamings that pass the same genes, whether the runs
-        were every other assignment, and each run's assignment (``assignments``),
-        each sample's dose index in the order of ``samples``.
+        (``result``): its cube's fingerprint, its gate and its seed, which every run
+        takes; and, for every cell type (``groups``), whether it was checked and why
+        not, and the genes its gate passes with the true doses. A cell type whose
+        units were read also records the kind of units permuted (``"samples"``,
+        ``"whole units"`` or ``"doses within units"``) and the random effect's
+        grouping (``unit``), the samples used, in the order of the fit, the doses,
+        each sample's dose as an index into them (``labels``), the blocks of units,
+        each unit given by its samples, and the number of assignments as an exact
+        integer; a cell type checked, whether the runs were every other assignment,
+        each run's assignment (``assignments``), each sample's dose index in the
+        order of ``samples``, and the runs whose gate gives the true doses' p-values
+        up to rounding (``tied_runs``, numbered from 1).
         """
         record: dict[str, Any] = json.loads(self._record)
         return record
@@ -263,7 +254,7 @@ class PermutationCheck:
         checked = int(np.count_nonzero(summary["checked"]))
         n = len(summary)
         lines = [
-            f"PermutationCheck of the gate, {_gate_text(record['result']['gate'])}: "
+            f"PermutationCheck of the gate ({gate_text(record['result']['gate'])}): "
             f"{n:,} cell type{'' if n == 1 else 's'}, {checked:,} checked; seed "
             f"{record['settings']['seed']}"
         ]
@@ -274,14 +265,6 @@ class PermutationCheck:
                 continue
             lines.append(f"  {group}: " + _row_text(summary, row, entry))
         return fitted_lines("\n".join(lines))
-
-
-def _gate_text(gate: Mapping[str, Any]) -> str:
-    """The gate, for the printout: its test and level."""
-    level = f"at {100.0 * gate['fdr']:g}% FDR"
-    if gate["fold_change"] is None:
-        return f"the {gate['test']} test {level}"
-    return f"TREAT beyond {gate['fold_change']:g}-fold at each dose, {level}"
 
 
 def _row_text(summary: Table, row: int, entry: Mapping[str, Any]) -> str:
@@ -296,7 +279,7 @@ def _row_text(summary: Table, row: int, entry: Mapping[str, Any]) -> str:
         if entry["exhaustive"]
         else f"{runs:,} random run{'' if runs == 1 else 's'} of {size} assignments"
     )
-    smallest = float(summary["smallest_p_value"][row])
+    smallest = float(summary["smallest_possible_p_value"][row])
     p = float(summary["p_value"][row])
     with_genes = int(round(share * runs))
     text = (
@@ -320,37 +303,42 @@ def permutation_check(
     groups: str | Sequence[str] | None = None,
     rng: np.random.Generator | int | None = None,
 ) -> PermutationCheck:
-    """Check how often the gate of a dose series passes genes when the doses carry no
-    information.
+    """Check whether the true doses of a dose series pass more genes through its gate
+    than permuted doses do.
 
     For each cell type, the dose labels of the samples it uses are permuted among the
     samples that the design treats alike (the module documentation gives the units),
     :func:`~cytepool.dose_response` runs again on that cell type with each permuted
     labelling and the result's settings and gate, and the genes that pass the gate
-    are counted. Under the null hypothesis that no gene responds to dose, every
-    assignment of the labels is as likely as the true one, so the share of runs that
-    pass genes is the chance that noise alone passes genes at this design, and the
-    genes the true doses pass get a permutation p-value, (1 + b) / (1 + B) for the b
-    of the B runs that pass at least as many (Phipson and Smyth 2010). Where genes
-    respond, strong responses scrambled over the permuted dose groups still pass in
-    some runs, so the share then overstates that chance, and the p-value comes out
-    larger than noise alone would make it. A design that allows at most
-    ``n_permutations`` other assignments runs each of them, which makes the p-value
-    exact; otherwise ``n_permutations`` assignments are drawn at random. Each run
-    keeps the samples of every dose group and the doses of the design, and so the
-    spline's knots and the genes of the dose-blind expression filter (Bourgon,
-    Gentleman and Huber 2010); ``batch``, which a rerun could find confounded by
-    chance and which no fit models, is left out. Vehicle-only data placed in mock dose groups by the design,
-    the check of Lee et al. (2024), run through :func:`~cytepool.dose_response` and
-    this check alike
+    are counted. The answer is the permutation p-value, (1 + b) / (1 + B) for the b
+    of the B runs that pass at least as many genes as the true doses (Phipson and
+    Smyth 2010). Under the null hypothesis that no gene responds to dose, every
+    assignment of the labels is as likely as the true one, so a small p-value says
+    that the true doses pass more genes than permuted ones, and so that not all of
+    the gate's calls are noise; it does not say which calls are false. The summary
+    also gives how often the gate passes genes with the doses permuted, given the
+    cell type's own samples, which varies widely between series of one design. That
+    share estimates how often noise alone passes genes only where no gene responds,
+    as in vehicle-only data: responses scrambled over the permuted dose groups still
+    pass in some runs.
+
+    A design that allows at most ``n_permutations`` other assignments runs each of
+    them, which makes the p-value exact; otherwise ``n_permutations`` assignments
+    are drawn at random. Each run keeps the samples of every dose group and the
+    doses of the design, and so the spline's knots and the genes of the dose-blind
+    expression filter (Bourgon, Gentleman and Huber 2010); ``batch``, which a rerun
+    could find confounded by chance and which no fit models, is left out. Vehicle-only
+    data that the design places in mock dose groups, as Lee et al. (2024) did, runs
+    through :func:`~cytepool.dose_response` and this check like any series
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-permutation-check).
 
-    Before the runs, each cell type runs once with its true doses through the same
-    path and must give the result's gate p-values, bit for bit, so that the runs are
-    the analysis the result records. Each run takes the time of the cell type's
-    analysis and of the gate's test: about 1 s for 20,000 genes and 24 samples with
-    the spline test on two threads, twice that with a fold change, and more for a
-    multiple contrast test or under dream.
+    Each run fits the gate's test alone, with the result's seed for a multiple
+    contrast test. Before the runs, each cell type runs once with its true doses
+    and must give the result's gate: the same genes, p-values equal up to rounding
+    and the same calls, so that the runs are the analysis the result records. Each
+    run takes the time of the cell type's analysis and of the gate's test: about
+    0.8 s for 20,000 genes and 24 samples with the spline test on two threads, twice
+    that with a fold change, and more for a multiple contrast test or under dream.
 
     Args:
         result: The result of :func:`~cytepool.dose_response` to check, which keeps
@@ -372,12 +360,13 @@ def permutation_check(
         TypeError: If ``result`` is not a :class:`~cytepool.DoseResponseResult`,
             ``n_permutations`` is not an integer, or ``groups`` or ``rng`` has the
             wrong type, or is or holds a numpy masked array.
-        ValueError: If ``n_permutations`` is below 1, ``rng`` is a negative seed,
-            the result keeps no cube and design, its design has more than one random
-            effect or a random slope, a cell type's true doses do not give the
-            result's gate p-values again, or a run does not run the gate.
-        KeyError: If a cell type asked for was not checked by the result, not
-            tested, or did not run the gate.
+        ValueError: If ``n_permutations`` is below 1, ``groups`` is empty or names a
+            cell type twice, ``rng`` is a negative seed, the result keeps no cube
+            and design, its design has more than one random effect or a random
+            slope, a cell type's true doses do not give the result's gate again, or
+            a run does not run the gate.
+        KeyError: If a cell type asked for is not in the cube, was not checked by
+            the result, not tested, or did not run the gate.
     """
     if not isinstance(result, DoseResponseResult):
         raise TypeError(
@@ -386,19 +375,20 @@ def permutation_check(
         )
     reject_masked(n_permutations, "n_permutations")
     runs = positive_integer(n_permutations, "n_permutations")
-    asked = _asked_groups(groups, result)
-    seed = recorded_seed(rng)
     rerun = _Rerun.of(result)
-    rows, tables, records = [], {}, []
-    for group in result.groups:
-        if group not in asked:
-            continue
-        found = _check_cell_type(result, rerun, group, runs, seed)
-        rows.append(found.row)
-        records.append(found.record)
-        if found.table is not None:
-            tables[group] = found.table
-    record = result.provenance
+    asked = _asked_groups(groups, result, rerun.cube)
+    seed = recorded_seed(rng)
+    records, tables = [], {}
+    for group in asked:
+        record, counts = _check_cell_type(result, rerun, group, runs, seed)
+        records.append(record)
+        if record["checked"]:
+            tables[group] = Table(
+                {
+                    "run": np.arange(1, len(counts) + 1, dtype=np.int64),
+                    "n_genes_passing_gate": np.array(counts, dtype=np.int64),
+                }
+            )
     provenance = {
         "method": "permutation_check",
         "versions": software_versions(),
@@ -408,57 +398,32 @@ def permutation_check(
             "seed": seed,
         },
         "result": {
-            "cube": record["cube"]["fingerprint"],
+            "cube": result.provenance["cube"]["fingerprint"],
             "gate": result.gate,
-            "seed": result.settings["seed"],
+            "seed": rerun.seed,
         },
         "groups": records,
     }
-    return PermutationCheck(_summary(rows), tables, provenance)
+    return PermutationCheck(_summary(records, tables), tables, provenance)
 
 
-def _asked_groups(groups: Any, result: DoseResponseResult) -> list[str]:
+def _asked_groups(groups: Any, result: DoseResponseResult, cube: Cube) -> list[str]:
     """The cell types asked for, in the result's order; each one named must have run
-    the gate."""
+    the gate, or the result's table of the gate says why not."""
     reject_masked(groups, "groups")
     if groups is None:
         return list(result.groups)
-    named = [groups] if isinstance(groups, str) else groups
-    if isinstance(named, Mapping) or not isinstance(named, Sequence | np.ndarray):
-        raise TypeError(
-            "groups must be a cell type or a list of them, or None for every cell "
-            f"type, got {type(groups).__name__}"
-        )
-    listed = list(named)
-    known = list(result.groups)
-    for name in listed:
-        if not isinstance(name, str):
-            raise TypeError(
-                f"groups must be cell types (str), got {type(name).__name__} {name!r}"
-            )
-        if name not in known:
-            raise KeyError(
-                f"no cell type {name!r} was checked by the result; cell types are: "
-                f"{listing(known) or '(none)'}{close_matches(name, known)}"
-            )
-        why = _why_unchecked(result, name)
-        if why:
-            raise KeyError(f"cell type {name!r} cannot be checked: {why}")
-    return [group for group in known if group in listed]
+    ids = cube.groups["group_id"].tolist()
+    named = [ids[position] for position in group_positions(cube, groups)]
+    for name in named:
+        result.table(name, GATE)
+    return [group for group in result.groups if group in named]
 
 
 def _why_unchecked(result: DoseResponseResult, group: str) -> str:
-    """Why a cell type has no gate to check, or ''."""
-    entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
-    if not entry["tested"]:
-        return f"not tested ({entry['status']}): {entry['reason']}"
-    if (group, GATE) not in result.tables:
-        test = result.gate["test"]
-        return (
-            f"the gate did not run: its test, {test!r}, was not run there: "
-            f"{entry['tests_not_run'].get(test, '')}"
-        )
-    return ""
+    """Why a cell type has no gate to check, in the words of the result's table of
+    the gate, or ''."""
+    return "" if (group, GATE) in result.tables else absence(result, group, GATE)
 
 
 # The rerun of one cell type.
@@ -467,14 +432,13 @@ def _why_unchecked(result: DoseResponseResult, group: str) -> str:
 @dataclass(frozen=True)
 class _Rerun:
     """How to run dose_response again on one cell type with other doses: the cube,
-    the design, the axis, the analysis with its options as the result records them,
-    and the arguments of dose_response."""
+    the design, the axis, the result's seed, and the other arguments of
+    dose_response, the analysis's options among them as the result records them."""
 
     cube: Cube
     design: Design
     axis: DoseAxis
-    analysis: Callable[..., DifferentialExpressionResult]
-    options: dict[str, Any]
+    seed: int | None
     arguments: dict[str, Any]
 
     @classmethod
@@ -495,30 +459,32 @@ class _Rerun:
                 "that permutation_check can tell: it permutes samples, or the units of "
                 "one random intercept such as '(1 | donor)'"
             )
-        settings = result.settings
-        gate = result.gate
-        analysis = _ANALYSES[result.method]
+        settings, gate = result.settings, result.gate
+        analysis = ANALYSES[result.method]
         recorded = result.provenance["analysis_settings"]
+        test = gate["test"]
         return cls(
             cube=cube,
             design=design,
             axis=result.dose,
-            analysis=analysis,
-            options=recorded_options(
-                analysis, recorded, set_by_caller=_SET_BY_DOSE_RESPONSE
-            ),
+            seed=settings["seed"],
             arguments={
-                "tests": _rerun_tests(settings["tests"], gate["test"]),
+                # A fold change reads each dose's fit, which every test holds.
+                "tests": [DOSE_GROUPS if test == EACH_DOSE else test],
                 "spline_df": settings["spline_df"],
-                "candidates": result.candidates if gate["test"] == MCP else None,
+                "candidates": result.candidates if test == MCP else None,
                 "gate": gate,
+                "analysis": analysis,
                 "min_cells": settings["min_cells"],
                 "min_counts": settings["min_counts"],
+                **recorded_options(
+                    analysis, recorded, set_by_caller=SET_BY_DOSE_RESPONSE
+                ),
             },
         )
 
     def __call__(
-        self, group: str, rows: list[int], doses: Sequence[float], seed: int | None
+        self, group: str, rows: list[int], doses: Sequence[float]
     ) -> DoseResponseResult:
         """dose_response on one cell type, with the doses of the design's rows
         replaced."""
@@ -535,65 +501,28 @@ class _Rerun:
             self.cube,
             design,
             dose=self.axis,
-            analysis=self.analysis,
             groups=[group],
-            rng=seed,
+            rng=self.seed,
             **self.arguments,
-            **self.options,
         )
 
 
-def _rerun_tests(given: list[str] | None, gate: str) -> list[str] | None:
-    """The tests of a rerun: the tests along dose that the result named, or None
-    when it named none, and the gate's test, so that the fit holds the contrasts of
-    the result's and its gate's p-values are the result's, bit for bit; the multiple
-    contrast tests other than the gate's, which cost the most and do not change the
-    fit, are left out. A gate with a fold change and no such test takes the dose
-    groups' test, whose contrasts are the doses that every fit holds."""
-    if given is None:
-        return None
-    tests = [test for test in given if test in TESTS]
-    if gate != EACH_DOSE and gate not in tests:
-        tests.append(gate)
-    return tests or [DOSE_GROUPS]
-
-
-def _check_reproduced(
-    result: DoseResponseResult, again: DoseResponseResult, group: str
-) -> None:
-    """Refuse a check whose run with the true doses does not give the result's gate:
-    its runs would not be those of the result's analysis."""
-    record, rerun = result.provenance, again.provenance
-    if rerun["cube"]["fingerprint"] != record["cube"]["fingerprint"]:
-        raise ValueError(
-            f"{group!r} ran again on a cube other than the result's (fingerprint "
-            f"{rerun['cube']['fingerprint']}, where the result records "
-            f"{record['cube']['fingerprint']}): its values changed since the analysis; "
-            "analyse the cube again and check that result"
+def _same_gate(theirs: Table, ours: Table) -> bool:
+    """Whether a run's gate holds the genes of another, with the same p-values up to
+    rounding and the same calls."""
+    return (
+        theirs["feature_id"].tolist() == ours["feature_id"].tolist()
+        and bool(
+            np.allclose(
+                np.asarray(theirs["p_value"]),
+                np.asarray(ours["p_value"]),
+                rtol=_ROUNDING,
+                atol=0.0,
+                equal_nan=True,
+            )
         )
-    changed = changed_settings(
-        record["analysis_settings"], rerun["analysis_settings"], ignored=("f_tests",)
+        and np.array_equal(theirs["passes_gate"], ours["passes_gate"])
     )
-    ours = result.table(group, GATE)
-    theirs = again.tables.get((group, GATE))
-    same = (
-        theirs is not None
-        and theirs["feature_id"].tolist() == ours["feature_id"].tolist()
-        and np.array_equal(
-            np.asarray(theirs["p_value"]), np.asarray(ours["p_value"]), equal_nan=True
-        )
-    )
-    if changed or not same:
-        differ = (
-            f"the settings {quoted(changed)} differ"
-            if changed
-            else "the gate's p-values differ"
-        )
-        raise ValueError(
-            f"{group!r} run again with its true doses does not give the result's gate "
-            f"({differ}): the cube's values, the options or CytePool changed since the "
-            "analysis; analyse the cube again and check that result"
-        )
 
 
 # Exchangeable units and assignments.
@@ -631,24 +560,6 @@ class _Units:
             )
         return total
 
-    def renamings(self, vehicle_held: bool) -> int:
-        """The renamings of the dose labels that give an assignment, the identity
-        included: the product of the factorials of the sizes of the classes of labels
-        with the same count in each block, the vehicle in a class of its own when
-        held."""
-        counts = {
-            label: tuple(
-                sum(self.labels[item] == label for item in block)
-                for block in self.blocks
-            )
-            for label in set(self.labels)
-        }
-        classes = Counter(
-            ("vehicle",) if vehicle_held and label == 0 else vector
-            for label, vector in counts.items()
-        )
-        return math.prod(math.factorial(size) for size in classes.values())
-
     def every_other(self) -> Iterator[tuple[int, ...]]:
         """Each assignment but the true one: the blocks' arrangements, each in
         lexicographic order, in their Cartesian product."""
@@ -681,6 +592,21 @@ class _Units:
             for position in positions:
                 found[position] = labels[item]
         return found
+
+    def record(self) -> dict[str, Any]:
+        """The units, for the provenance."""
+        return {
+            "units": self.kind,
+            "unit": self.unit,
+            "samples": list(self.samples),
+            "doses": list(self.doses),
+            "labels": self.by_sample(self.labels),
+            "blocks": [
+                [[self.samples[i] for i in self.items[item]] for item in block]
+                for block in self.blocks
+            ],
+            "n_assignments": self.count(),
+        }
 
 
 def _arrangements(labels: list[int]) -> Iterator[tuple[int, ...]]:
@@ -752,156 +678,99 @@ def _units(design: Design, axis: DoseAxis, used: Sequence[str]) -> _Units:
 # One cell type.
 
 
-@dataclass(frozen=True)
-class _Checked:
-    """What the check of one cell type gives: its row of the summary, its table of
-    runs (None when not checked) and its record."""
-
-    row: dict[str, Any]
-    table: Table | None
-    record: dict[str, Any]
-
-
 def _check_cell_type(
     result: DoseResponseResult,
     rerun: _Rerun,
     group: str,
     n_permutations: int,
     seed: int,
-) -> _Checked:
-    """Run the gate of a cell type on permuted dose labels, or say why not."""
+) -> tuple[dict[str, Any], list[int]]:
+    """Run the gate of a cell type on permuted dose labels, or say why not: the cell
+    type's record, and the genes that each run passes."""
     record: dict[str, Any] = {
         "group_id": group,
         "checked": False,
         "reason": _why_unchecked(result, group),
-        "units": None,
-        "unit": None,
-        "samples": [],
-        "doses": [],
-        "labels": [],
-        "blocks": [],
-        "n_assignments": None,
-        "renamings": None,
-        "exhaustive": False,
-        "assignments": [],
+        "n_genes_passing_gate": None,
     }
     if record["reason"]:
-        return _unchecked(record)
+        return record, []
     entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
     units = _units(rerun.design, rerun.axis, entry["fit"]["samples"])
-    observed = int(np.count_nonzero(result.table(group, GATE)["passes_gate"]))
-    count = units.count()
-    record |= {
-        "units": units.kind,
-        "unit": units.unit,
-        "samples": list(units.samples),
-        "doses": list(units.doses),
-        "labels": units.by_sample(units.labels),
-        "blocks": [
-            [[units.samples[i] for i in units.items[item]] for item in block]
-            for block in units.blocks
-        ],
-        "n_assignments": count,
-    }
-    if count == 1:
-        return _unchecked(record | {"reason": _single_assignment(units)}, observed)
-    # The true doses through the same path, with the result's seed.
-    again = rerun(
-        group,
-        list(units.rows),
-        [units.doses[label] for label in record["labels"]],
-        result.settings["seed"],
-    )
-    _check_reproduced(result, again, group)
-    generator = np.random.default_rng(
-        [seed, zlib.crc32(group.encode("utf-8")), _STREAM]
-    )
-    exhaustive = count - 1 <= n_permutations
-    assignments = (
-        list(units.every_other())
-        if exhaustive
-        else [units.draw(generator) for _ in range(n_permutations)]
-    )
-    counts = []
-    for run, labels in enumerate(assignments, start=1):
-        doses = [units.doses[label] for label in units.by_sample(labels)]
-        found = rerun(
-            group,
-            list(units.rows),
-            doses,
-            int(generator.integers(0, _SEED_BOUND)),
+    ours = result.table(group, GATE)
+    record |= units.record()
+    record["n_genes_passing_gate"] = int(np.count_nonzero(ours["passes_gate"]))
+    if record["n_assignments"] == 1:
+        record["reason"] = _single_assignment(units)
+        return record, []
+    # The true doses through the same path as the runs.
+    again = rerun(group, list(units.rows), [units.doses[i] for i in record["labels"]])
+    true = again.tables.get((group, GATE))
+    if true is None or not _same_gate(true, ours):
+        raise ValueError(
+            f"{group!r} run again with its true doses does not give the result's gate, "
+            f"the same genes with p-values equal up to a relative {_ROUNDING:g} and "
+            "the same calls: the cube's values, the options or CytePool changed since "
+            "the analysis; analyse the cube again and check that result"
         )
-        counts.append(_outcomes(found, group, run)["n_genes_passing_gate"])
-    passing = np.array(counts, dtype=np.float64)
-    renamings = _renamings(result, entry, units) if exhaustive else 1
+    exhaustive = record["n_assignments"] - 1 <= n_permutations
+    if exhaustive:
+        assignments = list(units.every_other())
+    else:
+        generator = np.random.default_rng(
+            [seed, zlib.crc32(group.encode("utf-8")), _STREAM]
+        )
+        assignments = [units.draw(generator) for _ in range(n_permutations)]
+    counts, tied = _runs(rerun, group, units, assignments, true)
     record |= {
         "checked": True,
-        "renamings": renamings,
         "exhaustive": exhaustive,
         "assignments": [units.by_sample(labels) for labels in assignments],
+        "tied_runs": tied,
     }
-    row = {
-        "group_id": group,
-        "checked": True,
-        "reason": "",
-        "n_assignments": float(count),
-        "exhaustive": exhaustive,
-        "n_runs": len(counts),
-        "n_genes_passing_gate": float(observed),
-        **_statistics(observed, passing),
-        "smallest_p_value": (
-            renamings / count if exhaustive else 1.0 / (1 + len(counts))
-        ),
-    }
-    table = Table(
-        {
-            "run": np.arange(1, len(counts) + 1, dtype=np.int64),
-            "n_genes_passing_gate": passing.astype(np.int64),
-        }
-    )
-    return _Checked(row, table, record)
+    return record, counts
 
 
-def _statistics(observed: int, passing: FloatArray) -> dict[str, float]:
+def _runs(
+    rerun: _Rerun,
+    group: str,
+    units: _Units,
+    assignments: list[tuple[int, ...]],
+    true: Table,
+) -> tuple[list[int], list[int]]:
+    """The genes that the gate passes in each run, and the runs, numbered from 1,
+    whose gate gives the true doses' p-values up to rounding."""
+    counts, tied = [], []
+    for run, labels in enumerate(assignments, start=1):
+        doses = [units.doses[label] for label in units.by_sample(labels)]
+        found = rerun(group, list(units.rows), doses)
+        gate = found.tables.get((group, GATE))
+        if gate is None:
+            raise ValueError(
+                f"run {run} of {group!r} did not run the gate: "
+                f"{absence(found, group, GATE)}; a run keeps the samples of every dose "
+                "group, so the analysis failed on the permuted doses"
+            )
+        counts.append(int(np.count_nonzero(gate["passes_gate"])))
+        if _same_gate(gate, true):
+            tied.append(run)
+    return counts, tied
+
+
+def _statistics(observed: int, passing: Any, ties: int) -> dict[str, float]:
     """What the runs say of the genes the true doses pass: the share of runs that
-    pass genes, the mean genes per run, and the p-value (1 + b) / (1 + B), with b
-    the B runs that pass at least as many genes (Phipson and Smyth 2010)."""
-    runs = passing.size
+    pass genes, the mean genes per run, the p-value (1 + b) / (1 + B), with b the
+    B runs that pass at least as many genes (Phipson and Smyth 2010), and the
+    smallest p-value they can give, (1 + t) / (1 + B), with t the runs that tie with
+    the true doses."""
+    values = np.asarray(passing, dtype=np.float64)
+    runs = values.size
     return {
-        "share_of_runs_with_passing_genes": float(np.mean(passing >= 1)),
-        "mean_passing_genes_per_run": float(np.mean(passing)),
-        "p_value": (1 + int(np.count_nonzero(passing >= observed))) / (1 + runs),
+        "share_of_runs_with_passing_genes": float(np.mean(values >= 1)),
+        "mean_passing_genes_per_run": float(np.mean(values)),
+        "p_value": (1 + int(np.count_nonzero(values >= observed))) / (1 + runs),
+        "smallest_possible_p_value": (1 + ties) / (1 + runs),
     }
-
-
-def _outcomes(found: DoseResponseResult, group: str, run: int) -> dict[str, int]:
-    """What one run gives, by name: the genes that pass the gate."""
-    table = found.tables.get((group, GATE))
-    if table is None:
-        why = _why_unchecked(found, group)
-        raise ValueError(
-            f"run {run} of {group!r} did not run the gate: {why}; a run keeps the "
-            "samples of every dose group, so the analysis failed on the permuted "
-            "doses"
-        )
-    return {"n_genes_passing_gate": int(np.count_nonzero(table["passes_gate"]))}
-
-
-def _renamings(
-    result: DoseResponseResult, entry: Mapping[str, Any], units: _Units
-) -> int:
-    """The assignments, the true one included, that only rename dose groups the
-    gate cannot tell apart, so that the gate passes the same genes: every dose
-    group for the dose-group test and a spline through every group's mean, the
-    treated ones for the fold-change gate and Dunnett's test, none otherwise."""
-    test = result.gate["test"]
-    treated = len(entry["doses"]) - 1
-    through_means = test == SPLINE and entry["f_test_df1"].get(SPLINE) == treated
-    if test == DOSE_GROUPS or through_means:
-        return units.renamings(vehicle_held=False)
-    if test in (EACH_DOSE, DUNNETT):
-        return units.renamings(vehicle_held=True)
-    return 1
 
 
 def _single_assignment(units: _Units) -> str:
@@ -918,46 +787,41 @@ def _single_assignment(units: _Units) -> str:
     )
 
 
-def _unchecked(record: dict[str, Any], observed: int | None = None) -> _Checked:
-    """The row of a cell type that is not checked, from its record; the genes its
-    gate passes when the gate ran."""
-    count = record["n_assignments"]
-    row = {
-        "group_id": record["group_id"],
-        "checked": False,
-        "reason": record["reason"],
-        "n_assignments": np.nan if count is None else float(count),
-        "exhaustive": False,
-        "n_runs": 0,
-        "n_genes_passing_gate": np.nan if observed is None else float(observed),
-        "share_of_runs_with_passing_genes": np.nan,
-        "mean_passing_genes_per_run": np.nan,
-        "p_value": np.nan,
-        "smallest_p_value": np.nan,
-    }
-    return _Checked(row, None, record)
+def _summary(records: list[dict[str, Any]], tables: Mapping[str, Table]) -> Table:
+    """One row per cell type, from its record and its runs; the statistics of a cell
+    type not checked are NaN."""
+    found = [
+        _statistics(
+            record["n_genes_passing_gate"],
+            tables[record["group_id"]]["n_genes_passing_gate"],
+            len(record["tied_runs"]),
+        )
+        if record["checked"]
+        else {}
+        for record in records
+    ]
 
-
-def _summary(rows: list[dict[str, Any]]) -> Table:
-    def column(name: str, dtype: Any) -> np.ndarray:
-        return np.array([row[name] for row in rows], dtype=dtype)
+    def numbers(values: list[Any]) -> np.ndarray:
+        return np.array(values, dtype=np.float64)  # None as NaN
 
     return Table(
         {
-            "group_id": text_column([row["group_id"] for row in rows]),
-            "checked": column("checked", bool),
-            "reason": text_column([row["reason"] for row in rows]),
-            "n_assignments": column("n_assignments", np.float64),
-            "exhaustive": column("exhaustive", bool),
-            "n_runs": column("n_runs", np.int64),
-            "n_genes_passing_gate": column("n_genes_passing_gate", np.float64),
-            "share_of_runs_with_passing_genes": column(
-                "share_of_runs_with_passing_genes", np.float64
+            "group_id": text_column([record["group_id"] for record in records]),
+            "checked": np.array([record["checked"] for record in records], dtype=bool),
+            "reason": text_column([record["reason"] for record in records]),
+            "n_assignments": numbers(
+                [record.get("n_assignments") for record in records]
             ),
-            "mean_passing_genes_per_run": column(
-                "mean_passing_genes_per_run", np.float64
+            "exhaustive": np.array(
+                [record.get("exhaustive", False) for record in records], dtype=bool
             ),
-            "p_value": column("p_value", np.float64),
-            "smallest_p_value": column("smallest_p_value", np.float64),
+            "n_runs": np.array(
+                [len(tables.get(record["group_id"], ())) for record in records],
+                dtype=np.int64,
+            ),
+            "n_genes_passing_gate": numbers(
+                [record["n_genes_passing_gate"] for record in records]
+            ),
+            **{name: numbers([row.get(name) for row in found]) for name in _STATISTICS},
         }
     )

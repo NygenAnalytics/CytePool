@@ -3,8 +3,7 @@
 A result of :func:`~cytepool.limma_voom`, :func:`~cytepool.limma_trend` or
 :func:`~cytepool.dream_voom` records the settings its analysis checked. A permutation
 test runs the analysis again on permuted labels with the options read back from that
-record, so that each run is the analysis of the result, and refuses a run whose own
-record differs from it.
+record, so that each run is the analysis of the result.
 """
 
 import inspect
@@ -36,18 +35,3 @@ def recorded_options(
     if options.get("expression_filter", True) is None:
         options["expression_filter"] = False  # recorded as None when it was off
     return options
-
-
-def changed_settings(
-    recorded: Mapping[str, Any],
-    rerun: Mapping[str, Any],
-    *,
-    ignored: Collection[str] = (),
-) -> list[str]:
-    """The names of the settings, sorted, whose values differ between the record of
-    an analysis and that of its rerun, leaving out those ``ignored``."""
-    return [
-        name
-        for name in sorted(set(recorded) | set(rerun))
-        if name not in ignored and recorded.get(name) != rerun.get(name)
-    ]

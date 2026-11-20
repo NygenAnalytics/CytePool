@@ -2447,10 +2447,12 @@ def test_the_chapter_s_gate_example_runs() -> None:
 
 # The gate. Reference values in tests/data/dose_gate/limma.json come from limma 3.62.1,
 # edgeR 4.4.0 and stageR 1.28.0 in R, written by validation/dose_gate.py: R fits each
-# cell type from the counts with its own knots and spline columns and gives each gate's
-# p-values (exact under voom's weights, and limma's classifyTestsF), adjusted by
-# Benjamini-Hochberg, each dose's TREAT p-values (treat and topTreat), and stageR's
-# stage-wise adjustment of the doses under the 1.5-fold gate.
+# cell type from the counts and gives the dose-group gate's p-values (exact under
+# voom's weights, and limma's classifyTestsF), adjusted by Benjamini-Hochberg, R's
+# Benjamini-Hochberg adjustment of CytePool's spline p-values, which
+# tests/data/dose_response_tests checks against limma, each dose's TREAT p-values
+# (treat and topTreat), and stageR's stage-wise adjustment of the doses under the
+# 1.5-fold gate.
 
 GATE_DATA = Path(__file__).parent / "data" / "dose_gate"
 ANALYSES = {"voom": limma_voom, "trend": limma_trend}
@@ -2475,9 +2477,6 @@ def gate_case(name: str) -> tuple[Cube, Design]:
     return cube, Design(case["design"], case["formula"])
 
 
-ANALYSES = {"voom": limma_voom, "trend": limma_trend}
-
-
 @pytest.mark.parametrize("name", ["fixture", "duplicate"])
 @pytest.mark.parametrize("analysis", ["voom", "trend"])
 @pytest.mark.parametrize("test", ["spline", "dose_groups"])
@@ -2498,7 +2497,12 @@ def test_gate_calls_match_limma(name: str, analysis: str, test: str) -> None:
             table = result.table(group, "gate")
             assert table["feature_id"].tolist() == genes
             values = theirs["gates"][test]
-            assert_p_values(table["p_value"], values["exact"])
+            if test == "spline":
+                # The spline's own p-values, which R adjusts.
+                spline = result.table(group, "spline")["p_value"]
+                assert_array_equal(table["p_value"], spline)
+            else:
+                assert_p_values(table["p_value"], values["exact"])
             called = np.asarray(values["exact_adjusted"]) <= level
             assert_array_equal(table["passes_gate"], called)
             assert called.any() and not called.all()
@@ -2537,9 +2541,12 @@ def test_the_fold_change_gate_matches_treat(analysis: str) -> None:
         analysis=ANALYSES[analysis],
     )
     assert result.gate == {"test": "each_dose", "fdr": 0.05, "fold_change": 1.5}
+    features = cube.features["feature_id"].tolist()
     for group, theirs in gate_reference()["limma"][f"fixture {analysis}"].items():
         values = theirs["treat"]
         table = result.table(group, "gate")
+        genes = [features[i - 1] for i in np.atleast_1d(theirs["genes"])]
+        assert table["feature_id"].tolist() == genes
         assert_p_values(table["p_value"], values["p"])
         called = np.asarray(values["adjusted"]) <= 0.05
         assert_array_equal(table["passes_gate"], called)
@@ -2560,12 +2567,18 @@ def test_the_fold_change_gate_matches_treat(analysis: str) -> None:
         assert_array_equal(lowest["n_doses_called"], hit.sum(axis=1))
         assert_array_equal(lowest["passes_gate"], called)
         assert hit.any()
+        at = np.where(hit.any(axis=1), np.argmax(hit, axis=1), 0)
+        stage_wise = np.where(hit.any(axis=1), adjusted[np.arange(at.size), at], np.nan)
+        found = np.asarray(lowest["stage_wise_adjusted_p_value"], dtype=float)
+        assert_array_equal(np.isnan(found), np.isnan(stage_wise))
+        present = ~np.isnan(stage_wise)
+        assert_p_values(found[present], stage_wise[present], 1e-6)
 
 
-def treat_by_hand(result: DoseResponseResult, group: str, change: float) -> np.ndarray:
-    """The gate's p-values from the table of each dose and the fit's degrees of
-    freedom: McCarthy and Smyth's p = P(T > |t| - delta) + P(T > |t| + delta), delta
-    = log2(fold change) / se, with scipy's t, then the smallest times the doses."""
+def treat_per_dose(result: DoseResponseResult, group: str, change: float) -> np.ndarray:
+    """Each dose's TREAT p-value, genes x doses, from the table of each dose and the
+    fit's degrees of freedom: McCarthy and Smyth's p = P(T > |t| - delta) + P(T > |t|
+    + delta), delta = log2(fold change) / se, with scipy's t."""
     each = result.table(group, "each_dose")
     k = len(np.unique(each["dose"]))
     change_ = np.asarray(each["log2_fold_change"], dtype=float).reshape(k, -1).T
@@ -2573,8 +2586,48 @@ def treat_by_hand(result: DoseResponseResult, group: str, change: float) -> np.n
     df = np.asarray(result.fit(group).moderated.df_total, dtype=float)[:, None]
     t = np.abs(change_) / error
     delta = np.log2(change) / error
-    p = student_t.sf(t - delta, df) + student_t.sf(t + delta, df)
-    return np.minimum(1.0, k * p.min(axis=1))
+    found: np.ndarray = student_t.sf(t - delta, df) + student_t.sf(t + delta, df)
+    return found
+
+
+def treat_by_hand(result: DoseResponseResult, group: str, change: float) -> np.ndarray:
+    """The gate's p-values: each dose's TREAT p-value by hand, the smallest times
+    the doses, capped at 1."""
+    p = treat_per_dose(result, group, change)
+    return np.minimum(1.0, p.shape[1] * p.min(axis=1))
+
+
+@pytest.mark.parametrize("analysis", ["voom", "trend"])
+def test_lowest_effective_doses_under_a_robust_fold_change_gate(analysis: str) -> None:
+    # Robust moderation reaches the doses' TREAT p-values that lowest_effective_doses
+    # computes again: the stage-wise calls of each dose's TREAT p-value by hand.
+    cube, design = gate_case("fixture")
+    result = dose_response(
+        cube,
+        design,
+        dose=AXIS,
+        gate={"fold_change": 1.2},
+        analysis=ANALYSES[analysis],
+        robust=True,
+    )
+    for group in result.groups:
+        per_dose = treat_per_dose(result, group, 1.2)
+        adjusted = stage_wise_adjusted_p_values(
+            result.table(group, "gate")["p_value"], per_dose, alpha=0.05
+        )
+        hit = np.nan_to_num(adjusted, nan=2.0) <= 0.05
+        doses = np.unique(result.table(group, "each_dose")["dose"])
+        lowest = result.lowest_effective_doses(group)
+        assert_array_equal(
+            lowest["lowest_effective_dose"],
+            np.where(hit.any(axis=1), doses[np.argmax(hit, axis=1)], np.nan),
+        )
+        at = np.where(hit.any(axis=1), np.argmax(hit, axis=1), 0)
+        expected = np.where(hit.any(axis=1), adjusted[np.arange(at.size), at], np.nan)
+        found = np.asarray(lowest["stage_wise_adjusted_p_value"], dtype=float)
+        assert_array_equal(np.isnan(found), np.isnan(expected))
+        assert_allclose(found, expected, rtol=1e-10)
+        assert hit.any()
 
 
 @pytest.mark.parametrize(
@@ -2709,8 +2762,8 @@ def test_the_default_gate_and_its_record(tmp_path: Path) -> None:
     # A fold change, its adjustments in the record and the printout.
     large = dose_response(cube, design, dose=AXIS, gate={"fold_change": 1.5})
     assert large.provenance["gate_adjustment"] == (
-        "the smallest of each gene's TREAT p-values of the doses times the doses "
-        "(Bonferroni), then Benjamini-Hochberg within each cell type"
+        "Bonferroni over the cell type's doses, Benjamini-Hochberg within each cell "
+        "type"
     )
     assert (
         "gate: TREAT beyond 1.5-fold at each dose, Bonferroni over the cell type's "
@@ -2774,6 +2827,30 @@ def test_a_cell_type_without_the_gate() -> None:
     assert (
         "gate: spline test, Benjamini-Hochberg within each cell type, at 5% FDR" in text
     )
+
+
+def test_the_printout_counts_calls_at_the_fdr() -> None:
+    # A call is an adjusted p-value of at most 0.05, as the gate makes it: three
+    # adjusted p-values of exactly 0.05 count, and one just above does not.
+    cube = gate_series()
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, groups="one")
+    tables = dict(result.tables)
+    spline = tables[("one", "spline")]
+    adjusted = np.full(len(spline), 0.5)
+    adjusted[:3] = 0.05
+    adjusted[3] = np.nextafter(0.05, 1.0)
+    columns = {name: spline[name] for name in spline.columns}
+    tables[("one", "spline")] = Table(columns | {"adjusted_p_value": adjusted})
+    edited = DoseResponseResult(
+        result.summary,
+        tables,
+        dict(result._fits),
+        result.design_report,
+        result.provenance,
+        cube=result.cube,
+        design=result.design,
+    )
+    assert "calls at 5% FDR: spline 3," in " ".join(repr(edited).split())
 
 
 @pytest.mark.parametrize("test", ["dunnett", "williams", "mcp"])
@@ -2858,6 +2935,12 @@ def test_gate_refusals() -> None:
     for test in ("linear_trend", "nonlinearity"):
         refused(ValueError, "not any response", gate={"test": test})
     refused(ValueError, r"'splien'.*did you mean 'spline'", gate={"test": "splien"})
+    refused(
+        ValueError,
+        r"'anova', which is not one of the gate's tests \(the one-way ANOVA of the "
+        r"dose groups is 'dose_groups'\)",
+        gate={"test": "anova"},
+    )
     for fdr in (0.0, 1.0, -0.1, np.nan):
         refused(ValueError, r"gate\['fdr'\] must be", gate={"fdr": fdr})
     refused(TypeError, r"gate\['fdr'\] must be a real number", gate={"fdr": "0.05"})
@@ -2867,8 +2950,9 @@ def test_gate_refusals() -> None:
         )
     refused(
         ValueError,
-        "has no threshold; leave gate\\['test'\\] out",
-        gate={"test": "spline", "fold_change": 1.5},
+        r"the gate's test 'williams' takes no fold change; pass "
+        r"gate=\{'fold_change': 1.5\} alone",
+        gate={"test": "williams", "fold_change": 1.5},
     )
     refused(
         ValueError,
@@ -2877,9 +2961,9 @@ def test_gate_refusals() -> None:
     )
     refused(
         ValueError,
-        "leave 'mcp' out of tests|neither tests nor the gate",
-        candidates=object(),
-    ) if False else None
+        "neither tests nor the gate names 'mcp'",
+        candidates=CandidateShapes(emax=[0.5]),
+    )
     one = Design(cube.samples.filter(np.isin(cube.samples["dose"], [0.0, 1.0])), "~ 1")
     with pytest.raises(
         ValueError, match="the gate's test 'spline' runs along the dose"
@@ -2890,7 +2974,9 @@ def test_gate_refusals() -> None:
     donors, _ = simulate_dose_series(
         [0.0, 1.0, 10.0], replicates=3, cell_types=1, n_genes=60, donor_sd=0.3, rng=1
     )
-    with pytest.raises(ValueError, match="dream_voom's tests are not"):
+    with pytest.raises(
+        ValueError, match="TREAT runs under limma_voom and limma_trend, which fit"
+    ):
         dose_response(
             donors,
             Design(donors.samples, "~ 1", random="(1 | donor)"),

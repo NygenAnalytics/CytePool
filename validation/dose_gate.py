@@ -10,28 +10,33 @@ which 30% respond, 300 cells per profile, whose 6 samples allow 90 assignments o
 their doses; ``sex``, the vehicle and 1 ug/kg x 4, two of each sex, under
 ``"~ sex"``, 36 assignments within the sexes; ``donors``, 4 donors whose cells
 receive the vehicle and 4 doses, under ``(1 | donor)``; and ``animals``, the vehicle
-and 3 doses x 6 samples, 2 from each of 3 animals, under ``(1 | animal)``.
+and 3 doses x 6 samples, 2 from each of 3 animals, two female and one male at each
+dose, under ``"~ sex"`` and ``(1 | animal)``, so that the sexes split the animals into
+blocks.
 
 R, which sees the counts, cells, doses, the design's variables and the settings and
 nothing that CytePool computed, keeps each cell type's samples of 10 cells or more
 and some counts and fits the design's terms with an indicator of each treated dose
 they hold: edgeR's ``filterByExpr`` and ``calcNormFactors``, then ``voom`` and
 ``lmFit`` (limma-voom) or log-CPM and ``lmFit`` (limma-trend). The gates' p-values:
-the spline's F-test with R's own knots and ``ns()`` columns fitted through the dose
-groups' means, and the dose groups' F-test, each exact under voom's weights (each
-gene's ``lm.wfit``, CytePool's default) and, for the dose groups, limma's
-``classifyTestsF`` (``contrast_standard_errors="limma"``), referred to each gene's
-degrees of freedom; with a fold change, ``treat`` and ``topTreat`` of each dose, the
-smallest p-value times the doses, capped at 1, and stageR's ``stageWiseAdjustment``
-for the lowest effective doses. Calls are ``p.adjust(, "BH") <= fdr``. From the sample
-table R builds the blocks of exchangeable units itself, counts the assignments as
-products of binomial coefficients, enumerates them where they are few, refits limma
-on each of the 90 assignments of ``duplicate``, and refits one recorded assignment of
-every case; variancePartition 1.36.2 fits the dream designs.
+the dose groups' F-test, exact under voom's weights (each gene's ``lm.wfit``,
+CytePool's default) and limma's ``classifyTestsF``
+(``contrast_standard_errors="limma"``), referred to each gene's degrees of freedom;
+with a fold change, ``treat`` and ``topTreat`` of each dose, the smallest p-value
+times the doses, capped at 1, and stageR's ``stageWiseAdjustment`` for the lowest
+effective doses. Calls are ``p.adjust(, "BH") <= fdr``, of the spline gate on
+CytePool's spline p-values, which ``dose_response_tests.py`` checks against limma.
+From the sample table R builds the blocks of exchangeable units itself, counts the
+assignments as products of binomial coefficients, enumerates them where they are few,
+refits limma on each assignment of ``duplicate`` (90) and ``sex`` (36), counting as
+ties the assignments whose refit gives the true doses' genes and p-values within
+1e-10, and refits one recorded assignment of every case; variancePartition 1.36.2
+fits the dream designs.
 
 Tiers: exact (1e-10) for limma's p-values and TREAT, close (1e-6) for robust priors
 and dream's F-statistics; identical for calls, genes, counts of assignments, the
-assignments enumerated, the genes each run passes and the smallest p-values.
+assignments enumerated, the genes each run passes and the smallest possible
+p-values.
 p-values are compared as their difference over p max(1, |log p|), statistics over
 max(|reference|, 1).
 
@@ -82,7 +87,7 @@ CHECKED_FOLD_CHANGE = 1.5
 
 R_LIMMA = r"""
 suppressPackageStartupMessages({
-  library(limma); library(edgeR); library(splines); library(stageR); library(jsonlite)
+  library(limma); library(edgeR); library(stageR); library(jsonlite)
 })
 args <- commandArgs(trailingOnly = TRUE)
 input <- read_json(args[[1]], simplifyVector = TRUE)
@@ -91,13 +96,11 @@ out <- list(versions = as.list(c(R = as.character(getRversion()), sapply(
   c("limma", "edgeR", "stageR"), function(p) as.character(packageVersion(p))))))
 HELPERS
 
-# The gate's p-value of each gene: the F-test of the spline (R's own knots and ns()
-# columns, fitted through the dose groups' means) or of the dose groups, exact under
-# voom's weights (each gene's own weighted least squares) or limma's
-# (classifyTestsF), referred to each gene's degrees of freedom; or, with a fold
-# change, each dose's TREAT p-value and the smallest of them times the doses, capped
-# at 1.
-gate_p_values <- function(c, case, gate, analysis, robust, exact) {
+# The gate's p-value of each gene: the dose groups' F-test, exact under voom's
+# weights (each gene's own weighted least squares) or limma's (classifyTestsF),
+# referred to each gene's degrees of freedom; or, with a fold change, each dose's
+# TREAT p-value and the smallest of them times the doses, capped at 1.
+gate_p_values <- function(c, gate, analysis, robust, exact) {
   k <- length(c$doses) - 1
   trend <- analysis == "trend"
   if (gate$test == "each_dose") {
@@ -107,15 +110,7 @@ gate_p_values <- function(c, case, gate, analysis, robust, exact) {
       topTreat(tr, coef = j, number = Inf, sort.by = "none")$P.Value), ncol = k)
     return(list(p = pmin(1, k * apply(P, 1, min)), per_dose = P))
   }
-  rows <- if (gate$test == "dose_groups") diag(k) else {
-    position <- position_of(case$axis)
-    x <- position(case$samples$dose); xs <- x[!is.na(x)]
-    knots <- c(min(xs), attr(ns(unique(xs), df = case$df), "knots"), max(xs))
-    own <- if (case$axis$vehicle == "own_group") as.numeric(c$doses > 0) else NULL
-    A <- least_squares(cbind(1, own, ns_columns(position, knots)(c$doses)), c$n)
-    A[-1, -1, drop = FALSE]
-  }
-  L <- rbind(matrix(0, c$n_others, nrow(rows)), t(rows))
+  L <- rbind(matrix(0, c$n_others, k), diag(k))
   eb <- eBayes(contrasts.fit(c$fit, L), trend = trend, robust = robust)
   df2 <- eb$df.residual + eb$df.prior
   if (exact && !is.null(c$W)) {
@@ -145,8 +140,9 @@ stage_wise <- function(screen, p, alpha) {
   full
 }
 
-# The limma jobs: each gate at each level, each dose's TREAT p-values and the gate
-# with a fold change, and the lowest effective doses under it.
+# The limma jobs: the dose groups' gate, the spline gate's calls on CytePool's
+# p-values, each dose's TREAT p-values and the gate with a fold change, and the
+# lowest effective doses under it.
 for (name in names(input$limma)) {
   job <- input$limma[[name]]
   case <- input$cases[[job$case]]
@@ -157,16 +153,20 @@ for (name in names(input$limma)) {
                 treat = list())
     for (test in job$tests) {
       gate <- list(test = test)
-      exact <- gate_p_values(c, case, gate, job$analysis, job$robust, TRUE)$p
+      exact <- gate_p_values(c, gate, job$analysis, job$robust, TRUE)$p
       res$gates[[test]] <- list(exact = exact, exact_adjusted = p.adjust(exact, "BH"))
       if (job$analysis == "voom") {
-        approximate <- gate_p_values(c, case, gate, job$analysis, job$robust, FALSE)$p
+        approximate <- gate_p_values(c, gate, job$analysis, job$robust, FALSE)$p
         res$gates[[test]]$limma <- approximate
         res$gates[[test]]$limma_adjusted <- p.adjust(approximate, "BH")
       }
     }
+    if (!is.null(job$spline[[ct]])) {
+      p <- as.numeric(job$spline[[ct]])
+      res$gates$spline <- list(exact_adjusted = p.adjust(p, "BH"))
+    }
     for (fc in input$fold_changes) {
-      g <- gate_p_values(c, case, list(test = "each_dose", fold_change = fc),
+      g <- gate_p_values(c, list(test = "each_dose", fold_change = fc),
                          job$analysis, job$robust, TRUE)
       # stageR's "holm" fails on one hypothesis per gene; one treated dose has no
       # stage-wise step.
@@ -185,13 +185,17 @@ for (i in names(input$reruns)) {
   job <- input$reruns[[i]]
   case <- input$cases[[job$case]]
   c <- fit_cell_type(case, job$cell_type, job$doses, job$analysis)
-  p <- gate_p_values(c, case, job$gate, job$analysis, FALSE, TRUE)$p
+  p <- gate_p_values(c, job$gate, job$analysis, FALSE, TRUE)$p
   out$reruns[[i]] <- list(samples = c$samples, genes = c$genes, p = p,
                           adjusted = p.adjust(p, "BH"))
 }
 
 # The exchangeable blocks of each case's cell types, their assignments, and, where
-# asked, every assignment with the genes each gate passes.
+# asked, every assignment refitted: the genes each gate passes, and the ties, the
+# assignments, the true one included, whose refit gives the true one's genes and
+# p-values within 1e-10.
+same_fit <- function(f, g) identical(f$genes, g$genes) &&
+  identical(is.na(f$p), is.na(g$p)) && all(abs(f$p - g$p) <= 1e-10 * abs(g$p), na.rm = TRUE)
 for (name in names(input$cases)) {
   case <- input$cases[[name]]
   for (ct in names(case$cell_types)) {
@@ -201,24 +205,17 @@ for (name in names(input$cases)) {
     if (ct %in% names(case$every)) {
       every <- every_assignment(b)
       entry$assignments <- every
-      gates <- case$every[[ct]]
-      entry$counts <- lapply(gates, function(gate) apply(every, 1, function(label) {
-        doses <- case$samples$dose
-        doses[match(b$samples, case$samples$sample_id)] <- b$doses[label + 1]
-        c <- fit_cell_type(case, ct, doses, "voom")
-        sum(calls(gate_p_values(c, case, gate, "voom", FALSE, TRUE)$p, input$fdr))
-      }))
-      names(entry$counts) <- names(gates)
-      # The assignments that only rename dose groups: the same partition of the
-      # samples, with the vehicle's samples kept for a gate of each dose.
-      part <- function(label) paste(sort(sapply(unique(label), function(l)
-        paste(which(label == l), collapse = ","))), collapse = "|")
-      observed <- part(b$label)
-      vehicle <- paste(which(b$label == 0), collapse = ",")
-      entry$renamings <- list(
-        every_group = sum(apply(every, 1, part) == observed),
-        vehicle_kept = sum(apply(every, 1, function(l)
-          part(l) == observed && paste(which(l == 0), collapse = ",") == vehicle)))
+      true <- which(apply(every, 1, function(label) all(label == b$label)))
+      refits <- lapply(case$every[[ct]], function(gate) lapply(seq_len(nrow(every)),
+        function(i) {
+          doses <- case$samples$dose
+          doses[match(b$samples, case$samples$sample_id)] <- b$doses[every[i, ] + 1]
+          c <- fit_cell_type(case, ct, doses, "voom")
+          list(genes = c$genes, p = gate_p_values(c, gate, "voom", FALSE, TRUE)$p)
+        }))
+      entry$counts <- lapply(refits, function(r) sapply(r, function(f)
+        sum(calls(f$p, input$fdr))))
+      entry$ties <- lapply(refits, function(r) sum(sapply(r, same_fit, r[[true]])))
     }
     out$blocks[[name]][[ct]] <- entry
   }
@@ -229,8 +226,7 @@ write_json(out, args[[2]], digits = I(17), matrix = "rowmajor", auto_unbox = TRU
 
 R_DREAM = r"""
 suppressPackageStartupMessages({
-  library(variancePartition); library(lme4); library(edgeR); library(splines)
-  library(jsonlite)
+  library(variancePartition); library(lme4); library(edgeR); library(jsonlite)
 })
 args <- commandArgs(trailingOnly = TRUE)
 input <- read_json(args[[1]], simplifyVector = TRUE)
@@ -246,9 +242,9 @@ tight <- lmerControl(optimizer = "tight_bobyqa", calc.derivs = FALSE,
 out <- list(versions = as.list(c(R = as.character(getRversion()), sapply(
   c("variancePartition", "lme4", "edgeR"), function(p) as.character(packageVersion(p))))))
 # The dose groups' F-test of a cell type under dream, with the doses given for the
-# design's samples: the indicators of the treated doses and the case's random
-# intercept, voomWithDreamWeights, dream with the doses as contrasts, eBayes and
-# topTable.
+# design's samples: the design's terms, the indicators of the treated doses and the
+# case's random intercept, voomWithDreamWeights, dream with the doses as contrasts,
+# eBayes and topTable.
 for (i in names(input$dream)) {
   job <- input$dream[[i]]
   case <- input$cases[[job$case]]
@@ -260,15 +256,18 @@ for (i in names(input$dream)) {
   treated <- sort(unique(d$dose[d$dose > 0]))
   ind <- matrix(sapply(treated, function(k) as.numeric(d$dose == k)), nrow = nrow(d))
   colnames(ind) <- paste0("dose", seq_along(treated))
-  X <- cbind("(Intercept)" = 1, ind)
+  others <- model.matrix(as.formula(case$formula), d)
+  X <- cbind(others, ind)
   dge <- DGEList(y); keep <- filterByExpr(dge, design = X)
   dge <- dge[keep, , keep.lib.sizes = FALSE]; dge <- calcNormFactors(dge)
   d <- cbind(d, ind); d[[case$unit]] <- factor(d[[case$unit]])
-  form <- as.formula(paste("~", paste(colnames(ind), collapse = " + "),
+  terms <- sub("^\\s*~\\s*", "", case$formula)
+  form <- as.formula(paste("~", terms, "+", paste(colnames(ind), collapse = " + "),
                            "+ (1 |", case$unit, ")"))
   v <- quiet(voomWithDreamWeights(dge, form, d, span = 0.5, control = tight))
-  L <- rbind(0, diag(length(treated)))
-  rownames(L) <- c("(Intercept)", colnames(ind)); colnames(L) <- paste0("L", seq_along(treated))
+  L <- rbind(matrix(0, ncol(others), length(treated)), diag(length(treated)))
+  rownames(L) <- c(colnames(others), colnames(ind))
+  colnames(L) <- paste0("L", seq_along(treated))
   e <- eBayes(quiet(dream(v, form, d, L = L, control = tight)))
   top <- topTable(e, coef = colnames(L), number = Inf, sort.by = "none")
   out$dream[[i]] <- list(samples = d$sample_id, genes = which(keep), F = top$F)
@@ -278,23 +277,6 @@ write_json(out, args[[2]], digits = I(17), matrix = "rowmajor", auto_unbox = TRU
 """
 
 R_HELPERS = r"""
-# The positions of doses on the axis, the spline's columns with R's own knots, and
-# least squares through the dose groups' means.
-position_of <- function(axis) function(d) {
-  if (axis$vehicle == "own_group") {
-    out <- rep(NA_real_, length(d)); t <- d > 0
-    out[t] <- if (axis$scale == "log10") log10(d[t]) else d[t]
-    out
-  } else if (axis$scale == "log10") log10(d + axis$offset) else d
-}
-ns_columns <- function(position, knots) function(d) {
-  z <- position(d); on <- !is.na(z); k <- length(knots)
-  m <- matrix(0, length(d), k - 1)
-  if (any(on)) m[on, ] <- ns(z[on], knots = knots[-c(1, k)], Boundary.knots = knots[c(1, k)])
-  m
-}
-least_squares <- function(Z, n) solve(crossprod(Z, Z * n), t(Z * n))
-
 # The samples of a cell type with enough cells and some counts.
 used_samples <- function(case, ct) {
   y <- case$cell_types[[ct]]$counts
@@ -396,7 +378,6 @@ class Case:
     formula: str
     unit: str | None  # the column of the design's random intercept
     analysis: str  # "limma" or "dream"
-    df: int | None  # the spline's columns, as dose_response chooses them
     tests: tuple[str, ...] = ()  # the gates checked against limma
     every: tuple[str, ...] = ()  # the cell types R reruns on every assignment
 
@@ -429,7 +410,6 @@ def cases() -> list[Case]:
             "~ 1",
             None,
             "limma",
-            2,
             ("spline", "dose_groups"),
         )
     )
@@ -450,7 +430,6 @@ def cases() -> list[Case]:
             "~ 1",
             None,
             "limma",
-            1,
             ("spline", "dose_groups"),
             ("cell_type_1",),
         )
@@ -481,7 +460,6 @@ def cases() -> list[Case]:
             "~ sex",
             None,
             "limma",
-            None,
             ("dose_groups",),
             ("cell_type_1",),
         )
@@ -503,18 +481,19 @@ def cases() -> list[Case]:
             "~ 1",
             "donor",
             "dream",
-            2,
         )
     )
 
     def animals(samples: Any) -> dict[str, list[str]]:
         ids = samples["sample_id"].tolist()
         # Replicates 1 and 2 of a dose come from its first animal, 3 and 4 from its
-        # second, 5 and 6 from its third.
+        # second, a male, 5 and 6 from its third.
+        animal = [(int(i.split("_r")[1]) + 1) // 2 for i in ids]
         return {
             "animal": [
-                f"{i.split('_')[0]}_a{(int(i.split('_r')[1]) + 1) // 2}" for i in ids
-            ]
+                f"{i.split('_')[0]}_a{a}" for i, a in zip(ids, animal, strict=True)
+            ],
+            "sex": ["M" if a == 2 else "F" for a in animal],
         }
 
     cube, samples = series(
@@ -530,11 +509,10 @@ def cases() -> list[Case]:
         Case(
             "animals",
             cube,
-            Design(samples, "~ 1", random="(1 | animal)"),
-            "~ 1",
+            Design(samples, "~ sex", random="(1 | animal)"),
+            "~ sex",
             "animal",
             "dream",
-            1,
         )
     )
     return found
@@ -611,9 +589,9 @@ def limma_runs(found: list[Case]) -> Ours:
 
 
 def check_runs(found: list[Case], ours: Ours) -> None:
-    """One random run of every case, with the default gate, and every other
-    assignment of ``duplicate`` (dose groups and the fold-change gate) and of ``sex``
-    (dose groups)."""
+    """One random run of every case, with the dose-group gate, and every other
+    assignment of ``duplicate`` and ``sex``, with the dose-group gate and the
+    fold-change gate."""
     for case in found:
         result = analyse(
             case,
@@ -621,12 +599,9 @@ def check_runs(found: list[Case], ours: Ours) -> None:
             {"test": "dose_groups"},
         )
         ours.checks[case.name] = permutation_check(result, n_permutations=1, rng=1)
-    for name, gates in (
-        ("duplicate", ({"test": "dose_groups"}, {"fold_change": CHECKED_FOLD_CHANGE})),
-        ("sex", ({"test": "dose_groups"},)),
-    ):
+    for name in ("duplicate", "sex"):
         case = next(c for c in found if c.name == name)
-        for gate in gates:
+        for gate in ({"test": "dose_groups"}, {"fold_change": CHECKED_FOLD_CHANGE}):
             result = analyse(case, "voom", gate)
             key = "dose_groups" if "test" in gate else "each_dose"
             ours.every[(name, key)] = permutation_check(
@@ -684,16 +659,11 @@ def r_input(found: list[Case], ours: Ours) -> dict[str, Any]:
             "dose_groups": {"test": "dose_groups"},
             "each_dose": {"test": "each_dose", "fold_change": CHECKED_FOLD_CHANGE},
         }
-        every = {
-            group: gates if case.name == "duplicate" else {} for group in case.every
-        }
         payload["cases"][case.name] = {
             "samples": samples,
             "formula": case.formula,
             "unit": case.unit,
-            "axis": AXIS.to_dict(),
-            "df": case.df,
-            "every": every,
+            "every": {group: gates for group in case.every},
             # The profiles of the design's samples, in its order.
             "cell_types": {
                 group: {
@@ -706,11 +676,23 @@ def r_input(found: list[Case], ours: Ours) -> dict[str, Any]:
         if case.analysis == "limma":
             settings = SETTINGS if case.name != "sex" else (("voom", False),)
             for analysis, robust in settings:
-                payload["limma"][label(case, analysis, robust)] = {
+                job = label(case, analysis, robust)
+                spline = ours.gates.get((job, "spline", FDR, "exact"))
+                payload["limma"][job] = {
                     "case": case.name,
                     "analysis": analysis,
                     "robust": robust,
-                    "tests": list(case.tests),
+                    "tests": [test for test in case.tests if test != "spline"],
+                    # CytePool's spline p-values, whose calls R makes.
+                    "spline": {}
+                    if spline is None
+                    else {
+                        group: [
+                            None if np.isnan(p) else p
+                            for p in spline.table(group, "spline")["p_value"].tolist()
+                        ]
+                        for group in spline.groups
+                    },
                 }
         check = ours.checks[case.name]
         for entry in check.provenance["groups"]:
@@ -837,7 +819,9 @@ def genes_of(case: Case, theirs: dict[str, Any]) -> list[str]:
 
 
 def compare_gates(found: list[Case], ours: Ours, limma: dict, rows: Rows) -> None:
-    """Each gate's p-values and calls against R's fit, at each level and setting."""
+    """The dose groups' gate's p-values and calls against R's fit, and the spline
+    gate's calls against R's adjustment of CytePool's spline p-values, at each level
+    and setting."""
     largest: dict[str, float] = {}
     same: dict[str, list[int]] = {}
 
@@ -855,12 +839,13 @@ def compare_gates(found: list[Case], ours: Ours, limma: dict, rows: Rows) -> Non
                 tally("genes tested", 0, 1)
                 continue
             tally("genes tested", 1, 1)
-            reference = vector(theirs["gates"][test][errors])
-            family = f"'{test}' gate, {'limma' if errors == 'limma' else 'exact'}"
-            difference = p_scaled(table["p_value"], reference)
-            key = f"{family}{', robust' if robust else ''}"
-            largest[key] = max(largest.get(key, 0.0), difference)
-            called = vector(theirs["gates"][test][errors + "_adjusted"]) <= level
+            values = theirs["gates"][test]
+            if errors in values:  # R's own p-values: not the spline's
+                family = f"'{test}' gate, {'limma' if errors == 'limma' else 'exact'}"
+                difference = p_scaled(table["p_value"], vector(values[errors]))
+                key = f"{family}{', robust' if robust else ''}"
+                largest[key] = max(largest.get(key, 0.0), difference)
+            called = vector(values[errors + "_adjusted"]) <= level
             mine = np.asarray(table["passes_gate"], dtype=bool)
             tally(
                 f"'{test}' gate: genes passing", int(np.sum(mine == called)), mine.size
@@ -874,10 +859,14 @@ def compare_gates(found: list[Case], ours: Ours, limma: dict, rows: Rows) -> Non
             value,
             CLOSE if "robust" in key else EXACT,
         )
+    references = {
+        "'spline' gate: genes passing": "R: p.adjust(p, 'BH') <= fdr on CytePool's "
+        "spline p-values, which dose_response_tests.py checks against limma",
+    }
     for family, (equal, total) in sorted(same.items()):
         rows.identical(
             f"{family}, at 5% and 10% FDR",
-            "R: p.adjust(p, 'BH') <= fdr on R's p-values",
+            references.get(family, "R: p.adjust(p, 'BH') <= fdr on R's p-values"),
             equal,
             total,
         )
@@ -1022,22 +1011,20 @@ def compare_assignments(
         same[0] += int(set(mine) == reference and len(mine) == len(set(mine)))
         same[1] += 1
     rows.identical(
-        "every assignment, the true one and every other run once: duplicate (90, "
-        "two gates) and sex (36)",
+        "every assignment, the true one and every other run once: duplicate (90) and "
+        "sex (36), two gates each",
         "R's enumeration of the distinct label vectors of each block",
         *same,
     )
 
 
 def compare_every_run(ours: Ours, blocks: dict, rows: Rows) -> None:
-    """The genes each run of duplicate passes, its share, p-value and smallest
-    p-value, against R's limma on each of the 90 assignments."""
+    """The genes each run of duplicate and sex passes, the share, the p-value and the
+    smallest possible p-value, against R's limma on each assignment."""
     runs = [0, 0]
     statistics = 0.0
     smallest = [0, 0]
     for (name, key), check in ours.every.items():
-        if name != "duplicate":
-            continue
         entry = check.provenance["groups"][0]
         theirs = blocks[name][entry["group_id"]]
         assignments = [tuple(row) for row in theirs["assignments"]]
@@ -1056,29 +1043,29 @@ def compare_every_run(ours: Ours, blocks: dict, rows: Rows) -> None:
             abs(float(row["share_of_runs_with_passing_genes"][0]) - share),
             abs(float(row["p_value"][0]) - p) / p,
         )
-        renamings = theirs["renamings"][
-            "every_group" if key == "dose_groups" else "vehicle_kept"
-        ]
+        ties = int(theirs["ties"][key])
         smallest[0] += int(
-            float(row["smallest_p_value"][0]) == renamings / len(assignments)
+            float(row["smallest_possible_p_value"][0]) == ties / len(assignments)
         )
         smallest[1] += 1
     rows.identical(
-        "duplicate, 89 runs of the dose-group gate and of the 1.5-fold gate: the "
-        "genes each run passes",
-        "limma 3.62.1 refitted by R on each of the 90 assignments it enumerates",
+        "duplicate and sex, 89 and 35 runs of the dose-group gate and of the 1.5-fold "
+        "gate: the genes each run passes",
+        "limma 3.62.1 refitted by R on each assignment it enumerates",
         *runs,
     )
     rows.bounded(
-        "duplicate: the share of runs with genes and the p-value, from R's counts",
-        "R's counts of the 90 assignments",
+        "duplicate and sex: the share of runs with genes and the p-value, from R's "
+        "counts",
+        "R's counts of every assignment",
         statistics,
         EXACT,
     )
     rows.identical(
-        "duplicate: the smallest p-value, 6/90 for the dose groups and 2/90 for the "
-        "fold-change gate",
-        "R: the assignments with the observed partition of the samples, over 90",
+        "duplicate and sex: the smallest possible p-value, 6/90 and 2/36 for the "
+        "dose groups, 2/90 and 2/36 for the fold-change gate",
+        "R: the ties, assignments whose refit gives the true doses' genes and "
+        "p-values within 1e-10, over the assignments",
         *smallest,
     )
 
@@ -1150,8 +1137,8 @@ def compare_reruns(
         *counts,
     )
     rows.bounded(
-        "dream, donors (doses within units) and animals (whole units): the dose-group "
-        "F-statistics of the true doses and of a recorded run",
+        "dream, donors (doses within units) and animals (whole units in blocks by "
+        "sex): the dose-group F-statistics of the true doses and of a recorded run",
         "variancePartition 1.36.2 dream, topTable",
         dream_f,
         CLOSE,
