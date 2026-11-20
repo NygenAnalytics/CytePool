@@ -602,16 +602,17 @@ def test_doses_are_refused_with_a_fix(
 
 
 def test_messages_say_what_x_and_the_doses_on_the_axis_are() -> None:
-    # 10 of 12 treated samples have the lowest dose: R's rule places its one interior
-    # knot there, on the lower boundary knot, and the message says what x is on a
-    # linear axis.
-    doses = np.r_[0.0, 0.0, np.ones(10), 2.0, 3.0]
-    linear = ug_per_kg(scale="linear")
-    with pytest.raises(
-        ValueError, match="every interior knot falls on the lower"
-    ) as error:
-        linear.spline_basis({"dose": doses}, 2, knots="quantiles")
-    assert str(error.value).endswith("(on this axis, x is the treated doses in ug/kg)")
+    # 10 of 12 samples on the axis have its lowest dose: R's rule places its one
+    # interior knot there, on the lower boundary knot, and the message says what x is
+    # on each kind of axis.
+    for options, doses, x in (
+        ({"scale": "linear"}, [0.0, 0.0, *[1.0] * 10, 2.0, 3.0], "the treated doses in ug/kg"),
+        ({}, [0.0, 0.0, *[1.0] * 10, 2.0, 3.0], "log10 of the treated doses in ug/kg"),
+        ({"vehicle": "on_axis", "offset": 0.003}, [*[0.0] * 10, 1.0, 2.0], "log10 of the doses plus 0.003 ug/kg"),
+    ):  # fmt: skip
+        with pytest.raises(ValueError, match="every interior knot falls") as error:
+            ug_per_kg(**options).spline_basis({"dose": doses}, 2, knots="quantiles")
+        assert str(error.value).endswith(f"(on this axis, x is {x})")
     # With the vehicle on the axis, its dose counts among the doses on the axis.
     on_axis = ug_per_kg(vehicle="on_axis", offset=0.003)
     with pytest.raises(ValueError) as error:
