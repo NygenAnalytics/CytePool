@@ -16,16 +16,16 @@ mpmath, run in a separate process at 50 digits on the exact binary values of the
 truth tables' parameters (``--reference DIRECTORY``, which imports mpmath but not
 CytePool), evaluates the documented formula of each shape at 0, at each dose, at the
 geometric midpoints of neighbouring doses, at a tenth of the lowest positive dose and
-at ten times the top dose; finds each EC50 as the root of |f| = |max_log2_change| / 2 and
-each benchmark dose as the lowest root of |f| = c, by bisection on log10 dose, at c =
-``expression_sd``, 1.349 ``expression_sd`` (ETAP's multiple), log2(1.1), 0.5 and
-|max_log2_change|; and computes the exact moments of the count model to the fourth: the
-Poisson-lognormal moments of the cells per profile, the marginal moments of the counts
-through the factorial moments of the negative binomial distribution, and the
+at ten times the top dose; finds each EC50 as the root of |f| = |max_log2_change| / 2
+and each benchmark dose as the lowest root of |f| = c, by bisection on log10 dose, at
+c = ``expression_sd``, 1.349 ``expression_sd`` (ETAP's multiple), log2(1.1), 0.5 and
+|max_log2_change|; and computes the exact moments of the count model to the fourth:
+the Poisson-lognormal moments of the cells per profile, the marginal moments of the
+counts through the factorial moments of the negative binomial distribution, and the
 covariance of one donor's counts at two doses. A curve that approaches its plateau
-never reaches a change of |max_log2_change| or more, and a peak or a step reaches a change
-up to |max_log2_change|; within those rules the roots come from bisection, not from the
-closed forms that CytePool uses. Thirteen curves with a change equal to their
+never reaches a change of |max_log2_change| or more, and a peak or a step reaches a
+change up to |max_log2_change|; within those rules the roots come from bisection, not
+from the closed forms that CytePool uses. Thirteen curves with a change equal to their
 |max_log2_change|, and flat genes, are added for the fixtures.
 
 Rows: the true curves by shape (exact, 1e-10 of |max_log2_change|, and 0 at dose 0); the
@@ -752,8 +752,8 @@ def check_curves(
     )
     boundary = ~in_series
     rows.add(
-        f"Benchmark doses of the {int((~series).sum())} added curves at abs(max_log2_change), "
-        "0.6 and 1.5 times it",
+        f"Benchmark doses of the {int((~series).sum())} added curves at "
+        "abs(max_log2_change), 0.6 and 1.5 times it",
         "mpmath",
         f"{int(mismatch[boundary].sum())} NaN mismatches, largest difference "
         f"{float(relative_roots[boundary].max(initial=0.0)):.1e}",

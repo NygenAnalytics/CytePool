@@ -129,7 +129,7 @@ def test_ec50_and_benchmark_doses_match_mpmath_roots() -> None:
     assert_array_equal(np.isnan(found), np.isnan(data["root"]))
     reached = ~np.isnan(data["root"])
     assert_allclose(found[reached], data["root"][reached], rtol=1e-10)
-    # Some changes are never reached, and some are reached at |max_change| itself.
+    # Some changes are never reached, and some are reached at |max_log2_change| itself.
     assert 0 < np.isnan(data["root"]).sum() < reached.sum()
 
 
@@ -186,7 +186,7 @@ def test_never_reached_is_nan() -> None:
             ("power", -0.5, NAN, 2.0, NAN, NAN),
         ]
     )
-    # At a change equal to |max_change|: a plateau is approached and never reached,
+    # At a change equal to |max_log2_change|: a plateau is approached and never reached,
     # while a step and a peak reach it; lines and powers go on beyond the top dose.
     assert_array_equal(
         truth.benchmark_doses("liver", log2_change=0.5),
@@ -196,7 +196,7 @@ def test_never_reached_is_nan() -> None:
     assert_array_equal(np.isnan(beyond), [True] * 6 + [False, False])
     below = truth.benchmark_doses("liver", log2_change=0.5 * (1.0 - 1e-9))
     assert_array_equal(np.isnan(below), [True] + [False] * 7)
-    # Twice |max_change|: 20 for the line, 10 x 2^(1/2) for the power.
+    # Twice |max_log2_change|: 20 for the line, 10 x 2^(1/2) for the power.
     assert_allclose(
         truth.benchmark_doses("liver", [6, 7], log2_change=1.0), [20.0, 10.0 * 2**0.5]
     )

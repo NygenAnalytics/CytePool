@@ -37,7 +37,7 @@
 "quasi_likelihood.py" = "997bcf992d63"
 "rotation_gene_set_tests.py" = "9c2c7bbf2d2c"
 "sample_quality_weights.py" = "ac5299d7e1eb"
-"simulate_dose_series.py" = "68a5ab84918b"
+"simulate_dose_series.py" = "abcb78a320f2"
 "smoothing.py" = "98502d9df51d"
 "sumrank.py" = "cc8d28697697"
 "variance_partitioning.py" = "2205e3c7bbf4"
