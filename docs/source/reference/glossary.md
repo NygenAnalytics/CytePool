@@ -68,6 +68,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Fingerprint.** A SHA-256 digest of what an analysis reads of a cube, its tables, cell numbers, normalization and layers, which names the cube however it was made. [What a cube records](../statistics/cubes.md#what-a-cube-records)
 
+**Gate.** The test that decides which genes of a dose series count as responding: one test of any response at a stated false discovery rate, run after a filter of the genes that does not read the doses, with any fold change inside its null hypothesis. BMDExpress calls such a step a prefilter; the ANOVA gate of the National Toxicology Program tests the data set as a whole. [Which genes count as responding](../statistics/dose_response.md#dose-response-gate)
+
 **Gene set.** A named list of genes that share a function or a response, such as a pathway or a signature, often read from a GMT file of a collection such as MSigDB. [Gene-set collections](../statistics/gene_set_tests.md#gene-set-collections)
 
 **Gene set enrichment analysis (GSEA).** A test of whether the genes of a set gather at the top or the bottom of a ranking of all genes by a statistic, scored by the largest deviation of a walk down the ranking. [Gene set enrichment analysis](../statistics/over_representation_and_gsea.md#gsea)
@@ -100,7 +102,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **LOWESS span.** The share of the genes that each local fit of a LOWESS trend uses, which voom chooses from the number of genes. [The span](../statistics/limma_voom.md#voom-span)
 
-**Lowest effective dose.** The lowest dose whose difference from the vehicle is called, in a gene that a screen calls, with no threshold on the size of the change: toxicology's lowest observed effect level (LOEL); the clinical minimum effective dose usually adds a clinically relevant size. [From which dose a gene responds](../statistics/dose_response.md#lowest-effective-dose)
+**Lowest effective dose.** The lowest dose whose difference from the vehicle is called, in a gene that the gate passes, with no threshold on the size of the change: toxicology's lowest observed effect level (LOEL); the clinical minimum effective dose usually adds a clinically relevant size. [From which dose a gene responds](../statistics/dose_response.md#lowest-effective-dose)
 
 **MCP step.** The multiple comparison procedure of MCP-Mod (multiple comparison procedure and modelling), its test step: each candidate shape becomes its optimal contrast of the dose groups, and the largest of their t-statistics is referred to the multivariate t distribution, which says whether the response follows any of the shapes. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
 
@@ -133,6 +135,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Partial conjunction.** The hypothesis that fewer than u of the studies that tested a gene have an effect, whose rejection claims an effect in at least u studies. [An effect in at least u studies](../statistics/replication.md#partial-conjunction)
 
 **Pathway score.** One number per sample for a gene set, such as a GSVA score, that summarizes the expression of the set's genes in that sample, so that pathways can be compared across samples and tested like genes. [GSVA](../statistics/pathway_scores.md#gsva)
+
+**Permutation check.** A check of how often a gate passes genes when the dose labels are permuted among the samples that the design treats alike, which shows at a series' own design how often noise passes the gate, with a permutation p-value for the genes the true doses pass. [Could the calls come from noise?](../statistics/dose_response.md#dose-permutation-check)
 
 **Precision weight.** A weight for each observation, the inverse of the variance that a mean-variance trend predicts for it, such as voom's. [voom](../statistics/limma_voom.md#voom)
 

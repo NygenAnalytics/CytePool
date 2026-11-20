@@ -1,10 +1,10 @@
 ---
-description: Where doses sit on a dose axis, what a dose series supports, which genes respond to dose in each cell type, with curves, trends and candidate shapes, from which dose, and simulated dose series.
+description: Where doses sit on a dose axis, what a dose series supports, which genes respond to dose in each cell type and how, a gate checked against noise, from which dose, and simulated dose series.
 ---
 
 # Dose response
 
-[Composition tests](composition.md) asked whether a condition changes which cells a sample holds. A dose series asks of each cell type which genes respond to a dose and how, and two things come before any test or curve: where each dose sits on the axis of a curve, which {api}`DoseAxis` records, and whether the samples of each cell type can support tests at all, which {api}`check_dose_design` reports. {api}`dose_response` then tests every cell type that supports tests, with a fitted curve and its band for each gene, tests of trends, of each dose against the vehicle and of candidate shapes of response, and the lowest dose from which each gene responds, and series simulated from known curves with {api}`simulate_dose_series` show how well a dose method recovers the responses at a design before it is run. [Dose response per cell type](../guides/dose_response.ipynb) runs the steps on a simulated series.
+[Composition tests](composition.md) asked whether a condition changes which cells a sample holds. A dose series asks of each cell type which genes respond to a dose and how, and two things come before any test or curve: where each dose sits on the axis of a curve, which {api}`DoseAxis` records, and whether the samples of each cell type can support tests at all, which {api}`check_dose_design` reports. {api}`dose_response` then tests every cell type that supports tests, with a fitted curve and its band for each gene, tests of trends, of each dose against the vehicle and of candidate shapes of response, a gate that decides which genes count as responding, which {api}`permutation_check` checks against permuted doses, and the lowest dose from which each gene responds, and series simulated from known curves with {api}`simulate_dose_series` show how well a dose method recovers the responses at a design before it is run. [Dose response per cell type](../guides/dose_response.ipynb) runs the steps on a simulated series.
 
 (dose-axes)=
 ## Dose axes and the vehicle
@@ -183,7 +183,7 @@ Which genes respond to the dose in each cell type, and how? {api}`dose_response`
 | `linear_trend` | Does expression rise or fall along the axis, and how fast? | The slope of a straight line fitted to the dose groups' means | 1, a moderated t-test |
 | `dose_groups` | Does any dose differ from the vehicle? | Every treated dose against the vehicle | The treated doses compared |
 
-Read `spline` first: it asks whether a gene responds at all. The linear trend and the non-linearity test describe the responses it finds, and `dose_groups` asks the same question as `spline` without a curve. The dose-group test is the one-way analysis of variance of the dose groups with moderated variances, the moderated counterpart of the ANOVA that the genomic dose-response approach of the National Toxicology Program runs as a gate: at least one gene must pass it at a Benjamini-Hochberg FDR below 0.05 for a data set to be analysed further [@ntp2018].
+Read `spline` first, the default gate ([Which genes count as responding](#dose-response-gate)): it asks whether a gene responds at all. The linear trend and the non-linearity test describe the responses it finds, and `dose_groups` asks the same question as `spline` without a curve. The dose-group test is the one-way analysis of variance of the dose groups with moderated variances, the moderated counterpart of the ANOVA that the genomic dose-response approach of the National Toxicology Program runs as a gate: at least one gene must pass it at a Benjamini-Hochberg FDR below 0.05 for a data set to be analysed further [@ntp2018].
 
 The spline is fitted by least squares to the means of the dose groups that a cell type compares, each group weighted by its samples, so that each of its coefficients is a contrast of the dose groups' differences from the vehicle. Without observation weights or other terms in the design, these are the coefficients of the spline fitted to the samples themselves, as the limma User's Guide fits a spline of time (section 9.6.2); under voom's weights the means are those of the weighted fit [@law2014]. The knots are placed once, on the doses of the design's samples, by {api}`DoseAxis.spline_basis` with its rule `"levels"`, so that the knots and curves of the cell types compare. By default the spline has 2 columns, 3 knots, when the axis holds 4 doses or more, and 1 otherwise: on simulated series of the vehicle and 8 doses, 2 columns found as many responsive genes as 3, and more than 1 column or a spline through every dose group ([Validation](../validation.md#validation-dose-response-calibration)). `spline_df` sets another size. A spline with as many coefficients as the dose groups a cell type compares passes through every group's mean, and its F-test is the dose-group F-test.
 
@@ -208,21 +208,23 @@ responding = spline.filter(spline["adjusted_p_value"] < 0.05)
 ```
 
 ```text
-DoseResponseResult (limma_voom): 3 cell types, 2 tested; tests: spline (read
-    first), nonlinearity, linear_trend, dose_groups
+DoseResponseResult (limma_voom): 3 cell types, 2 tested; tests: spline,
+    nonlinearity, linear_trend, dose_groups
   dose: ug/kg (administered) on a log10 axis, the vehicle in a group of its own;
         spline of 2 columns, knots at 0.548 ug/kg, boundary knots at 0.01 and 30
         ug/kg; linear_trend slopes per log10 unit of dose
-  hepatocyte: 9 dose groups, 27 samples, 817 genes; calls at 5% FDR: spline 88,
-              nonlinearity 31, linear_trend 81, dose_groups 77
-  stellate: 8 dose groups, 24 samples, 494 genes; calls at 5% FDR: spline 43,
-            nonlinearity 9, linear_trend 38, dose_groups 34
+  gate: spline test, Benjamini-Hochberg within each cell type, at 5% FDR
+  hepatocyte: 9 dose groups, 27 samples, 817 genes; 88 pass the gate; calls at
+              5% FDR: spline 88, nonlinearity 31, linear_trend 81, dose_groups
+              77
+  stellate: 8 dose groups, 24 samples, 494 genes; 43 pass the gate; calls at 5%
+            FDR: spline 43, nonlinearity 9, linear_trend 38, dose_groups 34
   cholangiocyte: not tested, refused: no vehicle sample is left (3 vehicle
                  samples left out); compare the doses with each other with
                  limma_voom
 ```
 
-The {api}`DoseResponseResult` prints the axis, the spline's knots in doses and the unit of the linear trend's slope, and for each cell type the dose groups it compares, its samples, the genes it tests and the genes each test calls at 5% FDR. The hepatocytes compare all 9 dose groups and the spline calls 88 genes, 85 of which respond in truth. The stellate cells keep no sample at 30 ug/kg, so they compare 8 dose groups, and their dose-group test has one degree of freedom fewer. The cholangiocytes keep no vehicle sample of 10 cells or more, so the check refuses them, and the summary gives its reason.
+The {api}`DoseResponseResult` prints the axis, the spline's knots in doses, the unit of the linear trend's slope and the gate, which decides which genes count as responding ([Which genes count as responding](#dose-response-gate)), and for each cell type the dose groups it compares, its samples, the genes it tests, the genes that pass the gate and the genes each test calls at 5% FDR. The hepatocytes compare all 9 dose groups and the spline calls 88 genes, 85 of which respond in truth. The stellate cells keep no sample at 30 ug/kg, so they compare 8 dose groups, and their dose-group test has one degree of freedom fewer. The cholangiocytes keep no vehicle sample of 10 cells or more, so the check refuses them, and the summary gives its reason.
 
 The result's tables, which {api}`DoseResponseResult.table` gives by cell type and name, and its summary:
 
@@ -231,11 +233,12 @@ The result's tables, which {api}`DoseResponseResult.table` gives by cell type an
 | `table(g, "spline")`, `"nonlinearity"`, `"dose_groups"` | Gene | `f_statistic`, `p_value`, `adjusted_p_value` and `adjusted_p_value_across_groups`; `df`, the denominator degrees of freedom |
 | `table(g, "linear_trend")` | Gene | `log2_fold_change`, the slope; `t`, `p_value` and the adjusted p-values |
 | `table(g, "each_dose")` | Gene and treated dose | Each dose against the vehicle: `log2_fold_change`, `standard_error`, `t`, `p_value` and `adjusted_p_value`, adjusted within the dose |
-| `result.summary` | Cell type | `status`, the check's; `tested` and `reason`; `n_dose_groups_tested`; `tests_not_run` |
+| `table(g, "gate")` | Gene | `passes_gate`, the gate's call; `p_value` and `adjusted_p_value` of the gate's test |
+| `result.summary` | Cell type | `status`, the check's; `tested` and `reason`; `n_dose_groups_tested`; `tests_not_run`; `n_genes_passing_gate` |
 
 {api}`DoseResponseResult.fit` computes a cell type's fit again, with the values, weights and moderated statistics behind its tables. `adjusted_p_value` adjusts the p-values of a cell type and test by Benjamini-Hochberg, as limma's `topTable` does, and `adjusted_p_value_across_groups` adjusts each test over every cell type that ran it, one family per test, for a report of calls across cell types. The tests of each dose are adjusted within the cell type and dose only. For each dose against the vehicle with control over a gene's several doses, as Dunnett's test gives it, pass the cell type's moderated fit and its dose contrasts to {api}`multiple_contrast_test` ([Trends, doses against the vehicle and candidate shapes](#dose-response-contrasts) shows how); to call the doses across genes, use {api}`DoseResponseResult.lowest_effective_doses` ([From which dose a gene responds](#lowest-effective-dose)).
 
-A cell type compares the dose groups that keep a sample there and that the design can compare with the vehicle; the provenance lists them with their samples. A test whose contrasts a cell type's doses cannot estimate is not run there, such as a spline of 2 columns on the vehicle and two treated doses, and `tests_not_run` names it, with the reason in the record and in the error of `result.table`. When the dose groups are few, two tests can ask the same question: with the vehicle and two treated doses, a spline of one column and `dose_treated` pass through the three groups' means, so the spline's F-test is the dose-group test; with the vehicle on the axis and three doses, a spline of one column is the straight line. By default a cell type then runs the first of `spline`, `dose_groups` and `linear_trend` and lists the others as not run; a test named in `tests` runs whatever it repeats.
+A cell type compares the dose groups that keep a sample there and that the design can compare with the vehicle; the provenance lists them with their samples. A test whose contrasts a cell type's doses cannot estimate is not run there, such as a spline of 2 columns on the vehicle and two treated doses, and `tests_not_run` names it, with the reason in the record and in the error of `result.table`. When the dose groups are few, two tests can ask the same question: with the vehicle and two treated doses, a spline of one column and `dose_treated` pass through the three groups' means, so the spline's F-test is the dose-group test; with the vehicle on the axis and three doses, a spline of one column is the straight line. By default a cell type then runs the gate's test, then the first of `spline`, `dose_groups` and `linear_trend`, and lists the others as not run; a test named in `tests` runs whatever it repeats.
 
 (dose-response-curves)=
 ## Curves with a band
@@ -282,15 +285,16 @@ mcp = result.table("hepatocyte", "mcp")
 ```
 
 ```text
-DoseResponseResult (limma_voom): 3 cell types, 2 tested; tests: spline (read
-    first), dunnett, williams, mcp
+DoseResponseResult (limma_voom): 3 cell types, 2 tested; tests: spline, dunnett,
+    williams, mcp
   dose: ug/kg (administered) on a log10 axis, the vehicle in a group of its own;
         spline of 2 columns, knots at 0.548 ug/kg, boundary knots at 0.01 and 30
         ug/kg
-  hepatocyte: 9 dose groups, 27 samples, 817 genes; calls at 5% FDR: spline 88,
-              dunnett 69, williams 73, mcp 92
-  stellate: 8 dose groups, 24 samples, 494 genes; calls at 5% FDR: spline 43,
-            dunnett 24, williams 26, mcp 49
+  gate: spline test, Benjamini-Hochberg within each cell type, at 5% FDR
+  hepatocyte: 9 dose groups, 27 samples, 817 genes; 88 pass the gate; calls at
+              5% FDR: spline 88, dunnett 69, williams 73, mcp 92
+  stellate: 8 dose groups, 24 samples, 494 genes; 43 pass the gate; calls at 5%
+            FDR: spline 43, dunnett 24, williams 26, mcp 49
   cholangiocyte: not tested, refused: no vehicle sample is left (3 vehicle
                  samples left out); compare the doses with each other with
                  limma_voom
@@ -334,19 +338,98 @@ guessed = cp.dose_response(
 
 With the vehicle and K - 1 treated doses, the contrasts of the dose groups point in at most K - 1 directions, so more shapes than treated doses cannot all differ: five shapes on two treated doses span two dimensions, and the printout says so. The MCP step still tests every shape, at the cost of the multiplicity of shapes that duplicate one another; at three dose groups, EMA's minimum for the MCP step [@ema2014], Dunnett's test asks nearly the same. A shape that does not change at a cell type's doses, such as a narrow peak at a dose that the cell type does not keep, is left out there, and the record says why. MCP-Mod applied gene by gene to expression data at eight concentrations found that the sigmoid Emax model fitted the less noisy genes best and simpler models the noisy ones [@duda2022]; here the shapes give only contrasts, and fitting them, MCP-Mod's modelling step, is not implemented yet.
 
+(dose-response-gate)=
+## Which genes count as responding
+
+Which genes count as responding to the dose, and what does that call rest on? A dose series runs several tests of each gene, and the genes that respond go on to curves, gene-set roll-ups and points of departure. One test decides: the gate, a test of any response at a stated false discovery rate, run after the expression filter. The filter reads each gene's counts and library sizes, never the doses, the kind of filter that leaves the error rate of the test after it in place [@bourgon2010]. {api}`dose_response` takes the gate as `gate`, records it and prints it:
+
+| `gate` | What it asks of a gene |
+| --- | --- |
+| `{"test": "spline"}`, the default | Does it respond along a smooth curve of dose? |
+| `{"test": "dose_groups"}` | Does any dose group differ from the vehicle? The default when fewer than two doses are on the axis, where no spline is placed |
+| `{"test": "dunnett"}`, `"williams"` or `"mcp"` | Does any dose differ from the vehicle, does the response grow in dose order, or does it follow a candidate shape? |
+| `{"fold_change": 1.5}` | Does it change by more than 1.5-fold, up or down, at a dose? |
+
+`"fdr"` sets the level, 0.05 by default: a gene passes when the Benjamini-Hochberg adjusted p-value of the gate's test, over the cell type's genes, is at most the level. The gate's test runs whether `tests` names it or not. `"linear_trend"` and `"nonlinearity"` cannot gate, since they test a straight line or a departure from one, not any response.
+
+```python
+gate = result.table("hepatocyte", "gate")
+large = cp.dose_response(
+    cube, cp.Design(cube.samples, "~ 1"), dose=axis, gate={"fold_change": 1.5}
+)
+print(large.gate, int(large.table("hepatocyte", "gate")["passes_gate"].sum()))
+```
+
+```text
+{'test': 'each_dose', 'fdr': 0.05, 'fold_change': 1.5} 24
+```
+
+The table `"gate"` has one row per gene tested: `p_value`, the p-value of the gate's test, `adjusted_p_value` and `passes_gate`. `result.summary` counts the genes that pass in `n_genes_passing_gate`, NaN where the gate's test did not run, which says nothing of whether the cell type responds. {api}`DoseResponseResult.gate` gives the gate as `dose_response(..., gate=result.gate)` takes it back, and the provenance records its adjustment for multiple testing (`gate_adjustment`) beside its test, level and fold change.
+
+A fold change enters each dose's test against the vehicle as its null hypothesis, by TREAT [@mccarthy2009], instead of a cut on the estimated changes after the test, as the rules of NTP and EPA's Transcriptomic Assessment Products apply it: a cut controls no error rate for the size of the change. Each dose's TREAT p-value tests whether its change exceeds the fold change; a gene's p-value is the smallest of its doses' times the doses, a Bonferroni adjustment that holds whatever the correlation between a gene's doses, which the gate records as the test `"each_dose"`; Benjamini-Hochberg then runs across genes. In the hepatocytes above, 93 of the genes tested change by more than 1.5-fold at one of the doses, in truth. The 1.5-fold gate passes 24 of them and no other gene; the default gate with a cut at 1.5-fold on the estimated changes keeps 86 genes, 77 of those 93, 7 whose true change never exceeds 1.5-fold and 2 flat genes. TREAT asks for evidence that a change exceeds the threshold, so a change must lie well above it to pass, and thresholds of 1.2 to 1.5 are usual ([Testing against a fold-change threshold](empirical_bayes.md#treat-test)). A gate with a fold change runs under {api}`limma_voom` and {api}`limma_trend`, whose moderated t-tests TREAT takes.
+
+The gate is not the ANOVA gate of NTP's and EPA's rules, a test of the data set that at least one gene must pass before the set is analysed further [@ntp2018], nor a prefilter of the kind that BMDExpress runs, a trend test with a cut on the estimated fold change. {api}`DoseResponseResult.lowest_effective_doses` calls the doses of the genes the gate passes ([From which dose a gene responds](#lowest-effective-dose)); curves keep every gene that the expression filter keeps, and gene-set roll-ups and points of departure, which will admit only the genes the gate passes, are not implemented yet.
+
+(dose-permutation-check)=
+## Could the calls come from noise?
+
+Could the genes that a gate passes come from noise at this design? In zebrafish embryos exposed to the vehicle alone and placed at random in 4 mock concentration groups of 6 samples, BMDExpress's default prefilter, a Williams trend test with a 1.5-fold cut, gave a transcriptomic point of departure, the benchmark dose of the 25th most sensitive gene, in 93% of runs [@lee2024]. With the concentration labels of a real series permuted 100 times, a workflow whose prefilter took an unadjusted Williams p-value found responsive genes in every permutation, where one with a false-discovery-rate-adjusted Williams test found none in nearly all [@bruns2026]. {api}`permutation_check` asks the question of a result, at its own design:
+
+```python
+check = cp.permutation_check(result, n_permutations=100, rng=1)
+print(check)
+```
+
+```text
+PermutationCheck of the gate, the spline test at 5% FDR: 3 cell types, 2
+    checked; seed 1
+  hepatocyte: 88 genes pass the gate; over 100 random runs of 1.1e21
+              assignments, the gate passed genes in 3 runs (0.03), 0.04 genes
+              per run; p = 0.0099, the smallest these runs can give
+  stellate: 43 genes pass the gate; over 100 random runs of 3.7e17 assignments,
+            the gate passed genes in 3 runs (0.03), 0.09 genes per run; p =
+            0.0099, the smallest these runs can give
+  cholangiocyte: not checked: not tested (refused): no vehicle sample is left (3
+                 vehicle samples left out); compare the doses with each other
+                 with limma_voom
+```
+
+For each cell type, the dose labels of the samples it uses are permuted among the samples that the design treats alike, {api}`dose_response` runs again on that cell type with each permuted labelling, the result's settings and its gate, and the genes that pass the gate are counted. Under the null hypothesis that no gene responds to dose, every assignment of the labels is as likely as the true one, so the runs show how often noise alone passes genes at this design. The check returns a {api}`PermutationCheck`: {api}`PermutationCheck.summary` gives for each cell type the genes that the true doses pass, the share of runs that pass genes, the mean genes per run, and the permutation p-value (1 + b) / (1 + B) for the b of B runs that pass at least as many genes as the true doses [@phipson2010]. {api}`PermutationCheck.table` gives each run's count, and the provenance each run's assignment, so that any run can be made again. Above, the gate passed genes in 3 of 100 runs in each cell type, and no run passed as many genes as the true doses, so p is 1/101, the smallest that 100 runs can give.
+
+Which samples count as alike follows the design. Without random effects the units are the samples, in blocks with the same row of the design's matrix apart from dose, so that `"~ sex"` permutes the doses within each sex, and a numeric covariate leaves each sample in a block of its own, which the check lists as not checked. With a random intercept such as `(1 | animal)`, animals that each received one dose are permuted whole, in blocks of animals with the same rows, so that each run keeps the samples and animals of every dose group; donors whose cells received every dose keep their samples, and the doses are permuted within each donor. Each run keeps the doses of the design, so the spline's knots, the sizes of the dose groups and the genes that the expression filter keeps stay those of the result. Before the runs, the true doses run once through the same path and must give the result's gate p-values bit for bit, so that the runs repeat the analysis that the result records.
+
+A design with few samples allows few assignments: the vehicle and two doses in duplicate allow 6! / (2! 2! 2!) = 90. When the assignments other than the true one number at most `n_permutations`, the check runs each of them once, which makes its p-value exact. A gate that does not read the order of the dose groups passes the same genes when an assignment only renames groups of equal size: the dose-group test always, and the spline when it passes through every group's mean, as at the vehicle and two doses. The smallest p-value such a check can give is then the renamings over the assignments, which the summary gives as `smallest_p_value`:
+
+| Design | Assignments | Smallest p-value of the dose-group gate, every assignment run |
+| --- | --- | --- |
+| The vehicle and 1 dose x 2 | 6 | 2/6, 0.33 |
+| The vehicle and 1 dose x 3 | 20 | 2/20, 0.10 |
+| The vehicle and 1 dose x 4 | 70 | 2/70, 0.029 |
+| The vehicle and 2 doses x 2 | 90 | 6/90, 0.067 |
+| The vehicle and 2 doses x 3 | 1,680 | 6/1,680, 0.0036 |
+| The vehicle and 3 doses x 2 | 2,520 | 24/2,520, 0.0095 |
+
+At the vehicle and two doses in duplicate, no p-value of the default gate falls below 0.05, however strongly the genes respond. The gates that compare each dose with the vehicle, with a fold change or by Dunnett's test, rename only the treated doses, and the Williams-type test and the MCP step tell every dose apart. With random runs the smallest p-value is 1 / (B + 1), 0.0099 at the default 100 runs, so the last two designs reach theirs only with `n_permutations` of 1,679 and 2,519, which run every assignment.
+
+On series in which no gene responds, simulated at 4 and 9 dose groups with 2 and 3 replicates, the check's runs passed genes as often as the series themselves did, the excess at 2 replicates included (0.162 of runs against 0.155 of series at 4 dose groups in duplicate), and its p-value was at most 0.05 in 1.5% to 6.0% of cell types ([Validation](../validation.md#validation-dose-response-calibration)).
+
+A series of vehicle-only samples that a design places in mock dose groups, as @lee2024 studied, is a null series by construction: {api}`dose_response` and this check run it as they run any series, and every gene the gate passes is a false call. On 200 simulated series of their design, 4 mock dose groups of 6 samples, the default gate passed a gene in 17 of 400 cell types, 4.3%, and a prefilter like the one they studied, a Williams-type p-value below 0.05 with no adjustment across genes and a 1.5-fold change at a dose, passed a gene in every one ([Validation](../validation.md#validation-dose-response-calibration)).
+
+Each run takes the time of the cell type's analysis and of the gate's test. On 20,000 genes and 24 samples, on two threads, a run took 1.0 s with the spline gate, so 100 runs take under 2 minutes per cell type; 2.1 s with a fold change, which fits the cell type once more for TREAT; and 27 s with the Williams-type gate, whose multivariate t probabilities take about a millisecond per gene. Under {api}`dream_voom`, each run takes the time of dream's fit ([Timings](../validation.md#validation-timings)).
+
 (lowest-effective-dose)=
 ## From which dose a gene responds
 
 From which dose does each gene respond? ICH E4 asks that the lowest dose recommended for use itself show an effect [@ich1994], and toxicology reads the lowest observed effect level (LOEL) of each endpoint. Calling each dose against the vehicle in every gene would multiply the false calls by the doses and the genes, so {api}`DoseResponseResult.lowest_effective_doses` calls them in two stages, as stageR does [@vandenberge2017]:
 
-1. The screen, a test of any response of the gene, the spline by default, calls the genes whose Benjamini-Hochberg adjusted p-value is at most `alpha`: R of the G genes it tested.
-2. In each gene called, the doses' moderated t-tests against the vehicle, those of the table `each_dose`, are called by Holm's step-down procedure at the level R alpha / G that the screen leaves, with Shaffer's first step: the first multiplier is the gene's doses minus one, not the doses, since the screen has rejected that every dose equals the vehicle [@holm1979; @shaffer1986].
+1. The gate, the spline by default, passes R of the G genes it tested at its false discovery rate, alpha ([Which genes count as responding](#dose-response-gate)).
+2. In each gene it passes, the doses' moderated t-tests against the vehicle, those of the table `each_dose`, are called by Holm's step-down procedure at the level R alpha / G that the gate leaves, with Shaffer's first step: the first multiplier is the gene's doses minus one, not the doses, since the gate has rejected that every dose equals the vehicle [@holm1979; @shaffer1986]. Under a gate with a fold change, each dose's TREAT p-value against that fold change takes the place of its t-test.
 
-The lowest effective dose is the lowest dose called. The calls control the overall false discovery rate (OFDR) at `alpha`: the expected share of the genes called with at least one false call, the screen's or a dose's, proved under independence between genes [@heller2009] and expected wherever Benjamini-Hochberg controls the false discovery rate [@vandenberge2017]. They do not control the share of false calls among all gene-dose calls, which counts a gene once for each dose called. [Calling contrasts across genes](multiple_testing.md#stage-wise-testing) gives the formula.
+The lowest effective dose is the lowest dose called. The calls control the overall false discovery rate (OFDR) at alpha: the expected share of the genes passed with at least one false call, the gate's or a dose's, proved under independence between genes [@heller2009] and expected wherever Benjamini-Hochberg controls the false discovery rate [@vandenberge2017]. They do not control the share of false calls among all gene-dose calls, which counts a gene once for each dose called. [Calling contrasts across genes](multiple_testing.md#stage-wise-testing) gives the formula.
 
 ```python
 lowest = result.lowest_effective_doses("hepatocyte")
-called = lowest.filter(lowest["responds"])
+called = lowest.filter(lowest["passes_gate"])
 top = called.sort("stage_wise_adjusted_p_value").take(range(5))
 for gene, dose, change, p, n in zip(
     top["feature_id"],
@@ -366,9 +449,9 @@ gene_0412     3 ug/kg  -2.0 log2  p 5.5e-07  3 of 8 doses
 gene_0040    10 ug/kg  +1.7 log2  p 7.1e-07  2 of 8 doses
 ```
 
-The table has one row per gene tested: `responds` says whether the screen calls the gene; `lowest_effective_dose` gives the lowest dose called, in the axis's unit, with that dose's `log2_fold_change` and `stage_wise_adjusted_p_value`; and `n_doses_called` counts the doses called. The lines above show the five genes of smallest stage-wise adjusted p-value. Of the 88 genes the spline calls in the hepatocytes, 69 have a dose called. A dose is called when its stage-wise adjusted p-value is at most `alpha`, as stageR counts, and the values hold only at the `alpha` given, since R depends on it: pass `alpha` to call at another level, rather than reading the values against another threshold. `screen` names another test of any response that the cell type ran, `"dose_groups"`, `"dunnett"`, `"williams"` or `"mcp"`; `"linear_trend"` and `"nonlinearity"` test a line or a departure from one, not any response.
+The table has one row per gene tested: `passes_gate` is the gate's call; `lowest_effective_dose` gives the lowest dose called, in the axis's unit, with that dose's `log2_fold_change` and `stage_wise_adjusted_p_value`; and `n_doses_called` counts the doses called. The lines above show the five genes of smallest stage-wise adjusted p-value. Of the 88 genes the gate passes in the hepatocytes, 69 have a dose called. A dose is called when its stage-wise adjusted p-value is at most the gate's level, as stageR counts, and the values hold only at that level, since R depends on it: another level, or another test of any response, is another gate, such as `gate={"test": "williams", "fdr": 0.1}` in {api}`dose_response`, rather than the values read against another threshold.
 
-An effective dose here is a dose whose change is detectable at the design, with no threshold on its size: the clinical minimum effective dose usually adds a clinically relevant change, as MCP-Mod's target dose does [@bornkamp2026]. It is a tested dose, not a potency between doses, and it moves with the replicates, the spacing of the doses and `alpha`; a gene can respond with no dose called, when its response spreads over several doses that each fall short. On simulated series, the overall false discovery proportion of these calls was 0.033 to 0.057 (standard errors 0.006 to 0.011), and the lowest effective dose lay a median of 8.9 to 14 times above the gene's true benchmark dose of a 1.1-fold change ([Validation](../validation.md#validation-dose-response-calibration)).
+An effective dose here is a dose whose change is detectable at the design, with no threshold on its size but the gate's fold change: the clinical minimum effective dose usually adds a clinically relevant change, as MCP-Mod's target dose does [@bornkamp2026]. It is a tested dose, not a potency between doses, and it moves with the replicates, the spacing of the doses and the gate's level; a gene can pass the gate with no dose called, when its response spreads over several doses that each fall short. Under the 1.5-fold gate above, the lowest effective dose is the lowest dose whose change beyond 1.5-fold is called. On simulated series, the overall false discovery proportion of these calls was 0.033 to 0.057 (standard errors 0.006 to 0.011), and the lowest effective dose lay a median of 8.9 to 14 times above the gene's true benchmark dose of a 1.1-fold change ([Validation](../validation.md#validation-dose-response-calibration)).
 
 Every dose called, not only the lowest, comes from {api}`stage_wise_adjusted_p_values` on the same tables, here 167 gene-dose calls:
 
@@ -467,12 +550,14 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **Replication.** Judged at the treated doses: a cell type whose estimable treated dose groups each keep one sample, or the samples of one level of a random intercept's grouping, is descriptive, whatever the vehicle keeps.
 - **Batches of one sample.** Pooled before the batch is checked; a sample alone in its batch, when it is the only one, joins no batch.
 - **A batch as a random intercept.** It compares the dose groups it confounds with the vehicle when the vehicle and each such group span two or more batches.
-- **The tests.** Every test the design supports, of which `spline` is read first; in a cell type whose dose groups are few, one of two tests of the same hypothesis ([Which genes respond to dose](#dose-response-tests)). Dunnett's, the Williams-type and the MCP tests run only when named, two-sided ([Trends, doses against the vehicle and candidate shapes](#dose-response-contrasts)).
+- **The tests.** Every test the design supports, and the gate's test; in a cell type whose dose groups are few, one of two tests of the same hypothesis, the gate's test kept ([Which genes respond to dose](#dose-response-tests)). Dunnett's, the Williams-type and the MCP tests run only when named, or when the gate takes one, two-sided ([Trends, doses against the vehicle and candidate shapes](#dose-response-contrasts)).
+- **The gate.** The spline test at 5% FDR, Benjamini-Hochberg within each cell type; the dose-group test when fewer than two doses are on the axis ([Which genes count as responding](#dose-response-gate)).
 - **Candidate shapes.** Five, spread over the design's doses by {api}`CandidateShapes.spread`: two Emax shapes, a sigmoid Emax shape of Hill slope 3, an exponential shape and a beta shape peaking mid-range.
-- **The lowest effective dose.** The spline as screen, at `alpha=0.05`, each dose called by Holm's step-down procedure with Shaffer's first step at the level the screen leaves ([From which dose a gene responds](#lowest-effective-dose)).
+- **The permutation check.** 100 runs per cell type, or every other assignment when there are no more, from a seed drawn and recorded unless `rng` gives one ([Could the calls come from noise?](#dose-permutation-check)).
+- **The lowest effective dose.** Each dose of a gene that the gate passes, called by Holm's step-down procedure with Shaffer's first step at the level the gate leaves ([From which dose a gene responds](#lowest-effective-dose)).
 - **The analysis.** {api}`limma_voom` with exact standard errors, its expression filter and TMM normalization, on the model of the dose groups.
 - **The spline.** 2 columns when the axis holds 4 doses or more, otherwise 1, in the restricted cubic form, with knots at quantiles of the distinct doses of the design's samples.
-- **FDR.** Benjamini-Hochberg within each cell type and test, and across the cell types that ran a test. With 2 replicates per dose, a cell type in which no gene responds has a call more often than 1 time in 20 ([Limits and differences](#dose-response-limits)).
+- **FDR.** Benjamini-Hochberg within each cell type and test, and across the cell types that ran a test. With 2 replicates per dose, a cell type in which no gene responds has a call more often than 1 time in 20, which {api}`permutation_check` measures at a series' own design ([Limits and differences](#dose-response-limits)).
 - **Cells per profile.** Reported, with no threshold beyond `min_cells`. In muscat's benchmark of differential state tests, methods on pseudobulk profiles performed decently from about 100 cells per cell type and sample, with moderate gains beyond [@crowell2020], which makes `n_cells_min` worth reading.
 
 (dose-response-limits)=
@@ -492,11 +577,16 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **Degrees of freedom under dream.** Under {api}`dream_voom` each contrast has its own degrees of freedom, and the multivariate t takes the smallest of the gene's doses', an approximation. It is conservative for Dunnett's test, whose contrasts are the doses. In a simulated design of 4 donors and 5 dose groups with 5 of its 20 samples left out, the Williams-type test's contrasts had more degrees of freedom than any dose, but the MCP step's had fewer in 19 to 174 of 240 genes, depending on the shape, down to 0.83 times the smallest dose's.
 - **One set of contrasts per cell type.** The Williams-type and MCP contrasts follow a cell type's samples per dose group, as the spline does, not each gene's precision; each gene's covariance, voom's weights included, still sets the contrasts' standard errors and correlation.
 - **Holm within each gene.** The per-dose calls of {api}`DoseResponseResult.lowest_effective_doses` leave out the correlation of a gene's doses through their shared vehicle, which the single-step max-t test uses. The gain it gives up is large with few degrees of freedom and small with many: at single-step p-values of 1e-6, Bonferroni's p-values are 22% larger for 3 doses and 65% for 8 at 5 degrees of freedom, and 1% and 3% at 40 ([Several contrasts of one gene](multiple_testing.md#correlated-tests)).
-- **Responses with no dose called.** A gene that the screen calls can have no dose called, when its change spreads over several doses that each fall short; the lowest effective dose is a tested dose, not a potency between doses.
+- **Responses with no dose called.** A gene that the gate passes can have no dose called, when its change spreads over several doses that each fall short; the lowest effective dose is a tested dose, not a potency between doses.
 - **Non-monotone responses.** The Williams-type test assumes the response grows in dose order and misses many bells; the spline and the MCP step detect most of them, the MCP step partly through its beta shape: many bells turn back only at the top doses, where they look monotone.
 - **The spline's weights.** The spline passes through the dose groups' means weighted by their samples, not by each gene's precision, so under voom's weights a dose group of few cells counts as much as its samples, though its mean is less precise.
 - **Bands where the spline cannot follow.** A band holds the spline fitted to the dose groups' true means, which misses a response that jumps or turns more sharply than the spline can follow; read the band beside each dose's estimate ([Curves with a band](#dose-response-curves)).
-- **Two replicates per dose.** In series where no gene responds, a cell type of 1,000 genes had a call at 5% FDR in 6.4% to 18.3% of the datasets with 2 replicates per dose, depending on the test and the number of doses, and in 4.5% to 7.5% with 3, the multiple contrast tests included, where Benjamini-Hochberg aims at 5% ([Validation](../validation.md#validation-dose-response-calibration)). With few residual degrees of freedom, 4 for the vehicle and three doses in duplicate, moderation pulls each gene's variance most of the way to a common prior, which understates the variance of genes that vary more than most between replicates. At 2 replicates per dose, read a few calls in a cell type as possibly due to chance.
+- **Two replicates per dose.** In series where no gene responds, a cell type of 1,000 genes had a call at 5% FDR in 6.4% to 18.3% of the datasets with 2 replicates per dose, depending on the test and the number of doses, and in 4.5% to 7.5% with 3, the multiple contrast tests included, where Benjamini-Hochberg aims at 5% ([Validation](../validation.md#validation-dose-response-calibration)). The default gate passed a gene in 15.5% and 10.2% of such cell types at 4 and 9 dose groups with 2 replicates, beyond the 7.76% that 1,000 datasets allow at 5%, and in 6.9% and 6.8% with 3; the 1.5-fold gate in at most 1.1%. With few residual degrees of freedom, 4 for the vehicle and three doses in duplicate, moderation pulls each gene's variance most of the way to a common prior, which understates the variance of genes that vary more than most between replicates. At 2 replicates per dose, read a few calls in a cell type as possibly due to chance, and run {api}`permutation_check`, whose runs show how often noise passes the gate at the series' own design ([Could the calls come from noise?](#dose-permutation-check)).
+- **Designs the check cannot permute.** {api}`permutation_check` refuses a design with more than one random effect or a random slope, whose exchangeable units it does not work out, and lists as not checked a cell type in which every sample is a block of its own, as a numeric covariate of the design makes it: drop the covariate, or bin it into a factor. The runs leave out `batch`, which a permuted labelling could confound by chance and which no fit models.
+- **Doses that change the cells.** The runs keep each sample's cells and library size. A dose that changes how many cells a sample holds changes the precision of its profile too, so the samples of different doses are not exchangeable even where no gene responds, and the check's share and p-value are then approximate.
+- **Genes that respond, in the runs.** The runs keep every gene's response, scrambled over the permuted dose groups, and a strong response still passes in a run that leaves most of a dose group's samples together: in the hepatocytes of [Dose response per cell type](../guides/dose_response.ipynb), 47 of the 51 genes that passed in the runs respond in truth. Where many genes respond, the share of runs with genes therefore overstates how often noise alone passes genes, and the p-value, a valid test of whether any gene responds, comes out larger than noise alone would make it. On simulated series in which a fifth of 1,000 genes respond, the median share of runs that passed genes was 0.06 to 0.20 across four designs, against 0.07 to 0.16 of series in which no gene responds, and every check gave a p-value at most 0.05 ([Validation](../validation.md#validation-dose-response-calibration)).
+- **A fold change under dream.** A gate with a fold change refuses fits of {api}`dream_voom`: TREAT takes limma's moderated t-tests, which dream's tests are not.
+- **What the runs repeat.** Each run repeats the analysis up to the gate: the fit, the tests along dose that the result ran and the gate's test. Curves and the multiple contrast tests other than the gate's do not run, since the gate does not read them, and a gate of a multiple contrast test costs its test in every run: 27 s per run of 20,000 genes with the Williams-type gate, against 1.0 s with the spline's, so 100 runs take 46 minutes per cell type ([Timings](../validation.md#validation-timings)).
 - **limma's standard errors.** With `contrast_standard_errors="limma"`, the F-tests of the spline use limma's approximate standard errors, which depend on the spline's columns: the F-statistics of R's `ns()` columns and of the restricted cubic columns of the same spline differ by up to half ([Validation](#validation-dose-response-tests)). The exact default and {api}`limma_trend` do not depend on them. The multiple contrast tests refuse limma's standard errors, as {api}`multiple_contrast_test` does: they give no covariance of a gene's doses' estimates, and on a simulated series of 9 dose groups the Williams-type and MCP p-values moved by up to 100-fold with them.
 - **Curves of dream fits and beyond the doses.** {api}`DoseResponseResult.curve` gives no curve for results of {api}`dream_voom`, whose tests run in full, and no value outside the doses a cell type compares.
 - **What a simulated series leaves out.** In {api}`simulate_dose_series`, a gene's biological SD is the same at every dose, the constant variance that BMDS fits by default; genes are independent given their curves, so gene-set methods meet no correlation between genes; each cell type draws its responsive genes on its own, so few genes respond in several cell types; bells are symmetric, and no curve is hormetic; the counts hold no ambient RNA; and library sizes move with dose, by a median of 0.08 log2 at the top dose of default series, which TMM removes for the most part, leaving about 0.01 log2 on the flat genes at the top dose.
@@ -512,6 +602,7 @@ Dose axes, dose designs, dose tests and simulated dose series are compared with 
 - {api}`dose_response`: the samples, dose groups and genes of each cell type, its F-tests, slopes, each dose against the vehicle, adjusted p-values and curves with their bands against limma 3.62.1 and edgeR 4.4.0 run on R's own knots and spline columns, the exact default against each gene's weighted least squares in R, exact (1e-10); the spline's sums of squares against rms 8.2-1, exact; the dream route against variancePartition 1.36.2, close (1e-6); DRomics, dreamlet and muscat on the same profiles, as information ([Validation](#validation-dose-response-tests)); error rates under the null, power and the coverage of the bands on simulated series ([Validation](#validation-dose-response-calibration)).
 - {api}`plot_dose_response`: the drawn curves, bands and points against limma-trend's spline in R, exact ([Validation](#validation-plotting)).
 - {api}`CandidateShapes`, {api}`optimal_contrasts`, the three multiple contrast tests, {api}`stage_wise_adjusted_p_values` and {api}`DoseResponseResult.lowest_effective_doses`: shapes against DoseFinding 1.4-2's `Mods`, `getResp` and `guesst`; contrasts against `optContr` and `MCTtest`; the tests' statistics against limma 3.62.1 and variancePartition 1.36.2 fits in R with multcomp 1.4-32, exact (1e-10), close (1e-6) for dream; their p-values against mvtnorm 1.4-2 and scipy 1.18.1 within simulation error; stage-wise p-values and lowest effective doses against stageR 1.28.0 and a closed test enumerated in R, exact and identical ([Validation](#validation-dose-contrasts)); error rates and power on simulated series ([Validation](#validation-dose-response-calibration)).
+- The gate of {api}`dose_response` and {api}`permutation_check`: the gate's p-values against limma 3.62.1 from the counts, under voom's weights and with `classifyTestsF`, exact (1e-10) and close (1e-6) with robust priors; each dose's TREAT p-values against `treat` and `topTreat`, exact; the genes passed, and the lowest effective doses under a fold-change gate against stageR 1.28.0, identical; the units, the assignments that R counts and enumerates, and the genes passed in every run of a design of 90 assignments, refitted by limma in R, identical; runs under dream against variancePartition 1.36.2, close ([Validation](#validation-dose-gate)); the share of null cell types that each gate passes, and the check's runs against it, on simulated series ([Validation](#validation-dose-response-calibration)).
 
 Further reading:
 
@@ -523,5 +614,7 @@ Further reading:
 - @ema2014 qualified MCP-Mod for phase 2 dose finding, with its minimum numbers of doses; @bretz2005 introduced the combination of multiple comparisons and modelling behind it, and @pinheiro2014 its generalization to estimates and their covariance from any model; @duda2022 applied it gene by gene to expression data.
 - @ich1994 sets out the dose-response information that supports drug registration, including the effect of the lowest recommended dose; @heller2009 and @vandenberge2017 describe the stage-wise testing behind the lowest effective doses.
 - @nault2022 benchmarked tests of single-cell dose series simulated from the EPA's benchmark-dose equations; @crowell2020 and @song2024 describe the simulators of muscat and scDesign3; @crump1984 introduced the benchmark dose, and @kappenberg2023 reviews the design and analysis of 5,670 toxicological dose-response analyses.
+- @bourgon2010 showed that a filter before a test keeps the test's control of errors when the filter's statistic and the test's are independent under the null hypothesis, and that some filters in use lose it; @mccarthy2009 introduced TREAT, which tests changes against a fold-change threshold instead of filtering on the estimated changes.
+- @lee2024 measured how often a benchmark-dose workflow gives a point of departure from vehicle-only zebrafish embryos placed in mock dose groups, and how pooling embryos lowers it; @bruns2026 compared five workflows on one dose series, which reported 70 to 3,618 responsive genes at 4 h, and ran them on permuted concentration labels; @phipson2010 showed why permutation p-values should never be zero, and how to compute exact ones when the permutations are drawn at random.
 
 [Gene-set tests](gene_set_tests.md) begins the part that turns the results for genes into results for pathways and regulators.

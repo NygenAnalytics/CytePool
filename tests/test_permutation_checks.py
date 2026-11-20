@@ -11,11 +11,14 @@ dose_response called in the test, counts put into the summary by hand, invariant
 refusals.
 """
 
+import contextlib
 import functools
+import io
 import itertools
 import json
 import math
 import pickle
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -858,4 +861,97 @@ def test_units_that_each_hold_one_dose_leave_one_assignment() -> None:
     assert check.summary["reason"][0] == (
         "each block of units that the design treats alike holds one dose, so no "
         "dose label can move"
+    )
+
+
+# The chapter.
+
+CHAPTER = (
+    Path(__file__).resolve().parents[1] / "docs/source/statistics/dose_response.md"
+)
+
+
+def chapter_section(label: str) -> str:
+    return CHAPTER.read_text().split(f"({label})=")[1].split("\n(")[0]
+
+
+def test_the_chapter_s_check_example_runs() -> None:
+    """The code of the chapter's section on the check, on the series of its section
+    on the tests: what it prints and the numbers its text reads from the summary."""
+    setup = re.findall(
+        r"```python\n(.*?)```", chapter_section("dose-response-tests"), re.S
+    )
+    text = chapter_section("dose-permutation-check")
+    blocks = re.findall(r"```python\n(.*?)```", text, re.S)
+    assert len(blocks) == 1
+    namespace: dict[str, Any] = {"cp": cytepool}
+    exec(setup[0].replace("print(result)\n", ""), namespace)  # noqa: S102
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        exec(blocks[0], namespace)  # noqa: S102
+    check = namespace["check"]
+    assert output.getvalue() == repr(check) + "\n"
+    assert "```text\n" + repr(check) + "\n```" in text
+    summary = check.summary.filter(check.summary["checked"])
+    assert summary["group_id"].tolist() == ["hepatocyte", "stellate"]
+    assert summary["share_of_runs_with_passing_genes"].tolist() == [0.03, 0.03]
+    assert summary["p_value"].tolist() == [1 / 101] * 2
+    assert summary["smallest_p_value"].tolist() == [1 / 101] * 2
+    assert "the gate passed genes in 3 of 100 runs in each cell type" in text
+    assert "so p is 1/101, the smallest that 100 runs can give" in text
+
+
+ROW = re.compile(
+    r"\| The vehicle and (\d) doses? x (\d) \| ([\d,]+) \| (\d+)/([\d,]+), ([\d.]+) \|"
+)
+
+
+def test_the_chapter_s_table_of_the_smallest_p_values() -> None:
+    """Each row of the chapter's table against a check of that design under the
+    dose-group gate: its assignments, and its smallest p-value with every assignment
+    run, or, where they are many, the renamings that tie: every dose group has the
+    same size, so each of the K! orders of the K groups' labels passes the same
+    genes."""
+    text = chapter_section("dose-permutation-check")
+    rows = ROW.findall(text)
+    assert len(rows) == 6
+    for treated, replicates, count, ties, over, shown in rows:
+        doses = [0.0, 0.1, 1.0, 10.0][: int(treated) + 1]
+        # The simulator places curves on two doses or more; one dose is taken from
+        # a series of two.
+        cube = series(
+            [*doses, 30.0] if len(doses) == 2 else doses,
+            n_genes=40,
+            replicates=int(replicates),
+        )
+        samples = cube.samples.filter(cube.samples["dose"] <= max(doses))
+        result = dose_response(
+            cube, Design(samples, "~ 1"), dose=AXIS, gate={"test": "dose_groups"}
+        )
+        assignments = int(count.replace(",", ""))
+        assert int(over.replace(",", "")) == assignments
+        exhaustive = assignments - 1 <= 100
+        check = permutation_check(
+            result, n_permutations=100 if exhaustive else 1, rng=1
+        )
+        entry = check.provenance["groups"][0]
+        assert entry["n_assignments"] == assignments
+        if exhaustive:
+            smallest = float(check.summary["smallest_p_value"][0])
+            assert smallest == int(ties) / assignments
+        else:
+            assert int(ties) == math.factorial(len(doses))
+        assert float(shown) == float(f"{int(ties) / assignments:.2g}")
+    assert (
+        "with `n_permutations` of 1,679 and 2,519, which run every assignment" in text
+    )
+    # The default gate at the vehicle and two doses in duplicate: a spline of one
+    # column through the three groups' means, which ties as the dose groups do.
+    cube = series([0.0, 0.1, 1.0], n_genes=40, replicates=2)
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS)
+    assert result.gate["test"] == "spline"
+    check = permutation_check(result, rng=1)
+    assert check.summary["smallest_p_value"].tolist() == [6 / 90]
+    assert (
+        "At the vehicle and two doses in duplicate, no p-value of the default" in text
     )

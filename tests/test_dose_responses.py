@@ -2379,7 +2379,7 @@ def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
     )
     assert (len(namespace["called"]), with_dose) == (88, 69)
     assert (
-        "Of the 88 genes the spline calls in the hepatocytes, 69 have a dose" in lowest
+        "Of the 88 genes the gate passes in the hepatocytes, 69 have a dose" in lowest
     )
     calls = namespace["calls"]
     assert int(calls.sum()) == 167 and "here 167 gene-dose calls" in lowest
@@ -2387,6 +2387,62 @@ def test_the_chapter_s_contrast_and_lowest_dose_examples_run() -> None:
         calls.any(axis=1),
         ~np.isnan(np.asarray(namespace["lowest"]["lowest_effective_dose"])),
     )
+
+
+def test_the_chapter_s_gate_example_runs() -> None:
+    """The code of the chapter's section on the gate, on the series of its section on
+    the tests: what it prints, and the genes the text counts against the simulator's
+    truth, for the 1.5-fold gate and for the default gate with a cut on the
+    estimated changes."""
+    text = CHAPTER.read_text()
+
+    def section(label: str) -> str:
+        return text.split(f"({label})=")[1].split("\n(")[0]
+
+    setup = re.findall(r"```python\n(.*?)```", section("dose-response-tests"), re.S)
+    gate_text = section("dose-response-gate")
+    blocks = re.findall(r"```python\n(.*?)```", gate_text, re.S)
+    assert len(blocks) == 1
+    namespace: dict[str, Any] = {"cp": cytepool}
+    exec(setup[0].replace("print(result)\n", ""), namespace)  # noqa: S102
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        exec(blocks[0], namespace)  # noqa: S102
+    printed = output.getvalue()
+    assert printed == "{'test': 'each_dose', 'fdr': 0.05, 'fold_change': 1.5} 24\n"
+    assert "```text\n" + printed + "```" in gate_text
+    result, large = namespace["result"], namespace["large"]
+    gate = namespace["gate"]
+    ids = gate["feature_id"].tolist()
+    entry = result.provenance["groups"][0]
+    assert entry["group_id"] == "hepatocyte"
+    doses = np.asarray(entry["doses"][1:], dtype=float)
+    true = np.abs(namespace["truth"].curve("hepatocyte", ids, at=doses)).max(axis=1)
+    beyond, flat = true > np.log2(1.5), true == 0
+    passed = np.asarray(large.table("hepatocyte", "gate")["passes_gate"])
+    assert (int(beyond.sum()), int(passed.sum()), int(np.sum(passed & beyond))) == (
+        93,
+        24,
+        24,
+    )
+    # The table of each dose holds the genes of the gate's table, dose by dose.
+    each = result.table("hepatocyte", "each_dose")
+    assert_array_equal(
+        np.asarray(each["feature_id"]).reshape(doses.size, -1),
+        np.tile(ids, (doses.size, 1)),
+    )
+    estimated = np.abs(np.asarray(each["log2_fold_change"])).reshape(doses.size, -1).T
+    cut = np.asarray(gate["passes_gate"]) & (estimated >= np.log2(1.5)).any(axis=1)
+    kept = (cut & beyond, cut & ~beyond & ~flat, cut & flat)
+    assert [int(cut.sum()), *(int(k.sum()) for k in kept)] == [86, 77, 7, 2]
+    assert (
+        "In the hepatocytes above, 93 of the genes tested change by more" in gate_text
+    )
+    assert "The 1.5-fold gate passes 24 of them and no other gene" in gate_text
+    assert (
+        "keeps 86 genes, 77 of those 93, 7 whose true change never exceeds 1.5-fold "
+        "and 2 flat genes"
+    ) in gate_text
 
 
 # The gate. Reference values in tests/data/dose_gate/limma.json come from limma 3.62.1,

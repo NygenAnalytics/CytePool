@@ -36,7 +36,7 @@ Mixed models and dream [@bates2015; @patterson1971; @harville1977; @henderson197
 
 ## Dose response
 
-Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022], the dose tests of each cell type [@desquilbet2010; @harrell2015; @law2014; @ntp2018; @tukey1985; @delignettemuller2023], trends, candidate shapes and lowest effective doses [@dunnett1955; @bretz2006; @bretz2005; @pinheiro2014; @hothorn2008; @bornkamp2026; @ema2014; @duda2022; @ich1994; @holm1979; @shaffer1986; @heller2009; @vandenberge2017], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
+Dose axes [@bornkamp2026; @mcfaline2024], the dose groups a design supports [@ema2014; @usepa2024] and the check of dose designs [@hoffman2026a; @lun2017; @searle1971; @crowell2020; @usepa2024; @sonigra2022], the dose tests of each cell type [@desquilbet2010; @harrell2015; @law2014; @ntp2018; @tukey1985; @delignettemuller2023], trends, candidate shapes and lowest effective doses [@dunnett1955; @bretz2006; @bretz2005; @pinheiro2014; @hothorn2008; @bornkamp2026; @ema2014; @duda2022; @ich1994; @holm1979; @shaffer1986; @heller2009; @vandenberge2017], the gate and its permutation check [@bourgon2010; @mccarthy2009; @ntp2018; @lee2024; @bruns2026; @phipson2010], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
 
 ## Gene sets and pathways
 
