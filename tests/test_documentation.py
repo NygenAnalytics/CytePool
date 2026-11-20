@@ -721,6 +721,7 @@ NO_PUBLISHED_WORK = {
     "cytepool": "the package's namespace; its modules cite their sources",
     "cytepool._analysis_records": "assembles CytePool's records of an analysis",
     "cytepool._columns": "names the columns of result tables",
+    "cytepool._doses": "reads the dose columns of sample tables",
     "cytepool._gene_ids": "reads lists of gene ids",
     "cytepool._jit": "compiles and caches routines with numba; THIRD_PARTY_NOTICES.md "
     "records what its cache locator follows of numba",
@@ -1341,7 +1342,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
     assert sorted(written - named) == [], sorted(written - named)
     assert {"construction", "operations", "with_columns", "numpy_dtype"} <= written
     assert {"studies", "group_names"} <= written
-    assert {"numpy_version", "max_changes", "seed"} <= written
+    assert {"numpy_version", "max_log2_changes", "seed"} <= written
     # The import and export of AnnData and MuData, when they are installed.
     ad = pytest.importorskip("anndata")
     pd = pytest.importorskip("pandas")

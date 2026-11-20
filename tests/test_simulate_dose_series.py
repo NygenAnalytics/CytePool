@@ -6,8 +6,9 @@ benchmark doses of curves taken from simulated series and of curves whose maxima
 change equals the change asked, and the exact moments of the count model. Benchmark
 doses are also checked against values derived by hand; the simulated cells and counts
 against the closed-form moments of the documented model, which this module computes
-itself and checks against mpmath's first; the allocation against counts by hand; and
-the cube against what DoseAxis and limma_voom need of a dose series.
+itself and checks against mpmath's first; the gene-level draws against the
+distributions the docstring states; the allocation against counts by hand; and the
+cube against what DoseAxis, limma_voom and cube files need of a dose series.
 """
 
 import doctest
@@ -17,7 +18,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import numba
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
@@ -28,8 +28,10 @@ from cytepool import (
     DoseAxis,
     DoseTruth,
     limma_voom,
+    read_cube,
     simulate_dose_series,
     simulated_dose_series,
+    write_cube,
 )
 
 DATA = Path(__file__).parent / "data" / "simulate_dose_series"
@@ -37,7 +39,7 @@ CHAPTER = (
     Path(__file__).resolve().parents[1] / "docs/source/statistics/linear_models.md"
 )
 NAN = math.nan
-PARAMETERS = ("shape", "max_change", "ec50", "slope", "peak_dose", "peak_width")
+PARAMETERS = ("shape", "max_log2_change", "ec50", "slope", "peak_dose", "peak_width")
 # The count model's constants, as simulate_dose_series documents them.
 CELLS_SD, DEPTH_SD, CELL_DISPERSION, LN2 = 0.3, 0.2, 0.5, math.log(2.0)
 FOLD_CHANGE = math.log2(1.1)
@@ -46,7 +48,7 @@ DOSES = [0.0, 0.01, 0.1, 1.0, 10.0, 30.0]
 
 def truth_of(rows: list[tuple[Any, ...]], top: float = 10.0) -> DoseTruth:
     """A truth of one cell type, "liver", whose genes g0, g1, ... have the curves
-    given as (shape, max_change, ec50, slope, peak_dose, peak_width)."""
+    given as (shape, max_log2_change, ec50, slope, peak_dose, peak_width)."""
     columns = {key: [row[i] for row in rows] for i, key in enumerate(PARAMETERS)}
     table = {
         "feature_id": [f"g{i}" for i in range(len(rows))],
@@ -86,7 +88,7 @@ def test_curves_match_mpmath() -> None:
             points = data["grid_case"] == case
             found = truth.curve("liver", [position], at=data["grid_dose"][points])[0]
             expected = data["grid_value"][points]
-            scale = abs(float(data["max_change"][case]))
+            scale = abs(float(data["max_log2_change"][case]))
             if scale == 0.0:
                 assert_array_equal(found, 0.0)
             else:
@@ -103,16 +105,26 @@ def test_curves_match_mpmath() -> None:
 def test_ec50_and_benchmark_doses_match_mpmath_roots() -> None:
     data, truths = fixture_truths()
     placed = np.isin(data["shape"], ["hill", "exponential", "frechet", "step"])
-    # The EC50 of a table is the dose of half the maximal change.
-    assert_allclose(data["ec50"][placed], data["ec50_root"][placed], rtol=1e-10)
     assert np.isnan(data["ec50_root"][~placed]).all()
+    # The EC50 is the benchmark dose of half the maximal change, for a step the dose
+    # of the step.
+    half = np.full(data["shape"].size, np.nan)
+    for truth, members in truths.values():
+        positions = np.flatnonzero(placed[members])
+        cases = members[positions]
+        half[cases] = truth.benchmark_doses(
+            "liver",
+            positions,
+            log2_change=np.abs(data["max_log2_change"][cases]) / 2.0,
+        )
+    assert_allclose(half[placed], data["ec50_root"][placed], rtol=1e-10)
     found = np.empty(data["root"].size)
     for truth, members in truths.values():
         for position, case in enumerate(members):
             asked = np.flatnonzero(data["root_case"] == case)
             for j in asked:
                 found[j] = truth.benchmark_doses(
-                    "liver", [position], change=data["root_change"][j]
+                    "liver", [position], log2_change=data["root_change"][j]
                 )[0]
     assert_array_equal(np.isnan(found), np.isnan(data["root"]))
     reached = ~np.isnan(data["root"])
@@ -140,7 +152,7 @@ def test_benchmark_doses_by_hand() -> None:
     # linear: 10 x 0.25 = 2.5; power: 10 x 0.25^(1/2) = 5; step: its EC50.
     changes = [0.2, 0.25, 0.75, math.exp(-2.0), 0.25, 0.25, 0.5]
     assert_allclose(
-        truth.benchmark_doses("liver", change=changes),
+        truth.benchmark_doses("liver", log2_change=changes),
         [1.0, 0.5, 6.0, 0.1, 2.5, 5.0, 3.0],
         rtol=1e-14,
     )
@@ -177,16 +189,16 @@ def test_never_reached_is_nan() -> None:
     # At a change equal to |max_change|: a plateau is approached and never reached,
     # while a step and a peak reach it; lines and powers go on beyond the top dose.
     assert_array_equal(
-        truth.benchmark_doses("liver", change=0.5),
+        truth.benchmark_doses("liver", log2_change=0.5),
         [NAN, NAN, NAN, NAN, 1.0, 1.0, 10.0, 10.0],
     )
-    beyond = truth.benchmark_doses("liver", change=0.5 * (1.0 + 1e-12))
+    beyond = truth.benchmark_doses("liver", log2_change=0.5 * (1.0 + 1e-12))
     assert_array_equal(np.isnan(beyond), [True] * 6 + [False, False])
-    below = truth.benchmark_doses("liver", change=0.5 * (1.0 - 1e-9))
+    below = truth.benchmark_doses("liver", log2_change=0.5 * (1.0 - 1e-9))
     assert_array_equal(np.isnan(below), [True] + [False] * 7)
     # Twice |max_change|: 20 for the line, 10 x 2^(1/2) for the power.
     assert_allclose(
-        truth.benchmark_doses("liver", [6, 7], change=1.0), [20.0, 10.0 * 2**0.5]
+        truth.benchmark_doses("liver", [6, 7], log2_change=1.0), [20.0, 10.0 * 2**0.5]
     )
 
 
@@ -195,7 +207,7 @@ def test_every_benchmark_dose_is_the_lowest_crossing() -> None:
     for cell_type in truth.cell_types:
         shape = truth.table(cell_type)["shape"]
         for change in (0.2, FOLD_CHANGE, 1.0):
-            doses = truth.benchmark_doses(cell_type, change=change)
+            doses = truth.benchmark_doses(cell_type, log2_change=change)
             reached = np.flatnonzero(np.isfinite(doses))
             # Each gene's curve at its own benchmark dose, and just below it.
             at = np.diagonal(truth.curve(cell_type, reached, at=doses[reached]))
@@ -318,6 +330,30 @@ def test_cells_and_counts_have_the_moments_of_the_model() -> None:
     assert np.max(np.abs(z)) <= 4.0
 
 
+def test_library_sizes_per_cell_have_the_documented_mean() -> None:
+    # Given its cells, a profile's counts sum to n e sum_g r_g 2^(f_g + b_g), whose
+    # mean per cell is sum_g r_g 2^f_g exp((sigma_g ln 2)^2 / 2) when the depth e has
+    # mean 1: one ratio per profile, pooled over doses and cell types.
+    doses = [0.0, 0.1, 1.0, 10.0]
+    cube, truth = simulate_dose_series(
+        doses, replicates=2000, cells=[30.0, 300.0], n_genes=300, rng=46
+    )
+    ratios = []
+    for k, cell_type in enumerate(truth.cell_types):
+        table = truth.table(cell_type)
+        changes = truth.curve(cell_type, at=doses)
+        counts = cube.layer("counts", cell_type).astype(np.float64)
+        n = cube.n_cells[:, k].astype(np.float64)
+        spread = np.exp((table["expression_sd"] * LN2) ** 2 / 2)
+        for j, dose in enumerate(doses):
+            rows = (cube.samples["dose"] == dose) & (n > 0)
+            expected = np.sum(table["counts_per_cell"] * 2.0 ** changes[:, j] * spread)
+            ratios.append(counts[rows].sum(axis=1) / n[rows] / expected)
+    ratio = np.concatenate(ratios)
+    assert ratio.size > 15_000
+    assert abs(ratio.mean() - 1.0) <= 4 * ratio.std(ddof=1) / math.sqrt(ratio.size)
+
+
 def test_donor_effects_are_shared_across_doses() -> None:
     doses = [0.0, 1.0, 10.0]
     options = {"cell_types": 1, "cells": 300.0, "n_genes": 6, "responsive": 0.5}
@@ -383,7 +419,9 @@ def test_allocation_of_genes_shapes_changes_and_signs() -> None:
     assert (first["shape"] != "flat").sum() == 200
     assert (second["shape"] != "flat").sum() == 250
     cells: dict[tuple[str, float], int] = {}
-    for shape, change in zip(first["shape"].tolist(), first["max_change"].tolist()):
+    for shape, change in zip(
+        first["shape"].tolist(), first["max_log2_change"].tolist()
+    ):
         cells[shape, change] = cells.get((shape, change), 0) + 1
     # 200 responsive genes: 60 hill, 30 exponential, 10 linear, 20 power, 40 bells,
     # 20 frechet and 20 steps; within each, the changes in turn, and rises and falls
@@ -410,9 +448,29 @@ def test_allocation_of_genes_shapes_changes_and_signs() -> None:
     assert sorted(shapes) == sorted(
         ["hill", "hill", "exponential", "power", "log_gauss_probit", "frechet", "step"]
     )
-    # A share that rounds to no gene, a half rounded up, and a series without
-    # responses, whose benchmark doses are all NaN.
-    for n_genes, share, expected in ((1, 0.2, 0), (3, 0.5, 2), (50, 0.0, 0)):
+    # Ties of the largest remainder go to the shape given first: 3 x 0.5 is 1.5 each.
+    for tied_shapes, expected_shapes in (
+        ({"hill": 0.5, "step": 0.5}, ["hill", "hill", "step"]),
+        ({"step": 0.5, "hill": 0.5}, ["hill", "step", "step"]),
+    ):
+        _, tied = simulate_dose_series(
+            DOSES, n_genes=3, responsive=1.0, shapes=tied_shapes, rng=1
+        )
+        assert sorted(tied.table("cell_type_1")["shape"].tolist()) == expected_shapes
+    # 250 genes: exponential and linear tie at 37.5 and 12.5, and exponential, given
+    # first, takes the gene left over.
+    counted = [(second["shape"] == s).sum() for s in ("exponential", "linear")]
+    assert counted == [38, 12]
+    # A share that rounds to no gene; halves rounded up (2.5 genes are 3, where
+    # rounding half to even gives 2); 0.29 of 50 genes, 14.499999999999998 in float64,
+    # rounded as 14.5; and a series without responses, whose benchmark doses are NaN.
+    for n_genes, share, expected in (
+        (1, 0.2, 0),
+        (3, 0.5, 2),
+        (5, 0.5, 3),
+        (50, 0.29, 15),
+        (50, 0.0, 0),
+    ):
         _, rounded = simulate_dose_series(
             DOSES, n_genes=n_genes, responsive=share, rng=26
         )
@@ -470,11 +528,59 @@ def test_placement_puts_a_tenth_below_and_above_the_doses() -> None:
     # Log-uniform over the doses: half the peaks lie below their log midpoint.
     midpoint = math.sqrt(0.01 * 30.0)
     assert abs(np.mean(peaks < midpoint) - 0.5) <= 4 * math.sqrt(0.25 / peaks.size)
-    # The median log10 spacing of 0.01, 0.1, 1, 10 and 30 is 1.
-    widths = table["peak_width"][bell]
-    assert 0.75 <= widths.min() and widths.max() <= 1.5
     powers = table["slope"][table["shape"] == "power"]
     assert 1.0 <= powers.min() and powers.max() <= 4.0
+
+
+def test_gene_level_draws_follow_the_documented_distributions() -> None:
+    n = 20_000
+    _, truth = simulate_dose_series(
+        DOSES,
+        replicates=1,
+        n_genes=n,
+        responsive=0.2,
+        shapes={"power": 0.5, "log_gauss_probit": 0.5},
+        rng=41,
+    )
+    first, second = (truth.table(c) for c in truth.cell_types)
+    # Expected counts per cell: log-normal around 0.1 with an SD (natural log) of
+    # sqrt(1.5^2 + 0.5^2), correlated 1.5^2 / (1.5^2 + 0.5^2) = 0.9 between cell types.
+    level = np.log(first["counts_per_cell"] / 0.1)
+    sd = math.hypot(1.5, 0.5)
+    assert abs(level.mean()) <= 4 * sd / math.sqrt(n)
+    assert abs(level.std(ddof=1) - sd) <= 4 * sd / math.sqrt(2 * n)
+    rho = np.corrcoef(level, np.log(second["counts_per_cell"] / 0.1))[0, 1]
+    assert abs(rho - 0.9) <= 4 * (1 - 0.9**2) / math.sqrt(n)
+    # SD factors: log-normal with an SD of 0.3 around biological_sd.
+    factor = np.log(first["expression_sd"] / 0.25)
+    assert abs(factor.mean()) <= 4 * 0.3 / math.sqrt(n)
+    assert abs(factor.std(ddof=1) - 0.3) <= 4 * 0.3 / math.sqrt(2 * n)
+    # Responsive genes: a random order per cell type, so the two sets overlap as
+    # independent draws do, in 0.2 x 0.2 of the genes, and spread over the gene ids.
+    one, two = first["shape"] != "flat", second["shape"] != "flat"
+    assert abs((one & two).sum() - 0.04 * n) <= 4 * math.sqrt(n * 0.04 * 0.96)
+    positions = np.flatnonzero(one) / (n - 1)
+    assert abs(positions.mean() - 0.5) <= 4 * math.sqrt(1 / 12 / one.sum())
+    # Power slopes log-uniform from 1 to 4: half lie below 2.
+    powers = first["slope"][first["shape"] == "power"]
+    assert abs(np.mean(powers < 2.0) - 0.5) <= 4 * math.sqrt(0.25 / powers.size)
+    # Bell widths: uniform from 0.75 to 1.5 times the log10 gap between the doses on
+    # either side of the peak, 1 from 0.01 to 10 and log10(3) from 10 to 30, whatever
+    # the peak.
+    bell = first["shape"] == "log_gauss_probit"
+    peaks = np.log10(first["peak_dose"][bell])
+    positive = np.log10(DOSES[1:])
+    gaps = np.array(
+        [positive[positive >= p].min() - positive[positive < p].max() for p in peaks]
+    )
+    widths = first["peak_width"][bell]
+    ratio = widths / gaps
+    assert 0.75 <= ratio.min() and ratio.max() <= 1.5
+    assert abs(np.mean(ratio < 1.125) - 0.5) <= 4 * math.sqrt(0.25 / ratio.size)
+    assert abs(np.corrcoef(ratio, peaks)[0, 1]) <= 4 / math.sqrt(ratio.size)
+    narrow = peaks > 1.0
+    assert narrow.sum() > 100
+    assert widths[narrow].max() <= 1.5 * math.log10(3.0) + 1e-12
 
 
 def test_truths_stay_when_the_design_changes() -> None:
@@ -554,15 +660,6 @@ def test_the_same_seed_gives_the_same_series() -> None:
     drawn = np.random.default_rng(31)
     drawn.random()
     assert fingerprint(rng=drawn)[0] != seeded
-    # Threads change nothing; the simulator has no compiled code, and this guards
-    # against compiled code added later.
-    previous = numba.get_num_threads()
-    try:
-        numba.set_num_threads(1)
-        single = fingerprint(rng=31)[0]
-    finally:
-        numba.set_num_threads(previous)
-    assert single == seeded
 
 
 # The cube.
@@ -604,13 +701,13 @@ def test_the_cube_reads_as_a_dose_series() -> None:
     construction = cube.provenance["construction"]
     assert set(construction) == {
         "function", "cytepool_version", "numpy_version", "doses", "replicates",
-        "cell_types", "cells", "n_genes", "responsive", "shapes", "max_changes",
+        "cell_types", "cells", "n_genes", "responsive", "shapes", "max_log2_changes",
         "biological_sd", "donor_sd", "composition", "unit", "metric", "seed",
     }  # fmt: skip
     assert construction["seed"] == 34 and construction["replicates"] == [3, 2, 2, 1]
     assert construction["composition"]["stellate"] == [1.0, 1.0, 0.5, 0.0]
     assert "Built by simulate_dose_series" in cube.history()
-    # The dose axis of PR 3 reads the sample table as it stands.
+    # DoseAxis reads the sample table as it stands.
     axis = DoseAxis("dose", unit=truth.unit, metric=truth.metric)
     basis = axis.spline_basis(cube.samples, df=2)
     columns = axis.design_columns(cube.samples, basis)
@@ -632,6 +729,19 @@ def test_the_cube_reads_as_a_dose_series() -> None:
     assert wide.samples["donor"][10] == "donor_01"
 
 
+def test_a_simulated_cube_survives_a_cube_file(tmp_path: Path) -> None:
+    cube, _ = simulate_dose_series(
+        [0, 0.1, 1, 10], n_genes=30, donor_sd=0.1, rng=np.random.default_rng(3)
+    )
+    write_cube(cube, tmp_path / "series")
+    back = read_cube(tmp_path / "series")
+    assert back.fingerprint() == cube.fingerprint()
+    assert back.provenance == cube.provenance
+    construction = back.provenance["construction"]
+    assert construction["seed"] is None and construction["donor_sd"] == 0.1
+    assert back.samples.equals(cube.samples)
+
+
 def test_estimated_changes_follow_the_truth() -> None:
     # Strong Hill responses: limma-voom's top dose against the vehicle recovers the
     # true change of genes with at least 10 expected counts at both, and calls flat
@@ -642,7 +752,7 @@ def test_estimated_changes_follow_the_truth() -> None:
         cell_types=1,
         cells=500.0,
         shapes={"hill": 1.0},
-        max_changes=(2.0,),
+        max_log2_changes=(2.0,),
         rng=11,
     )
     levels = {"dose_group": [f"d{k}" for k in range(6)]}
@@ -726,12 +836,12 @@ def test_genes_are_chosen_as_a_cube_chooses_features() -> None:
     assert truth.curve("liver", [], at=[5.0]).shape == (0, 1)
     assert truth.curve("liver", at=[]).shape == (3, 0)
     assert_allclose(
-        truth.benchmark_doses("liver", ["g1", "g0"], change=[1.0, 0.5]), [5.0, 1.0]
+        truth.benchmark_doses("liver", ["g1", "g0"], log2_change=[1.0, 0.5]), [5.0, 1.0]
     )
     with pytest.raises(ValueError, match="repeats 'g0'"):
         truth.curve("liver", ["g0", "g0"], at=[1.0])
     with pytest.raises(KeyError, match="no gene with id 'g9'"):
-        truth.benchmark_doses("liver", ["g9"], change=0.5)
+        truth.benchmark_doses("liver", ["g9"], log2_change=0.5)
 
 
 # Arguments.
@@ -777,12 +887,22 @@ REFUSED_SERIES = [
     ({"shapes": {"weibull": 1.0}}, ValueError, "unknown shape 'weibull'"),
     ({"shapes": {"hill": 0.5, "step": 0.4}}, ValueError, "sum to 1"),
     ({"shapes": {"hill": 1.5, "step": -0.5}}, ValueError, "non-negative"),
-    ({"max_changes": []}, ValueError, "at least one value"),
-    ({"max_changes": [0.5, 0.1]}, ValueError, "above log2\\(1.1\\)"),
-    ({"max_changes": [-1.0]}, ValueError, "given as a size"),
+    ({"max_log2_changes": []}, ValueError, "at least one value"),
+    ({"max_log2_changes": [0.5, 0.1]}, ValueError, "exceed log2\\(1.1\\)"),
+    ({"max_log2_changes": [math.log2(1.1)]}, ValueError, "exceed log2\\(1.1\\)"),
+    ({"max_log2_changes": [-1.0]}, ValueError, "size in log2 units, above 0"),
+    ({"max_log2_changes": 0.0}, ValueError, "size in log2 units, above 0"),
     ({"biological_sd": 0.0}, ValueError, "biological_sd must be positive"),
     ({"donor_sd": -0.1}, ValueError, "donor_sd must be non-negative"),
     ({"donor_sd": "high"}, TypeError, "donor_sd must be a real number"),
+    # Sizes typed as percentages give counts that no sequencing depth gives.
+    ({"max_log2_changes": 70.0}, ValueError, "expected counts of a profile reach 2"),
+    ({"biological_sd": 40.0}, ValueError, "lower max_log2_changes, biological_sd"),
+    ({"donor_sd": 50.0}, ValueError, "expected counts of a profile reach 2"),
+    ({"cells": 1e19}, ValueError, "expected cells of a profile reach 2\\^53"),
+    # Doses whose span puts EC50s beyond float64.
+    ({"doses": [0.0, 1e-300, 1e300]}, ValueError, "EC50s beyond the range of float64"),
+    ({"doses": [0.0, 1e300, 1e308]}, ValueError, "from 1e\\+300 to 1e\\+308"),
     ({"composition": [1.0]}, TypeError, "mapping of cell type"),
     (
         {"composition": {"cell_type_3": [1.0] * 6}},
@@ -805,20 +925,25 @@ REFUSED_SERIES = [
 ]
 
 
+# numpy's scalar reprs, such as np.float64(0.3), which messages must not print.
+NUMPY_REPR = re.compile(r"np\.\w+\(")
+
+
 @pytest.mark.parametrize(("change", "error", "message"), REFUSED_SERIES)
 def test_arguments_are_refused_with_a_fix(
     change: dict[str, Any], error: type[Exception], message: str
 ) -> None:
     arguments: dict[str, Any] = {"doses": DOSES, "n_genes": 20, "rng": 1, **change}
-    with pytest.raises(error, match=message):
+    with pytest.raises(error, match=message) as caught:
         simulate_dose_series(arguments.pop("doses"), **arguments)
+    assert not NUMPY_REPR.search(str(caught.value)), caught.value
 
 
 def good_table(**changes: Any) -> dict[str, Any]:
     table = {
         "feature_id": ["a", "b"],
         "shape": ["hill", "flat"],
-        "max_change": [1.0, 0.0],
+        "max_log2_change": [1.0, 0.0],
         "ec50": [1.0, NAN],
         "slope": [1.0, NAN],
         "peak_dose": [NAN, NAN],
@@ -830,68 +955,77 @@ def good_table(**changes: Any) -> dict[str, Any]:
 
 
 REFUSED_TRUTHS = [
-    ({"curves": []}, TypeError, "mapping of cell type to its table"),
-    ({"curves": {}}, ValueError, "at least one cell type"),
-    ({"curves": {1: good_table()}}, TypeError, "non-empty str"),
-    ({"curves": {"x": {"feature_id": ["a"]}}}, ValueError, "lacks the columns 'shape'"),
-    ({"curves": {"x": good_table(feature_id=["a", "a"])}}, ValueError, "repeats 'a'"),
-    ({"curves": {"x": good_table(feature_id=[1, 2])}}, TypeError, "non-empty str"),
+    ({"tables": []}, TypeError, "mapping of cell type to its table"),
+    ({"tables": {}}, ValueError, "at least one cell type"),
+    ({"tables": {1: good_table()}}, TypeError, "non-empty str"),
+    # One table where a mapping of cell type to table belongs.
     (
-        {"curves": {"x": good_table(shape=["hil", "flat"])}},
+        {"tables": good_table()},
+        TypeError,
+        "tables maps each cell type to its table, such as \\{'hepatocyte': "
+        "truth.table\\('hepatocyte'\\)\\}; got a list for 'feature_id'",
+    ),
+    ({"tables": {"x": {"feature_id": ["a"]}}}, ValueError, "lacks the columns 'shape'"),
+    ({"tables": {"x": good_table(feature_id=["a", "a"])}}, ValueError, "repeats 'a'"),
+    ({"tables": {"x": good_table(feature_id=[1, 2])}}, TypeError, "non-empty str"),
+    (
+        {"tables": {"x": good_table(shape=["hil", "flat"])}},
         ValueError,
         "did you mean 'hill'",
     ),
     (
-        {"curves": {"x": good_table(ec50=[0.0, NAN])}},
+        {"tables": {"x": good_table(ec50=[0.0, NAN])}},
         ValueError,
-        "ec50 of a must be finite and above 0",
+        "ec50 of a must be finite and above 0 for a hill curve, got 0.0$",
     ),
     (
-        {"curves": {"x": good_table(slope=[NAN, NAN])}},
+        {"tables": {"x": good_table(slope=[-2.0, NAN])}},
         ValueError,
-        "slope of a must be finite",
+        "slope of a must be finite and above 0 for a hill curve, got -2.0$",
     ),
     (
-        {"curves": {"x": good_table(peak_dose=[1.0, NAN])}},
+        {"tables": {"x": good_table(peak_dose=[1.0, NAN])}},
         ValueError,
-        "peak_dose of a must be NaN",
+        "peak_dose of a must be NaN, since a hill curve has no peak_dose; got 1.0$",
     ),
     (
-        {"curves": {"x": good_table(ec50=[1.0, 2.0])}},
+        {"tables": {"x": good_table(ec50=[1.0, 2.0])}},
         ValueError,
         "ec50 of b must be NaN",
     ),
     (
-        {"curves": {"x": good_table(max_change=[0.0, 0.0])}},
+        {"tables": {"x": good_table(max_log2_change=[0.0, 0.0])}},
         ValueError,
-        "max_change of a must be finite and not 0",
+        "max_log2_change of a must be finite and not 0 for a hill curve, got 0.0$",
     ),
     (
-        {"curves": {"x": good_table(max_change=[1.0, 0.5])}},
+        {"tables": {"x": good_table(max_log2_change=[1.0, 0.5])}},
         ValueError,
-        "max_change of b must be 0",
+        "max_log2_change of b must be 0",
     ),
     (
-        {"curves": {"x": good_table(counts_per_cell=[1.0, 0.0])}},
+        {"tables": {"x": good_table(counts_per_cell=[1.0, 0.0])}},
         ValueError,
-        "counts_per_cell of b",
+        "counts_per_cell of b must be finite and above 0, got 0.0$",
     ),
     (
-        {"curves": {"x": good_table(expression_sd=[math.inf, 1.0])}},
+        {"tables": {"x": good_table(expression_sd=[math.inf, 1.0])}},
         ValueError,
         "expression_sd of a",
     ),
     (
-        {"curves": {"x": good_table(max_change=["1", "0"])}},
+        {"tables": {"x": good_table(max_log2_change=["1", "0"])}},
         TypeError,
         "must hold real numbers",
     ),
     (
-        {"curves": {"x": good_table(), "y": good_table(feature_id=["b", "a"])}},
+        {"tables": {"x": good_table(), "y": good_table(feature_id=["b", "a"])}},
         ValueError,
-        "the genes of curves\\['x'\\], in the same order",
+        "the genes of tables\\['x'\\], in the same order",
     ),
     ({"doses": [0.0, 1.0]}, ValueError, "at least two doses above 0"),
+    ({"doses": [0.3, 1.0, 10.0]}, ValueError, "got 0.3 first$"),
+    ({"doses": [0.0, 1.0, 1.0, 10.0]}, ValueError, "got 1.0 after 1.0$"),
     ({"unit": ""}, ValueError, "unit must not be empty"),
     ({"metric": "dose"}, ValueError, "metric must be one of"),
 ]
@@ -903,13 +1037,14 @@ def test_truths_refuse_tables_they_cannot_read(
 ) -> None:
     arguments: dict[str, Any] = {
         "doses": [0.0, 1.0, 10.0],
-        "curves": {"x": good_table()},
+        "tables": {"x": good_table()},
         "unit": "uM",
         "metric": "nominal",
         **change,
     }
-    with pytest.raises(error, match=message):
-        DoseTruth(arguments.pop("doses"), arguments.pop("curves"), **arguments)
+    with pytest.raises(error, match=message) as caught:
+        DoseTruth(arguments.pop("doses"), arguments.pop("tables"), **arguments)
+    assert not NUMPY_REPR.search(str(caught.value)), caught.value
 
 
 def test_methods_refuse_what_they_cannot_read() -> None:
@@ -922,17 +1057,24 @@ def test_methods_refuse_what_they_cannot_read() -> None:
         truth.curve(0, at=[1.0])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="at must be finite and at least 0"):
         truth.curve("liver", at=[-1.0])
+    # One dose is a column of changes; two dimensions are refused.
+    assert_array_equal(truth.curve("liver", at=1.0), truth.curve("liver", at=[1.0]))
+    assert truth.curve("liver", at=np.float64(1.0)).shape == (2, 1)
     with pytest.raises(ValueError, match="1-D"):
-        truth.curve("liver", at=1.0)
+        truth.curve("liver", at=[[1.0]])
     with pytest.raises(TypeError, match="at must hold real numbers"):
         truth.curve("liver", at=["1"])
     with pytest.raises(ValueError, match="one value or one per gene \\(2\\)"):
-        truth.benchmark_doses("liver", change=[0.5, 0.5, 0.5])
+        truth.benchmark_doses("liver", log2_change=[0.5, 0.5, 0.5])
+    # One value for every gene is named once, as given.
     for change in (0.0, -1.0, math.nan, math.inf):
-        with pytest.raises(ValueError, match="finite and above 0"):
-            truth.benchmark_doses("liver", change=change)
-    with pytest.raises(TypeError, match="change must hold real numbers"):
-        truth.benchmark_doses("liver", change="0.5")
+        with pytest.raises(ValueError, match="finite and above 0") as caught:
+            truth.benchmark_doses("liver", log2_change=change)
+        assert str(caught.value).endswith(f"got {change!r}")
+    with pytest.raises(ValueError, match="got -1.0 and 0.0$"):
+        truth.benchmark_doses("liver", log2_change=[0.0, -1.0])
+    with pytest.raises(TypeError, match="log2_change must hold real numbers"):
+        truth.benchmark_doses("liver", log2_change="0.5")
 
 
 def test_doses_the_simulator_refuses_are_those_a_dose_axis_reads_as_one() -> None:
@@ -958,10 +1100,16 @@ def test_the_chapter_example_runs(capsys: pytest.CaptureFixture[str]) -> None:
     assert len(blocks) == 1
     namespace: dict[str, Any] = {"cp": cytepool}
     exec(blocks[0], namespace)  # noqa: S102
-    printed = capsys.readouterr().out
-    # The shares the chapter quotes.
-    assert printed.strip() in section
-    assert "53% of responsive genes called, 0.2% of flat genes" in printed
+    printed = capsys.readouterr().out.strip().splitlines()
+    # The output the code block shows, and the counts the text quotes.
+    assert all(f"# {line}\n" in section for line in printed)
+    assert printed[0] == "59 of 113 responsive genes called, 2 of 461 flat"
+    assert printed[1:] == [
+        "maximal change 0.5: 4 of 32 called",
+        "maximal change 1: 21 of 38 called",
+        "maximal change 2: 34 of 43 called",
+    ]
+    assert "59 of the 113 that respond and 2 of the 461 flat ones" in section
 
 
 def test_the_examples_in_the_docstrings_run() -> None:

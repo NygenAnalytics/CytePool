@@ -170,7 +170,7 @@ DOSE_SAMPLES = {"dose": [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0]}
 TRUTH_TABLE = {
     "feature_id": ["g1", "g2"],
     "shape": ["hill", "flat"],
-    "max_change": [1.0, 0.0],
+    "max_log2_change": [1.0, 0.0],
     "ec50": [1.0, np.nan],
     "slope": [2.0, np.nan],
     "peak_dose": [np.nan, np.nan],
@@ -2069,7 +2069,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "n_genes": 8,
             "responsive": [0.5, 0.25],
             "shapes": {"hill": 0.5, "step": 0.5},
-            "max_changes": [1.0, 2.0],
+            "max_log2_changes": [1.0, 2.0],
             "biological_sd": 0.25,
             "donor_sd": 0.1,
             "composition": {"liver": [1.0, 1.0, 0.5, 0.5]},
@@ -2084,7 +2084,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "cells": None,
             "responsive": None,
             "shapes": None,
-            "max_changes": None,
+            "max_log2_changes": None,
             "composition": None,
         },
         options=("n_genes", "biological_sd", "donor_sd", "unit", "metric", "rng"),
@@ -2093,13 +2093,13 @@ ENTRY_POINTS: dict[str, Entry] = {
     "cytepool.simulated_dose_series.DoseTruth": Entry(
         lambda c: {
             "doses": [0.0, 1.0, 10.0],
-            "curves": {"liver": TRUTH_TABLE},
+            "tables": {"liver": TRUTH_TABLE},
             "unit": "uM",
             "metric": "nominal",
         },
-        {"doses": None, "curves": "None or NaN"},
+        {"doses": None, "tables": "None or NaN"},
         options=("unit", "metric"),
-        keys={"curves": "liver"},
+        keys={"tables": "liver"},
     ),
     "cytepool.simulated_dose_series.DoseTruth.curve": Entry(
         lambda c: {"cell_type": "liver", "genes": ["g2", "g1"], "at": [0.0, 1.0, 5.0]},
@@ -2108,8 +2108,12 @@ ENTRY_POINTS: dict[str, Entry] = {
         instance=lambda c: DOSE_TRUTH,
     ),
     "cytepool.simulated_dose_series.DoseTruth.benchmark_doses": Entry(
-        lambda c: {"cell_type": "liver", "genes": ["g1", "g2"], "change": [0.5, 0.5]},
-        {"genes": None, "change": None},
+        lambda c: {
+            "cell_type": "liver",
+            "genes": ["g1", "g2"],
+            "log2_change": [0.5, 0.5],
+        },
+        {"genes": None, "log2_change": None},
         options=("cell_type",),
         instance=lambda c: DOSE_TRUTH,
     ),

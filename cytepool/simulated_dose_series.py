@@ -11,10 +11,10 @@ of each replicate (an animal, or one donor's cells in a well) in each cell type,
 the effects of each replicate that muscat's and scDesign3's simulations also give
 (Crowell et al. 2020; Song et al. 2024); :class:`~cytepool.DoseTruth` holds each
 gene's true curve, EC50 and benchmark doses. The curves include shapes inside and
-outside the model sets of BMDS (US EPA 2026), drc (Ritz et al. 2015) and DRomics
-(Delignette-Muller et al. 2023), so that a method is not checked only on curves of
-its own form; Hill, sigmoid Emax and four-parameter log-logistic curves are one
-family (Kappenberg et al. 2023)
+outside the families of curves that BMDS (US EPA 2026), drc (Ritz et al. 2015) and
+DRomics (Delignette-Muller et al. 2023) fit, so that a method is not checked only on
+curves of its own form; Hill, sigmoid Emax and four-parameter log-logistic curves are
+one family (Kappenberg et al. 2023)
 (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
 
 References:
@@ -65,11 +65,12 @@ import numpy as np
 import numpy.typing as npt
 
 from . import __version__
+from ._columns import is_data_frame
 from ._counts import real_values
+from ._doses import SAME_DOSE, checked_doses
 from ._masked_arrays import reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
 from ._options import (
-    checked_choice,
     non_negative_number,
     positive_finite_number,
     positive_integer,
@@ -78,7 +79,7 @@ from ._options import (
 )
 from .cube import Cube
 from .cube._axes import count_dtype, selected_positions
-from .dose_axes import METRICS
+from .dose_axes import DoseAxis
 from .table import Table
 
 __all__ = ["DoseTruth", "simulate_dose_series"]
@@ -109,16 +110,17 @@ DEFAULT_SHAPES = MappingProxyType(
         "step": 0.10,
     }
 )
-"""The shares of the shapes among the responsive genes by default: 30% Hill curves, in
-the model sets of BMDS, drc's LL.4 and DRomics; 60% in BMDS's set and 70% in DRomics';
-20% Fréchet curves and steps, outside every set."""
+"""The shares of the shapes among the responsive genes by default: 30% Hill curves, a
+family that BMDS, drc's LL.4 and DRomics all fit; 60% in families that BMDS fits and
+70% in families that DRomics fits; 20% Fréchet curves and steps, which none of them
+fits."""
 
 FOLD_CHANGE = 1.1
 """The fold change of ``bmd_fold_change``: a change of log2(1.1) in either direction."""
 
-# The parameter columns of a truth table, and the columns that each shape uses.
+# The parameter columns of a truth table.
 PARAMETERS = (
-    "max_change",
+    "max_log2_change",
     "ec50",
     "slope",
     "peak_dose",
@@ -126,20 +128,16 @@ PARAMETERS = (
     "counts_per_cell",
     "expression_sd",
 )
-_USES = {
-    "hill": ("ec50", "slope"),
-    "exponential": ("ec50",),
-    "linear": (),
-    "power": ("slope",),
-    "log_gauss_probit": ("peak_dose", "peak_width"),
-    "frechet": ("ec50", "slope"),
-    "step": ("ec50",),
-    FLAT: (),
+# The shapes that use each curve parameter; the other shapes hold NaN there.
+_USED_BY = {
+    "ec50": ("hill", "exponential", "frechet", "step"),
+    "slope": ("hill", "power", "frechet"),
+    "peak_dose": ("log_gauss_probit",),
+    "peak_width": ("log_gauss_probit",),
 }
-_SHAPE_PARAMETERS = ("ec50", "slope", "peak_dose", "peak_width")
-# The shapes whose curve reaches a change c only when |max_change| exceeds c (a
-# plateau that the curve approaches), and those that reach it at |max_change| = c too
-# (a peak or a step that the curve attains).
+# The shapes whose curve reaches a change c only when |max_log2_change| exceeds c (a
+# plateau that the curve approaches), and those that reach it at |max_log2_change| = c
+# too (a peak or a step that the curve attains).
 _APPROACHED = ("hill", "exponential", "frechet")
 _ATTAINED = ("log_gauss_probit", "step")
 # The shapes placed by their dose of a 1.1-fold change.
@@ -161,17 +159,17 @@ _CELL_DISPERSION = 0.5
 # Slopes are log-uniform between these bounds. A power curve with an exponent below 1
 # rises infinitely steeply at the vehicle.
 _SLOPES = {"hill": (0.5, 4.0), "frechet": (0.5, 4.0), "power": (1.0, 4.0)}
-# The SD of a bell along log10 dose, uniform between these multiples of the median
-# log10 spacing of the positive doses, so that most bells exceed half their peak at
-# two or more of the doses.
+# The SD of a bell along log10 dose, uniform between these multiples of the log10 gap
+# between the positive doses on either side of its peak, so that nearly every bell
+# exceeds half its peak at two or more doses, however the doses are spaced.
 _BELL_WIDTHS = (0.75, 1.5)
 # The doses of a 1.1-fold change of the placed shapes are log-uniform from an eighth
 # of the log10 span of the positive doses below the lowest to an eighth above the top
 # dose: a tenth lies below the doses and a tenth above.
 _BEYOND = 0.125
-# Distinct doses closer than this, relative to the larger, are one dose that a
-# conversion of units left as two, as DoseAxis reads them.
-_SAME_DOSE = 1e-8
+# The largest expected count or cells of a profile: whole numbers up to 2^53 are exact
+# in float64, and numpy's samplers refuse means far above it.
+_LARGEST_MEAN = 2.0**53
 # The shares of the shapes must sum to 1 within this.
 _SUM_TOLERANCE = 1e-9
 # The streams that each cell type's stream spawns, in this order.
@@ -180,17 +178,14 @@ _STREAMS = ("genes", "curves", "cells", "depth", "samples", "donors", "counts")
 
 class _Curves(NamedTuple):
     """The curve of each gene: its shape and the parameters that shape uses (NaN
-    for the others)."""
+    for the others), named as the columns of a truth table."""
 
     shape: npt.NDArray[np.object_]
-    max_change: FloatArray
+    max_log2_change: FloatArray
     ec50: FloatArray
     slope: FloatArray
     peak_dose: FloatArray
     peak_width: FloatArray
-
-    def take(self, rows: npt.NDArray[np.intp]) -> "_Curves":
-        return _Curves._make(values[rows] for values in self)
 
 
 class DoseTruth:
@@ -200,7 +195,10 @@ class DoseTruth:
     in log2 expression from the vehicle (a log2 fold change) at any dose
     (:meth:`curve`), the gene's EC50, the dose that gives half the maximal change,
     and its benchmark doses (Crump 1984), the lowest dose at which the curve departs
-    from the vehicle by a stated change, at any change (:meth:`benchmark_doses`).
+    from the vehicle by a stated change, the benchmark response, at any change
+    (:meth:`benchmark_doses`)
+    (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
+
     :meth:`table` gives the parameters and two benchmark doses per gene, with the
     columns
 
@@ -208,15 +206,16 @@ class DoseTruth:
     - ``shape``: ``"flat"`` for a gene that does not respond, or one of ``"hill"``,
       ``"exponential"``, ``"linear"``, ``"power"``, ``"log_gauss_probit"``,
       ``"frechet"`` and ``"step"`` (the curves below);
-    - ``max_change``: the signed maximal change in log2 expression: the plateau of
-      the hill, exponential, frechet and step curves, the change at the top dose of
+    - ``max_log2_change``: the signed maximal change in log2 expression: the plateau
+      of the hill, exponential, frechet and step curves, the change at the top dose of
       the linear and power curves, and the peak (or trough) of the log_gauss_probit
       curve; 0 for flat;
-    - ``ec50``: the dose of half the maximal change (hill, exponential, frechet,
-      step); NaN otherwise;
+    - ``ec50``: the dose of half the maximal change (hill, exponential, frechet), or
+      the dose of the step, where the change jumps from 0 to ``max_log2_change``
+      (step); NaN otherwise;
     - ``slope``: the Hill slope (hill), the shape exponent (frechet) or the exponent
-      (power), positive whatever the direction, which ``max_change`` carries; NaN
-      otherwise;
+      (power), positive whatever the direction, which ``max_log2_change`` carries;
+      NaN otherwise;
     - ``peak_dose`` and ``peak_width``: the dose of the peak and the SD of the bell
       along log10 dose, in log10 units (log_gauss_probit); NaN otherwise;
     - ``counts_per_cell``: the expected counts of one cell at the vehicle, for a
@@ -228,9 +227,11 @@ class DoseTruth:
     - ``bmd_expression_sd``: the benchmark dose at a change of one ``expression_sd``;
     - ``bmd_fold_change``: the benchmark dose at a fold change of 1.1 in either
       direction, a rise of 10% or a fall of 9.1% (a change of log2(1.1) = 0.1375 in
-      log2 expression).
+      log2 expression), in true expression: the prior counts of log-CPM values
+      compress the observed changes of genes with few counts, so for them an
+      estimate on the observed scale targets a higher dose.
 
-    With M = ``max_change``, E = ``ec50``, n = ``slope``, P = ``peak_dose``, w =
+    With M = ``max_log2_change``, E = ``ec50``, n = ``slope``, P = ``peak_dose``, w =
     ``peak_width`` and T the top dose, the change from the vehicle at dose d > 0 is
 
     - hill: M / (1 + (E/d)^n), the Hill equation, drc's LL.4 and the sigmoid Emax
@@ -257,16 +258,15 @@ class DoseTruth:
     as :meth:`table` gives them, so that a truth can be saved and read back:
     ``DoseTruth(truth.doses, {c: truth.table(c) for c in truth.cell_types},
     unit=truth.unit, metric=truth.metric)`` rebuilds ``truth``. Other columns of the
-    tables, such as the benchmark doses, are ignored and computed again. Immutable
-    (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
+    tables, such as the benchmark doses, are ignored and computed again. Immutable.
 
     Args:
         doses: The dose levels of the series, as :func:`simulate_dose_series` takes
             them: strictly increasing from 0, the vehicle, with at least two doses
             above 0. The last is the top dose of the linear and power curves.
-        curves: Each cell type's table, a ``Table``, a mapping of column name to 1-D
+        tables: Each cell type's table, a ``Table``, a mapping of column name to 1-D
             values or a pandas DataFrame, with the columns ``feature_id``, ``shape``,
-            ``max_change``, ``ec50``, ``slope``, ``peak_dose``, ``peak_width``,
+            ``max_log2_change``, ``ec50``, ``slope``, ``peak_dose``, ``peak_width``,
             ``counts_per_cell`` and ``expression_sd``, and the same genes in the
             same order in every table.
         unit: The unit of the doses, as :class:`~cytepool.DoseAxis` takes it.
@@ -280,9 +280,10 @@ class DoseTruth:
         ValueError: If ``doses`` are not as described, there is no cell type, a
             table lacks a column, its genes are repeated or differ from those of
             another table, a shape is unknown, or a parameter is not finite and
-            above 0 where the shape uses it and NaN where it does not; ``max_change``
-            must be 0 for flat genes and finite and not 0 otherwise, and
-            ``counts_per_cell`` and ``expression_sd`` finite and above 0.
+            above 0 where the shape uses it and NaN where it does not;
+            ``max_log2_change`` must be 0 for flat genes and finite and not 0
+            otherwise, and ``counts_per_cell`` and ``expression_sd`` finite and
+            above 0.
 
     Example:
         >>> truth = DoseTruth(
@@ -291,7 +292,7 @@ class DoseTruth:
         ...         "hepatocyte": {
         ...             "feature_id": ["Cyp1a1", "Alb"],
         ...             "shape": ["hill", "flat"],
-        ...             "max_change": [2.0, 0.0],
+        ...             "max_log2_change": [2.0, 0.0],
         ...             "ec50": [1.0, np.nan],
         ...             "slope": [2.0, np.nan],
         ...             "peak_dose": [np.nan, np.nan],
@@ -305,67 +306,73 @@ class DoseTruth:
         ... )
         >>> truth.curve("hepatocyte", at=[0.0, 1.0, 10.0]).round(4).tolist()
         [[0.0, 1.0, 1.9802], [0.0, 0.0, 0.0]]
-        >>> truth.benchmark_doses("hepatocyte", change=1.0).tolist()
+        >>> truth.benchmark_doses("hepatocyte", log2_change=1.0).tolist()
         [1.0, nan]
     """
 
-    __slots__ = ("_doses", "_unit", "_metric", "_tables", "_curves", "_index")
+    __slots__ = ("_doses", "_unit", "_metric", "_tables", "_index")
 
     _doses: tuple[float, ...]
     _unit: str
     _metric: str
     _tables: Mapping[str, Table]
-    _curves: Mapping[str, _Curves]
     _index: dict[str, int]
 
     def __init__(
         self,
         doses: npt.ArrayLike,
-        curves: Mapping[str, Any],
+        tables: Mapping[str, Any],
         *,
         unit: str,
         metric: str,
     ) -> None:
-        reject_masked(doses, "doses")
-        reject_masked(curves, "curves", missing="None or NaN")
+        reject_masked(tables, "tables", missing="None or NaN")
         checked = _checked_series_doses(doses)
-        unit = _checked_unit(unit)
-        metric = checked_choice(metric, "metric", METRICS)
-        if not isinstance(curves, Mapping):
+        axis = DoseAxis("dose", unit=unit, metric=metric)
+        if not isinstance(tables, Mapping):
             raise TypeError(
-                "curves must be a mapping of cell type to its table, got "
-                f"{type(curves).__name__}"
+                "tables must be a mapping of cell type to its table, got "
+                f"{type(tables).__name__}"
             )
-        if not curves:
-            raise ValueError("curves must hold the table of at least one cell type")
+        if not tables:
+            raise ValueError("tables must hold the table of at least one cell type")
         top = float(checked[-1])
-        tables: dict[str, Table] = {}
-        parsed: dict[str, _Curves] = {}
+        truth_tables: dict[str, Table] = {}
         feature_ids: np.ndarray | None = None
-        for cell_type, values in curves.items():
+        for cell_type, values in tables.items():
             if not isinstance(cell_type, str) or not cell_type:
                 raise TypeError(
-                    f"the cell types of curves must be non-empty str, got {cell_type!r}"
+                    f"the cell types of tables must be non-empty str, got {cell_type!r}"
                 )
-            where = f"curves[{cell_type!r}]"
-            ids, gene_curves, expression = _checked_truth_table(values, where)
+            if not (isinstance(values, Table | Mapping) or is_data_frame(values)):
+                raise TypeError(
+                    "tables maps each cell type to its table, such as {'hepatocyte': "
+                    f"truth.table('hepatocyte')}}; got a {type(values).__name__} for "
+                    f"{cell_type!r}"
+                )
+            where = f"tables[{cell_type!r}]"
+            table = _checked_truth_table(values, where)
             if feature_ids is None:
-                feature_ids = ids
-            elif not np.array_equal(ids, feature_ids):
-                first = next(iter(curves))
+                feature_ids = table["feature_id"]
+            elif not np.array_equal(table["feature_id"], feature_ids):
+                first = next(iter(tables))
                 raise ValueError(
-                    f"{where} must have the genes of curves[{first!r}], in the same "
+                    f"{where} must have the genes of tables[{first!r}], in the same "
                     "order: every cell type of a series has the same genes"
                 )
-            parsed[cell_type] = gene_curves
-            tables[cell_type] = _truth_table(ids, gene_curves, expression, top)
-        assert feature_ids is not None  # curves is not empty
+            curves = _curves_of(table)
+            truth_tables[cell_type] = table.with_columns(
+                bmd_expression_sd=_benchmark_doses(curves, top, table["expression_sd"]),
+                bmd_fold_change=_benchmark_doses(
+                    curves, top, np.full(len(table), math.log2(FOLD_CHANGE))
+                ),
+            )
+        assert feature_ids is not None  # tables is not empty
         state = {
             "_doses": tuple(float(dose) for dose in checked),
-            "_unit": unit,
-            "_metric": metric,
-            "_tables": MappingProxyType(tables),
-            "_curves": MappingProxyType(parsed),
+            "_unit": axis.unit,
+            "_metric": axis.metric,
+            "_tables": MappingProxyType(truth_tables),
             "_index": {gene: i for i, gene in enumerate(feature_ids.tolist())},
         }
         for name, value in state.items():
@@ -426,73 +433,77 @@ class DoseTruth:
             genes: Feature ids, a boolean mask or integer positions, as
                 ``Cube.select`` takes features; None (default) gives every gene, in
                 table order.
-            at: ``(m,)`` doses in the unit of the series, finite and at least 0.
+            at: One dose, or ``(m,)`` doses, in the unit of the series, finite and
+                at least 0.
 
         Returns:
-            ``(genes, m)`` float64 log2 fold changes against the vehicle.
+            ``(genes, m)`` float64 log2 fold changes against the vehicle, with m = 1
+            for one dose.
 
         Raises:
             KeyError: If the truth has no such cell type or gene.
             TypeError: If ``at`` is not real-valued, or an argument is or holds a
                 numpy masked array.
-            ValueError: If ``at`` is not 1-D or holds a dose that is not finite or is
-                negative, or ``genes`` repeats a gene.
+            ValueError: If ``at`` has more than one dimension or holds a dose that is
+                not finite or is negative, or ``genes`` repeats a gene.
         """
-        reject_masked(genes, "genes")
-        reject_masked(at, "at")
         curves = self._selected(cell_type, genes)
-        doses = _checked_doses(at, "at")
+        # Searched before np.atleast_1d could turn numpy.ma.masked in a list into NaN.
+        reject_masked(at, "at")
+        doses = checked_doses(np.atleast_1d(at), "at")
         return _changes(curves, self._doses[-1], doses)
 
     def benchmark_doses(
-        self, cell_type: str, genes: Any = None, *, change: npt.ArrayLike
+        self, cell_type: str, genes: Any = None, *, log2_change: npt.ArrayLike
     ) -> FloatArray:
         """The lowest dose at which each gene's true curve departs from the vehicle
-        by a change, in either direction.
+        by a change, in either direction: its benchmark dose at a benchmark response
+        (BMR) of ``log2_change``.
 
         For a change c in log2 expression, the lowest dose d at which |f(d)| reaches
-        c, f being the curve of :meth:`curve`; NaN where the curve never does. A
-        rule of BMDS turns into a change here: one SD of the vehicle is ``change``
-        equal to ``table(cell_type)["expression_sd"]``, which ``bmd_expression_sd``
-        holds, and a fold change of 1.1 is log2(1.1), which ``bmd_fold_change``
-        holds.
+        c, f being the curve of :meth:`curve`; NaN where the curve never does. The
+        benchmark response is a change in log2 expression: a rise of 10%, BMDS's
+        relative deviation of 0.1, is ``np.log2(1.1)``, not 0.1, and the same change
+        downwards is a fall of 9.1%. One SD of true expression at the vehicle is
+        ``table(cell_type)["expression_sd"]``, which ``bmd_expression_sd`` uses, as
+        ``bmd_fold_change`` uses log2(1.1).
 
         Args:
             cell_type: The cell type.
             genes: Feature ids, a boolean mask or integer positions, as
                 ``Cube.select`` takes features; None (default) gives every gene, in
                 table order.
-            change: The change in log2 expression, above 0 and finite: one value
-                for every gene, or one per gene selected.
+            log2_change: The benchmark response as a change in log2 expression,
+                above 0 and finite: one value for every gene, or one per gene
+                selected.
 
         Returns:
             ``(genes,)`` float64 doses in the unit of the series.
 
         Raises:
             KeyError: If the truth has no such cell type or gene.
-            TypeError: If ``change`` is not real-valued, or an argument is or holds
-                a numpy masked array.
-            ValueError: If ``change`` has neither one value nor one per gene, or is
-                not finite and above 0, or ``genes`` repeats a gene.
+            TypeError: If ``log2_change`` is not real-valued, or an argument is or
+                holds a numpy masked array.
+            ValueError: If ``log2_change`` has neither one value nor one per gene, or
+                is not finite and above 0, or ``genes`` repeats a gene.
         """
-        reject_masked(genes, "genes")
-        reject_masked(change, "change")
         curves = self._selected(cell_type, genes)
-        changes = real_values(change, "change")
-        if changes.ndim == 0:
-            changes = np.full(curves.shape.size, float(changes))
-        elif changes.shape != (curves.shape.size,):
+        n_genes = curves.shape.size
+        changes = real_values(log2_change, "log2_change")
+        if changes.shape not in ((), (n_genes,)):
             raise ValueError(
-                f"change must be one value or one per gene ({curves.shape.size}), got "
+                f"log2_change must be one value or one per gene ({n_genes}), got "
                 f"shape {changes.shape}"
             )
         bad = ~(np.isfinite(changes) & (changes > 0.0))
         if bad.any():
             raise ValueError(
-                "change must be finite and above 0, a change in log2 expression; got "
-                f"{listing([repr(float(value)) for value in changes[bad]])}"
+                "log2_change must be finite and above 0, a change in log2 expression; "
+                f"got {listing([repr(float(v)) for v in np.unique(changes[bad])])}"
             )
-        return _benchmark_doses(curves, self._doses[-1], changes)
+        return _benchmark_doses(
+            curves, self._doses[-1], np.broadcast_to(changes, n_genes)
+        )
 
     def __repr__(self) -> str:
         n_genes = len(self._index)
@@ -518,10 +529,9 @@ class DoseTruth:
 
     def _selected(self, cell_type: str, genes: Any) -> _Curves:
         """The curves of the genes selected in a cell type."""
-        curves = self._curves[self._cell_type(cell_type)]
-        ids = self._tables[cell_type]["feature_id"]
-        rows = selected_positions(genes, ids, self._index, "genes")
-        return curves if rows is None else curves.take(rows)
+        table = self._tables[self._cell_type(cell_type)]
+        rows = selected_positions(genes, table["feature_id"], self._index, "genes")
+        return _curves_of(table if rows is None else table.take(rows))
 
 
 def simulate_dose_series(
@@ -533,7 +543,7 @@ def simulate_dose_series(
     n_genes: int = 1000,
     responsive: float | Sequence[float] = 0.2,
     shapes: Mapping[str, float] | None = None,
-    max_changes: float | Sequence[float] = (0.5, 1.0, 2.0),
+    max_log2_changes: float | Sequence[float] = (0.5, 1.0, 2.0),
     biological_sd: float = 0.25,
     donor_sd: float | None = None,
     composition: Mapping[str, Sequence[float]] | None = None,
@@ -563,30 +573,31 @@ def simulate_dose_series(
 
     f is the gene's true curve, a change in log2 expression from the vehicle that
     :class:`DoseTruth` describes. A share ``responsive`` of the genes respond,
-    rounded half up, the first of a random order of the genes, so that a larger share
-    adds genes and keeps the others; their shapes follow the shares of ``shapes`` by the largest
-    remainder (ties in the order given), the maximal changes ``max_changes`` in turn
-    within each shape, and rises and falls in turn within each shape and change, the
-    first a rise, so that the counts of every shape, change and direction are exact.
-    The dose of a 1.1-fold change of the hill, exponential, frechet and step curves
-    is log-uniform from an eighth of the log10 span of the positive doses below the
-    lowest to an eighth above the top dose, so that a tenth lies below the doses and
-    a tenth above, and their EC50s follow from it; linear and power curves reach
-    their maximal change at the top dose. Bells peak at a dose log-uniform over the
-    positive doses, with an SD along log10 dose from 0.75 to 1.5 times the median
-    log10 spacing of the positive doses, so that most exceed half their peak at two
-    or more doses. Slopes are log-uniform from 0.5 to 4 (hill, frechet) and from 1 to
-    4 (power). Doses multiplied by a factor give EC50s, peak doses and benchmark
-    doses multiplied by it.
+    rounded half up, the first of a random order of the genes, so that a larger
+    share adds genes and keeps the others; their shapes follow the shares of
+    ``shapes`` by the largest remainder (ties in the order given), the maximal
+    changes ``max_log2_changes`` in turn within each shape, and rises and falls in
+    turn within each shape and change, the first a rise, so that the counts of every
+    shape, change and direction are exact. The dose of a 1.1-fold change of the
+    hill, exponential, frechet and step curves is log-uniform from an eighth of the
+    log10 span of the positive doses below the lowest to an eighth above the top
+    dose, so that a tenth lies below the doses and a tenth above, and their EC50s
+    follow from it; linear and power curves reach their maximal change at the top
+    dose. Bells peak at a dose log-uniform over the positive doses, with an SD along
+    log10 dose from 0.75 to 1.5 times the log10 gap between the positive doses on
+    either side of the peak, so that nearly every bell exceeds half its peak at two
+    or more doses, however the doses are spaced. Slopes are log-uniform from 0.5 to
+    4 (hill, frechet) and from 1 to 4 (power). Doses multiplied by a factor give
+    EC50s, peak doses and benchmark doses multiplied by it.
 
     The random draws come in independent streams: one for the levels the cell types
     share, and for each cell type one each for the genes' levels and SD factors, the
     curves, the cells, the depths, the biological effects, the donor effects and the
     counts. A cell type's curves, levels and SD factors therefore depend only on the
     seed, its position among the cell types, ``doses``, ``n_genes``,
-    ``responsive``, ``shapes`` and ``max_changes``: other ``replicates``, ``cells``,
-    ``composition``, ``biological_sd`` or ``donor_sd`` give the same genes, and so
-    does adding a cell type, which compares designs on the same truth
+    ``responsive``, ``shapes`` and ``max_log2_changes``: other ``replicates``,
+    ``cells``, ``composition``, ``biological_sd`` or ``donor_sd`` give the same
+    genes, and so does adding a cell type, which compares designs on the same truth
     (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
 
     Args:
@@ -597,10 +608,13 @@ def simulate_dose_series(
         cell_types: How many cell types, named ``cell_type_1``, ``cell_type_2``,
             ..., or their names.
         cells: The expected number of cells pooled into a profile at a factor of 1
-            in ``composition``, the mean (the median is about 4% lower): one number,
-            or one per cell type.
-        n_genes: The genes, the same in every cell type, with ids ``gene_1``, ...,
-            padded with zeros to the width of ``n_genes``.
+            in ``composition``: one number, or one per cell type. The Poisson mean
+            of a profile is log-normal around it, with a median 4.4% lower and a
+            coefficient of variation of 0.31, and counting the cells adds 1 /
+            ``cells`` to the squared coefficient of variation.
+        n_genes: The genes, the same in every cell type, with ids ``gene_0001`` to
+            ``gene_1000`` for 1,000 genes, padded with zeros to the width of
+            ``n_genes``.
         responsive: The share of the genes that respond to dose: one number, or one
             per cell type; 0 gives a series without responses.
         shapes: The shares of the curve shapes among the responsive genes, by name
@@ -608,9 +622,9 @@ def simulate_dose_series(
             ``"log_gauss_probit"``, ``"frechet"``, ``"step"``), summing to 1; None
             gives 30% hill, 15% exponential, 5% linear, 10% power, 20%
             log_gauss_probit, 10% frechet and 10% step.
-        max_changes: The maximal changes of the responsive genes in log2 units, each
-            above log2(1.1) = 0.1375, given in equal shares, half rises and half
-            falls.
+        max_log2_changes: The maximal changes of the responsive genes, as sizes in
+            log2 units, each above log2(1.1) = 0.1375: 1 is a 2-fold change. They
+            come in equal shares, half rises and half falls.
         biological_sd: The SD of a gene's log2 expression between replicates of one
             dose from biological variation between animals or wells, the median over
             genes.
@@ -646,8 +660,9 @@ def simulate_dose_series(
             array.
         ValueError: If a value is out of range or a per-dose or per-cell-type
             argument has the wrong length, a shape or a cell type of
-            ``composition`` is unknown, the shares of ``shapes`` do not sum to 1, or
-            ``composition`` is 0 at every dose for a cell type.
+            ``composition`` is unknown, the shares of ``shapes`` do not sum to 1,
+            ``composition`` is 0 at every dose for a cell type, or the expected
+            cells or counts of a profile exceed 2^53.
 
     Example:
         >>> cube, truth = simulate_dose_series([0, 0.1, 1, 10], replicates=2, rng=1)
@@ -665,7 +680,7 @@ def simulate_dose_series(
         n_genes=n_genes,
         responsive=responsive,
         shapes=shapes,
-        max_changes=max_changes,
+        max_log2_changes=max_log2_changes,
         biological_sd=biological_sd,
         donor_sd=donor_sd,
         composition=composition,
@@ -684,35 +699,69 @@ def simulate_dose_series(
     replicate_of_sample = np.concatenate(
         [np.arange(count) for count in settings.replicates]
     )
-    n_samples = dose_of_sample.size
-    counts = np.empty((len(settings.cell_types), n_samples, settings.n_genes), np.int64)
-    n_cells = np.empty((n_samples, len(settings.cell_types)), np.int64)
+    parts = [
+        _cell_type_series(
+            stream, settings, k, shared_levels, dose_of_sample, replicate_of_sample
+        )
+        for k, stream in enumerate(cell_type_streams)
+    ]
     gene_ids = _gene_ids(settings.n_genes)
-    curves: dict[str, dict[str, Any]] = {}
-    for k, stream in enumerate(cell_type_streams):
-        draws = dict(
-            zip(_STREAMS, map(np.random.default_rng, stream.spawn(len(_STREAMS))))
-        )
-        level_draws = draws["genes"].standard_normal(settings.n_genes)
-        factor_draws = draws["genes"].standard_normal(settings.n_genes)
-        counts_per_cell = _COUNTS_PER_CELL * np.exp(
-            _SHARED_LEVEL_SD * shared_levels + _OWN_LEVEL_SD * level_draws
-        )
-        sd_factor = np.exp(_SD_FACTOR_SD * factor_draws)
-        gene_curves = _true_curves(draws["curves"], settings, k)
-        changes = _changes(gene_curves, float(settings.doses[-1]), settings.doses)
-        expected_cells = (
-            settings.cells[k] * np.asarray(settings.composition[k])[dose_of_sample]
-        )
-        cells_drawn = draws["cells"].poisson(
-            expected_cells
-            * np.exp(
-                _CELLS_SD * draws["cells"].standard_normal(n_samples) - _CELLS_SD**2 / 2
-            )
-        )
-        depth = np.exp(
-            _DEPTH_SD * draws["depth"].standard_normal(n_samples) - _DEPTH_SD**2 / 2
-        )
+    truth = DoseTruth(
+        settings.doses,
+        {
+            cell_type: {"feature_id": gene_ids, **columns}
+            for cell_type, (_, _, columns) in zip(settings.cell_types, parts)
+        },
+        unit=settings.unit,
+        metric=settings.metric,
+    )
+    counts = np.stack([counts for counts, _, _ in parts])
+    cube = Cube(
+        {"counts": counts.astype(count_dtype(counts, int(counts.max(initial=0))))},
+        samples=_sample_table(settings, dose_of_sample, replicate_of_sample),
+        groups={"group_id": list(settings.cell_types)},
+        features={"feature_id": gene_ids},
+        n_cells=np.stack([cells for _, cells, _ in parts], axis=1),
+        provenance={"construction": _construction(settings, rng)},
+        copy=False,
+    )
+    return cube, truth
+
+
+def _cell_type_series(
+    stream: np.random.SeedSequence,
+    settings: "_Settings",
+    k: int,
+    shared_levels: FloatArray,
+    dose_of_sample: npt.NDArray[np.intp],
+    replicate_of_sample: npt.NDArray[np.intp],
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], dict[str, Any]]:
+    """Cell type k's counts (samples x genes), cells per profile and truth columns,
+    by the count model of simulate_dose_series."""
+    n_samples = dose_of_sample.size
+    draws = dict(zip(_STREAMS, map(np.random.default_rng, stream.spawn(len(_STREAMS)))))
+    level_draws = draws["genes"].standard_normal(settings.n_genes)
+    factor_draws = draws["genes"].standard_normal(settings.n_genes)
+    counts_per_cell = _COUNTS_PER_CELL * np.exp(
+        _SHARED_LEVEL_SD * shared_levels + _OWN_LEVEL_SD * level_draws
+    )
+    sd_factor = np.exp(_SD_FACTOR_SD * factor_draws)
+    curves = _true_curves(draws["curves"], settings, k)
+    changes = _changes(curves, float(settings.doses[-1]), settings.doses)
+    expected_cells = (
+        settings.cells[k] * np.asarray(settings.composition[k])[dose_of_sample]
+    )
+    rate = expected_cells * np.exp(
+        _CELLS_SD * draws["cells"].standard_normal(n_samples) - _CELLS_SD**2 / 2
+    )
+    _check_means(rate, "cells", "cells or composition")
+    cells_drawn = draws["cells"].poisson(rate)
+    depth = np.exp(
+        _DEPTH_SD * draws["depth"].standard_normal(n_samples) - _DEPTH_SD**2 / 2
+    )
+    # Effects or changes too large for float64 give inf or NaN, which _check_means
+    # refuses.
+    with np.errstate(over="ignore", invalid="ignore"):
         effects = settings.biological_sd * draws["samples"].standard_normal(
             (n_samples, settings.n_genes)
         )
@@ -726,31 +775,31 @@ def simulate_dose_series(
             * counts_per_cell
             * np.exp2(changes[:, dose_of_sample].T + sd_factor * effects)
         )
-        # numpy's negative binomial takes a size, 1 / dispersion, and a probability;
-        # a profile without cells has mean 0, which gives 0.
-        size = (np.maximum(cells_drawn, 1) / _CELL_DISPERSION)[:, None]
-        counts[k] = draws["counts"].negative_binomial(size, size / (size + means))
-        n_cells[:, k] = cells_drawn
-        curves[settings.cell_types[k]] = {
-            "feature_id": gene_ids,
-            **gene_curves._asdict(),
-            "counts_per_cell": counts_per_cell,
-            "expression_sd": sd_factor
-            * math.hypot(settings.biological_sd, settings.donor_sd or 0.0),
-        }
-    truth = DoseTruth(
-        settings.doses, curves, unit=settings.unit, metric=settings.metric
-    )
-    cube = Cube(
-        {"counts": counts.astype(count_dtype(counts, int(counts.max(initial=0))))},
-        samples=_sample_table(settings, dose_of_sample, replicate_of_sample),
-        groups={"group_id": list(settings.cell_types)},
-        features={"feature_id": gene_ids},
-        n_cells=n_cells,
-        provenance={"construction": _construction(settings, rng)},
-        copy=False,
-    )
-    return cube, truth
+    _check_means(means, "counts", "max_log2_changes, biological_sd, donor_sd or cells")
+    # numpy's negative binomial takes a size, 1 / dispersion, and a probability;
+    # a profile without cells has mean 0, which gives 0.
+    size = (np.maximum(cells_drawn, 1) / _CELL_DISPERSION)[:, None]
+    counts = draws["counts"].negative_binomial(size, size / (size + means))
+    columns = {
+        **curves._asdict(),
+        "counts_per_cell": counts_per_cell,
+        "expression_sd": sd_factor
+        * math.hypot(settings.biological_sd, settings.donor_sd or 0.0),
+    }
+    return counts, cells_drawn, columns
+
+
+def _check_means(means: FloatArray, what: str, remedy: str) -> None:
+    """Refuse expected cells or counts of 2^53 or more, or not finite, which no
+    experiment gives and numpy's samplers cannot always draw from."""
+    with np.errstate(invalid="ignore"):
+        too_large = ~(means < _LARGEST_MEAN)
+    if too_large.any():
+        raise ValueError(
+            f"the expected {what} of a profile reach 2^53 or more in "
+            f"{int(too_large.sum()):,} cases, which no experiment gives and numpy's "
+            f"samplers cannot always draw from; lower {remedy}"
+        )
 
 
 # The truth: curves, benchmark doses and the placement of the curves.
@@ -769,7 +818,7 @@ def _changes(curves: _Curves, top: float, doses: FloatArray) -> FloatArray:
             rows = np.flatnonzero(curves.shape == shape)
             if rows.size == 0:
                 continue
-            m = curves.max_change[rows, None]
+            m = curves.max_log2_change[rows, None]
             e, n = curves.ec50[rows, None], curves.slope[rows, None]
             if shape == "hill":
                 change = m / (1.0 + (e / d) ** n)
@@ -793,7 +842,7 @@ def _changes(curves: _Curves, top: float, doses: FloatArray) -> FloatArray:
 def _benchmark_doses(curves: _Curves, top: float, change: FloatArray) -> FloatArray:
     """The lowest dose at which each gene's |change| reaches ``change``, NaN where it
     never does, by the closed form of each shape."""
-    reach = np.abs(curves.max_change)
+    reach = np.abs(curves.max_log2_change)
     found = np.full(reach.size, np.nan)
     for shape in SHAPES:
         rows = curves.shape == shape
@@ -831,45 +880,61 @@ def _true_curves(rng: np.random.Generator, settings: "_Settings", k: int) -> _Cu
     # Drawn for every gene, so that a gene's place does not depend on which respond.
     position, slope_draw, peak_draw, width_draw = rng.random((4, n_genes))
     shape = np.full(n_genes, FLAT, dtype=object)
-    max_change = np.zeros(n_genes)
-    responding = order[: math.floor(settings.responsive[k] * n_genes + 0.5)]
+    max_log2_change = np.zeros(n_genes)
+    # Rounded first, so that 0.29 of 50 genes, 14.499999999999998 in float64, is 15.
+    responding = order[: math.floor(round(settings.responsive[k] * n_genes, 9) + 0.5)]
     labels, changes = _allocation(
-        responding.size, settings.shapes, settings.max_changes
+        responding.size, settings.shapes, settings.max_log2_changes
     )
     shape[responding] = labels
-    max_change[responding] = changes
+    max_log2_change[responding] = changes
     positive = np.log10(settings.doses[1:])
     span = positive[-1] - positive[0]
-    spacing = float(np.median(np.diff(positive)))
     ec50, slope, peak_dose, peak_width = (np.full(n_genes, np.nan) for _ in range(4))
     for name, (low, high) in _SLOPES.items():
         rows = shape == name
         slope[rows] = low * (high / low) ** slope_draw[rows]
     bells = shape == "log_gauss_probit"
-    peak_dose[bells] = 10.0 ** (positive[0] + span * peak_draw[bells])
+    peak = positive[0] + span * peak_draw[bells]
+    peak_dose[bells] = 10.0**peak
+    # The positive doses on either side of each peak, and the gap between them.
+    above = np.clip(np.searchsorted(positive, peak), 1, positive.size - 1)
     low, high = _BELL_WIDTHS
-    peak_width[bells] = spacing * (low + (high - low) * width_draw[bells])
-    placed = np.isin(shape, _PLACED)
-    fold_change_dose = 10.0 ** (
-        positive[0] - _BEYOND * span + (1.0 + 2.0 * _BEYOND) * span * position[placed]
+    peak_width[bells] = (positive[above] - positive[above - 1]) * (
+        low + (high - low) * width_draw[bells]
     )
+    placed = np.isin(shape, _PLACED)
     # The dose of a change is proportional to the EC50 for these shapes, so the EC50
     # is the dose placed divided by the dose of the change at an EC50 of 1.
     at_unit_ec50 = _Curves(
         shape[placed],
-        max_change[placed],
+        max_log2_change[placed],
         np.ones(int(placed.sum())),
         slope[placed],
         peak_dose[placed],
         peak_width[placed],
     )
     change = np.full(int(placed.sum()), math.log2(FOLD_CHANGE))
-    ec50[placed] = fold_change_dose / _benchmark_doses(at_unit_ec50, 1.0, change)
-    return _Curves(shape, max_change, ec50, slope, peak_dose, peak_width)
+    # EC50s beyond the range of float64 give 0 or inf, which are refused below.
+    with np.errstate(over="ignore", under="ignore", divide="ignore"):
+        fold_change_dose = 10.0 ** (
+            positive[0]
+            - _BEYOND * span
+            + (1.0 + 2.0 * _BEYOND) * span * position[placed]
+        )
+        ec50[placed] = fold_change_dose / _benchmark_doses(at_unit_ec50, 1.0, change)
+    if not np.all(np.isfinite(ec50[placed]) & (ec50[placed] > 0.0)):
+        raise ValueError(
+            f"the doses from {settings.doses[1]:g} to {settings.doses[-1]:g} and "
+            f"max_log2_changes up to {max(settings.max_log2_changes):g} place EC50s "
+            "beyond the range of float64; give the doses in a unit that brings them "
+            "nearer to 1, or smaller max_log2_changes"
+        )
+    return _Curves(shape, max_log2_change, ec50, slope, peak_dose, peak_width)
 
 
 def _allocation(
-    count: int, shapes: Mapping[str, float], max_changes: tuple[float, ...]
+    count: int, shapes: Mapping[str, float], max_log2_changes: tuple[float, ...]
 ) -> tuple[npt.NDArray[np.object_], FloatArray]:
     """The shape and signed maximal change of ``count`` responsive genes, in nested
     order: shapes by the largest remainder of their shares (ties in the order
@@ -884,45 +949,32 @@ def _allocation(
     by_remainder = np.argsort(-(quotas - seats), kind="stable")
     seats[by_remainder[:left]] += 1
     within = np.concatenate([np.arange(n) for n in seats])
-    turn = len(max_changes)
+    turn = len(max_log2_changes)
     sign = np.where((within // turn) % 2 == 0, 1.0, -1.0)
     labels = np.repeat(np.array(names, dtype=object), seats)
-    return labels, sign * np.asarray(max_changes)[within % turn]
+    return labels, sign * np.asarray(max_log2_changes)[within % turn]
 
 
-def _truth_table(
-    feature_ids: Any, curves: _Curves, expression: Mapping[str, FloatArray], top: float
-) -> Table:
-    """A cell type's table: the parameters and the two benchmark doses."""
-    columns: dict[str, Any] = {"feature_id": feature_ids, "shape": curves.shape}
-    columns |= {name: getattr(curves, name) for name in _Curves._fields[1:]}
-    columns |= {name: expression[name] for name in ("counts_per_cell", "expression_sd")}
-    columns["bmd_expression_sd"] = _benchmark_doses(
-        curves, top, np.asarray(expression["expression_sd"], dtype=np.float64)
-    )
-    columns["bmd_fold_change"] = _benchmark_doses(
-        curves, top, np.full(curves.shape.size, math.log2(FOLD_CHANGE))
-    )
-    return Table(columns)
+def _curves_of(table: Table) -> _Curves:
+    """The curves of a truth table's genes."""
+    return _Curves(*(table[name] for name in _Curves._fields))
 
 
-def _checked_truth_table(
-    values: Any, where: str
-) -> tuple[np.ndarray, _Curves, dict[str, FloatArray]]:
-    """The genes, curves and expression of a cell type's table, checked."""
+def _checked_truth_table(values: Any, where: str) -> Table:
+    """A cell type's table, checked: its genes, shapes and parameters, as float64."""
     table = values if isinstance(values, Table) else Table(values)
     missing = [
         name for name in ("feature_id", "shape", *PARAMETERS) if name not in table
     ]
     if missing:
         raise ValueError(f"{where} lacks the columns {quoted(missing)}")
-    ids = np.asarray(table["feature_id"], dtype=object)
+    ids = table["feature_id"]
     if any(not isinstance(gene, str) or not gene for gene in ids.tolist()):
         raise TypeError(f"{where}: feature_id must hold non-empty str")
     repeated = sorted(gene for gene, n in Counter(ids.tolist()).items() if n > 1)
     if repeated:
         raise ValueError(f"{where}: feature_id repeats {quoted(repeated)}")
-    shape = np.asarray(table["shape"], dtype=object)
+    shape = table["shape"]
     unknown = sorted({str(name) for name in shape.tolist()} - {*SHAPES, FLAT})
     if unknown:
         raise ValueError(
@@ -932,32 +984,32 @@ def _checked_truth_table(
     numbers_by_name = {
         name: real_values(table[name], f"{where}[{name!r}]") for name in PARAMETERS
     }
-    for name in _SHAPE_PARAMETERS:
+    for name, users in _USED_BY.items():
         values_of = numbers_by_name[name]
-        used = np.array([name in _USES[s] for s in shape.tolist()], dtype=bool)
+        used = np.isin(shape, users)
         bad = used & ~(np.isfinite(values_of) & (values_of > 0.0))
         if bad.any():
             i = int(np.flatnonzero(bad)[0])
             raise ValueError(
                 f"{where}: {name} of {ids[i]} must be finite and above 0 for a "
-                f"{shape[i]} curve, got {values_of[i]!r}"
+                f"{shape[i]} curve, got {float(values_of[i])!r}"
             )
         bad = ~used & ~np.isnan(values_of)
         if bad.any():
             i = int(np.flatnonzero(bad)[0])
             raise ValueError(
                 f"{where}: {name} of {ids[i]} must be NaN, since a {shape[i]} curve "
-                f"has no {name}; got {values_of[i]!r}"
+                f"has no {name}; got {float(values_of[i])!r}"
             )
-    change = numbers_by_name["max_change"]
+    change = numbers_by_name["max_log2_change"]
     flat = shape == FLAT
     bad = (flat & (change != 0.0)) | (~flat & ~(np.isfinite(change) & (change != 0.0)))
     if bad.any():
         i = int(np.flatnonzero(bad)[0])
         expected = "0" if flat[i] else "finite and not 0"
         raise ValueError(
-            f"{where}: max_change of {ids[i]} must be {expected} for a {shape[i]} "
-            f"curve, got {change[i]!r}"
+            f"{where}: max_log2_change of {ids[i]} must be {expected} for a "
+            f"{shape[i]} curve, got {float(change[i])!r}"
         )
     for name in ("counts_per_cell", "expression_sd"):
         values_of = numbers_by_name[name]
@@ -966,20 +1018,18 @@ def _checked_truth_table(
             i = int(np.flatnonzero(bad)[0])
             raise ValueError(
                 f"{where}: {name} of {ids[i]} must be finite and above 0, got "
-                f"{values_of[i]!r}"
+                f"{float(values_of[i])!r}"
             )
-    curves = _Curves(shape, *(numbers_by_name[name] for name in _Curves._fields[1:]))
-    expression = {
-        name: numbers_by_name[name] for name in ("counts_per_cell", "expression_sd")
-    }
-    return ids, curves, expression
+    return table.with_columns(numbers_by_name).select(
+        ("feature_id", "shape", *PARAMETERS)
+    )
 
 
 def _rebuilt_truth(
-    doses: tuple[float, ...], curves: dict[str, Table], unit: str, metric: str
+    doses: tuple[float, ...], tables: dict[str, Table], unit: str, metric: str
 ) -> DoseTruth:
     """A truth rebuilt from its parts, for pickling."""
-    return DoseTruth(doses, curves, unit=unit, metric=metric)
+    return DoseTruth(doses, tables, unit=unit, metric=metric)
 
 
 # The arguments.
@@ -997,7 +1047,7 @@ class _Settings:
     n_genes: int
     responsive: tuple[float, ...]
     shapes: Mapping[str, float]
-    max_changes: tuple[float, ...]
+    max_log2_changes: tuple[float, ...]
     biological_sd: float
     donor_sd: float | None
     composition: tuple[tuple[float, ...], ...]
@@ -1014,26 +1064,25 @@ def _checked_settings(
     n_genes: Any,
     responsive: Any,
     shapes: Any,
-    max_changes: Any,
+    max_log2_changes: Any,
     biological_sd: Any,
     donor_sd: Any,
     composition: Any,
     unit: Any,
     metric: Any,
 ) -> _Settings:
+    series_doses = _checked_series_doses(doses)
     for name, value in (
-        ("doses", doses),
         ("replicates", replicates),
         ("cell_types", cell_types),
         ("cells", cells),
         ("responsive", responsive),
         ("shapes", shapes),
-        ("max_changes", max_changes),
+        ("max_log2_changes", max_log2_changes),
         ("composition", composition),
     ):
         reject_masked(value, name)
-    checked_doses = _checked_series_doses(doses)
-    n_doses = checked_doses.size
+    n_doses = series_doses.size
     names = _checked_cell_types(cell_types)
     n_types = len(names)
     replicate_counts = _per_item(
@@ -1045,32 +1094,35 @@ def _checked_settings(
     shares_responsive = _per_item(
         responsive, "responsive", n_types, "cell type", _checked_share
     )
-    changes = _per_item(max_changes, "max_changes", None, "change", _checked_change)
+    changes = _per_item(
+        max_log2_changes, "max_log2_changes", None, "change", _checked_change
+    )
+    axis = DoseAxis("dose", unit=unit, metric=metric)
     return _Settings(
-        doses=checked_doses,
+        doses=series_doses,
         replicates=tuple(int(count) for count in replicate_counts),
         cell_types=names,
         cells=tuple(float(value) for value in cell_numbers),
         n_genes=positive_integer(n_genes, "n_genes"),
         responsive=tuple(float(value) for value in shares_responsive),
         shapes=_checked_shapes(shapes),
-        max_changes=tuple(float(value) for value in changes),
+        max_log2_changes=tuple(float(value) for value in changes),
         biological_sd=positive_finite_number(biological_sd, "biological_sd"),
         donor_sd=None
         if donor_sd is None
         else non_negative_number(donor_sd, "donor_sd"),
         composition=_checked_composition(composition, names, n_doses),
-        unit=_checked_unit(unit),
-        metric=checked_choice(metric, "metric", METRICS),
+        unit=axis.unit,
+        metric=axis.metric,
     )
 
 
 def _checked_series_doses(doses: Any) -> FloatArray:
     """The dose levels of a series: strictly increasing from 0, at least two above 0,
     none that differ by less than 1e-8 of the dose."""
-    values = _checked_doses(doses, "doses")
+    values = checked_doses(doses, "doses")
     if values.size == 0 or values[0] != 0.0:
-        found = f"{values[0]!r}" if values.size else "nothing"
+        found = f"{float(values[0])!r}" if values.size else "nothing"
         raise ValueError(
             f"doses must start with 0, the vehicle, and increase; got {found} first"
         )
@@ -1079,14 +1131,14 @@ def _checked_series_doses(doses: Any) -> FloatArray:
         i = int(steps[0])
         raise ValueError(
             "doses must increase strictly, each dose level once; got "
-            f"{values[i + 1]!r} after {values[i]!r}"
+            f"{float(values[i + 1])!r} after {float(values[i])!r}"
         )
     if values.size < 3:
         raise ValueError(
             "doses need at least two doses above 0, the vehicle, so that the curves "
             f"have a span to be placed on; got {listing([f'{v:g}' for v in values])}"
         )
-    close = np.flatnonzero(np.diff(values[1:]) <= _SAME_DOSE * values[2:])
+    close = np.flatnonzero(np.diff(values[1:]) <= SAME_DOSE * values[2:])
     if close.size:
         a, b = float(values[close[0] + 1]), float(values[close[0] + 2])
         raise ValueError(
@@ -1094,22 +1146,6 @@ def _checked_series_doses(doses: Any) -> FloatArray:
             "DoseAxis reads as one dose; round them, for example with numpy.round"
         )
     return values
-
-
-def _checked_doses(values: Any, name: str) -> FloatArray:
-    """Doses as a new float64 array: 1-D, real, finite and at least 0."""
-    doses = real_values(values, name)
-    if doses.ndim != 1:
-        raise ValueError(
-            f"{name} must be a 1-D array of doses, got shape {doses.shape}"
-        )
-    bad = ~np.isfinite(doses) | (doses < 0.0)
-    if bad.any():
-        raise ValueError(
-            f"{name} must be finite and at least 0, with 0 for the vehicle; got "
-            f"{listing([repr(float(dose)) for dose in doses[bad]])}"
-        )
-    return doses
 
 
 def _checked_cell_types(cell_types: Any) -> tuple[str, ...]:
@@ -1169,13 +1205,17 @@ def _checked_share(value: Any, name: str) -> float:
 
 
 def _checked_change(value: Any, name: str) -> float:
-    """A maximal change, above log2(1.1)."""
+    """A maximal change in log2 expression, above log2(1.1)."""
     change = real_number(value, name, finite=True)
+    if change <= 0.0:
+        raise ValueError(
+            f"{name} must be a size in log2 units, above 0: each gene's direction is "
+            f"drawn, half rises and half falls; got {change}"
+        )
     if not change > math.log2(FOLD_CHANGE):
         raise ValueError(
-            f"{name} must be above log2(1.1) = 0.1375, a change in log2 expression "
-            "that a 1.1-fold change can place, and is given as a size, the direction "
-            f"being drawn; got {change}"
+            f"{name} must exceed log2(1.1) = 0.1375, so that every responsive gene "
+            f"reaches a 1.1-fold change; got {change}"
         )
     return change
 
@@ -1201,7 +1241,7 @@ def _checked_shapes(shapes: Any) -> Mapping[str, float]:
     total = math.fsum(checked.values())
     if abs(total - 1.0) > _SUM_TOLERANCE:
         raise ValueError(f"the shares of shapes must sum to 1, got {total!r}")
-    return MappingProxyType(checked)
+    return checked
 
 
 def _checked_composition(
@@ -1238,20 +1278,12 @@ def _checked_composition(
     return tuple(factors)
 
 
-def _checked_unit(unit: Any) -> str:
-    """The unit of the doses, as DoseAxis takes it: a non-empty str."""
-    if not isinstance(unit, str):
-        raise TypeError(f"unit must be a str, got {type(unit).__name__}")
-    if not unit.strip():
-        raise ValueError("unit must not be empty")
-    return unit
-
-
 # The cube.
 
 
 def _gene_ids(n_genes: int) -> list[str]:
-    """gene_1, ..., padded with zeros to the width of n_genes."""
+    """gene_1 to gene_9 for 9 genes, gene_0001 to gene_1000 for 1,000: ids padded
+    with zeros to the width of n_genes."""
     width = len(str(n_genes))
     return [f"gene_{i:0{width}d}" for i in range(1, n_genes + 1)]
 
@@ -1280,9 +1312,9 @@ def _sample_table(
 def _construction(settings: _Settings, rng: Any) -> dict[str, Any]:
     """The cube's record of how it was simulated: every argument as resolved."""
     seed = (
-        operator.index(rng)
-        if isinstance(rng, numbers.Integral) and not isinstance(rng, bool | np.bool_)
-        else None
+        None
+        if rng is None or isinstance(rng, np.random.Generator)
+        else operator.index(rng)
     )
     return {
         "function": "simulate_dose_series",
@@ -1295,7 +1327,7 @@ def _construction(settings: _Settings, rng: Any) -> dict[str, Any]:
         "n_genes": settings.n_genes,
         "responsive": list(settings.responsive),
         "shapes": dict(settings.shapes),
-        "max_changes": list(settings.max_changes),
+        "max_log2_changes": list(settings.max_log2_changes),
         "biological_sd": settings.biological_sd,
         "donor_sd": settings.donor_sd,
         "composition": {

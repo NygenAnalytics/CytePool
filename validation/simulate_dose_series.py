@@ -16,19 +16,19 @@ mpmath, run in a separate process at 50 digits on the exact binary values of the
 truth tables' parameters (``--reference DIRECTORY``, which imports mpmath but not
 CytePool), evaluates the documented formula of each shape at 0, at each dose, at the
 geometric midpoints of neighbouring doses, at a tenth of the lowest positive dose and
-at ten times the top dose; finds each EC50 as the root of |f| = |max_change| / 2 and
+at ten times the top dose; finds each EC50 as the root of |f| = |max_log2_change| / 2 and
 each benchmark dose as the lowest root of |f| = c, by bisection on log10 dose, at c =
 ``expression_sd``, 1.349 ``expression_sd`` (ETAP's multiple), log2(1.1), 0.5 and
-|max_change|; and computes the exact moments of the count model to the fourth: the
+|max_log2_change|; and computes the exact moments of the count model to the fourth: the
 Poisson-lognormal moments of the cells per profile, the marginal moments of the counts
 through the factorial moments of the negative binomial distribution, and the
 covariance of one donor's counts at two doses. A curve that approaches its plateau
-never reaches a change of |max_change| or more, and a peak or a step reaches a change
-up to |max_change|; within those rules the roots come from bisection, not from the
+never reaches a change of |max_log2_change| or more, and a peak or a step reaches a change
+up to |max_log2_change|; within those rules the roots come from bisection, not from the
 closed forms that CytePool uses. Thirteen curves with a change equal to their
-|max_change|, and flat genes, are added for the fixtures.
+|max_log2_change|, and flat genes, are added for the fixtures.
 
-Rows: the true curves by shape (exact, 1e-10 of |max_change|, and 0 at dose 0); the
+Rows: the true curves by shape (exact, 1e-10 of |max_log2_change|, and 0 at dose 0); the
 EC50s (exact, 1e-10 relative); the benchmark doses by shape (exact, 1e-10 relative)
 and where they are NaN (identical); the responsive genes and the counts of each shape,
 maximal change and direction against the documented allocation, coded here
@@ -43,9 +43,11 @@ natural-log units (controls: some comparison must exceed 4 standard errors); the
 series at 1, 2 and 8 numba threads in three processes, an integer seed against the
 generator it seeds, generators in the same state, and the truth under other designs
 (identical); and, for information, the z-scores, the shares of each shape's benchmark
-doses below and above the doses, how many doses see each bell at four designs, the SD
-of observed log2-CPM over ``expression_sd`` by expected count, the shift of the
-expected library size along dose, and the run time of one series.
+doses below and above the doses, where the EC50s of the placed shapes fall at 9 and 4
+dose groups, how many doses see each bell at four evenly and two unevenly spaced
+designs, the SD of observed log2-CPM over ``expression_sd`` and the observed change at
+the top dose over the true one, by expected count, the shift of the expected library
+size along dose, and the run time of one series.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root so that
@@ -90,7 +92,7 @@ SHAPES = (
 )
 APPROACHED = ("hill", "exponential", "frechet")
 PLACED = ("hill", "exponential", "frechet", "step")
-PARAMETERS = ("max_change", "ec50", "slope", "peak_dose", "peak_width")
+PARAMETERS = ("max_log2_change", "ec50", "slope", "peak_dose", "peak_width")
 LADDER = [0.0, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0]
 HALF_LOG = [0.0, 0.1, 0.316, 1.0, 3.16]
 MOMENT_DOSES = [0.0, 0.1, 1.0, 10.0]
@@ -151,15 +153,25 @@ DEFAULT_CHANGES = (0.5, 1.0, 2.0)
 # The genes of each cell type whose count moments are compared: four flat and four
 # responsive, at these quantiles of the ranks of counts_per_cell.
 RANKS = (0.1, 0.4, 0.7, 0.95)
-# The designs at which the bells' visibility is reported.
+# The designs at which the bells' visibility is reported, with their seeds: four whose
+# positive doses are evenly or nearly evenly spaced in log dose, and two that are not.
 BELL_DESIGNS = {
-    "3 dose groups, 0, 1 and 10": [0.0, 1.0, 10.0],
-    "4 dose groups, 0 and 0.1 to 10 a decade apart": [0.0, 0.1, 1.0, 10.0],
-    "6 dose groups, 0 and 0.01 to 30": [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
-    "9 dose groups, the ladder": LADDER,
+    "3 dose groups, 0, 1 and 10": ([0.0, 1.0, 10.0], 20261141),
+    "4 dose groups, 0 and 0.1 to 10 a decade apart": ([0.0, 0.1, 1.0, 10.0], 20261142),
+    "6 dose groups, 0 and 0.01 to 30": ([0.0, 0.01, 0.1, 1.0, 10.0, 30.0], 20261143),
+    "9 dose groups, the ladder": (LADDER, 20261144),
+    "5 dose groups, 0, 1, 3, 10 and 100": ([0.0, 1.0, 3.0, 10.0, 100.0], 20261152),
+    "6 dose groups, 0, 1, 2, 3, 4 and 1000": (
+        [0.0, 1.0, 2.0, 3.0, 4.0, 1000.0],
+        20261153,
+    ),
+}
+# The designs at which the EC50s of the placed shapes are located, with their seeds.
+EC50_DESIGNS = {
+    "9 dose groups, the ladder": (LADDER, 20261154),
+    "4 dose groups, 0 and 0.1 to 10 a decade apart": ([0.0, 0.1, 1.0, 10.0], 20261155),
 }
 THREADS = (1, 8)
-FULL_GRID_DATASETS = 61_440
 # Curves per shape kept in the fixtures: the largest differences and a random sample.
 FIXTURE_CURVES = 12
 FIXTURE_MOMENTS = 10
@@ -539,7 +551,7 @@ def series_cases(truths: dict[str, Any]) -> dict[str, np.ndarray]:
                 grid_case += [case] * grid.size
                 grid_dose += grid.tolist()
                 sd = float(table["expression_sd"][i])
-                reach = abs(float(table["max_change"][i]))
+                reach = abs(float(table["max_log2_change"][i]))
                 for change in (sd, 1.349 * sd, math.log2(1.1), 0.5, reach or 0.5):
                     root_case.append(case)
                     root_change.append(change)
@@ -554,7 +566,7 @@ def series_cases(truths: dict[str, Any]) -> dict[str, np.ndarray]:
 
 
 def boundary_cases(first_case: int) -> dict[str, np.ndarray]:
-    """Curves at a change equal to their |max_change|, 0.6 of it and 1.5 times it,
+    """Curves at a change equal to their |max_log2_change|, 0.6 of it and 1.5 times it,
     and a flat gene, for the fixtures: where each shape reaches the change."""
     rows = [
         ("hill", 0.5, 2.0, 1.5, math.nan, math.nan),
@@ -585,7 +597,7 @@ def boundary_cases(first_case: int) -> dict[str, np.ndarray]:
     grid = grid_of(np.asarray(LADDER))
     arrays["grid_case"] = np.repeat(cases, grid.size)
     arrays["grid_dose"] = np.tile(grid, len(rows))
-    reach = np.abs(arrays["max_change"])
+    reach = np.abs(arrays["max_log2_change"])
     at = np.where(reach > 0.0, reach, 0.5)
     arrays["root_case"] = np.concatenate([cases, cases, cases])
     arrays["root_change"] = np.concatenate([at, 0.6 * at, 1.5 * at])
@@ -638,7 +650,7 @@ def cytepool_curves(cases: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarra
             roots[asked] = truth.benchmark_doses(
                 "cases",
                 position[cases["root_case"][asked]],
-                change=cases["root_change"][asked],
+                log2_change=cases["root_change"][asked],
             )
     return values, roots
 
@@ -651,7 +663,7 @@ def check_curves(
     values, roots = cytepool_curves(cases)
     errors = np.zeros(cases["shape"].size)
     series = ~np.char.startswith(cases["source"], "boundary")
-    scale = np.abs(cases["max_change"])[cases["grid_case"]]
+    scale = np.abs(cases["max_log2_change"])[cases["grid_case"]]
     difference = np.abs(values - reference["grid_value"])
     relative = np.where(
         scale > 0.0, difference / np.where(scale > 0.0, scale, 1.0), difference
@@ -667,7 +679,7 @@ def check_curves(
             f"{int(points.sum()):,} doses",
             "mpmath, the documented formula",
             f"{largest:.1e}",
-            "0" if shape == "flat" else f"{EXACT:g} of max_change",
+            "0" if shape == "flat" else f"{EXACT:g} of max_log2_change",
             largest <= tolerance,
         )
     at_zero = cases["grid_dose"] == 0.0
@@ -688,7 +700,7 @@ def check_curves(
         largest = float(relative_ec50.max(initial=0.0))
         rows.add(
             f"EC50s, {shape}, {genes.size:,} genes",
-            "mpmath, root of abs(f) = abs(max_change) / 2",
+            "mpmath, root of abs(f) = abs(max_log2_change) / 2",
             f"{largest:.1e}",
             f"{EXACT:g}",
             largest <= EXACT,
@@ -704,7 +716,7 @@ def check_curves(
         largest = float(relative_roots[asked].max(initial=0.0))
         rows.add(
             f"Benchmark doses, {shape}, {int(asked.sum()):,} at expression_sd, 1.349 "
-            "expression_sd, log2(1.1), 0.5 and abs(max_change)",
+            "expression_sd, log2(1.1), 0.5 and abs(max_log2_change)",
             "mpmath, lowest root of abs(f) = c",
             f"{largest:.1e}",
             f"{EXACT:g}",
@@ -740,7 +752,7 @@ def check_curves(
     )
     boundary = ~in_series
     rows.add(
-        f"Benchmark doses of the {int((~series).sum())} added curves at abs(max_change), "
+        f"Benchmark doses of the {int((~series).sum())} added curves at abs(max_log2_change), "
         "0.6 and 1.5 times it",
         "mpmath",
         f"{int(mismatch[boundary].sum())} NaN mismatches, largest difference "
@@ -766,11 +778,11 @@ def check_allocation(rows: Rows, truths: dict[str, Any]) -> None:
             table = truth.table(cell_type)
             n_genes = settings["n_genes"]
             share = settings["responsive"]
-            responding = math.floor(share * n_genes + 0.5)
+            responding = math.floor(round(share * n_genes, 9) + 0.5)
             found = Counter(
                 (shape, change)
                 for shape, change in zip(
-                    table["shape"].tolist(), table["max_change"].tolist()
+                    table["shape"].tolist(), table["max_log2_change"].tolist()
                 )
                 if shape != "flat"
             )
@@ -858,11 +870,46 @@ def information_shares(rows: Rows, truth: Any) -> None:
     )
 
 
+def information_ec50s(rows: Rows) -> None:
+    """Where the EC50s of the shapes placed by their benchmark dose fall: below the
+    lowest dose, above the top dose, and above 5 times it, the bound of BMDS's Hill
+    model on doses scaled to the top dose."""
+    from cytepool import simulate_dose_series
+
+    for design, (doses, seed) in EC50_DESIGNS.items():
+        _, truth = simulate_dose_series(
+            doses,
+            replicates=1,
+            cell_types=1,
+            n_genes=4000,
+            responsive=1.0,
+            shapes=dict.fromkeys(PLACED, 0.25),
+            rng=seed,
+        )
+        table = truth.table("cell_type_1")
+        parts = []
+        for shape in PLACED:
+            ec50 = table["ec50"][table["shape"] == shape]
+            parts.append(
+                f"{shape} {np.mean(ec50 < doses[1]):.1%} below the lowest dose, "
+                f"{np.mean(ec50 > doses[-1]):.1%} above the top dose, "
+                f"{np.mean(ec50 > 5.0 * doses[-1]):.1%} above 5 times it"
+            )
+        rows.add(
+            f"EC50s of 1,000 curves of each shape placed by its benchmark dose, at "
+            f"{design}",
+            "information",
+            "; ".join(parts),
+            "n/a",
+            None,
+        )
+
+
 def information_bells(rows: Rows) -> None:
     """At how many positive doses each bell reaches half its peak, by design."""
     from cytepool import simulate_dose_series
 
-    for i, (design, doses) in enumerate(BELL_DESIGNS.items()):
+    for design, (doses, seed) in BELL_DESIGNS.items():
         _, truth = simulate_dose_series(
             doses,
             replicates=1,
@@ -870,11 +917,11 @@ def information_bells(rows: Rows) -> None:
             n_genes=2000,
             responsive=1.0,
             shapes={"log_gauss_probit": 1.0},
-            rng=20261141 + i,
+            rng=seed,
         )
         table = truth.table("cell_type_1")
         curves = truth.curve("cell_type_1", at=np.asarray(doses[1:]))
-        relative = np.abs(curves) / np.abs(table["max_change"])[:, None]
+        relative = np.abs(curves) / np.abs(table["max_log2_change"])[:, None]
         seen = (relative >= 0.5).sum(axis=1)
         # A fall a method can see: the highest dose's change at least a quarter of
         # the peak below the largest change, which comes at a lower dose.
@@ -998,6 +1045,67 @@ def information_observed_sd(rows: Rows) -> None:
         )
 
 
+def information_compression(rows: Rows) -> None:
+    """The change of voom's log2-CPM from the vehicle to the top dose over the true
+    change, by expected count at the vehicle: the prior count compresses the observed
+    changes of genes with few counts."""
+    from cytepool import simulate_dose_series
+
+    doses = [0.0, 0.01, 0.1, 1.0, 10.0, 30.0]
+    edges = (0.0, 1.0, 2.0, 5.0, 20.0, math.inf)
+    for i, cells in enumerate((30.0, 100.0)):
+        cube, truth = simulate_dose_series(
+            doses,
+            replicates=[2000, 1, 1, 1, 1, 2000],
+            cell_types=1,
+            cells=cells,
+            n_genes=4000,
+            responsive=0.2,
+            shapes={"hill": 0.5, "exponential": 0.5},
+            max_log2_changes=(1.0, 2.0),
+            rng=20261156 + i,
+        )
+        counts = cube.layer("counts", "cell_type_1").astype(np.float64)
+        libraries = counts.sum(axis=1, keepdims=True)
+        log_cpm = np.log2((counts + 0.5) / (libraries + 1.0) * 1e6)
+        dose = np.asarray(cube.samples["dose"])
+        observed = log_cpm[dose == doses[-1]].mean(axis=0) - log_cpm[dose == 0.0].mean(
+            axis=0
+        )
+        table = truth.table("cell_type_1")
+        flat = table["shape"] == "flat"
+        # The flat genes' median removes the shift of the library sizes, as TMM would.
+        observed -= np.median(observed[flat])
+        true = truth.curve("cell_type_1", at=[doses[-1]])[:, 0]
+        ratio = np.divide(observed, true, out=np.zeros_like(true), where=true != 0.0)
+        expected = table["counts_per_cell"] * cells
+        responding = ~flat & (np.abs(true) > 0.5)
+        parts = []
+        for low, high in zip(edges[:-1], edges[1:]):
+            chosen = responding & (expected >= low) & (expected < high)
+            rises, falls = chosen & (true > 0.0), chosen & (true < 0.0)
+            if min(rises.sum(), falls.sum()) < 5:
+                continue
+            label = (
+                f"{low:g} to {high:g}" if math.isfinite(high) else f"{low:g} or more"
+            )
+            parts.append(
+                f"{label}: {np.median(ratio[chosen]):.2f} (rises "
+                f"{np.median(ratio[rises]):.2f}, falls {np.median(ratio[falls]):.2f}; "
+                f"{int(chosen.sum())} genes)"
+            )
+        rows.add(
+            "Change of log2-CPM from the vehicle to the top dose over the true change, "
+            f"2,000 replicates of each, at {cells:g} cells per profile, median by "
+            "expected count at the vehicle, responsive genes whose true change exceeds "
+            "0.5",
+            "information",
+            "; ".join(parts),
+            "n/a",
+            None,
+        )
+
+
 def information_library_sizes(rows: Rows) -> None:
     """The log2 change of the expected library size per cell at the top dose."""
     from cytepool import simulate_dose_series
@@ -1040,8 +1148,7 @@ def information_timing(rows: Rows) -> None:
             f"Time of one series of 9 dose groups x {replicates} replicates x 2 cell "
             "types x 1,000 genes, median of 3 after a first call",
             "information",
-            f"{seconds * 1e3:.1f} ms; {FULL_GRID_DATASETS:,} datasets at this rate: "
-            f"{seconds * FULL_GRID_DATASETS / 60:.1f} min",
+            f"{seconds * 1e3:.1f} ms, {60 / seconds:,.0f} series a minute",
             "n/a",
             None,
         )
@@ -1142,6 +1249,32 @@ def check_threads(rows: Rows, here: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------------------
 
 
+def fixture_moments(
+    inputs: dict[str, np.ndarray], reference: dict[str, np.ndarray], width: int
+) -> dict[str, np.ndarray]:
+    """Ten count cases of the moments series and ten covariances, with their exact
+    moments, and the cells' cases."""
+    chosen = np.linspace(0, width - 1, FIXTURE_MOMENTS).round().astype(int)
+    covariance_chosen = (
+        np.linspace(0, reference["covariance"].size - 1, FIXTURE_MOMENTS)
+        .round()
+        .astype(int)
+    )
+    return {
+        "m": inputs["count_m"][chosen],
+        "a": inputs["count_a"][chosen],
+        "sigma": inputs["count_sigma"][chosen],
+        "count_moments": reference["count_moments"][chosen],
+        "cells_m": inputs["cells_m"],
+        "cells_moments": reference["cells_moments"],
+        **{
+            f"cov_{key}": inputs[f"cov_{key}"][covariance_chosen]
+            for key in ("m1", "m2", "a1", "a2", "sigma", "tau")
+        },
+        "covariance": reference["covariance"][covariance_chosen],
+    }
+
+
 def write_fixtures(
     cases: dict[str, np.ndarray],
     reference: dict[str, np.ndarray],
@@ -1190,42 +1323,15 @@ def write_fixtures(
 # ---------------------------------------------------------------------------------------
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--write-fixtures", action="store_true", help="write fixtures")
-    parser.add_argument("--reference", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--simulate", type=Path, help=argparse.SUPPRESS)
-    arguments = parser.parse_args()
-    if arguments.reference is not None:
-        reference_main(arguments.reference)
-        return 0
-    if arguments.simulate is not None:
-        simulate_main(arguments.simulate)
-        return 0
-
-    rows = Rows()
-    simulated = {name: simulate(name) for name in SERIES}
-    truths = {name: truth for name, (_, truth) in simulated.items()}
-    curves = series_cases(
-        {name: truths[name] for name in ("ladder", "half_log", "moments")}
-    )
-    cases = joined(curves, boundary_cases(curves["shape"].size))
-
-    moments = moment_inputs(*simulated["moments"], donor_sd=0.0)
-    donors = moment_inputs(*simulated["donors"], donor_sd=SERIES["donors"]["donor_sd"])
-    count_m = np.concatenate([*moments["m"], *donors["m"]])
-    count_a = np.concatenate([*moments["a"], *donors["a"]])
-    count_sigma = np.concatenate(
-        [
-            *moments["sigma"],
-            *(np.hypot(s, t) for s, t in zip(donors["sigma"], donors["tau"])),
-        ]
-    )
-    # Covariances within donors: the vehicle with each dose, gene by gene.
-    covariance_inputs: dict[str, list[np.ndarray]] = {
+def covariance_cases(
+    donors: dict[str, Any],
+) -> tuple[dict[str, np.ndarray], list[tuple[np.ndarray, np.ndarray]]]:
+    """The inputs of the covariances within donors, the vehicle with each dose gene by
+    gene, and the counts of each pair; replicate r of every dose is donor r."""
+    inputs: dict[str, list[np.ndarray]] = {
         key: [] for key in ("m1", "m2", "a1", "a2", "sigma", "tau")
     }
-    covariance_observed = []
+    observed = []
     for i in range(len(donors["m"])):
         if donors["dose"][i] == 0:
             continue
@@ -1234,48 +1340,25 @@ def main() -> int:
             for j in range(len(donors["m"]))
             if donors["type"][j] == donors["type"][i] and donors["dose"][j] == 0
         )
-        covariance_inputs["m1"].append(donors["m"][vehicle])
-        covariance_inputs["m2"].append(donors["m"][i])
-        covariance_inputs["a1"].append(donors["a"][vehicle])
-        covariance_inputs["a2"].append(donors["a"][i])
-        covariance_inputs["sigma"].append(donors["sigma"][i])
-        covariance_inputs["tau"].append(donors["tau"][i])
-        # Replicate r of every dose is donor r.
-        covariance_observed.append((donors["counts"][vehicle], donors["counts"][i]))
-    cells_m = np.asarray([float(m[0]) for m in moments["m"]])
-    inputs = {
-        **{
-            key: cases[key]
-            for key in (
-                "shape",
-                *PARAMETERS,
-                "top",
-                "grid_case",
-                "grid_dose",
-                "root_case",
-                "root_change",
-            )
-        },
-        "cells_m": cells_m,
-        "count_m": count_m,
-        "count_a": count_a,
-        "count_sigma": count_sigma,
-        **{
-            f"cov_{key}": np.concatenate(values)
-            for key, values in covariance_inputs.items()
-        },
-    }
-    start = time.perf_counter()
-    reference, versions = run_reference(inputs)
-    reference_seconds = time.perf_counter() - start
-    print("Reference: " + ", ".join(f"{k} {v}" for k, v in versions.items()))
-    print(f"Reference computed in {reference_seconds:.0f} s")
+        inputs["m1"].append(donors["m"][vehicle])
+        inputs["m2"].append(donors["m"][i])
+        inputs["a1"].append(donors["a"][vehicle])
+        inputs["a2"].append(donors["a"][i])
+        inputs["sigma"].append(donors["sigma"][i])
+        inputs["tau"].append(donors["tau"][i])
+        observed.append((donors["counts"][vehicle], donors["counts"][i]))
+    return {key: np.concatenate(values) for key, values in inputs.items()}, observed
 
-    errors = check_curves(rows, cases, reference)
-    check_allocation(rows, truths)
-    check_placement(rows, truths)
 
-    # Cells per profile, in the moments series.
+def check_moments(
+    rows: Rows,
+    moments: dict[str, Any],
+    donors: dict[str, Any],
+    pairs: list[tuple[np.ndarray, np.ndarray]],
+    reference: dict[str, np.ndarray],
+) -> None:
+    """The rows of the cells and counts against their exact moments, the covariances
+    within donors, and the two models the counts must not follow."""
     exact_cells = reference["cells_moments"].T
     z_cells = [
         z_of_moments(cells[:, None], exact_cells[:, [i]])
@@ -1316,8 +1399,7 @@ def main() -> int:
     )
     z_covariance = []
     for (vehicle, dosed), exact_covariance in zip(
-        covariance_observed,
-        np.split(reference["covariance"], len(covariance_observed)),
+        pairs, np.split(reference["covariance"], len(pairs))
     ):
         products = (vehicle - vehicle.mean(axis=0)) * (dosed - dosed.mean(axis=0))
         n = products.shape[0]
@@ -1349,6 +1431,65 @@ def main() -> int:
             largest > BOUND,
             control=True,
         )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--write-fixtures", action="store_true", help="write fixtures")
+    parser.add_argument("--reference", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--simulate", type=Path, help=argparse.SUPPRESS)
+    arguments = parser.parse_args()
+    if arguments.reference is not None:
+        reference_main(arguments.reference)
+        return 0
+    if arguments.simulate is not None:
+        simulate_main(arguments.simulate)
+        return 0
+
+    rows = Rows()
+    simulated = {name: simulate(name) for name in SERIES}
+    truths = {name: truth for name, (_, truth) in simulated.items()}
+    curves = series_cases(
+        {name: truths[name] for name in ("ladder", "half_log", "moments")}
+    )
+    cases = joined(curves, boundary_cases(curves["shape"].size))
+    moments = moment_inputs(*simulated["moments"], donor_sd=0.0)
+    donors = moment_inputs(*simulated["donors"], donor_sd=SERIES["donors"]["donor_sd"])
+    covariance_inputs, pairs = covariance_cases(donors)
+    inputs = {
+        **{
+            key: cases[key]
+            for key in (
+                "shape",
+                *PARAMETERS,
+                "top",
+                "grid_case",
+                "grid_dose",
+                "root_case",
+                "root_change",
+            )
+        },
+        "cells_m": np.asarray([float(m[0]) for m in moments["m"]]),
+        "count_m": np.concatenate([*moments["m"], *donors["m"]]),
+        "count_a": np.concatenate([*moments["a"], *donors["a"]]),
+        "count_sigma": np.concatenate(
+            [
+                *moments["sigma"],
+                *(np.hypot(s, t) for s, t in zip(donors["sigma"], donors["tau"])),
+            ]
+        ),
+        **{f"cov_{key}": values for key, values in covariance_inputs.items()},
+    }
+    start = time.perf_counter()
+    reference, versions = run_reference(inputs)
+    reference_seconds = time.perf_counter() - start
+    print("Reference: " + ", ".join(f"{k} {v}" for k, v in versions.items()))
+    print(f"Reference computed in {reference_seconds:.0f} s")
+
+    errors = check_curves(rows, cases, reference)
+    check_allocation(rows, truths)
+    check_placement(rows, truths)
+    check_moments(rows, moments, donors, pairs, reference)
     z = np.asarray(rows.z_scores)
     rows.add(
         f"z-scores of the {z.size} calibrated comparisons",
@@ -1357,12 +1498,13 @@ def main() -> int:
         "n/a",
         None,
     )
-
     check_threads(rows, series_digests(simulated))
     check_seeds(rows)
     information_shares(rows, truths["ladder"])
+    information_ec50s(rows)
     information_bells(rows)
     information_observed_sd(rows)
+    information_compression(rows)
     information_library_sizes(rows)
     information_timing(rows)
 
@@ -1372,26 +1514,10 @@ def main() -> int:
         if rows.failures:
             print("not writing fixtures: some checks failed")
         else:
-            chosen = np.linspace(0, width - 1, FIXTURE_MOMENTS).round().astype(int)
-            covariance_chosen = (
-                np.linspace(0, reference["covariance"].size - 1, FIXTURE_MOMENTS)
-                .round()
-                .astype(int)
+            width = len(moments["m"]) * moments["m"][0].size
+            write_fixtures(
+                cases, reference, errors, fixture_moments(inputs, reference, width)
             )
-            fixture_moments = {
-                "m": count_m[chosen],
-                "a": count_a[chosen],
-                "sigma": count_sigma[chosen],
-                "count_moments": reference["count_moments"][chosen],
-                "cells_m": cells_m,
-                "cells_moments": reference["cells_moments"],
-                **{
-                    f"cov_{key}": inputs[f"cov_{key}"][covariance_chosen]
-                    for key in ("m1", "m2", "a1", "a2", "sigma", "tau")
-                },
-                "covariance": reference["covariance"][covariance_chosen],
-            }
-            write_fixtures(cases, reference, errors, fixture_moments)
     print(f"{len(rows.rows)} checks, {rows.failures} failed")
     return 1 if rows.failures else 0
 

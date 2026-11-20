@@ -136,7 +136,7 @@ with a `layer` line for each group of each layer: layers in the order counts, de
 
 {api}`from_bulk` records `samples` and `features`, where their ids came from: `"table"`, `"ids"`, `"data_frame_index"` (samples) or `"data_frame_columns"` (features), or `"positions"`.
 
-{api}`simulate_dose_series` records each argument as it was resolved: `doses`; `replicates`, one per dose; `cell_types`; `cells` and `responsive`, one per cell type; `n_genes`; `shapes`, each shape's share; `max_changes`; `biological_sd`; `donor_sd`, null for one animal per replicate; `composition`, each cell type's factor at each dose; `unit`; `metric`; `seed`, the integer seed given, or null for a generator; and `numpy_version`, since the series follows numpy's random algorithms.
+{api}`simulate_dose_series` records each argument as it was resolved: `doses`; `replicates`, one per dose; `cell_types`; `cells` and `responsive`, one per cell type; `n_genes`; `shapes`, each shape's share; `max_log2_changes`; `biological_sd`; `donor_sd`, null for one animal per replicate; `composition`, each cell type's factor at each dose; `unit`; `metric`; `seed`, the integer seed given, or null for a generator; and `numpy_version`, since the series follows numpy's random algorithms.
 
 {api}`from_anndata` and {api}`from_mudata`, reading data that CytePool did not export, record:
 
