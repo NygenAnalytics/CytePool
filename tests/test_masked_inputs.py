@@ -49,6 +49,7 @@ from cytepool import (
     CubeCollection,
     Design,
     DoseAxis,
+    DoseTruth,
     GeneSets,
     Network,
     StudyResults,
@@ -165,6 +166,21 @@ CELL_GROUPS = ["B", "T", "B", "T"]
 # A dose axis, and samples with the vehicle and three doses.
 DOSE_AXIS = DoseAxis("dose", unit="uM", metric="nominal")
 DOSE_SAMPLES = {"dose": [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0]}
+# The table of a true curve per gene, and a truth of one cell type.
+TRUTH_TABLE = {
+    "feature_id": ["g1", "g2"],
+    "shape": ["hill", "flat"],
+    "max_log2_change": [1.0, 0.0],
+    "ec50": [1.0, np.nan],
+    "slope": [2.0, np.nan],
+    "peak_dose": [np.nan, np.nan],
+    "peak_width": [np.nan, np.nan],
+    "counts_per_cell": [0.5, 0.5],
+    "expression_sd": [0.25, 0.25],
+}
+DOSE_TRUTH = DoseTruth(
+    [0.0, 1.0, 10.0], {"liver": TRUTH_TABLE}, unit="uM", metric="nominal"
+)
 CUBE_AXES = {
     "samples": {"sample_id": ["S1", "S2"]},
     "groups": {"group_id": ["B", "T"]},
@@ -2042,6 +2058,65 @@ ENTRY_POINTS: dict[str, Entry] = {
         instance=lambda c: DOSE_AXIS,
         keys={"samples": "dose"},
     ),
+    # Simulated dose series: doses, the values per dose and per cell type, the shares
+    # of shapes and the composition factors; the truth's doses, tables and genes.
+    "cytepool.simulated_dose_series.simulate_dose_series": Entry(
+        lambda c: {
+            "doses": [0.0, 0.1, 1.0, 10.0],
+            "replicates": [2, 2, 2, 2],
+            "cell_types": ["liver", "kidney"],
+            "cells": [50.0, 80.0],
+            "n_genes": 8,
+            "responsive": [0.5, 0.25],
+            "shapes": {"hill": 0.5, "step": 0.5},
+            "max_log2_changes": [1.0, 2.0],
+            "biological_sd": 0.25,
+            "donor_sd": 0.1,
+            "composition": {"liver": [1.0, 1.0, 0.5, 0.5]},
+            "unit": "uM",
+            "metric": "nominal",
+            "rng": 1,
+        },
+        {
+            "doses": None,
+            "replicates": None,
+            "cell_types": None,
+            "cells": None,
+            "responsive": None,
+            "shapes": None,
+            "max_log2_changes": None,
+            "composition": None,
+        },
+        options=("n_genes", "biological_sd", "donor_sd", "unit", "metric", "rng"),
+        keys={"shapes": "hill", "composition": "liver"},
+    ),
+    "cytepool.simulated_dose_series.DoseTruth": Entry(
+        lambda c: {
+            "doses": [0.0, 1.0, 10.0],
+            "tables": {"liver": TRUTH_TABLE},
+            "unit": "uM",
+            "metric": "nominal",
+        },
+        {"doses": None, "tables": "None or NaN"},
+        options=("unit", "metric"),
+        keys={"tables": "liver"},
+    ),
+    "cytepool.simulated_dose_series.DoseTruth.curve": Entry(
+        lambda c: {"cell_type": "liver", "genes": ["g2", "g1"], "at": [0.0, 1.0, 5.0]},
+        {"genes": None, "at": None},
+        options=("cell_type",),
+        instance=lambda c: DOSE_TRUTH,
+    ),
+    "cytepool.simulated_dose_series.DoseTruth.benchmark_doses": Entry(
+        lambda c: {
+            "cell_type": "liver",
+            "genes": ["g1", "g2"],
+            "log2_change": [0.5, 0.5],
+        },
+        {"genes": None, "log2_change": None},
+        options=("cell_type",),
+        instance=lambda c: DOSE_TRUTH,
+    ),
     # Differential expression. min_cells and n_threads go through operator.index,
     # which reads a 0-d masked integer.
     "cytepool.differential_expression.limma_voom": Entry(
@@ -2960,6 +3035,10 @@ NO_ARRAY_INPUT = {
         ),
         "Contrasts and Tables, which were checked when they were built, and a record "
         "kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.simulated_dose_series.DoseTruth.table": (
+        ("cell_type",),
+        "a cell type, looked up",
     ),
     "cytepool.composition.CompositionResult.table": (
         ("contrast",),

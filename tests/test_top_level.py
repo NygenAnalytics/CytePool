@@ -53,6 +53,7 @@ MODULES = {
     "cytepool.replication_across_studies": ("ReplicationResult", "replication"),
     "cytepool.rotation_gene_set_tests": ("mroast", "roast", "romer"),
     "cytepool.score_tests": ("limma",),
+    "cytepool.simulated_dose_series": ("DoseTruth", "simulate_dose_series"),
     "cytepool.study_results": ("StudyResults", "analyse_each_study"),
     "cytepool.sumrank_across_studies": ("SumRankResult", "sumrank"),
     "cytepool.table": ("Table",),
@@ -67,8 +68,8 @@ OPTIONAL = ("anndata", "matplotlib", "mudata", "pandas")
 
 def test_the_top_level_lists_the_names_of_its_docstring() -> None:
     documented = re.findall(r":(?:class|func):`(\w+)`", cytepool.__doc__ or "")
-    assert len(documented) == len(set(documented)) == 57
-    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 58
+    assert len(documented) == len(set(documented)) == 59
+    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 60
     assert set(cytepool.__all__) == {*documented, "__version__"}
     assert isinstance(cytepool.__version__, str) and cytepool.__version__
 

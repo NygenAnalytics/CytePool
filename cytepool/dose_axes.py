@@ -36,7 +36,8 @@ import numpy as np
 import numpy.typing as npt
 
 from ._columns import is_data_frame
-from ._masked_arrays import Missing, reject_masked, unmasked_array
+from ._doses import SAME_DOSE, checked_doses, real_vector
+from ._masked_arrays import reject_masked
 from ._messages import close_matches, listing
 from ._options import checked_choice, positive_finite_number, positive_integer
 from .cube import Cube
@@ -52,9 +53,6 @@ SCALES = ("log10", "linear")
 VEHICLES = ("own_group", "on_axis")
 # The rules of NaturalSplineBasis that place knots on a dose ladder.
 RULES = ("levels", "quantiles")
-# Distinct doses closer than this, relative to the larger, are one dose that a
-# conversion of units left as two.
-_SAME_DOSE = 1e-8
 # The most doses a message lists: dose series rarely have more.
 _LISTED_DOSES = 20
 
@@ -166,7 +164,7 @@ class DoseAxis:
             ValueError: If ``doses`` is not 1-D, or holds a value that is not finite
                 or is negative.
         """
-        return self._positions(_checked_doses(doses, "doses"))
+        return self._positions(checked_doses(doses, "doses"))
 
     def doses(self, positions: npt.ArrayLike) -> FloatArray:
         """The doses at positions on the axis, the inverse of :meth:`positions`.
@@ -188,7 +186,7 @@ class DoseAxis:
                 array.
             ValueError: If ``positions`` is not 1-D or holds an infinite value.
         """
-        values = _real_vector(positions, "positions", missing="NaN")
+        values = real_vector(positions, "positions", missing="NaN")
         if np.isinf(values).any():
             raise ValueError(
                 "positions must not be infinite; NaN marks a missing value"
@@ -406,14 +404,14 @@ class DoseAxis:
                 f"table{close_matches(self.column, table.columns)}; columns are: "
                 f"{listing([repr(name) for name in table.columns])}"
             )
-        return _checked_doses(table[self.column], f"samples[{self.column!r}]")
+        return checked_doses(table[self.column], f"samples[{self.column!r}]")
 
     def _knot_positions(self, knots: npt.ArrayLike, levels: FloatArray) -> FloatArray:
         """The positions of interior knots given as doses, which must lie strictly
         between the lowest and highest dose on the axis."""
         # Searched before np.atleast_1d could turn numpy.ma.masked in a list into NaN.
         reject_masked(knots, "knots")
-        doses = np.sort(_checked_doses(np.atleast_1d(knots), "knots"))
+        doses = np.sort(checked_doses(np.atleast_1d(knots), "knots"))
         outside = (doses <= levels[0]) | (doses >= levels[-1])
         if outside.any():
             raise ValueError(
@@ -432,7 +430,7 @@ class DoseAxis:
                 "a spline of dose needs at least two distinct doses on the axis, and "
                 f"the samples have {found}{self._which_doses()}"
             )
-        close = np.flatnonzero(np.diff(levels) <= _SAME_DOSE * levels[1:])
+        close = np.flatnonzero(np.diff(levels) <= SAME_DOSE * levels[1:])
         if close.size:
             a, b = float(levels[close[0]]), float(levels[close[0] + 1])
             raise ValueError(
@@ -459,25 +457,3 @@ class DoseAxis:
     def _dose_text(self, doses: FloatArray) -> str:
         """Doses for messages, such as "0.1, 1 and 10 ug/kg"."""
         return f"{listing([f'{dose:g}' for dose in doses], limit=_LISTED_DOSES)} {self.unit}"
-
-
-def _checked_doses(values: Any, name: str) -> FloatArray:
-    """Doses as float64: a 1-D array of real numbers, finite and at least 0."""
-    doses = _real_vector(values, name)
-    bad = ~np.isfinite(doses) | (doses < 0.0)
-    if bad.any():
-        raise ValueError(
-            f"{name} must be finite and at least 0, with 0 for the vehicle; got "
-            f"{listing([repr(float(dose)) for dose in doses[bad]])}"
-        )
-    return doses
-
-
-def _real_vector(values: Any, name: str, *, missing: Missing = None) -> FloatArray:
-    """A new float64 copy of a 1-D array of real numbers."""
-    array = unmasked_array(values, name, missing=missing)
-    if array.dtype.kind not in "iuf":
-        raise TypeError(f"{name} must hold real numbers, got dtype {array.dtype}")
-    if array.ndim != 1:
-        raise ValueError(f"{name} must be a 1-D array, got shape {array.shape}")
-    return array.astype(np.float64)

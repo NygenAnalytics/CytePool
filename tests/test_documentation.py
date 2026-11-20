@@ -721,6 +721,7 @@ NO_PUBLISHED_WORK = {
     "cytepool": "the package's namespace; its modules cite their sources",
     "cytepool._analysis_records": "assembles CytePool's records of an analysis",
     "cytepool._columns": "names the columns of result tables",
+    "cytepool._doses": "reads the dose columns of sample tables",
     "cytepool._gene_ids": "reads lists of gene ids",
     "cytepool._jit": "compiles and caches routines with numba; THIRD_PARTY_NOTICES.md "
     "records what its cache locator follows of numba",
@@ -1270,7 +1271,13 @@ def _record_keys(record: dict[str, Any]) -> set[str]:
 def test_the_cube_files_page_names_every_key_that_cytepool_writes(
     tmp_path: Path,
 ) -> None:
-    from cytepool import CubeCollection, from_bulk, from_cells, write_cube
+    from cytepool import (
+        CubeCollection,
+        from_bulk,
+        from_cells,
+        simulate_dose_series,
+        write_cube,
+    )
 
     page = (SOURCE / "reference" / "cube_files.md").read_text()
     # A key is named when it is written as code: in a code span or a code block.
@@ -1314,6 +1321,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
         ).read_text()
     )
     bulk = from_bulk(np.array([[1, 2], [3, 4]]))
+    simulated, _ = simulate_dose_series([0, 1, 10], n_genes=3, rng=1)
     stacked = CubeCollection(
         {"a": cube, "b": cube}, group_names={"B": "B cells"}
     ).stack()
@@ -1326,6 +1334,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
         | set(sample_id["attributes"])
         | _record_keys(attributes["provenance"])
         | _record_keys(bulk.provenance)
+        | _record_keys(simulated.provenance)
         | _record_keys(stacked.provenance)
         | set(digests)
         | {key for layer in digests["layers"].values() for key in layer}
@@ -1333,6 +1342,7 @@ def test_the_cube_files_page_names_every_key_that_cytepool_writes(
     assert sorted(written - named) == [], sorted(written - named)
     assert {"construction", "operations", "with_columns", "numpy_dtype"} <= written
     assert {"studies", "group_names"} <= written
+    assert {"numpy_version", "max_log2_changes", "seed"} <= written
     # The import and export of AnnData and MuData, when they are installed.
     ad = pytest.importorskip("anndata")
     pd = pytest.importorskip("pandas")

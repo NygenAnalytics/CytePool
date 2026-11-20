@@ -14,7 +14,7 @@ Cells or samples [@squair2021; @zimmerman2021; @murphy2022; @junttila2022; @crow
 
 Pseudobulk profiles and cubes [@wolf2018; @virshup2024; @bredikhin2022; @miles2025; @nist2015].
 
-Designs, linear models and contrasts [@wilkinson1973; @chambers1992; @becker1988; @venables2025; @rcoreteam2025; @searle1971; @hoaglin1978; @golub2013; @smyth2004; @smyth2005; @ritchie2015; @bates2015], with splines and dose axes [@durrleman1989; @harrell2015; @harrell2026; @desquilbet2010; @perperoglou2019; @bornkamp2026; @mcfaline2024].
+Designs, linear models and contrasts [@wilkinson1973; @chambers1992; @becker1988; @venables2025; @rcoreteam2025; @searle1971; @hoaglin1978; @golub2013; @smyth2004; @smyth2005; @ritchie2015; @bates2015], with splines and dose axes [@durrleman1989; @harrell2015; @harrell2026; @desquilbet2010; @perperoglou2019; @bornkamp2026; @mcfaline2024], and simulated dose series [@nault2022; @crowell2020; @song2024; @crump1984; @usepa2026; @ritz2015; @delignettemuller2023; @kappenberg2023].
 
 Empirical Bayes moderation [@smyth2004; @loennstedt2002; @phipson2016; @mccarthy2009; @chen2025].
 

@@ -12,6 +12,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
 
+**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from the vehicle by a stated change, the benchmark response (BMR), such as one SD of the vehicle or a fold change of 1.1. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
 
 **Competitive and self-contained tests.** A competitive gene-set test asks whether a set's genes change more than the other genes, and a self-contained test whether they change at all. [Competitive or self-contained](../statistics/gene_set_tests.md#competitive-and-self-contained)
@@ -23,6 +25,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Cook's distance.** How much one sample's count moves a gene's fit, by which DESeq2 removes the p-value of a gene that one count drives. [DESeq2](../statistics/count_models.md#deseq2)
 
 **Counts per million (CPM).** Counts divided by the effective library size, times one million. [Counts per million and log-CPM](../statistics/normalization_and_filtering.md#log-cpm)
+
+**Coverage.** The share of intervals that contain the true value over repeated experiments, which a 95% interval should hold at 95%. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
 
 **Cox-Reid adjusted profile likelihood.** The likelihood of a gene's dispersion with the coefficients fitted at each value, adjusted for most of the bias that fitting them gives, which edgeR and DESeq2 maximize to estimate dispersions. [The Cox-Reid adjusted profile likelihood](../statistics/count_models.md#cox-reid)
 
@@ -37,6 +41,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Dispersion outlier.** A gene whose own dispersion estimate lies so far above DESeq2's trend that DESeq2 keeps it rather than shrink it towards the trend. [DESeq2](../statistics/count_models.md#deseq2)
 
 **Dose axis.** The axis along which a curve of dose is fitted, usually log10 of the dose, with the unit, what the dose measures (administered, nominal, measured or internal), and where the vehicle goes: in a group of its own, or on the axis at a recorded offset. [Dose axes and the vehicle](../statistics/linear_models.md#dose-axes)
+
+**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
 
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
