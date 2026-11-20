@@ -3,8 +3,8 @@ fitted.
 
 A dose analysis compares each dose with the vehicle, the samples given no dose, and
 judges each difference against the variation between replicates given the same dose.
-:func:`check_dose_design` says what each cell type (group) of a cube supports, and
-returns a :class:`DoseDesignReport`
+:func:`~cytepool.check_dose_design` says what each cell type (group) of a cube
+supports, and returns a :class:`~cytepool.DoseDesignReport`
 (https://docs.nygen.io/CytePool/statistics/dose-response#dose-design-check):
 
 1. Samples. A design sample enters a cell type as it enters the cell type's fit in
@@ -258,17 +258,19 @@ class DoseDesignReport:
 
     @property
     def summary(self) -> Table:
-        """One row per cell type: its status, why, its dose groups and samples."""
+        """One row per cell type, with its status, the reason, its dose groups and its
+        samples."""
         return self._summary
 
     @property
     def doses(self) -> Table:
-        """One row per cell type and dose group: samples, cells, counts, estimable."""
+        """One row per cell type and dose group, with its samples, cells and counts, and
+        whether it is estimable."""
         return self._doses
 
     @property
     def samples(self) -> Table:
-        """One row per cell type and design sample: used or left out, and why."""
+        """One row per cell type and design sample, used or left out, and why."""
         return self._samples
 
     @property
@@ -283,9 +285,9 @@ class DoseDesignReport:
 
     @property
     def settings(self) -> dict[str, Any]:
-        """The settings of the check, as a new dict: ``dose``, the axis as
+        """The settings of the check as a new dict, with ``dose``, the axis as
         :meth:`DoseAxis.to_dict` gives it, which ``DoseAxis(**settings["dose"])``
-        rebuilds; ``batch``, ``rules``, ``sex``, ``min_cells``, ``min_counts`` and
+        rebuilds, and ``batch``, ``rules``, ``sex``, ``min_cells``, ``min_counts`` and
         ``groups``, as given."""
         settings: dict[str, Any] = json.loads(self._settings)
         return settings
