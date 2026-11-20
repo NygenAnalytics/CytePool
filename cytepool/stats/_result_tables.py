@@ -78,7 +78,7 @@ def coefficient_position(value: Any, names: tuple[str, ...]) -> int:
     position = integral_number(value, "coefficient", expected="a name or a position")
     if not -len(names) <= position < len(names):
         raise IndexError(
-            f"coefficient position {position} is out of range for {len(names)} "
-            "coefficients"
+            f"position {position} is out of range for {len(names)} coefficients or "
+            "contrasts"
         )
     return position % len(names)

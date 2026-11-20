@@ -15,7 +15,7 @@ import pytest
 from scipy import stats
 
 from cytepool._jit import thread_limit
-from cytepool.design import Contrasts, make_contrasts
+from cytepool.design import Contrasts
 from cytepool.stats.empirical_bayes import moderated_statistics
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.multiple_contrasts import (
@@ -76,9 +76,6 @@ def test_williams_weights_by_hand() -> None:
         "low to high - vehicle",
     )
     np.testing.assert_allclose(contrasts.matrix.sum(axis=0), 0.0, atol=1e-15)
-    unnamed = williams_contrasts([2, 2, 2])
-    assert unnamed.columns == ("1", "2", "3")
-    assert unnamed.names == ("3 - 1", "2 to 3 - 1")
 
 
 def test_dunnett_contrasts_take_groups_and_a_control() -> None:
@@ -108,10 +105,31 @@ def test_dunnett_contrasts_take_groups_and_a_control() -> None:
         ),
         (lambda: dunnett_contrasts(["a", "b"], control=2), ValueError, "out of range"),
         (lambda: dunnett_contrasts(["a", "b"], control=1.0), TypeError, "control"),
-        (lambda: williams_contrasts([3]), ValueError, "at least two groups"),
+        (lambda: williams_contrasts({"v": 3}), ValueError, "at least two groups"),
         (lambda: williams_contrasts({"v": 3, "d": 0}), ValueError, "positive integer"),
         (lambda: williams_contrasts({"v": 3, "d": 2.5}), TypeError, "integer"),
-        (lambda: williams_contrasts("34"), TypeError, "single string"),
+        (lambda: williams_contrasts("34"), TypeError, "map each group name"),
+        # Counts alone name no groups, which the estimates' names would have to match.
+        (lambda: williams_contrasts([3, 3, 3]), TypeError, "map each group name"),
+        # A set has no order, so the control, the first group, would be any of them.
+        (
+            lambda: dunnett_contrasts({"vehicle", "low", "high"}),
+            TypeError,
+            "a set has no order",
+        ),
+        (lambda: dunnett_contrasts(frozenset({"a", "b"})), TypeError, "no order"),
+        (lambda: williams_contrasts({4, 3}), TypeError, "in dose order"),
+        # The coefficients of a model with an intercept are differences already.
+        (
+            lambda: dunnett_contrasts(["(Intercept)", "dose_groupd1"]),
+            ValueError,
+            r"already their differences from the reference group.*'~ 0 \+ dose'",
+        ),
+        (
+            lambda: williams_contrasts({"(Intercept)": 3, "d1": 3, "d2": 3}),
+            ValueError,
+            "intercept of a model",
+        ),
     ],
 )
 def test_contrast_builders_refuse(call, error, message) -> None:
@@ -233,11 +251,15 @@ def test_contrasts_are_matched_to_estimates_by_name() -> None:
     assert plain.names == ("contrast1", "contrast2", "contrast3")
     np.testing.assert_array_equal(named.contrasts, contrasts.matrix)
     assert named.estimate_names == tuple(names)
-    with pytest.raises(ValueError, match="estimate_names must name the estimates"):
+    with pytest.raises(
+        ValueError,
+        match="'vehicle', 'low', 'mid' and 'high' are not among them; name the "
+        "estimates with estimate_names, in the order of their columns",
+    ):
         multiple_contrast_test(means, covariances, contrasts, df=9.0)
     with pytest.raises(
         ValueError,
-        match="do not weigh 'middle'; they weigh 'mid' .did you mean 'middle'.., which is not",
+        match="'middle' is missing and 'mid' .did you mean 'middle'.. is not among",
     ):
         multiple_contrast_test(
             means,
@@ -251,13 +273,18 @@ def test_contrasts_are_matched_to_estimates_by_name() -> None:
 def test_mismatched_names_are_listed() -> None:
     means, covariances, names = _groups()
     three = dunnett_contrasts(names[:3])
-    with pytest.raises(ValueError, match=r"but they do not weigh 'high'$"):
+    with pytest.raises(
+        ValueError, match=r"the estimates \('vehicle', .*'high' is miss"
+    ):
         multiple_contrast_test(means, covariances, three, df=9.0, estimate_names=names)
     five = dunnett_contrasts([*names, "extra"])
-    with pytest.raises(
-        ValueError, match=r"but they weigh 'extra', which is not among estimate_names$"
-    ):
+    with pytest.raises(ValueError, match=r"but 'extra' is not among them; name the"):
         multiple_contrast_test(means, covariances, five, df=9.0, estimate_names=names)
+    # Weights in the order of the estimates, of the wrong length or orientation.
+    with pytest.raises(ValueError, match=r"one row for each of the estimates \(4\)"):
+        multiple_contrast_test(means, covariances, np.ones((3, 4)), df=9.0)
+    with pytest.raises(ValueError, match="one value for each of the estimates"):
+        multiple_contrast_test(means, covariances, {"x": [1.0, -1.0]}, df=9.0)
 
 
 def test_pandas_weights_are_matched_by_their_index() -> None:
@@ -283,6 +310,10 @@ def test_pandas_weights_are_matched_by_their_index() -> None:
     in_order = pd.DataFrame(np.asarray(contrasts.matrix), columns=list(contrasts.names))
     plain = multiple_contrast_test(means, covariances, in_order, df=9.0, rng=1)
     np.testing.assert_array_equal(plain.p_value, reference.p_value)
+    # An index that is neither names nor pandas' default positions is refused.
+    shifted = pd.DataFrame({"x": [-1.0, 0.0, 0.0, 1.0]}, index=[1, 2, 3, 4])
+    with pytest.raises(ValueError, match="must hold the names of the estimates"):
+        multiple_contrast_test(means, covariances, shifted, df=9.0)
 
 
 def test_without_contrasts_the_estimates_are_tested() -> None:
@@ -450,13 +481,18 @@ def test_the_tables() -> None:
     )
     overall = test.table(feature_ids=["g1", "g2", "g3", "g4"])
     assert overall.columns == (
-        "feature_id", "contrast", "t", "p_value", "p_value_error", "adjusted_p_value"
+        "feature_id", "contrast", "estimate", "standard_error", "t", "p_value",
+        "p_value_error", "adjusted_p_value",
     )  # fmt: skip
     assert overall["feature_id"].tolist() == ["g1", "g2", "g3", "g4"]
     assert overall["contrast"].tolist() == [
         "high - vehicle", "low - vehicle", "low - vehicle", "high - vehicle"
     ]  # fmt: skip
     np.testing.assert_array_equal(overall["p_value"], test.p_value.min(axis=1))
+    # The chosen contrasts' estimates are the mean differences, with standard errors
+    # sqrt(0.1 + 0.1).
+    np.testing.assert_allclose(overall["estimate"], [3.0, -2.5, 0.2, 1.2], rtol=1e-12)
+    np.testing.assert_allclose(overall["standard_error"], np.sqrt(0.2), rtol=1e-12)
     # Benjamini and Hochberg's adjustment, by hand: p_(i) * n / i, then the running
     # minimum from the largest.
     p = np.asarray(overall["p_value"])
@@ -480,6 +516,8 @@ def test_the_tables() -> None:
     np.testing.assert_array_equal(one["p_value"], test.table(1)["p_value"])
     with pytest.raises(KeyError, match="no coefficient or contrast 'top'"):
         test.table("top")
+    with pytest.raises(IndexError, match="out of range for 3 coefficients or contra"):
+        test.table(5)
     with pytest.raises(ValueError, match="one id per feature"):
         test.table(feature_ids=["g1"])
     text = repr(test)
@@ -515,26 +553,99 @@ def test_results_do_not_depend_on_threads() -> None:
     np.testing.assert_array_equal(one.p_value_error, many.p_value_error)
 
 
-def test_a_fit_s_coefficients_and_covariances_can_be_tested() -> None:
-    """The chapter's example: a cell-means fit, its moderated variances and named
-    contrasts matched to the coefficient names."""
+@pytest.mark.parametrize("weighted", [False, True])
+def test_a_moderated_fit_is_tested_with_its_own_covariances(weighted) -> None:
+    """A cell-means fit, with weights that differ by gene (one covariance per gene)
+    or without (one for every gene): its Dunnett contrasts give the moderated t of
+    contrasts_fit and moderated_statistics, and a fit of the contrasts tested as it
+    is gives the same tests."""
     rng = np.random.default_rng(5)
-    groups = np.repeat([0, 1, 2], 4)
-    design = np.eye(3)[groups]
+    groups = np.repeat([0, 1, 2, 3], 3)
+    design = np.eye(4)[groups]
     y = rng.normal(5.0, 1.0, (12, 25))
-    y[groups == 2, :5] += 3.0
-    fit = fit_linear_model(y, design, coefficient_names=["vehicle", "low", "high"])
+    y[groups == 3, :5] += 4.0
+    weights = rng.uniform(0.5, 2.0, y.shape) if weighted else None
+    names = ["vehicle", "low", "mid", "high"]
+    fit = fit_linear_model(y, design, weights=weights, coefficient_names=names)
+    assert (fit.cov_coefficients_per_feature is not None) == weighted
     moderated = moderated_statistics(fit)
-    covariances = moderated.posterior_variance[:, None, None] * fit.cov_coefficients
-    test = multiple_contrast_test(
-        fit.coefficients, covariances, dunnett_contrasts(fit.coefficient_names),
-        df=moderated.df_total, estimate_names=fit.coefficient_names,
-    )  # fmt: skip
-    # The contrasts of a fit by contrasts_fit and moderated_statistics give the same t.
-    pairs = make_contrasts(["low - vehicle", "high - vehicle"], fit.coefficient_names)
-    reference = moderated_statistics(contrasts_fit(fit, pairs))
+    contrasts = dunnett_contrasts(fit.coefficient_names)
+    test = multiple_contrast_test(moderated, contrasts=contrasts, rng=1)
+    reference = moderated_statistics(contrasts_fit(fit, contrasts))
     np.testing.assert_allclose(test.t, reference.t, rtol=1e-12)
+    np.testing.assert_array_equal(test.df, moderated.df_total)
+    as_fitted = multiple_contrast_test(reference, rng=1)
+    assert as_fitted.names == contrasts.names
+    np.testing.assert_allclose(as_fitted.t, test.t, rtol=1e-12)
+    np.testing.assert_allclose(as_fitted.p_value, test.p_value, rtol=1e-12)
     assert (test.table()["p_value"][:5] < 0.01).all()
+    # One contrast of the fit is its moderated t-test.
+    one = multiple_contrast_test(moderated, contrasts={"high": [0.0, 0.0, 0.0, 1.0]})
+    np.testing.assert_allclose(one.p_value[:, 0], moderated.p_value[:, 3], rtol=1e-12)
+
+
+def test_a_fit_without_exact_standard_errors_and_missing_arguments_are_refused() -> (
+    None
+):
+    rng = np.random.default_rng(6)
+    design = np.eye(3)[np.repeat([0, 1, 2], 3)]
+    y = rng.normal(5.0, 1.0, (9, 12))
+    names = ["vehicle", "low", "high"]
+    fit = fit_linear_model(
+        y, design, weights=rng.uniform(0.5, 2.0, y.shape), coefficient_names=names
+    )
+    approximate = contrasts_fit(fit, dunnett_contrasts(names), method="limma")
+    assert not approximate.exact_standard_errors
+    with pytest.raises(ValueError, match="limma's approximate standard errors"):
+        multiple_contrast_test(moderated_statistics(approximate))
+    moderated = moderated_statistics(fit)
+    with pytest.raises(ValueError, match="so leave out covariances and df; pass the"):
+        multiple_contrast_test(moderated, np.eye(3), df=4.0)
+    with pytest.raises(ValueError, match="so leave out estimate_names"):
+        multiple_contrast_test(moderated, estimate_names=names)
+    with pytest.raises(TypeError, match="needs covariances and df with estimates"):
+        multiple_contrast_test(fit.coefficients)
+    with pytest.raises(TypeError, match="needs df with estimates"):
+        multiple_contrast_test(fit.coefficients, np.eye(3))
+
+
+def test_the_correlation_of_dunnett_contrasts_and_simultaneous_intervals() -> None:
+    """Dunnett's contrasts of independent group means with variances s^2 / n_i are
+    correlated by lambda_i lambda_j, lambda_i = sqrt(n_i / (n_i + n_0)) (Dunnett
+    1955); the stored correlation gives simultaneous intervals, which scipy's
+    dunnett computes from the samples themselves."""
+    rng = np.random.default_rng(12)
+    sizes = np.array([6, 3, 4, 5])
+    samples = [rng.normal(mean, 1.0, n) for mean, n in zip([0, 0.4, 1.0, 2.0], sizes)]
+    means = np.array([[sample.mean() for sample in samples]])
+    residual_df = int(sizes.sum() - sizes.size)
+    pooled = sum(((s - s.mean()) ** 2).sum() for s in samples) / residual_df
+    names = ["vehicle", "low", "mid", "high"]
+    test = multiple_contrast_test(
+        means, pooled * np.diag(1.0 / sizes), dunnett_contrasts(names),
+        df=residual_df, estimate_names=names, relative_error=1e-3, rng=3,
+    )  # fmt: skip
+    lam = np.sqrt(sizes[1:] / (sizes[1:] + sizes[0]))
+    expected = np.outer(lam, lam)
+    np.fill_diagonal(expected, 1.0)
+    np.testing.assert_allclose(test.correlation[0], expected, rtol=1e-12)
+    from cytepool.stats.multivariate_t import multivariate_t_quantile
+
+    critical = multivariate_t_quantile(
+        0.95, test.correlation, test.df, two_sided=True, relative_error=1e-3, rng=4
+    )
+    half_width = critical.quantile[:, None] * test.standard_error
+    reference = stats.dunnett(*samples[1:], control=samples[0], rng=5)
+    interval = reference.confidence_interval(confidence_level=0.95)
+    # scipy integrates by randomized quasi-Monte Carlo too: its interval ends move by
+    # up to 1.4e-3 between seeds.
+    np.testing.assert_allclose(
+        test.estimate[0] - half_width[0], interval.low, rtol=0, atol=3e-3
+    )
+    np.testing.assert_allclose(
+        test.estimate[0] + half_width[0], interval.high, rtol=0, atol=3e-3
+    )
+    np.testing.assert_allclose(test.p_value[0], reference.pvalue, rtol=0, atol=1e-3)
 
 
 @pytest.mark.parametrize(
@@ -562,11 +673,11 @@ def test_arguments_are_refused(options, error, message) -> None:
 
 def test_arrays_of_text_are_refused() -> None:
     means, covariances, names = _groups()
-    with pytest.raises(TypeError, match="estimates must hold numbers"):
+    with pytest.raises(TypeError, match="estimates must hold real numbers"):
         multiple_contrast_test(means.astype(str), covariances, df=9.0)
-    with pytest.raises(TypeError, match="covariances must hold numbers"):
+    with pytest.raises(TypeError, match="covariances must hold real numbers"):
         multiple_contrast_test(means, covariances.astype(str), df=9.0)
-    with pytest.raises(TypeError, match="df must hold numbers"):
+    with pytest.raises(TypeError, match="df must hold real numbers"):
         multiple_contrast_test(means, covariances, df="nine")
 
 
@@ -591,3 +702,74 @@ def test_the_examples_run() -> None:
     from cytepool.stats import multiple_contrasts
 
     assert doctest.testmod(multiple_contrasts, raise_on_error=False).failed == 0
+
+
+def test_the_overall_table_of_a_one_sided_test() -> None:
+    """The feature's contrast is the largest t for "greater" and the smallest for
+    "less", even when another contrast has a larger |t|, and its p-value is the
+    smallest of the feature's."""
+    means = np.array([[0.0, -3.0, 0.5, 1.0], [0.0, 0.2, -2.0, 0.4]])
+    names = ["vehicle", "low", "mid", "high"]
+    expected = {
+        "greater": ["high - vehicle", "high - vehicle"],
+        "less": ["low - vehicle", "mid - vehicle"],
+    }
+    for alternative, chosen in expected.items():
+        test = multiple_contrast_test(
+            means, np.diag([0.1] * 4), dunnett_contrasts(names), df=10.0,
+            estimate_names=names, alternative=alternative, rng=1,
+        )  # fmt: skip
+        table = test.table()
+        assert table["contrast"].tolist() == chosen
+        np.testing.assert_array_equal(table["p_value"], test.p_value.min(axis=1))
+
+
+def test_a_contrast_of_zero_variance_makes_its_feature_missing() -> None:
+    """One contrast of zero variance among contrasts of positive variance: the
+    vehicle and the low dose are known exactly."""
+    names = ["vehicle", "low", "mid", "high"]
+    test = multiple_contrast_test(
+        np.array([5.0, 5.0, 6.0, 7.0]), np.diag([0.0, 0.0, 0.04, 0.04]),
+        dunnett_contrasts(names), df=9.0, estimate_names=names, rng=1,
+    )  # fmt: skip
+    for name in ("estimate", "standard_error", "t", "p_value", "p_value_error"):
+        assert np.isnan(getattr(test, name)).all(), name
+    assert np.isnan(test.correlation).all()
+
+
+def test_a_negative_variance_is_refused() -> None:
+    names = ["vehicle", "low", "mid", "high"]
+    with pytest.raises(
+        ValueError,
+        match="feature 0 is not positive semidefinite: it gives contrast 'low - "
+        "vehicle' the variance -0.4",
+    ):
+        multiple_contrast_test(
+            np.zeros(4), np.diag([0.1, -0.5, 0.1, 0.1]), dunnett_contrasts(names),
+            df=9.0, estimate_names=names,
+        )  # fmt: skip
+    # Rounding below 0 in a contrast of zero variance leaves its feature untested.
+    covariance = np.full((2, 2), 0.3)
+    covariance[0, 1] = covariance[1, 0] = 0.3 * (1 + 4e-16)
+    rounded = multiple_contrast_test(np.zeros(2), covariance, [-1.0, 1.0], df=9.0)
+    assert np.isnan(rounded.p_value).all()
+
+
+def test_asymmetric_covariances_are_refused() -> None:
+    means, covariances, names = _groups()
+    covariances[2, 0, 1] = 0.01
+    with pytest.raises(
+        ValueError, match="covariances must be symmetric.*the matrix of feature 2"
+    ):
+        multiple_contrast_test(
+            means, covariances, dunnett_contrasts(names), df=9.0, estimate_names=names
+        )
+    one = np.diag([0.1, 0.1, 0.1, 0.1])
+    one[3, 0] = 0.02
+    with pytest.raises(ValueError, match="symmetric.*the matrix differs"):
+        multiple_contrast_test(means, one, df=9.0)
+    # Rounding of a product of symmetric matrices is accepted.
+    rounded = one.copy()
+    rounded[3, 0] = 0.0
+    rounded[0, 1], rounded[1, 0] = 0.01, 0.01 * (1 + 1e-15)
+    assert np.isfinite(multiple_contrast_test(means, rounded, df=9.0).p_value).all()

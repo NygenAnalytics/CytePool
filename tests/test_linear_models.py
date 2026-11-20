@@ -1296,7 +1296,7 @@ def test_negative_correlation_is_allowed_above_the_bound_of_the_largest_block() 
 @pytest.mark.parametrize(
     ("contrasts", "keywords", "error", "message"),
     [
-        (np.ones((2, 1)), {}, ValueError, "one row per coefficient of the fit"),
+        (np.ones((2, 1)), {}, ValueError, "one row for each of the fit's coefficients"),
         (np.ones((3, 0)), {}, ValueError, "at least one contrast"),
         (np.array([0.0, np.nan, 1.0]), {}, ValueError, "contrasts must be finite"),
         (np.ones((3, 2)), {"names": ["a"]}, ValueError, "names must have 2 entries"),
@@ -1310,7 +1310,7 @@ def test_negative_correlation_is_allowed_above_the_bound_of_the_largest_block() 
             {"a": [0.0, 1.0]},
             {},
             ValueError,
-            "contrast 'a' must have one value per coefficient",
+            "contrast 'a' must have one value for each of the fit's coefficients",
         ),
         ({}, {}, ValueError, "at least one contrast"),
         (

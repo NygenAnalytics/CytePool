@@ -9,19 +9,19 @@ contrast of every feature and adjusts each p-value for the contrasts of its feat
 by the single-step max-t method (Hothorn, Bretz and Westfall 2008): the adjusted
 p-value of contrast j is the chance that the largest of the feature's correlated
 t-statistics is at least as extreme as t_j, from the multivariate t distribution
-(:func:`~cytepool.stats.multivariate_t.multivariate_t_cdf`). It takes estimates and
-their covariance, such as the coefficients of a fit, as multcomp's ``glht`` does with
-``parm()``. :func:`dunnett_contrasts` builds Dunnett's contrasts, each treatment
-against the control (Dunnett 1955), and :func:`williams_contrasts` the Williams-type
-contrasts, the control against the size-weighted mean of the highest one, two or
-more doses, for means that change in dose order (Bretz 2006), as multcomp's
-``contrMat``.
+(:func:`~cytepool.stats.multivariate_t.multivariate_t_cdf`). It takes a moderated fit,
+or estimates and their covariance as multcomp's ``glht`` does with ``parm()``.
+:func:`dunnett_contrasts` builds Dunnett's contrasts, each treatment against the
+control (Dunnett 1955), and :func:`williams_contrasts` the Williams-type contrasts,
+the control against the size-weighted mean of the highest one, two or more doses, for
+means that change in dose order (Bretz 2006), as multcomp's ``contrMat``.
 https://docs.nygen.io/CytePool/statistics/multiple-testing#correlated-tests explains
 the tests.
 
 Differences from multcomp:
-    - ``df`` has no default and need not be an integer, as moderated degrees of
-      freedom are not; multcomp's default of 0 gives z-tests, here ``np.inf``.
+    - ``df`` need not be an integer, as moderated degrees of freedom are not, and has
+      no default with estimates; multcomp's default of 0 gives z-tests, here
+      ``np.inf``.
     - Williams-type contrasts are named by the doses they pool, such as
       "mid to high - vehicle", where ``contrMat`` names them "C 1", "C 2", ...; with
       two groups they are Dunnett's single contrast, which ``contrMat`` refuses.
@@ -33,6 +33,10 @@ References:
     Dunnett CW (1955). A multiple comparison procedure for comparing several
     treatments with a control. Journal of the American Statistical Association 50,
     1096-1121. doi:10.1080/01621459.1955.10501294
+
+    Williams DA (1971). A test for differences between treatment means when several
+    dose levels are compared with a zero dose control. Biometrics 27, 103.
+    doi:10.2307/2528930
 
     Bretz F (2006). An extension of the Williams trend test to general unbalanced
     linear models. Computational Statistics and Data Analysis 50, 1735-1748.
@@ -51,17 +55,18 @@ import numpy.typing as npt
 
 from cytepool._columns import text_column
 from cytepool._jit import thread_limit
-from cytepool._masked_arrays import read_only, reject_masked, unmasked_array
-from cytepool._messages import close_matches, listing, quoted
-from cytepool._options import checked_choice, integral_number
-from cytepool.design._contrast_weights import (
-    checked_names,
-    contrast_matrix,
-    is_named_contrasts,
-    is_pandas,
+from cytepool._masked_arrays import (
+    read_only,
+    real_array,
+    reject_masked,
+    unmasked_array,
 )
+from cytepool._messages import listing, quoted
+from cytepool._options import checked_choice, integral_number
+from cytepool.design._contrast_weights import checked_names, contrast_matrix
 from cytepool.design.contrasts import Contrasts
 from cytepool.stats._result_tables import coefficient_position, feature_id_column
+from cytepool.stats.empirical_bayes import ModeratedFit
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.multivariate_t import multivariate_t_cdf
 from cytepool.table import Table
@@ -77,9 +82,11 @@ FloatArray = npt.NDArray[np.float64]
 
 _ALTERNATIVES = ("two-sided", "greater", "less")
 _EPS = float(np.finfo(np.float64).eps)
-# A contrast whose correlation matrix has an eigenvalue below this times the largest
-# is not positive semidefinite.
-_EIGENVALUE_TOLERANCE = 1e-10
+# A covariance matrix whose entries differ from their transposes by more than this
+# times its largest variance is not symmetric; a contrast's variance below minus this
+# times its scale, and a correlation of contrasts whose smallest eigenvalue is below
+# minus this times its largest, show a covariance that is not positive semidefinite.
+_TOLERANCE = 1e-10
 
 
 # ---------------------------------------------------------------------------------------
@@ -93,6 +100,11 @@ def _group_names(groups: Any, name: str) -> list[str]:
         raise TypeError(
             f"{name} must be a sequence of group names, not a single string"
         )
+    if isinstance(groups, set | frozenset):
+        raise TypeError(
+            f"{name} must give the groups in order, the control first, but a "
+            f"{type(groups).__name__} has no order; pass a list or a dict"
+        )
     names = list(groups.keys() if isinstance(groups, Mapping) else groups)
     if len(names) < 2:
         raise ValueError(f"{name} must hold at least two groups, got {len(names)}")
@@ -104,6 +116,14 @@ def _group_names(groups: Any, name: str) -> list[str]:
             )
         if not group:
             raise ValueError(f"{name} has an empty group name at position {position}")
+    if "(Intercept)" in names:
+        raise ValueError(
+            f"{name} include '(Intercept)', the intercept of a model, which is not a "
+            "group: with an intercept, the coefficients of the other groups are "
+            "already their differences from the reference group, so test them as "
+            "they are (contrasts=None), or fit a design without an intercept, such as "
+            "'~ 0 + dose', which gives one coefficient per group"
+        )
     repeated = sorted({group for group in names if names.count(group) > 1})
     if repeated:
         raise ValueError(
@@ -127,7 +147,8 @@ def dunnett_contrasts(
     Args:
         groups: The group names, in order, as a sequence, or the keys of a mapping
             such as the group sizes that :func:`williams_contrasts` takes (Dunnett's
-            weights do not depend on the sizes).
+            weights do not depend on the sizes), such as the coefficient names of a
+            fit with one coefficient per group.
         control: The control group, by name or 0-based position; the first group by
             default.
 
@@ -136,9 +157,11 @@ def dunnett_contrasts(
 
     Raises:
         ValueError: If there are fewer than two groups, a name is empty or
-            repeated, or ``control`` is not one of the groups.
-        TypeError: If ``groups`` is a single string or names a group with something
-            other than text, or an argument is a numpy masked array.
+            repeated, a group is a model's intercept, or ``control`` is not one of
+            the groups.
+        TypeError: If ``groups`` is a single string, a set (which has no order), or
+            names a group with something other than text, or an argument is a numpy
+            masked array.
 
     Example:
         >>> dunnett_contrasts(["vehicle", "low", "high"]).names
@@ -170,24 +193,27 @@ def dunnett_contrasts(
     return Contrasts(matrix, labels, tuple(names))
 
 
-def williams_contrasts(sizes: Sequence[int] | Mapping[str, int]) -> Contrasts:
+def williams_contrasts(sizes: Mapping[str, int]) -> Contrasts:
     """Williams-type contrasts: the control against the size-weighted mean of the
     highest one, two or more doses.
 
     The first group is the control and the doses follow in increasing order.
     Contrast j = 1, ..., K - 1 weighs the control -1 and each of the j highest doses
     n_i / (the sum of their sizes), as multcomp's ``contrMat(n, type = "Williams")``
-    (Bretz 2006). Tested one-sided with :func:`multiple_contrast_test`, they detect a
-    change that grows in dose order, and their largest t-statistic picks how many of
-    the top doses have changed. They differ from Williams' (1971) trend test, which
-    compares each dose with the control after fitting means that change in dose
-    order. https://docs.nygen.io/CytePool/statistics/multiple-testing#dunnett-and-williams-contrasts
+    (Bretz 2006). Tested with :func:`multiple_contrast_test`, they detect a change
+    that grows in dose order: two-sided for genes, whose direction is not known,
+    which tests rises and falls at one error rate, and one-sided (``"greater"`` or
+    ``"less"``) when the direction is known. A significant contrast means that the
+    doses it pools differ from the control on average, not that each of them does;
+    which doses changed is the question of :func:`dunnett_contrasts`. They differ
+    from Williams' (1971) trend test, which compares each dose with the control
+    after fitting means that change in dose order.
+    https://docs.nygen.io/CytePool/statistics/multiple-testing#dunnett-and-williams-contrasts
     explains them.
 
     Args:
-        sizes: The replicates of each group, in dose order with the control first,
-            as a mapping of group name to count, or a sequence of counts, whose
-            groups are then named "1", "2", ..., as multcomp names unnamed groups.
+        sizes: The replicates of each group, as a mapping of group name to count, in
+            dose order with the control first.
 
     Returns:
         The contrasts, named by the doses they pool, such as "high - vehicle",
@@ -196,8 +222,8 @@ def williams_contrasts(sizes: Sequence[int] | Mapping[str, int]) -> Contrasts:
 
     Raises:
         ValueError: If there are fewer than two groups, a count is not a positive
-            integer, or a name is empty or repeated.
-        TypeError: If ``sizes`` is a single string or a count is not a number, or an
+            integer, a name is empty or repeated, or a group is a model's intercept.
+        TypeError: If ``sizes`` is not a mapping, a count is not a number, or an
             argument is a numpy masked array.
 
     Example:
@@ -205,18 +231,14 @@ def williams_contrasts(sizes: Sequence[int] | Mapping[str, int]) -> Contrasts:
         ('high - vehicle', 'low to high - vehicle')
     """
     reject_masked(sizes, "sizes")
-    if isinstance(sizes, str):
-        raise TypeError("sizes must give one count per group, not a single string")
-    if isinstance(sizes, Mapping):
-        names = _group_names(sizes, "sizes")
-        values = list(sizes.values())
-    else:
-        values = list(sizes)
-        names = [str(j + 1) for j in range(len(values))]
-        if len(values) < 2:
-            raise ValueError(f"sizes must hold at least two groups, got {len(values)}")
+    if not isinstance(sizes, Mapping):
+        raise TypeError(
+            "sizes must map each group name to its replicates, in dose order with "
+            f"the control first, got {type(sizes).__name__}"
+        )
+    names = _group_names(sizes, "sizes")
     counts = []
-    for group, value in zip(names, values):
+    for group, value in sizes.items():
         count = integral_number(
             value, f"the size of group {group!r}", expected="an integer"
         )
@@ -252,23 +274,33 @@ class MultipleContrastTest:
     For each feature and contrast c: the estimate c'b, its standard error
     sqrt(c' V c), t, and the single-step adjusted p-value, the chance that the
     largest of the feature's t-statistics on its ``df`` is at least as extreme as t
-    (Hothorn, Bretz and Westfall 2008). The arrays are read-only.
+    (Hothorn, Bretz and Westfall 2008). The arrays are read-only. The repr counts
+    the features whose ``adjusted_p_value`` of :meth:`table` is below 0.05, and, as
+    ``p_values_short_of_relative_error``, the p-values whose standard error exceeds
+    ``relative_error`` of the smaller of p and 1 - p, which happens only when the
+    computation stopped at its limit of 2^20 points: use them with their
+    ``p_value_error``, or ask for a larger ``relative_error``.
 
     Attributes:
-        names: The contrast names.
-        estimate_names: The names of the estimates, which the rows of ``contrasts``
-            weigh.
+        names: The contrast names, which label the columns of ``estimate``, ``t``
+            and the other ``(n_features, n_contrasts)`` arrays.
+        estimate_names: The names of the estimates, which label the rows of
+            ``contrasts``.
         contrasts: ``(n_estimates, n_contrasts)`` weights of each contrast.
         estimate: ``(n_features, n_contrasts)`` estimates of the contrasts.
         standard_error: ``(n_features, n_contrasts)`` their standard errors.
         t: ``(n_features, n_contrasts)`` t-statistics.
         p_value: ``(n_features, n_contrasts)`` p-values adjusted for the contrasts of
-            the feature (single-step): P(max_l \\|T_l\\| >= \\|t\\|) two-sided,
+            the feature (single-step): P(max_l |T_l| >= |t|) two-sided,
             P(max_l T_l >= t) for ``"greater"`` and P(min_l T_l <= t) for
             ``"less"``. Within a feature they never decrease as t becomes less
             extreme.
         p_value_error: ``(n_features, n_contrasts)`` the standard error of each
             p-value (the quadrature's error bound with two contrasts, 0 with one).
+        correlation: ``(n_features, n_contrasts, n_contrasts)`` the correlation of
+            each feature's t-statistics, which
+            :func:`~cytepool.stats.multivariate_t.multivariate_t_quantile` turns
+            into the critical value of simultaneous confidence intervals.
         df: ``(n_features,)`` degrees of freedom of the t-statistics.
         alternative: ``"two-sided"``, ``"greater"`` or ``"less"``.
         relative_error: The requested standard error of the smaller of each p-value
@@ -283,6 +315,7 @@ class MultipleContrastTest:
     t: FloatArray
     p_value: FloatArray
     p_value_error: FloatArray
+    correlation: FloatArray
     df: FloatArray
     alternative: str
     relative_error: float
@@ -294,13 +327,13 @@ class MultipleContrastTest:
 
         Without ``contrast``, the test of each feature as a whole, the max-t test of
         its contrasts: ``feature_id``; ``contrast``, the contrast with the most
-        extreme t, whose adjusted p-value is the feature's; its ``t``, ``p_value``
-        and ``p_value_error``; and ``adjusted_p_value``, Benjamini and Hochberg's
-        adjustment of ``p_value`` over the features. With ``contrast``: its
-        ``estimate``, ``standard_error``, ``t``, ``p_value`` and ``p_value_error``.
-        This ``p_value`` is adjusted for the feature's contrasts, unlike the
-        p-values of other CytePool tables; across features, call the features from
-        the table without ``contrast``.
+        extreme t, whose adjusted p-value is the feature's; its ``estimate``,
+        ``standard_error``, ``t``, ``p_value`` and ``p_value_error``; and
+        ``adjusted_p_value``, Benjamini and Hochberg's adjustment of ``p_value`` over
+        the features. With ``contrast``: its ``estimate``, ``standard_error``, ``t``,
+        ``p_value`` and ``p_value_error``. This ``p_value`` is adjusted for the
+        feature's contrasts, unlike the p-values of other CytePool tables; across
+        features, call the features from the table without ``contrast`` first.
         https://docs.nygen.io/CytePool/statistics/multiple-testing#correlated-tests
         explains the two levels.
 
@@ -320,26 +353,25 @@ class MultipleContrastTest:
         n_features = self.t.shape[0]
         ids = feature_id_column(feature_ids, n_features)
         if contrast is None:
-            extremeness = _extremeness(self.t, self.alternative)
-            usable = ~np.isnan(extremeness).all(axis=1)
-            filled = np.where(np.isnan(extremeness), -np.inf, extremeness)
-            chosen = np.argmax(filled, axis=1)
+            chosen, adjusted = _feature_test(self.t, self.p_value, self.alternative)
             rows = np.arange(n_features)
-            p_value = np.where(usable, self.p_value[rows, chosen], np.nan)
+            # A feature is missing in every contrast or in none.
+            missing = np.isnan(self.t[:, 0])
             return Table(
                 {
                     "feature_id": ids,
                     "contrast": text_column(
-                        [self.names[j] if ok else None for j, ok in zip(chosen, usable)]
+                        [
+                            None if gone else self.names[j]
+                            for j, gone in zip(chosen, missing)
+                        ]
                     ),
-                    "t": np.where(usable, self.t[rows, chosen], np.nan),
-                    "p_value": p_value,
-                    "p_value_error": np.where(
-                        usable, self.p_value_error[rows, chosen], np.nan
-                    ),
-                    "adjusted_p_value": np.asarray(
-                        adjust_p_values(p_value, "bh"), dtype=np.float64
-                    ),
+                    "estimate": self.estimate[rows, chosen],
+                    "standard_error": self.standard_error[rows, chosen],
+                    "t": self.t[rows, chosen],
+                    "p_value": self.p_value[rows, chosen],
+                    "p_value_error": self.p_value_error[rows, chosen],
+                    "adjusted_p_value": adjusted,
                 }
             )
         j = coefficient_position(contrast, self.names)
@@ -355,8 +387,8 @@ class MultipleContrastTest:
         )
 
     def __repr__(self) -> str:
-        overall = self.table()["adjusted_p_value"]
-        called = int(np.count_nonzero(overall < 0.05))
+        _, adjusted = _feature_test(self.t, self.p_value, self.alternative)
+        called = int(np.count_nonzero(adjusted < 0.05))
         # 1 - p of a p-value near 1 is known only to the rounding of p.
         smaller = np.minimum(self.p_value, 1.0 - self.p_value)
         allowed = self.relative_error * smaller + _EPS * self.p_value
@@ -375,16 +407,15 @@ def _extremeness(t: FloatArray, alternative: str) -> FloatArray:
     return t if alternative == "greater" else -t
 
 
-def _named_rows(weights: Any) -> list[str] | None:
-    """The estimate names that weights name their rows by, or None for weights read
-    in order."""
-    if is_named_contrasts(weights):
-        return [str(name) for name in weights.columns]
-    if is_pandas(weights):
-        index = list(weights.index)
-        if index and all(isinstance(name, str) for name in index):
-            return index
-    return None
+def _feature_test(
+    t: FloatArray, p_value: FloatArray, alternative: str
+) -> tuple[np.ndarray, FloatArray]:
+    """Each feature's most extreme contrast, whose p-value is the feature's max-t
+    p-value, and Benjamini and Hochberg's adjustment of these over the features; a
+    missing feature, NaN throughout, keeps NaN."""
+    chosen = np.argmax(_extremeness(t, alternative), axis=1)
+    p_feature = p_value[np.arange(t.shape[0]), chosen]
+    return chosen, np.asarray(adjust_p_values(p_feature, "bh"), dtype=np.float64)
 
 
 def _contrast_weights(
@@ -399,40 +430,13 @@ def _contrast_weights(
         names = checked_names(estimate_names, n_estimates, "estimate_names")
     if contrasts is None:
         return np.eye(n_estimates), names, names
-    reject_masked(contrasts, "contrasts")
-    if isinstance(contrasts, Mapping) and not is_named_contrasts(contrasts):
-        parts = list(contrasts.values())
-    else:
-        parts = [contrasts]
-    for part in parts:
-        rows = _named_rows(part)
-        if rows is None:
-            continue
-        if estimate_names is None:
-            raise ValueError(
-                "the contrasts name the estimates they weigh "
-                f"({quoted(rows)}), so estimate_names must name the estimates, in the "
-                "order of their columns, for the contrasts to be matched by name"
-            )
-        if sorted(rows) != sorted(names):
-            missing = [name for name in names if name not in rows]
-            unexpected = [name for name in rows if name not in names]
-            problems = []
-            if missing:
-                problems.append(f"they do not weigh {quoted(missing)}")
-            if unexpected:
-                hinted = [
-                    repr(name) + close_matches(name, missing) for name in unexpected
-                ]
-                which = "which is" if len(unexpected) == 1 else "which are"
-                problems.append(
-                    f"they weigh {listing(hinted)}, {which} not among estimate_names"
-                )
-            raise ValueError(
-                f"the contrasts must weigh exactly the estimates of estimate_names "
-                f"({quoted(list(names))}), in any order, but {'; '.join(problems)}"
-            )
-    matrix, contrast_names = contrast_matrix(contrasts, None, names)
+    matrix, contrast_names = contrast_matrix(
+        contrasts,
+        None,
+        names,
+        target="the estimates",
+        remedy="name the estimates with estimate_names, in the order of their columns",
+    )
     zero = np.flatnonzero(~matrix.any(axis=0))
     if zero.size:
         raise ValueError(
@@ -442,13 +446,30 @@ def _contrast_weights(
     return matrix, contrast_names, names
 
 
+def _fit_inputs(
+    moderated: ModeratedFit,
+) -> tuple[FloatArray, FloatArray, FloatArray, tuple[str, ...]]:
+    """The coefficients of a moderated fit, their covariances (the posterior variance
+    times the unscaled covariance of each feature, or of every feature), the df of
+    its moderated t-statistics and the coefficient names."""
+    fit = moderated.fit
+    if not fit.exact_standard_errors:
+        raise ValueError(
+            "the fit has limma's approximate standard errors of contrasts, from "
+            "contrasts_fit(method='limma') or limma_voom's "
+            "contrast_standard_errors='limma', which give no covariance of the "
+            "contrasts; test a fit with exact standard errors, the default"
+        )
+    per_feature = fit.cov_coefficients_per_feature
+    unscaled = fit.cov_coefficients if per_feature is None else per_feature
+    covariances = moderated.posterior_variance[:, None, None] * unscaled
+    return fit.coefficients, covariances, moderated.df_total, fit.coefficient_names
+
+
 def _feature_df(df: Any, n_features: int) -> FloatArray:
-    if isinstance(df, bool | np.bool_):
-        raise TypeError("df must be a number or one number per feature, got bool")
-    values = unmasked_array(df, "df", missing="NaN")
-    if values.dtype.kind not in "iuf":
-        raise TypeError(f"df must hold numbers, got an array of dtype {values.dtype}")
-    values = np.asarray(values, dtype=np.float64)
+    values = real_array(
+        unmasked_array(df, "df", missing="NaN"), "df", boolean=False, objects=False
+    )
     if values.ndim > 1:
         raise ValueError(
             "df must be one number or one per feature: the multivariate t distribution "
@@ -472,15 +493,15 @@ def _feature_df(df: Any, n_features: int) -> FloatArray:
 
 
 def multiple_contrast_test(
-    estimates: npt.ArrayLike,
-    covariances: npt.ArrayLike,
+    estimates: npt.ArrayLike | ModeratedFit,
+    covariances: npt.ArrayLike | None = None,
     contrasts: Any = None,
     *,
-    df: npt.ArrayLike,
+    df: npt.ArrayLike | None = None,
     estimate_names: Sequence[str] | None = None,
     alternative: str = "two-sided",
     relative_error: float = 0.01,
-    rng: Any = None,
+    rng: np.random.Generator | int | None = None,
     n_threads: int | None = None,
 ) -> MultipleContrastTest:
     """Test several contrasts of every feature, with one error rate per feature.
@@ -493,31 +514,36 @@ def multiple_contrast_test(
     C' V C (:func:`~cytepool.stats.multivariate_t.multivariate_t_cdf`), as multcomp's
     ``summary(glht(parm(b, V, df), linfct = t(C)))``. With :func:`dunnett_contrasts`
     this is Dunnett's test of each dose against the vehicle; with
-    :func:`williams_contrasts` and ``alternative="greater"`` (or ``"less"``), the
-    Williams-type test of a change that grows in dose order.
-    https://docs.nygen.io/CytePool/statistics/multiple-testing#correlated-tests
+    :func:`williams_contrasts`, the Williams-type test of a change that grows in dose
+    order. https://docs.nygen.io/CytePool/statistics/multiple-testing#correlated-tests
     explains the tests.
 
-    Contrasts that name the estimates they weigh, such as those of
-    :func:`dunnett_contrasts` and :func:`williams_contrasts`, are matched to
-    ``estimate_names`` by name, never by position; other weights are taken in the
-    order of the estimates. A feature with a missing or infinite estimate or
-    covariance, or a contrast of zero variance, gets NaN for every contrast.
+    A :class:`~cytepool.stats.empirical_bayes.ModeratedFit`, such as
+    ``limma_voom(...).fit(group).moderated``, gives everything but the contrasts:
+    its coefficients (or contrasts), their covariance, the posterior variance times
+    the fit's unscaled covariance, the df of its moderated t-statistics and its
+    coefficient names. Contrasts that name the estimates they weigh, such as those of
+    :func:`dunnett_contrasts` and :func:`williams_contrasts`, are matched to the
+    estimate names by name, never by position; other weights are taken in the order
+    of the estimates. A feature with a missing or infinite estimate or covariance, or
+    a contrast of zero variance, gets NaN for every contrast.
 
     Args:
-        estimates: ``(n_features, n_estimates)`` estimates, such as group means or
-            the coefficients of a fit, or ``(n_estimates,)`` for one feature.
-        covariances: Their covariance matrices, ``(n_features, n_estimates,
-            n_estimates)``, or one ``(n_estimates, n_estimates)`` matrix for every
-            feature; positive semidefinite.
+        estimates: A ``ModeratedFit``; or ``(n_features, n_estimates)`` estimates,
+            such as group means or the coefficients of a fit, or ``(n_estimates,)``
+            for one feature, with ``covariances`` and ``df``.
+        covariances: The covariance matrices of the estimates, ``(n_features,
+            n_estimates, n_estimates)``, or one ``(n_estimates, n_estimates)`` matrix
+            for every feature; symmetric and positive semidefinite. Left out with a
+            ``ModeratedFit``.
         contrasts: The contrasts to test: a :class:`~cytepool.design.Contrasts`, a
             mapping of name to weights, or a ``(n_estimates, n_contrasts)`` matrix;
-            None tests the estimates themselves.
+            None tests the estimates themselves, such as the contrasts of a fit.
         df: Degrees of freedom of the t-statistics: one number, or one per feature,
             positive; ``np.inf`` for z-tests. Need not be integers, as moderated
-            degrees of freedom are not.
+            degrees of freedom are not. Left out with a ``ModeratedFit``.
         estimate_names: The names of the estimates, in order, which named contrasts
-            are matched to; required by them.
+            are matched to; required by them. Left out with a ``ModeratedFit``.
         alternative: ``"two-sided"``, ``"greater"`` (the contrasts are larger than
             0) or ``"less"``.
         relative_error: The largest standard error of the smaller of each adjusted
@@ -533,28 +559,65 @@ def multiple_contrast_test(
 
     Raises:
         ValueError: If the shapes disagree, named contrasts do not weigh exactly the
-            estimates of ``estimate_names`` or come without them, a contrast is all
-            zero, ``df`` is not positive or is not one number per feature, the
-            contrasts of a feature have a covariance that is not positive
-            semidefinite, ``alternative`` is unknown, or ``relative_error`` is not
-            between 0 and 1.
-        TypeError: If an argument has the wrong type or is a numpy masked array.
+            estimates or come without their names, a contrast is all zero, ``df``
+            is not positive or is not one number per feature, the covariance of a
+            feature is not symmetric or gives its contrasts a covariance that is not
+            positive semidefinite, ``alternative`` is unknown, ``relative_error`` is
+            not between 0 and 1, a ``ModeratedFit`` comes with ``covariances``,
+            ``df`` or ``estimate_names``, or its fit has limma's approximate
+            standard errors of contrasts.
+        TypeError: If ``covariances`` or ``df`` is missing with estimates, an
+            argument has the wrong type or is a numpy masked array.
 
     Example:
+        Dunnett's test of group means, with the covariance of the means of a one-way
+        model: the pooled variance over each group's replicates, on N - K degrees
+        of freedom (moderated ones need not be integers).
+
         >>> import numpy as np
-        >>> sizes = {"vehicle": 4, "low": 4, "high": 4}
+        >>> groups = ["vehicle", "low", "high"]
+        >>> replicates = np.array([4, 4, 4])
         >>> means = np.array([[5.0, 5.2, 6.1]])
-        >>> covariance = np.diag([0.05, 0.05, 0.05])
+        >>> pooled_variance = 0.2
         >>> test = multiple_contrast_test(
-        ...     means, covariance, dunnett_contrasts(sizes), df=9.5,
-        ...     estimate_names=list(sizes))
+        ...     means, pooled_variance * np.diag(1 / replicates),
+        ...     dunnett_contrasts(groups), df=replicates.sum() - replicates.size,
+        ...     estimate_names=groups)
         >>> test.p_value[0].round(4).tolist()  # low and high against the vehicle
-        [0.7584, 0.0117]
+        [0.7587, 0.0127]
     """
-    b = unmasked_array(estimates, "estimates", missing="NaN")
-    if b.dtype.kind not in "biuf":
-        raise TypeError(f"estimates must hold numbers, got an array of dtype {b.dtype}")
-    b = np.asarray(b, dtype=np.float64)
+    if isinstance(estimates, ModeratedFit):
+        given = [
+            name
+            for name, value in (
+                ("covariances", covariances),
+                ("df", df),
+                ("estimate_names", estimate_names),
+            )
+            if value is not None
+        ]
+        if given:
+            raise ValueError(
+                "a ModeratedFit gives the covariances, df and names of its "
+                f"coefficients, so leave out {listing(given)}; pass the contrasts by "
+                "keyword, contrasts=..."
+            )
+        estimates, covariances, df, estimate_names = _fit_inputs(estimates)
+    elif covariances is None or df is None:
+        missing = [
+            name
+            for name, value in (("covariances", covariances), ("df", df))
+            if value is None
+        ]
+        raise TypeError(
+            f"multiple_contrast_test needs {listing(missing)} with estimates; a "
+            "ModeratedFit in place of the estimates gives them itself"
+        )
+    b = real_array(
+        unmasked_array(estimates, "estimates", missing="NaN"),
+        "estimates",
+        objects=False,
+    )
     if b.ndim == 1:
         b = b[np.newaxis, :]
     if b.ndim != 2 or b.shape[1] == 0:
@@ -563,12 +626,11 @@ def multiple_contrast_test(
             f"got {np.shape(estimates)}"
         )
     n_features, n_estimates = b.shape
-    v = unmasked_array(covariances, "covariances", missing="NaN")
-    if v.dtype.kind not in "biuf":
-        raise TypeError(
-            f"covariances must hold numbers, got an array of dtype {v.dtype}"
-        )
-    v = np.asarray(v, dtype=np.float64)
+    v = real_array(
+        unmasked_array(covariances, "covariances", missing="NaN"),
+        "covariances",
+        objects=False,
+    )
     if v.shape not in (
         (n_estimates, n_estimates),
         (n_features, n_estimates, n_estimates),
@@ -578,6 +640,7 @@ def multiple_contrast_test(
             f"({n_features}, {n_estimates}, {n_estimates}) for estimates of shape "
             f"{b.shape}, got {v.shape}"
         )
+    _check_symmetric(v)
     matrix, names, estimate_labels = _contrast_weights(
         contrasts, estimate_names, n_estimates
     )
@@ -585,24 +648,22 @@ def multiple_contrast_test(
     feature_df = _feature_df(df, n_features)
     estimate = b @ matrix
     covariance = np.einsum("ia,...ij,jb->...ab", matrix, v, matrix)
+    covariance = 0.5 * (covariance + np.swapaxes(covariance, -1, -2))
     covariance = np.broadcast_to(covariance, (n_features, *covariance.shape[-2:]))
     variance = np.diagonal(covariance, axis1=1, axis2=2)
+    if v.ndim == 2:
+        finite_covariance = np.full(n_features, np.isfinite(v).all())
+    else:
+        finite_covariance = np.isfinite(v.reshape(n_features, -1)).all(axis=1)
+    tested = np.isfinite(b).all(axis=1) & finite_covariance & ~np.isnan(feature_df)
+    _check_variances(variance, v, matrix, tested, names)
+    complete = tested & (variance > 0.0).all(axis=1)
     with np.errstate(invalid="ignore", divide="ignore"):
         standard_error = np.sqrt(variance)
         t = estimate / standard_error
         correlation = covariance / (
             standard_error[:, :, None] * standard_error[:, None, :]
         )
-    if v.ndim == 2:
-        finite_covariance = np.full(n_features, np.isfinite(v).all())
-    else:
-        finite_covariance = np.isfinite(v.reshape(n_features, -1)).all(axis=1)
-    complete = (
-        np.isfinite(b).all(axis=1)
-        & finite_covariance
-        & ~np.isnan(feature_df)
-        & (variance > 0.0).all(axis=1)
-    )
     _check_positive_semidefinite(correlation, complete)
     nan = ~complete
     estimate[nan] = np.nan
@@ -610,24 +671,20 @@ def multiple_contrast_test(
     t = np.where(nan[:, None], np.nan, t)
     correlation = np.where(nan[:, None, None], np.nan, correlation)
     m = matrix.shape[1]
-    if side == "two-sided":
-        thresholds, two_sided = np.abs(t), True
-    else:
-        thresholds, two_sided = (t if side == "greater" else -t), False
-    upper = np.repeat(thresholds[:, :, None], m, axis=2)
+    extremeness = _extremeness(t, side)
     with thread_limit(n_threads):
         probabilities = multivariate_t_cdf(
-            upper,
+            np.repeat(extremeness[:, :, None], m, axis=2),
             correlation[:, None, :, :],
             feature_df[:, None],
-            two_sided=two_sided,
+            two_sided=side == "two-sided",
             relative_error=relative_error,
             rng=rng,
         )
     p_value, p_value_error = _monotone(
         np.asarray(probabilities.complement).reshape(n_features, m),
         np.asarray(probabilities.error).reshape(n_features, m),
-        _extremeness(t, side),
+        extremeness,
     )
     return MultipleContrastTest(
         names=names,
@@ -638,10 +695,53 @@ def multiple_contrast_test(
         t=read_only(np.ascontiguousarray(t)),
         p_value=read_only(p_value),
         p_value_error=read_only(p_value_error),
+        correlation=read_only(np.ascontiguousarray(correlation)),
         df=read_only(feature_df),
         alternative=side,
         relative_error=float(relative_error),
     )
+
+
+def _check_symmetric(v: FloatArray) -> None:
+    """Refuse a covariance matrix that is not symmetric, relative to its largest
+    variance; a matrix with a missing value is not checked."""
+    stack = v.reshape(-1, *v.shape[-2:])
+    with np.errstate(invalid="ignore"):
+        asymmetry = np.abs(stack - stack.transpose(0, 2, 1)).max(axis=(1, 2))
+    scale = np.abs(np.diagonal(stack, axis1=1, axis2=2)).max(axis=1)
+    finite = np.isfinite(stack).all(axis=(1, 2))
+    bad = np.flatnonzero(finite & (asymmetry > _TOLERANCE * scale))
+    if bad.size:
+        which = "" if v.ndim == 2 else f" of feature {bad[0]}"
+        raise ValueError(
+            f"covariances must be symmetric, to {_TOLERANCE:g} of the largest "
+            f"variance; the matrix{which} differs from its transpose by up to "
+            f"{asymmetry[bad[0]]:.3g}, against a largest variance of "
+            f"{scale[bad[0]]:.3g}"
+        )
+
+
+def _check_variances(
+    variance: FloatArray,
+    v: FloatArray,
+    matrix: FloatArray,
+    tested: np.ndarray,
+    names: tuple[str, ...],
+) -> None:
+    """Refuse a covariance that gives a contrast a negative variance, beyond the
+    rounding of its scale, (sum_a |c_a| sqrt(V_aa))^2; a variance of 0 leaves its
+    feature untested."""
+    with np.errstate(invalid="ignore"):
+        scale = (
+            np.sqrt(np.abs(np.diagonal(v, axis1=-2, axis2=-1))) @ np.abs(matrix)
+        ) ** 2
+    negative = tested[:, None] & (variance < -_TOLERANCE * scale)
+    if negative.any():
+        feature, j = np.argwhere(negative)[0]
+        raise ValueError(
+            f"the covariance of feature {feature} is not positive semidefinite: it "
+            f"gives contrast {names[j]!r} the variance {variance[feature, j]:.3g}"
+        )
 
 
 def _check_positive_semidefinite(correlation: FloatArray, complete: np.ndarray) -> None:
@@ -651,9 +751,9 @@ def _check_positive_semidefinite(correlation: FloatArray, complete: np.ndarray) 
     if rows.size == 0:
         return
     stack = correlation[rows]
-    eigenvalues = np.linalg.eigvalsh(0.5 * (stack + stack.transpose(0, 2, 1)))
+    eigenvalues = np.linalg.eigvalsh(stack)
     smallest = eigenvalues[:, 0] / eigenvalues[:, -1]
-    bad = np.flatnonzero(smallest < -_EIGENVALUE_TOLERANCE)
+    bad = np.flatnonzero(smallest < -_TOLERANCE)
     if bad.size:
         feature = int(rows[bad[0]])
         raise ValueError(
