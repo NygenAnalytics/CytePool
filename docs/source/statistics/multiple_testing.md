@@ -56,9 +56,40 @@ $$
 \rho_{jl} = \frac{c_j^\top V c_l}{\sqrt{c_j^\top V c_j \; c_l^\top V c_l}}.
 $$
 
-The single-step adjusted p-value of contrast $j$ is the chance that the largest of the gene's t-statistics is at least as extreme as $t_j$: $P(\max_l |T_l| \ge |t_j|)$ two-sided, with $T$ multivariate t on the gene's degrees of freedom and correlation $\rho$. Calling the contrasts whose adjusted p-values are below $\alpha$ keeps the chance of any false call among the gene's contrasts at $\alpha$. How much this gains over Bonferroni depends on the degrees of freedom: for three contrasts correlated by 0.5, Bonferroni's p-values are 20% larger than the single-step ones at every magnitude with 5 degrees of freedom (42% with eight contrasts), while for z-tests the gap falls from 3.0% at a p-value of 1.4e-3 to 0.11% at 1.1e-7 and 0.01% at 2.4e-10. The gain is largest at the small moderated degrees of freedom that 2 to 4 replicates per dose give.
+The single-step adjusted p-value of contrast $j$ is the chance that the largest of the gene's t-statistics is at least as extreme as $t_j$: $P(\max_l |T_l| \ge |t_j|)$ two-sided, with $T$ multivariate t on the gene's degrees of freedom and correlation $\rho$. Calling the contrasts whose adjusted p-values are below $\alpha$ keeps the chance of any false call among the gene's contrasts at most $\alpha$. Bonferroni's p-values are larger. The table gives how much larger, as a share of the single-step p-value, for Dunnett's contrasts of equal groups (correlated by 0.5) at single-step p-values of 1e-2, 1e-4 and 1e-6, from Dunnett's integral:
 
-{api}`MultipleContrastTest.table` gives two levels. Without a contrast, each gene's test as a whole: its most extreme contrast, whose adjusted p-value is the gene's max-t p-value, and `adjusted_p_value`, Benjamini and Hochberg's adjustment of these over the genes, which calls the genes that respond. With a contrast, its estimate, standard error, t-statistic and `p_value`, adjusted for the gene's contrasts, unlike the p-values of other CytePool tables. To call doses across genes, screen the genes by `adjusted_p_value` first and read the doses of the genes called, the order of the two-stage methods that control the false discovery rate of the genes, such as stageR's [@vandenberge2017].
+| Degrees of freedom | 3 contrasts | 8 contrasts |
+| --- | --- | --- |
+| 5 | 26%, 23%, 22% | 73%, 66%, 65% |
+| 10 | 16%, 10%, 9% | 41%, 29%, 25% |
+| 20 | 11%, 5%, 3% | 27%, 13%, 9% |
+| 40 | 9%, 3%, 1% | 21%, 7%, 3% |
+| Normal (z-tests) | 7%, 1%, 0.2% | 15%, 3%, 0.6% |
+
+The gain falls as the degrees of freedom grow and as the p-values shrink. The degrees of freedom of a moderated test, `df_total` of the fit, add the prior's to the residual ones: in the example below, 3 replicates of 5 groups leave 10 residual degrees of freedom, and the median `df_total` is 32.5.
+
+The example tests each dose against the vehicle in every gene of one cell type of a simulated dose series ([Simulated dose series with known curves](dose_response.md#simulated-dose-series)). The design has one coefficient per dose group, `~ 0 + dose_group`, and {api}`limma_voom` fits the Dunnett contrasts of the groups; {api}`multiple_contrast_test` takes the moderated fit and tests its contrasts as they are, with their covariance in each gene and the fit's degrees of freedom:
+
+```python
+from cytepool import Design, limma_voom, simulate_dose_series
+from cytepool.stats.multiple_contrasts import dunnett_contrasts, multiple_contrast_test
+
+cube, truth = simulate_dose_series([0, 1, 3, 10, 30], replicates=3, n_genes=2000, rng=3)
+design = Design(cube.samples, "~ 0 + dose_group")
+result = limma_voom(cube, design, contrasts=dunnett_contrasts(design.columns))
+cell_type = result.fit("cell_type_1")
+test = multiple_contrast_test(cell_type.moderated, rng=1)
+test.table(feature_ids=cell_type.features["feature_id"]).sort("p_value")
+# The first rows, some of the columns:
+# feature_id  contrast                     estimate  standard_error      t  p_value  adjusted_p_value
+# gene_0344   dose_groupd4 - dose_groupd0      2.47            0.27   9.15  6.5e-10           7.0e-07
+# gene_1499   dose_groupd4 - dose_groupd0      2.11            0.24   8.69  2.2e-09           1.2e-06
+# gene_1844   dose_groupd4 - dose_groupd0     -2.50            0.31  -7.98  1.5e-08           5.4e-06
+```
+
+Each row is a gene's test as a whole: `contrast` is its most extreme contrast, here the highest dose, with its estimate and standard error; `p_value` is that contrast's p-value adjusted for the gene's four contrasts, the gene's max-t p-value; and `adjusted_p_value` is Benjamini and Hochberg's adjustment of these over the genes, below 0.05 for 57 of the 1,092 genes tested. The first group of {api}`dunnett_contrasts`, here `dose_groupd0`, is the control. In a design with an intercept, such as `~ dose_group`, the coefficients of the doses are already differences from the vehicle: test the fit as it is, without contrasts. Group means and their covariance work too, as the example of {api}`multiple_contrast_test` shows for a one-way design. A fit whose contrasts carry limma's approximate standard errors (`contrast_standard_errors="limma"`) holds no covariance of its contrasts and is refused.
+
+{api}`MultipleContrastTest.table` gives two levels. Without a contrast, each gene's test as a whole, as above, which calls the genes that respond. With a contrast, its estimate, standard error, t-statistic and `p_value`, adjusted for the gene's contrasts, unlike the p-values of other CytePool tables. To call doses across genes, screen the genes by `adjusted_p_value` at a false discovery rate $\alpha$ first; then, in the $R$ genes called of the $G$ tested, call the contrasts whose `p_value` is below $\alpha R / G$. This is the confirmation level of stageR's two-stage rule, which keeps the overall false discovery rate, the share of called genes with any false call, a gene without a change or a dose named wrongly, at $\alpha$ [@vandenberge2017]. Each called gene has at least one such contrast, its most extreme, since Benjamini and Hochberg's rule calls a gene whose p-value is below $\alpha R / G$.
 
 (dunnett-and-williams-contrasts)=
 ### Dunnett's and Williams-type contrasts
@@ -66,45 +97,30 @@ The single-step adjusted p-value of contrast $j$ is the chance that the largest 
 | Family | Contrasts | Alternative | Function |
 | --- | --- | --- | --- |
 | Dunnett's [@dunnett1955] | each dose minus the vehicle | two-sided, or one-sided when the direction is known | {api}`dunnett_contrasts` |
-| Williams-type [@bretz2006] | the mean of the $j$ highest doses, weighted by their group sizes, minus the vehicle, for $j = 1, \dots, K-1$ | one-sided, in the expected direction | {api}`williams_contrasts` |
+| Williams-type [@bretz2006] | the mean of the $j$ highest doses, weighted by their group sizes, minus the vehicle, for $j = 1, \dots, K-1$ | two-sided for genes, whose direction is not known; one-sided when it is | {api}`williams_contrasts` |
 
-Williams-type contrasts suit responses that grow in dose order: the largest of their t-statistics says how many of the top doses have changed, and pooling the doses gains power when several have. They differ from Williams' trend test, which compares each dose with the vehicle after fitting means that change in dose order, and which @bretz2006 extends. Both builders return a {api}`Contrasts` whose columns are the groups, matched by name to the estimates.
+Williams-type contrasts suit responses that grow in dose order: pooling the top doses gains power when several have changed. A two-sided test covers rises and falls at one error rate, where testing `"greater"` and `"less"` separately and joining the calls doubles it. A significant Williams-type contrast means that the doses it pools differ from the vehicle on average, not that each of them does, and the most extreme contrast is the pooling that best matches the observed change, not an estimate of how many doses changed: with 3 replicates and every dose changed in proportion to its rank (0, 1, 2 and 3 residual standard deviations), the highest dose alone had the largest t-statistic in 60% of 2,000 simulated genes, and the pooling of all three doses in 2%. Which doses changed is the question of Dunnett's contrasts. Williams-type contrasts differ from Williams' trend test [@williams1971], which compares each dose with the vehicle after fitting means that change in dose order, and which @bretz2006 extends. Both builders return a {api}`Contrasts` whose columns are the groups, matched by name to the estimates; {api}`williams_contrasts` takes the size of each group, in dose order with the vehicle first.
 
 (multivariate-t-probabilities)=
 ### Multivariate t probabilities
 
 {api}`multivariate_t_cdf` computes the probability that every coordinate of a multivariate t vector stays within its limit, and the complement, the adjusted p-value, as a {api}`MultivariateTProbability`; {api}`multivariate_t_quantile` computes the critical value of a max-t test, as a {api}`MultivariateTQuantile`. The complement is a sum over the coordinates of the chance that each is the first to exceed its limit; each term is computed by conditioning on its exceedance, with randomized lattice points [@genz1992; @genz2002], which keeps the relative error bounded however small the p-value [@owen2019]. Two contrasts, as the vehicle and two doses give, are computed without random numbers. The API reference of {api}`cytepool.stats.multivariate_t` gives the method.
 
-Each p-value carries `p_value_error`, its standard error, at most `relative_error` of it (1% by default) at every magnitude. That matters for calls: at a false discovery rate of 5%, the cut-off for the top gene of 20,000 is $0.05/20{,}000 = 2.5 \times 10^{-6}$, which mvtnorm's default absolute error of 1e-3 cannot resolve. A call changes with the seed only for p-values within a few errors of its cut-off, about 2% of it at the default.
+Each p-value carries `p_value_error`, its standard error, at most `relative_error` of it (1% by default) at every magnitude. That matters for calls: at a false discovery rate of 5%, the cut-off for the top gene of 20,000 is $0.05/20{,}000 = 2.5 \times 10^{-6}$, which mvtnorm's default absolute error of 1e-3 cannot resolve. A call changes with the seed only for p-values within a few errors of its cut-off, about 2% of it at the default. A tenfold smaller `relative_error` took about 12 times as long in the benchmark ([Timings](#validation-timings)).
 
-The example tests each dose against the vehicle in every gene of a fit with one coefficient per dose group, whose names follow the dose order given by `levels`:
+Simultaneous confidence intervals of a gene's contrasts take the critical value of its max-t test, from the correlation of its contrasts that the test keeps:
 
 ```python
-from cytepool.design import Design
-from cytepool.stats.empirical_bayes import moderated_statistics
-from cytepool.stats.linear_models import fit_linear_model
-from cytepool.stats.multiple_contrasts import dunnett_contrasts, multiple_contrast_test
+from cytepool.stats.multivariate_t import multivariate_t_quantile
 
-levels = {"dose": ["vehicle", "low", "mid", "high"]}
-design = Design(samples, "~ 0 + dose", levels=levels)
-fit = fit_linear_model(log_expression, design, weights=weights)
-moderated = moderated_statistics(fit)
-covariances = (
-    moderated.posterior_variance[:, None, None] * fit.cov_coefficients_per_feature
+critical = multivariate_t_quantile(
+    0.95, test.correlation, test.df, two_sided=True, rng=2
 )
-test = multiple_contrast_test(
-    fit.coefficients,
-    covariances,
-    dunnett_contrasts(fit.coefficient_names),
-    df=moderated.df_total,
-    estimate_names=fit.coefficient_names,
-    rng=1,
-)
-test.table()  # each gene's test as a whole
-test.table("dosehigh - dosevehicle")  # the highest dose in every gene
+half_width = critical.quantile[:, None] * test.standard_error
+lower, upper = test.estimate - half_width, test.estimate + half_width
 ```
 
-The contrasts are matched to `estimate_names` by name; the first group of `dunnett_contrasts`, here `dosevehicle`, is the control. A fit without weights or missing values keeps one covariance matrix for every gene, `fit.cov_coefficients`, and `fit.cov_coefficients_per_feature` is None; the covariances are then `moderated.posterior_variance[:, None, None] * fit.cov_coefficients`.
+For each gene, all its intervals hold their contrasts with a probability of 95%. For group means, these intervals agree with scipy's `dunnett` to within its own Monte Carlo error.
 
 (multiple-testing-defaults)=
 ## Defaults and choices
@@ -113,9 +129,9 @@ The contrasts are matched to `estimate_names` by name; the first group of `dunne
 - **The family.** Each cell type and contrast by default; `adjust_across_groups=True` adds a family of every cell type ([above](#adjusting-across-cell-types)). {api}`adjust_p_values` adjusts all the p-values it is given as one family, or each slice along `axis`, such as each contrast of a matrix of genes by contrasts.
 - **Families larger than observed.** `n` declares a family larger than the p-values given, as R's `p.adjust` does: the missing p-values count as larger than every one given for Bonferroni's and Holm's methods, and as 1 for the others.
 - **Missing p-values**, marked NaN, stay NaN and do not count as tests.
-- **The contrasts of a gene.** {api}`dunnett_contrasts` for each dose against the vehicle; {api}`williams_contrasts` with `alternative="greater"` or `"less"` when the response grows in dose order; an F-test (`f_tests`) when any change matters and which one does not.
-- **The degrees of freedom.** One value per gene, the moderated `df_total` of a fit. The multivariate t takes one value per gene, so where each contrast has its own, as in dream's tests, the smallest of a gene's is conservative. `np.inf` gives z-tests.
-- **The accuracy of p-values.** `relative_error=0.01`, a standard error of at most 1% of each p-value; the cost grows as its inverse square, and smaller values suit p-values near a cut-off.
+- **The contrasts of a gene.** {api}`dunnett_contrasts` for each dose against the vehicle; {api}`williams_contrasts` when the response grows in dose order, two-sided for genes, whose direction is not known, which tests rises and falls at one error rate, and one-sided (`alternative="greater"` or `"less"`) when the direction is known; an F-test (`f_tests`) when any change matters and which one does not.
+- **The degrees of freedom.** A {api}`ModeratedFit` gives its `df_total`; with estimates, one value per gene. The multivariate t takes one value per gene, so where each contrast has its own, as in dream's tests, the smallest of a gene's is conservative. `np.inf` gives z-tests.
+- **The accuracy of p-values.** `relative_error=0.01`, a standard error of at most 1% of each p-value. A tenfold smaller value took about 12 times as long in the benchmark ([Timings](#validation-timings)), and suits p-values near a cut-off.
 - **The estimate of $\pi_0$.** The smoother over qvalue's grid of $\lambda$ by default. One value of `lambdas`, such as 0.5, suits a few dozen p-values, on which the smoother, which reads the largest $\lambda$, often gives an estimate of 0 or 1; `method="bootstrap"`, `smooth_df` and `smooth_log` are qvalue's options.
 
 (multiple-testing-limits)=
@@ -129,7 +145,7 @@ The contrasts are matched to `estimate_names` by name; the first group of `dunne
 
 {api}`multiple_contrast_test` follows multcomp's `glht` with `parm()`, and differs from it in these:
 
-- **Single-step adjustment only.** No step-down adjustments and no simultaneous confidence intervals; {api}`multivariate_t_quantile` gives the critical value that an interval needs.
+- **Single-step adjustment only.** No step-down adjustments; simultaneous confidence intervals come from {api}`multivariate_t_quantile` and the correlation the test keeps ([above](#multivariate-t-probabilities)), where multcomp's `confint` computes them.
 - **Degrees of freedom that are not integers**, such as moderated ones, are accepted, where mvtnorm refuses them; `df` has no default, where multcomp's 0 gives z-tests.
 - **Names of Williams-type contrasts** say which doses are pooled, such as "mid to high - vehicle", where multcomp writes "C 2"; with two groups they are Dunnett's one contrast, which multcomp refuses.
 
@@ -146,7 +162,8 @@ Further reading:
 - @simes1986 introduced an improved Bonferroni test of a set of hypotheses, and @hochberg1988 and @hommel1988 procedures that build on it.
 - @benjamini1995 introduced the false discovery rate and the procedure that controls it, and @benjamini2001 showed that it holds under positive dependence and gave a procedure for any dependence.
 - @storey2002 estimated the proportion of true nulls from the p-values above a threshold, and @storey2003 introduced the q-value for genome-wide studies, with that estimate smoothed over thresholds.
-- @dunnett1955 introduced the comparison of several treatments with a control at one error rate, @bretz2006 the Williams-type contrasts of unbalanced designs, and @hothorn2008 single-step tests of general linear hypotheses of any parametric model.
+- @dunnett1955 introduced the comparison of several treatments with a control at one error rate, @williams1971 a test of doses whose means change in dose order against a zero-dose control, @bretz2006 the Williams-type contrasts of unbalanced designs, and @hothorn2008 single-step tests of general linear hypotheses of any parametric model.
+- @vandenberge2017 introduced stageR's two-stage rule, which screens the genes and then confirms the hypotheses of each gene called.
 - @genz2002 compared methods for multivariate t probabilities, and @owen2019 showed why conditioning on each rare event keeps the relative error of a union bounded.
 
 The foundations are in place: a cube of profiles, a design fitted to every gene, moderated tests and their adjustment. [Normalization and filtering](normalization_and_filtering.md) begins the part on differential expression, which applies them to counts.

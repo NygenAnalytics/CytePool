@@ -48,9 +48,9 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Dose group.** The samples given one dose, the vehicle's included; in a cell type, the samples of a dose group that pass the cell type's filter of samples. [What a number of dose groups supports](../statistics/dose_response.md#dose-groups)
 
-**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
-
 **Dunnett's test.** The comparison of each treatment or dose with the control at one family-wise error rate, which refers the largest of the contrasts' correlated t-statistics to the multivariate t distribution. [Dunnett's and Williams-type contrasts](../statistics/multiple_testing.md#dunnett-and-williams-contrasts)
+
+**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
