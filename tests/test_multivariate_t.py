@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy import special
 
 from cytepool._jit import thread_limit
 from cytepool.stats import multivariate_t
@@ -203,6 +204,70 @@ def dunnett_complement(k: int, rho: float, c: float) -> float:
         value = 1.0 if out >= 1.0 else -math.expm1(k * math.log1p(-out))
         total += w * math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi) * value
     return total
+
+
+def product_box(lam, limits, df, two_sided) -> tuple[float, float]:
+    """The probability and the complement of the box T_i <= c_i, or |T_i| <= c_i,
+    for the correlation lam_i lam_j (i != j), each computed on its own side: Dunnett's
+    (1955) integral over the shared normal factor x by 400-node Gauss-Legendre, and,
+    for finite df, over S by 200-node Gauss-Legendre on (0, 4] with its density
+    (df S^2 is chi-squared on df degrees of freedom); scipy's normal tails."""
+    lam = np.asarray(lam, float)[:, None]
+    limits = np.asarray(limits, float)[:, None]
+    spread = np.sqrt(1.0 - lam**2)
+    nodes, weights = np.polynomial.legendre.leggauss(400)
+
+    def given(s: float) -> tuple[float, float]:
+        half = 12.0 + float(np.max(np.abs(lam * limits))) * s
+        x = half * nodes
+        w = half * weights * np.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+        above = (limits * s - lam * x) / spread
+        out = special.ndtr(-above)
+        inside = special.ndtr(above)
+        if two_sided:
+            below = (-limits * s - lam * x) / spread
+            out = out + special.ndtr(below)
+            # Both ends on one side of 0: their difference from the near tails.
+            inside = np.where(
+                below > 0.0,
+                special.ndtr(-below) - special.ndtr(-above),
+                special.ndtr(above) - special.ndtr(below),
+            )
+        with np.errstate(divide="ignore"):
+            log_inside = np.log(inside).sum(axis=0)
+            log_kept = np.log1p(-np.minimum(out, 1.0)).sum(axis=0)
+        return float(w @ np.exp(log_inside)), float(w @ -np.expm1(log_kept))
+
+    if math.isinf(df):
+        return given(1.0)
+    s_nodes, s_weights = np.polynomial.legendre.leggauss(200)
+    log_norm = (df / 2.0) * math.log(df / 2.0) - math.lgamma(df / 2.0) + math.log(2.0)
+    probability = complement = 0.0
+    for s, w in zip(2.0 + 2.0 * s_nodes, 2.0 * s_weights):
+        density = math.exp(log_norm + (df - 1.0) * math.log(s) - 0.5 * df * s * s)
+        inside, outside = given(s)
+        probability += w * density * inside
+        complement += w * density * outside
+    return probability, complement
+
+
+@pytest.mark.parametrize("df", [math.inf, 6.5])
+@pytest.mark.parametrize("two_sided", [True, False])
+def test_distinct_limits_match_dunnetts_integral(df, two_sided) -> None:
+    """A limit per coordinate: tails, estimated from the first exceedances, and small
+    boxes, estimated directly by conditioning on the coordinate with the smallest
+    probability of its interval, which is not the first."""
+    lam = np.array([0.45, 0.8, 0.3, 0.65, 0.55])
+    tails = [3.1, 1.7, 2.6, 2.2, 3.8]
+    small = [0.6, 0.15, 0.3, 0.45, 0.2] if two_sided else [-1.2, -2.3, -0.9, -1.6, -1.1]
+    for seed, limits in enumerate((tails, small)):
+        result = multivariate_t_cdf(
+            limits, product_correlation(lam), df, two_sided=two_sided, rng=seed
+        )
+        probability, complement = product_box(lam, limits, df, two_sided)
+        smaller = min(probability, complement)
+        assert smaller < 0.25
+        within_errors(min(result.probability, result.complement), smaller, result.error)
 
 
 @pytest.mark.parametrize("rho", [0.5, 0.9])
@@ -515,6 +580,49 @@ def test_missing_values_give_nan_for_their_problem_only() -> None:
     assert math.isnan(nan_correlation.probability)
 
 
+def test_infinite_limits_drop_their_coordinates_from_any_correlation() -> None:
+    """The coordinates kept read their own rows and columns of a general correlation,
+    whose sub-matrices all differ."""
+    correlation = np.array(
+        [
+            [1.0, 0.1, 0.7, -0.3],
+            [0.1, 1.0, 0.2, 0.5],
+            [0.7, 0.2, 1.0, 0.4],
+            [-0.3, 0.5, 0.4, 1.0],
+        ]
+    )
+    for kept in ([1, 3], [0, 2, 3]):
+        upper = np.full(4, np.inf)
+        upper[kept] = 2.2
+        # At relative_error 1e-3 a wrong sub-matrix stands out: the leading block in
+        # place of rows and columns 0, 2 and 3 moves the complement by 70 errors.
+        options = {"two_sided": True, "relative_error": 1e-3}
+        full = multivariate_t_cdf(upper, correlation, 7.0, rng=1, **options)
+        sub = multivariate_t_cdf(
+            [2.2] * len(kept), correlation[np.ix_(kept, kept)], 7.0, rng=2, **options
+        )
+        if len(kept) == 2:  # the same quadrature
+            assert full.complement == sub.complement
+        else:
+            within_errors(
+                full.complement, sub.complement, math.hypot(full.error, sub.error)
+            )
+
+
+def test_a_coordinate_fixed_by_the_conditioning_one() -> None:
+    """T_2 = -T_1 and T_3 independent of both: the one-sided box is |T_1| <= c and
+    T_3 <= c, of probability (1 - 2 Q(c)) (1 - Q(c)) for the normal. Each part
+    integrates exactly, as T_2 is in or out by T_1 alone; at c = 6 the overlaps are
+    rare, and the weights of the steered draws add a variance of their own."""
+    correlation = np.array([[1.0, -1.0, 0.0], [-1.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    for c in (1.0, 2.5, 6.0):
+        result = multivariate_t_cdf([c] * 3, correlation, math.inf, rng=1)
+        tail = normal_tail(c)
+        expected = -math.expm1(math.log1p(-2.0 * tail) + math.log1p(-tail))
+        assert result.complement == pytest.approx(expected, rel=1e-11)
+        within_errors(result.complement, expected, result.error)
+
+
 def test_infinite_limits() -> None:
     correlation = equicorrelated(3, 0.5)
     # An infinite limit drops its coordinate.
@@ -557,23 +665,52 @@ def test_extreme_tails_underflow_to_zero_without_nan() -> None:
     )
     assert np.isfinite(near_normal.complement) and np.isfinite(near_normal.error)
     assert 0.0 < near_normal.complement < 1e-300
+    # Near the smallest subnormal, some conditioning draws underflow; they carry no
+    # measure, and the complement stays below the union bound of its tails, with
+    # rare overlaps (correlation 0.5) and without (0.99).
+    from cytepool.stats.distributions import t_sf
+
+    for rho in (0.5, 0.99):
+        for df in (1e6, math.inf):
+            for c in (38.0, 38.3, 38.45):
+                result = multivariate_t_cdf(
+                    [c] * 3, equicorrelated(3, rho), df, two_sided=True, rng=1
+                )
+                union = 6.0 * float(t_sf(c, df))
+                assert 0.0 <= result.complement <= union * (1 + 1e-3) + 1e-323
+                assert np.isfinite(result.error)
+
+
+def test_a_ray_parallel_to_a_face() -> None:
+    """Along the direction theta = 0, T_2 = 0 at every distance: T_2 <= -1 excludes
+    the whole ray, and -1 <= T_2 <= 1 leaves it to T_1 <= 2, which it meets at
+    radius 2, so that its probability is G(0) - G(2) = 1 - (1 + 4 / 5)^(-5 / 2) at
+    df 5."""
+    loadings = np.eye(2)
+    missed = multivariate_t._ray(
+        0.0, loadings, np.array([-np.inf, -np.inf]), np.array([2.0, -1.0]), 5.0
+    )
+    assert missed == (0.0, 1.0)
+    inside, outside = multivariate_t._ray(
+        0.0, loadings, np.array([-np.inf, -1.0]), np.array([2.0, 1.0]), 5.0
+    )
+    assert inside == pytest.approx(1.0 - 1.8**-2.5, rel=1e-14)
+    assert outside == pytest.approx(1.8**-2.5, rel=1e-14)
 
 
 def test_small_boxes_keep_their_relative_accuracy() -> None:
     """The probability, not only the complement, carries the requested relative error
-    when it is the smaller side: a central box and a tail orthant."""
+    when it is the smaller side: a central box and a tail orthant, against Dunnett's
+    integral (an equicorrelation of 0.5 is the product of sqrt(0.5) and itself)."""
+    lam = np.full(5, math.sqrt(0.5))
     correlation = equicorrelated(5, 0.5)
     central = multivariate_t_cdf([0.1] * 5, correlation, 4.0, two_sided=True, rng=1)
-    assert central.probability < 1e-4
-    assert central.error <= 0.01 * central.probability
     orthant = multivariate_t_cdf([-3.0] * 5, correlation, 4.0, rng=1)
-    assert orthant.probability < 0.01
-    assert orthant.error <= 0.01 * orthant.probability
-    # P(all T_i <= -3) <= P(T_1 <= -3), and at least the independent product.
-    from cytepool.stats.distributions import t_cdf
-
-    single = float(t_cdf(-3.0, 4.0))
-    assert single**5 <= orthant.probability <= single
+    for result, limit, two_sided in ((central, 0.1, True), (orthant, -3.0, False)):
+        reference, _ = product_box(lam, [limit] * 5, 4.0, two_sided)
+        assert reference < 0.01
+        within_errors(result.probability, reference, result.error)
+        assert result.error <= 0.01 * result.probability
 
 
 def test_the_point_limit_is_reported(monkeypatch) -> None:
@@ -729,8 +866,14 @@ def test_quantiles_broadcast_and_give_nan() -> None:
         ),
         (([2.0, 2.0], np.eye(2), 5.0), {"two_sided": 1}, TypeError, "two_sided"),
         (([2.0, 2.0], np.eye(2), 5.0), {"rng": "seed"}, TypeError, "rng"),
-        (([[2.0, 2.0]] * 2, np.eye(2), [5.0, 6.0, 7.0]), {}, ValueError, "broadcast"),
-        ((["a", "b"], np.eye(2), 5.0), {}, TypeError, "real numbers"),
+        (
+            ([[2.0, 2.0]] * 2, np.eye(2), [5.0, 6.0, 7.0]),
+            {},
+            ValueError,
+            r"correlation of shape \(2, 2\), upper of shape \(2, 2\), df of shape",
+        ),
+        ((["a", "b"], np.eye(2), 5.0), {}, TypeError, "upper must hold real numbers"),
+        (([2.0, 2.0], np.eye(2), True), {}, TypeError, "df must hold real numbers"),
     ],
 )
 def test_arguments_are_refused_with_a_fix(arguments, options, error, message) -> None:
@@ -742,6 +885,64 @@ def test_arguments_are_refused_with_a_fix(arguments, options, error, message) ->
 def test_quantile_probabilities_outside_zero_and_one_are_refused(probability) -> None:
     with pytest.raises(ValueError, match="between 0 and 1"):
         multivariate_t_quantile(probability, np.eye(3), 5.0)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "options", "error", "message"),
+    [
+        ((0.95, np.eye(3), 0.0), {}, ValueError, "df must be positive"),
+        ((0.95, np.eye(3), True), {}, TypeError, "df must hold real numbers"),
+        (
+            (0.95, [[1.0, 0.9, -0.9], [0.9, 1.0, 0.9], [-0.9, 0.9, 1.0]], 5.0),
+            {},
+            ValueError,
+            "positive semidefinite",
+        ),
+        ((0.95, [[1.0, 0.5], [0.4, 1.0]], 5.0), {}, ValueError, "symmetric"),
+        ((0.95, np.eye(3), 5.0), {"relative_error": 1.0}, ValueError, "relative_err"),
+        ((0.95, np.eye(3), 5.0), {"two_sided": "yes"}, TypeError, "two_sided"),
+        ((["0.9"], np.eye(3), 5.0), {}, TypeError, "probability must hold real"),
+        (
+            ([0.9, 0.95], np.stack([np.eye(3)] * 3), 5.0),
+            {},
+            ValueError,
+            r"probability of shape \(2,\), correlation of shape \(3, 3, 3\)",
+        ),
+    ],
+)
+def test_quantile_arguments_are_refused(arguments, options, error, message) -> None:
+    with pytest.raises(error, match=message):
+        multivariate_t_quantile(*arguments, **options)
+
+
+def test_quantile_errors_are_honest_and_meet_the_target() -> None:
+    """The quantile's stated error against its actual error over 100 seeds, and at
+    relative_error 1e-3 its error times the slope of the complement, which is the
+    complement's error, within the target. The root is that of Dunnett's integral."""
+    lam = np.full(5, math.sqrt(0.5))
+    correlation = equicorrelated(5, 0.5)
+
+    def complement(q: float) -> float:
+        return product_box(lam, [q] * 5, math.inf, True)[1]
+
+    low, high = 2.0, 3.5
+    for _ in range(60):
+        middle = 0.5 * (low + high)
+        low, high = (middle, high) if complement(middle) > 0.05 else (low, middle)
+    root = 0.5 * (low + high)
+    z = []
+    for seed in range(100):
+        q = multivariate_t_quantile(
+            0.95, correlation, math.inf, two_sided=True, rng=seed
+        )
+        z.append((q.quantile - root) / q.error)
+    low_rms, high_rms = _rms_bounds(100)
+    assert low_rms <= math.sqrt(np.mean(np.square(z))) <= high_rms
+    precise = multivariate_t_quantile(
+        0.95, correlation, math.inf, two_sided=True, relative_error=1e-3, rng=1
+    )
+    slope = (complement(root - 1e-4) - complement(root + 1e-4)) / 2e-4
+    assert precise.error * slope <= 1e-3 * 0.05 * 1.2
 
 
 def test_rng_is_checked_even_without_random_numbers() -> None:

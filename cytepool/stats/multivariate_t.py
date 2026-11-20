@@ -46,13 +46,14 @@ Methods:
     - Rare overlaps. When the earlier coordinates of a part exceed their limits with a
       total chance below 1e-3, given T_r at its threshold, that chance comes from
       draws deep in the tail of Z_r and near the ends of the earlier coordinates'
-      intervals, which few points reach. The part then draws Z_r at the point x^2 of
-      its conditional distribution and each earlier coordinate at the point
-      (1 - cos(pi x)) / 2 of its interval, x the lattice coordinate, with weights 2 x
-      and pi sin(pi x) / 2 of mean 1, and estimates 1 - h_r as the mean of the weights
-      times the chance that an earlier coordinate leaves its interval, whose variance
-      is that of the overlap, not that of the weights (own construction from these
-      standard changes of variable and control variates).
+      intervals, which few points reach. The part then draws each earlier coordinate
+      at the point (1 - cos(pi x)) / 2 of its interval, x the lattice coordinate,
+      which brings draws near both ends, and Z_r at the point x^2 of its conditional
+      distribution, which moves draws towards its threshold, with weights
+      pi sin(pi x) / 2 and 2 x of mean 1, and estimates 1 - h_r as the mean of the
+      weights times the chance that an earlier coordinate leaves its interval, whose
+      variance is that of the overlap, not that of the weights (own construction from
+      these standard changes of variable and control variates).
     - The probability itself, when it is below 1/2. The same estimator conditions on
       the coordinate with the smallest marginal probability of its interval, and
       integrates the others given it. For a one-sided limit below 0, the condition is
@@ -93,12 +94,13 @@ Methods:
     - Quantiles. The equicoordinate quantile solves for the limit at which the
       probability, or the complement for probabilities of at least 1/2, reaches its
       target. It lies between the univariate quantile at the probability and the one
-      that Bonferroni's inequality gives; the root is found by bisection with the
-      shifts and points held fixed, which makes the estimate a smooth function of the
-      limit, until the estimate changes across the bracket by less than 1% of its
-      standard error; points then double while the standard error exceeds its
-      target. The quantile's error is the standard error of the probability over the
-      slope of the estimate across the final bracket.
+      that Bonferroni's inequality gives; the root is found by bisection between these
+      bounds with the shifts and points held fixed, which makes the estimate a smooth
+      function of the limit, until the estimate changes across the bracket by less
+      than 1% of its standard error; while the standard error exceeds its target,
+      points double and the bisection starts again from the bounds. The quantile's
+      error is the standard error of the probability over the slope of the estimate
+      across the final bracket.
 
 References:
     Genz A (1992). Numerical computation of multivariate normal probabilities. Journal
@@ -123,7 +125,7 @@ from numba import prange
 from numpy.typing import ArrayLike, NDArray
 
 from cytepool._jit import by_chunks, jit, jit_numpy_errors
-from cytepool._masked_arrays import read_only, unmasked_array
+from cytepool._masked_arrays import read_only, real_array, unmasked_array
 from cytepool._options import checked_flag, random_generator, real_number
 from cytepool.stats.distributions import (
     chi2_ppf_scalar,
@@ -285,10 +287,9 @@ def _normal_interval(a: float, b: float, x: float, draw: bool) -> tuple[float, f
         if a >= 0.0:
             mass = norm_cdf_scalar(-a)
             return mass, norm_isf_scalar((1.0 - x) * mass) if draw else 0.0
+        # Only the conditioning draws have an infinite upper end, and they draw.
         lower_a = norm_cdf_scalar(a)
         mass = 1.0 - lower_a
-        if not draw:
-            return mass, 0.0
         below = x * mass
         if lower_a + below <= 0.5:
             return mass, norm_ppf_scalar(lower_a + below)
@@ -320,11 +321,10 @@ def _normal_interval(a: float, b: float, x: float, draw: bool) -> tuple[float, f
 
 @jit_numpy_errors
 def _t_within(b: float, df: float) -> float:
-    """Return P(|T| <= b) for T ~ t(df), b >= 0, accurate when it is small."""
+    """Return P(|T| <= b) for T ~ t(df), b finite and >= 0, accurate when it is
+    small."""
     if df == _INF:
         return math.erf(b * _SQRT_HALF)
-    if b == _INF:
-        return 1.0
     return betainc_scalar(0.5, 0.5 * df, b * b / (df + b * b))
 
 
@@ -654,16 +654,7 @@ def _chi2_points(
 @jit_numpy_errors
 def _accumulate(
     df: float,
-    kinds: np.ndarray,
-    thresholds: FloatArray,
-    masses: FloatArray,
-    tilts: FloatArray,
-    sizes: np.ndarray,
-    ranks: np.ndarray,
-    factors: FloatArray,
-    loads: FloatArray,
-    lows: FloatArray,
-    highs: FloatArray,
+    parts: tuple[np.ndarray, ...],
     overlaps: bool,
     chi2: FloatArray,
     alpha: FloatArray,
@@ -674,9 +665,13 @@ def _accumulate(
 ) -> None:
     """Add the points first to last - 1 of every shift to the shifts' totals.
 
-    Each part conditions on T_r above its threshold (kind ``_ABOVE``) or within plus or
-    minus it (``_WITHIN``), whose probability is ``masses``, and integrates its
-    earlier coordinates given T_r; a part with none counts its mass exactly.
+    ``parts`` holds, for each part, its kind, threshold, mass and tilt (from
+    :func:`_complement_conditions` or :func:`_probability_condition`), and its number
+    of earlier coordinates and of random ones, factors, loads, lows and highs (from
+    :func:`_complement_parts` or :func:`_probability_parts`). Each part conditions on
+    T_r above its threshold (kind ``_ABOVE``) or within plus or minus it
+    (``_WITHIN``), whose probability is its mass, and integrates its earlier
+    coordinates given T_r; a part with none counts its mass exactly.
 
     S is drawn as sqrt(V / (df + t)) for the part's tilt t, with V chi-squared on df
     degrees of freedom, and weighted by (df / (df + t))^(df / 2) exp(t S^2 / 2)
@@ -687,19 +682,20 @@ def _accumulate(
     :func:`_rare_overlaps`), the chance that an earlier coordinate exceeds its limit
     as well comes from draws deep in the tail of Z_r and near the ends of the earlier
     coordinates' intervals, which few points reach, so that the shifts' estimates
-    would agree while missing it. There Z_r is drawn at the point x^2 of its
-    conditional distribution, x the lattice coordinate, with the weight 2 x, and each
-    earlier coordinate at the point (1 - cos(pi x)) / 2 of its interval, with the
-    weight pi sin(pi x) / 2, which bring points to both. The weights have mean 1, so
-    the part estimates 1 - h_r as the mean of the weights times the chance that an
-    earlier coordinate leaves its interval, whose variance is that of the overlap,
-    not that of the weights. Elsewhere the draws are plain, as these changes add
-    variance where overlaps are common.
+    would agree while missing it. There each earlier coordinate is drawn at the point
+    (1 - cos(pi x)) / 2 of its interval, x the lattice coordinate, with the weight
+    pi sin(pi x) / 2, which brings draws near both ends, and Z_r at the point x^2 of
+    its conditional distribution, with the weight 2 x, which moves draws towards its
+    threshold. The weights have mean 1, so the part estimates 1 - h_r as the mean of
+    the weights times the chance that an earlier coordinate leaves its interval,
+    whose variance is that of the overlap, not that of the weights. Elsewhere the
+    draws are plain, as these changes add variance where overlaps are common.
 
     A coordinate of zero residual variance is a linear function of the random ones;
     its interval limits the last random coordinate it depends on, so that the
     overlap is integrated, not sampled.
     """
+    kinds, thresholds, masses, tilts, sizes, ranks, factors, loads, lows, highs = parts
     n_parts = kinds.size
     width = max(sizes.max(), 1)
     y = np.empty(width)
@@ -969,12 +965,10 @@ def _complement_conditions(
 def _box_slope(upper: FloatArray, two_sided: bool) -> float:
     """The derivative of log P(Z_i in its interval times s for every i) in log s at
     s = 1, summed over the coordinates as if they were independent: about the power
-    of s by which a small box's probability grows with S."""
+    of s by which a small box's probability grows with S. The limits are finite."""
     slope = 0.0
     for i in range(upper.size):
         b = upper[i]
-        if b == _INF:
-            continue
         if two_sided:
             if b == 0.0:
                 slope += 1.0
@@ -1111,8 +1105,7 @@ def _sampled_box(
             table, table_df, table_points = _chi2_points(
                 table, table_df, table_points, df, _FIRST_POINTS, alpha, shifts
             )
-        _accumulate(
-            df,
+        parts = (
             kinds,
             thresholds,
             masses,
@@ -1123,14 +1116,8 @@ def _sampled_box(
             loads,
             lows,
             highs,
-            False,
-            table,
-            alpha,
-            shifts,
-            0,
-            _FIRST_POINTS,
-            totals,
         )
+        _accumulate(df, parts, False, table, alpha, shifts, 0, _FIRST_POINTS, totals)
         points = _FIRST_POINTS
         estimate, _ = _shift_statistics(totals, points, 1.0)
         side_is_probability = estimate <= 0.5
@@ -1142,8 +1129,19 @@ def _sampled_box(
             correlation, order, lower, upper, factors, loads, lows, highs
         )
         kinds, thresholds, masses, tilts = _complement_conditions(order, upper, df)
-    fewest = _fewest_points(
-        df, thresholds, sizes, loads, lows, highs, not side_is_probability
+    overlaps = not side_is_probability
+    fewest = _fewest_points(df, thresholds, sizes, loads, lows, highs, overlaps)
+    parts = (
+        kinds,
+        thresholds,
+        masses,
+        tilts,
+        sizes,
+        ranks,
+        factors,
+        loads,
+        lows,
+        highs,
     )
     side_factor = 1.0 if side_is_probability else factor
     while True:
@@ -1157,24 +1155,7 @@ def _sampled_box(
                     table, table_df, table_points, df, target, alpha, shifts
                 )
             _accumulate(
-                df,
-                kinds,
-                thresholds,
-                masses,
-                tilts,
-                sizes,
-                ranks,
-                factors,
-                loads,
-                lows,
-                highs,
-                not side_is_probability,
-                table,
-                alpha,
-                shifts,
-                points,
-                target,
-                totals,
+                df, parts, overlaps, table, alpha, shifts, points, target, totals
             )
             points = target
         estimate, error = _shift_statistics(totals, points, side_factor)
@@ -1365,10 +1346,10 @@ def _boxes_serial(
 @jit_numpy_errors
 def _side_estimate(
     q: float,
+    complement_side: bool,
     correlation: FloatArray,
     df: float,
     two_sided: bool,
-    complement_side: bool,
     points: int,
     alpha: FloatArray,
     shifts: FloatArray,
@@ -1391,7 +1372,6 @@ def _side_estimate(
         )
         return (complement if complement_side else probability), error
     scaled_lows = lows * q if two_sided else lows
-    scaled_highs = highs * q
     if complement_side:
         kinds, thresholds, masses, tilts = _complement_conditions(order, upper, df)
         factor = 2.0 if two_sided else 1.0
@@ -1400,9 +1380,7 @@ def _side_estimate(
             0, upper, df, two_sided
         )
         factor = 1.0
-    totals = np.zeros(_SHIFTS)
-    _accumulate(
-        df,
+    parts = (
         kinds,
         thresholds,
         masses,
@@ -1412,16 +1390,25 @@ def _side_estimate(
         factors,
         loads,
         scaled_lows,
-        scaled_highs,
-        complement_side,
-        table,
-        alpha,
-        shifts,
-        0,
-        points,
-        totals,
+        highs * q,
     )
+    totals = np.zeros(_SHIFTS)
+    _accumulate(df, parts, complement_side, table, alpha, shifts, 0, points, totals)
     return _shift_statistics(totals, points, factor)
+
+
+@jit_numpy_errors
+def _gap(
+    q: float, target: float, complement_side: bool, problem: tuple[Any, ...]
+) -> tuple[float, float]:
+    """The estimate at q less the target on the complement side, or the target less
+    the estimate on the probability side: a function that falls as q grows, whose
+    root is the quantile; with the estimate's error. ``problem`` holds the other
+    arguments of :func:`_side_estimate`."""
+    estimate, error = _side_estimate(q, complement_side, *problem)
+    if complement_side:
+        return estimate - target, error
+    return target - estimate, error
 
 
 @jit_numpy_errors
@@ -1447,19 +1434,21 @@ def _quantile(
         for j in range(k):
             if math.isnan(correlation[i, j]):
                 return _NAN, _NAN, table, table_df, table_points
+    # The quantile lies between the univariate one at the probability and the one
+    # that Bonferroni's inequality gives.
     tail = 1.0 - probability
     if two_sided:
-        low = t_isf_scalar(0.5 * tail, df)
-        high = t_isf_scalar(0.5 * tail / k, df)
+        lowest = t_isf_scalar(0.5 * tail, df)
+        highest = t_isf_scalar(0.5 * tail / k, df)
     else:
-        low = (
+        lowest = (
             -t_isf_scalar(probability, df)
             if probability < 0.5
             else t_isf_scalar(tail, df)
         )
-        high = t_isf_scalar(tail / k, df)
+        highest = t_isf_scalar(tail / k, df)
     if k == 1:
-        return low, 0.0, table, table_df, table_points
+        return lowest, 0.0, table, table_df, table_points
     complement_side = probability >= 0.5
     target = tail if complement_side else probability
     # The parts depend on the limit only through their thresholds: with one limit for
@@ -1496,14 +1485,10 @@ def _quantile(
             table, table_df, table_points = _chi2_points(
                 table, table_df, table_points, df, points, alpha, shifts
             )
-        # f(q) = estimate - target falls as q grows; widen the bracket where the
-        # estimate at its ends has not changed sign.
-        f_low, _ = _side_estimate(
-            low,
+        problem = (
             correlation,
             df,
             two_sided,
-            complement_side,
             points,
             alpha,
             shifts,
@@ -1516,115 +1501,30 @@ def _quantile(
             lows,
             highs,
         )
-        f_low = f_low - target if complement_side else target - f_low
-        f_high, _ = _side_estimate(
-            high,
-            correlation,
-            df,
-            two_sided,
-            complement_side,
-            points,
-            alpha,
-            shifts,
-            table,
-            order,
-            sizes,
-            ranks,
-            factors,
-            loads,
-            lows,
-            highs,
-        )
-        f_high = f_high - target if complement_side else target - f_high
-        for _ in range(60):
-            if f_low >= 0.0:
-                break
-            width = high - low
-            high, f_high = low, f_low
-            low = low - max(width, 1e-3)
-            if two_sided:
-                low = max(low, 0.0)  # where the complement is 1
-            f_low, _ = _side_estimate(
-                low,
-                correlation,
-                df,
-                two_sided,
-                complement_side,
-                points,
-                alpha,
-                shifts,
-                table,
-                order,
-                sizes,
-                ranks,
-                factors,
-                loads,
-                lows,
-                highs,
-            )
-            f_low = f_low - target if complement_side else target - f_low
-        for _ in range(60):
-            if f_high <= 0.0:
-                break
-            width = high - low
-            low, f_low = high, f_high
-            high = high + max(width, 1e-3)
-            f_high, _ = _side_estimate(
-                high,
-                correlation,
-                df,
-                two_sided,
-                complement_side,
-                points,
-                alpha,
-                shifts,
-                table,
-                order,
-                sizes,
-                ranks,
-                factors,
-                loads,
-                lows,
-                highs,
-            )
-            f_high = f_high - target if complement_side else target - f_high
+        # Each round bisects between the bounds, which hold the root however the
+        # estimate moves as the points double.
+        low, high = lowest, highest
+        f_low, _ = _gap(low, target, complement_side, problem)
+        f_high, _ = _gap(high, target, complement_side, problem)
         error = 0.0
-        slope = _NAN
         for _ in range(200):
             middle = 0.5 * (low + high)
-            estimate, error = _side_estimate(
-                middle,
-                correlation,
-                df,
-                two_sided,
-                complement_side,
-                points,
-                alpha,
-                shifts,
-                table,
-                order,
-                sizes,
-                ranks,
-                factors,
-                loads,
-                lows,
-                highs,
-            )
-            f_middle = estimate - target if complement_side else target - estimate
+            f_middle, error = _gap(middle, target, complement_side, problem)
             if f_middle >= 0.0:
                 low, f_low = middle, f_middle
             else:
                 high, f_high = middle, f_middle
-            if f_low - f_high > 0.0:
-                slope = (f_low - f_high) / (high - low)
             if f_low - f_high <= 0.01 * error or high - low <= 4.0 * _EPS * max(
                 abs(low), abs(high)
             ):
                 break
-        if f_low - f_high > 0.0:
-            root = low + (high - low) * f_low / (f_low - f_high)
-        else:
-            root = 0.5 * (low + high)
+        # The estimate is a smooth function of q with the points fixed: the final
+        # bracket gives its root by interpolation, and its slope.
+        drop = f_low - f_high
+        slope = drop / (high - low) if drop > 0.0 else _NAN
+        root = low + (high - low) * (f_low / drop if drop > 0.0 else 0.5)
+        # The estimate's error at the bounds can carry the interpolation past them.
+        root = min(max(root, lowest), highest)
         if k == 2 or points >= most_points:
             enough = True
         else:
@@ -1642,12 +1542,9 @@ def _quantile(
                 complement_side,
             )
             enough = error <= relative_error * target and points >= fewest
-        if k == 2 or enough:
+        if enough:
             spread = error / slope if slope > 0.0 else _NAN
             return root, spread, table, table_df, table_points
-        # More points: the root moves by about its standard error.
-        spread = max(8.0 * error / slope, 4.0 * _EPS * abs(root))
-        low, high = root - spread, root + spread
         points = min(2 * points, most_points)
 
 
@@ -1763,19 +1660,13 @@ def _quantiles_serial(
 # ---------------------------------------------------------------------------------------
 
 
-def _real(values: Any, name: str) -> FloatArray:
-    array = unmasked_array(values, name, missing="NaN")
-    if array.dtype.kind not in "biuf":
-        raise TypeError(
-            f"{name} must contain real numbers (bool, integer or float); got an "
-            f"array of dtype {array.dtype}"
-        )
-    return np.asarray(array, dtype=np.float64)
-
-
 def _checked_correlation(values: Any) -> FloatArray:
     """The correlation matrices, (..., k, k), checked where they hold no NaN."""
-    correlation = _real(values, "correlation")
+    correlation = real_array(
+        unmasked_array(values, "correlation", missing="NaN"),
+        "correlation",
+        objects=False,
+    )
     if correlation.ndim < 2 or correlation.shape[-1] != correlation.shape[-2]:
         raise ValueError(
             "correlation must be a square matrix, or a stack of them with shape "
@@ -1816,7 +1707,9 @@ def _checked_correlation(values: Any) -> FloatArray:
 
 
 def _checked_df(values: Any) -> FloatArray:
-    df = _real(values, "df")
+    df = real_array(
+        unmasked_array(values, "df", missing="NaN"), "df", boolean=False, objects=False
+    )
     if (df <= 0.0).any():
         raise ValueError(
             f"df must be positive, or np.inf for the normal distribution; got "
@@ -1843,17 +1736,30 @@ def _positions(shape: tuple[int, ...], batch: tuple[int, ...]) -> np.ndarray:
     )
 
 
-def _batch(*shapes: tuple[tuple[int, ...], str]) -> tuple[int, ...]:
+def _batch(*arguments: tuple[np.ndarray, int, str]) -> tuple[int, ...]:
+    """The shape of the problems: the broadcast shape of the arguments' leading
+    dimensions, those before the last ``trailing`` of each."""
     try:
-        return np.broadcast_shapes(*(shape for shape, _ in shapes))
+        return np.broadcast_shapes(
+            *(
+                values.shape[: values.ndim - trailing]
+                for values, trailing, _ in arguments
+            )
+        )
     except ValueError:
-        listed = ", ".join(f"{name} {shape}" for shape, name in shapes)
+        listed = ", ".join(
+            f"{name} of shape {values.shape}" for values, _, name in arguments
+        )
         raise ValueError(
-            "the problems' shapes do not broadcast to a common shape: " + listed
+            "the arguments do not broadcast: the dimensions before the last one of "
+            "upper and the last two of correlation must broadcast with those of the "
+            f"other arguments; got {listed}"
         ) from None
 
 
-def _lattice(k: int, rng: Any) -> tuple[FloatArray, FloatArray]:
+def _lattice(
+    k: int, rng: np.random.Generator | int | None
+) -> tuple[FloatArray, FloatArray]:
     """The generators of the Kronecker points in k + 1 dimensions, and the shifts:
     none for one or two coordinates, which use no random numbers."""
     dimensions = k + 1
@@ -1883,7 +1789,7 @@ def multivariate_t_cdf(
     *,
     two_sided: bool = False,
     relative_error: float = 0.01,
-    rng: Any = None,
+    rng: np.random.Generator | int | None = None,
 ) -> MultivariateTProbability:
     """Probability that every coordinate of a multivariate t vector stays within its
     limit, and its complement.
@@ -1908,7 +1814,7 @@ def multivariate_t_cdf(
 
     Args:
         upper: ``(..., k)`` upper limits; +inf for none. With ``two_sided``, the box
-            is \\|T_i\\| <= upper_i, and the limits must be at least 0.
+            is |T_i| <= upper_i, and the limits must be at least 0.
         correlation: ``(..., k, k)`` correlation matrices: symmetric to 1e-10, with
             a unit diagonal to 1e-10, and positive semidefinite (smallest eigenvalue
             at least -1e-10 times the largest); singular matrices, such as those of
@@ -1946,7 +1852,9 @@ def multivariate_t_cdf(
     """
     correlation_values = _checked_correlation(correlation)
     k = correlation_values.shape[-1]
-    upper_values = _real(upper, "upper")
+    upper_values = real_array(
+        unmasked_array(upper, "upper", missing="NaN"), "upper", objects=False
+    )
     if upper_values.ndim == 0 or upper_values.shape[-1] != k:
         raise ValueError(
             f"upper must have one limit per coordinate ({k}) in its last axis; got "
@@ -1964,9 +1872,9 @@ def multivariate_t_cdf(
     correlation_batch = correlation_values.shape[:-2]
     upper_batch = upper_values.shape[:-1]
     batch = _batch(
-        (correlation_batch, "correlation"),
-        (upper_batch, "upper"),
-        (df_values.shape, "df"),
+        (correlation_values, 2, "correlation"),
+        (upper_values, 1, "upper"),
+        (df_values, 0, "df"),
     )
     n = math.prod(batch)
     out = np.empty((n, 3))
@@ -1999,13 +1907,13 @@ def multivariate_t_quantile(
     *,
     two_sided: bool = False,
     relative_error: float = 0.01,
-    rng: Any = None,
+    rng: np.random.Generator | int | None = None,
 ) -> MultivariateTQuantile:
     """Equicoordinate quantile of a multivariate t distribution: the critical value of
     a max-t test.
 
     The q with P(T_i <= q for every i) = probability, or, with ``two_sided``,
-    P(\\|T_i\\| <= q for every i) = probability, as mvtnorm's ``qmvt`` with
+    P(|T_i| <= q for every i) = probability, as mvtnorm's ``qmvt`` with
     ``tail = "lower.tail"`` or ``"both.tails"``; T is as in
     :func:`multivariate_t_cdf`. A one-sided max-t test at level alpha rejects when
     the largest t-statistic exceeds the quantile at 1 - alpha, and a two-sided one
@@ -2046,7 +1954,11 @@ def multivariate_t_quantile(
         >>> round(critical.quantile, 2)
         2.76
     """
-    probability_values = _real(probability, "probability")
+    probability_values = real_array(
+        unmasked_array(probability, "probability", missing="NaN"),
+        "probability",
+        objects=False,
+    )
     outside = (probability_values <= 0.0) | (probability_values >= 1.0)
     if outside.any():
         raise ValueError(
@@ -2061,9 +1973,9 @@ def multivariate_t_quantile(
     alpha, shifts = _lattice(k, rng)
     correlation_batch = correlation_values.shape[:-2]
     batch = _batch(
-        (probability_values.shape, "probability"),
-        (correlation_batch, "correlation"),
-        (df_values.shape, "df"),
+        (probability_values, 0, "probability"),
+        (correlation_values, 2, "correlation"),
+        (df_values, 0, "df"),
     )
     n = math.prod(batch)
     out = np.empty((n, 2))
