@@ -2650,6 +2650,16 @@ def test_the_default_gate_and_its_record(tmp_path: Path) -> None:
         one.table("one", "gate")["p_value"].tolist()
         == one.table("one", "dose_groups")["p_value"].tolist()
     )
+    # A fold change, its adjustments in the record and the printout.
+    large = dose_response(cube, design, dose=AXIS, gate={"fold_change": 1.5})
+    assert large.provenance["gate_adjustment"] == (
+        "the smallest of each gene's TREAT p-values of the doses times the doses "
+        "(Bonferroni), then Benjamini-Hochberg within each cell type"
+    )
+    assert (
+        "gate: TREAT beyond 1.5-fold at each dose, Bonferroni over the cell type's "
+        "doses, Benjamini-Hochberg within each cell type, at 5% FDR"
+    ) in " ".join(repr(large).split())
 
 
 def test_the_gate_s_test_runs_when_tests_do_not_name_it() -> None:

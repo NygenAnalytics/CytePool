@@ -4,8 +4,8 @@ gate at the series' own design.
 :func:`~cytepool.permutation_check` permutes the dose labels of each cell type among
 the samples that its design treats alike, runs :func:`~cytepool.dose_response` again
 on each permuted labelling with the result's settings, and counts the genes that pass
-the result's gate: how often noise alone passes genes at this design, and a
-permutation p-value for the genes the true doses pass
+the result's gate: how often the gate passes genes when the doses carry no
+information, and a permutation p-value for the genes the true doses pass
 (https://docs.nygen.io/CytePool/statistics/dose-response#dose-permutation-check).
 
 Exchangeable units:
@@ -102,8 +102,8 @@ _SEED_BOUND = 2**63
 
 
 class PermutationCheck:
-    """How often noise passes the gate of a dose series, from
-    :func:`permutation_check`.
+    """How often the gate of a dose series passes genes with its doses permuted,
+    from :func:`permutation_check`.
 
     ``summary`` has one row per cell type asked for: ``group_id``; ``checked``;
     ``reason``, why a cell type was not checked, empty when checked;
@@ -296,7 +296,7 @@ def _row_text(summary: Table, row: int, entry: Mapping[str, Any]) -> str:
     with_genes = int(round(share * runs))
     text = (
         f"{passing:,} gene{' passes' if passing == 1 else 's pass'} the gate; over "
-        f"{over}, noise passed genes in {with_genes:,} run"
+        f"{over}, the gate passed genes in {with_genes:,} run"
         f"{'' if with_genes == 1 else 's'} ({share:.2f}), "
         f"{float(summary['mean_passing_genes_per_run'][row]):.2g} genes per run; "
         f"p = {p:.2g}"
@@ -326,15 +326,18 @@ def permutation_check(
     assignment of the labels is as likely as the true one, so the share of runs that
     pass genes is the chance that noise alone passes genes at this design, and the
     genes the true doses pass get a permutation p-value, (1 + b) / (1 + B) for the b
-    of the B runs that pass at least as many (Phipson and Smyth 2010). A design that
-    allows at most ``n_permutations`` other assignments runs each of them, which
-    makes the p-value exact; otherwise ``n_permutations`` assignments are drawn at
-    random. Each run keeps the samples of every dose group and the doses of the
-    design, and so the spline's knots and the genes of the dose-blind expression
-    filter (Bourgon et al. 2010); ``batch``, which a rerun could find confounded by
-    chance and which no fit models, is left out. Vehicle-only data placed in mock
-    dose groups by the design, the check of Lee et al. (2024), run through
-    :func:`~cytepool.dose_response` and this check alike
+    of the B runs that pass at least as many (Phipson and Smyth 2010). Where genes
+    respond, strong responses scrambled over the permuted dose groups still pass in
+    some runs, so the share then overstates that chance, and the p-value comes out
+    larger than noise alone would make it. A design that allows at most
+    ``n_permutations`` other assignments runs each of them, which makes the p-value
+    exact; otherwise ``n_permutations`` assignments are drawn at random. Each run
+    keeps the samples of every dose group and the doses of the design, and so the
+    spline's knots and the genes of the dose-blind expression filter (Bourgon et al.
+    2010); ``batch``, which a rerun could find confounded by chance and which no fit
+    models, is left out. Vehicle-only data placed in mock dose groups by the design,
+    the check of Lee et al. (2024), run through :func:`~cytepool.dose_response` and
+    this check alike
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-permutation-check).
 
     Before the runs, each cell type runs once with its true doses through the same

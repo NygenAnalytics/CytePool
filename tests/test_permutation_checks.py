@@ -37,7 +37,7 @@ from cytepool import (
     permutation_check,
     simulate_dose_series,
 )
-from cytepool.permutation_checks import _statistics, _units
+from cytepool.permutation_checks import _rerun_tests, _statistics, _units
 
 DATA = Path(__file__).parent / "data" / "dose_gate"
 AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
@@ -722,3 +722,140 @@ def test_units_of_unequal_size_keep_the_dose_groups() -> None:
     # animals of three doses, and a of four doses form the blocks.
     assert second["n_assignments"] == math.factorial(4) * math.factorial(3)
     assert "d2_r3" not in second["samples"]
+
+
+def test_runs_leave_the_batch_out() -> None:
+    # Lanes of two samples that the true doses cross, so that no dose group is
+    # confounded with a lane. By inclusion and exclusion, 9 x 6 - 18 + 6 = 42 of the
+    # 89 other assignments put both samples of a dose in one lane: 6 for each of the 3
+    # doses in each of the 3 lanes, 1 for each of 18 pairs of doses in two lanes, and
+    # 1 for each of the 6 with every dose in a lane of its own. The result's check of
+    # the batch is the user's; the runs leave the batch out, as a fit does, and so
+    # each runs the gate.
+    cube = series([0.0, 0.1, 1.0], replicates=2)
+    assert cube.samples["dose"].tolist() == [0.0, 0.0, 0.1, 0.1, 1.0, 1.0]
+    lanes = ["a", "b", "b", "c", "c", "a"]
+    design = Design(cube.samples.with_columns({"lane": lanes}), "~ 1")
+    result = dose_response(cube, design, dose=AXIS, batch="lane")
+    assert result.settings["batch"] == "lane"
+    check = permutation_check(result, rng=1)
+    entry = check.provenance["groups"][0]
+    assert entry["exhaustive"] and len(entry["assignments"]) == 89
+    confounded = 0
+    for assignment in entry["assignments"]:
+        by_dose: dict[int, set[str]] = {}
+        for sample, label in zip(entry["samples"], assignment, strict=True):
+            by_dose.setdefault(label, set()).add(lanes[entry["samples"].index(sample)])
+        confounded += any(len(found) == 1 for found in by_dose.values())
+    assert confounded == 42
+    found = again(cube, design, entry, 0)
+    assert check.table("cell_type_1")["n_genes_passing_gate"][0] == np.count_nonzero(
+        found.table("cell_type_1", "gate")["passes_gate"]
+    )
+
+
+def test_a_check_refuses_wrong_parts_and_stays_as_built() -> None:
+    cube = responsive()
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS)
+    check = permutation_check(result, n_permutations=2, rng=3)
+    summary, provenance = check.summary, check.provenance
+    tables = {group: check.table(group) for group in ("one", "two")}
+    for parts, message in (
+        (("summary", tables, provenance), "summary must be a Table"),
+        ((summary, ["one"], provenance), "tables must be a mapping"),
+        ((summary, {1: tables["one"]}, provenance), "keyed by cell type"),
+        ((summary, {"one": "table"}, provenance), r"tables\['one'\] must be a Table"),
+        ((summary, tables, "record"), "provenance must be a mapping"),
+    ):
+        with pytest.raises(TypeError, match=message):
+            PermutationCheck(*parts)  # type: ignore[arg-type]
+    with pytest.raises(AttributeError, match="immutable"):
+        check.summary = summary  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="immutable"):
+        del check.summary  # type: ignore[misc]
+    with pytest.raises(KeyError, match="no cell type 'three' was asked for"):
+        check.table("three")
+    assert PermutationCheck(summary, tables, provenance).summary.equals(summary)
+
+
+def test_the_printout_says_what_the_runs_can_give() -> None:
+    # Series where no gene responds, whose true doses pass no gene: every run passes
+    # at least as many, and p is 1.
+    flat = series([0.0, 0.1, 1.0, 10.0], replicates=3, responsive=0.0)
+    result = dose_response(flat, Design(flat.samples, "~ 1"), dose=AXIS)
+    assert not np.any(result.table("cell_type_1", "gate")["passes_gate"])
+    # 20 random runs can give 1/21, below 0.05: the line ends at p.
+    text = " ".join(repr(permutation_check(result, n_permutations=20, rng=2)).split())
+    assert "over 20 random runs of 369,600 assignments" in text
+    assert text.endswith("genes per run; p = 1")
+    # The vehicle and one dose in duplicate allow 6 assignments, and the dose-group
+    # gate no p-value below 2/6: the line says so.
+    pairs = series([0.0, 0.1, 1.0], replicates=2, responsive=0.0)
+    samples = pairs.samples.filter(pairs.samples["dose"] <= 0.1)
+    result = dose_response(pairs, Design(samples, "~ 1"), dose=AXIS)
+    assert result.gate["test"] == "dose_groups"
+    text = " ".join(repr(permutation_check(result, rng=2)).split())
+    assert "over all 5 other assignments" in text
+    assert text.endswith("p = 1; the smallest these runs can give is 0.33")
+    # A fold-change gate in the heading.
+    large = dose_response(
+        responsive(), Design(responsive().samples, "~ 1"), dose=AXIS,
+        gate={"fold_change": 1.5},
+    )  # fmt: skip
+    text = " ".join(repr(permutation_check(large, n_permutations=1, rng=2)).split())
+    assert text.startswith(
+        "PermutationCheck of the gate, TREAT beyond 1.5-fold at each dose, at 5% FDR:"
+    )
+
+
+def test_runs_take_the_tests_the_result_named() -> None:
+    # The runs fit the contrasts of the tests along dose that the result named, with
+    # the gate's test, so that the true doses give the result's gate p-values bit
+    # for bit; multiple contrast tests other than the gate's are left out, and a
+    # fold-change gate with no such test takes the dose groups'.
+    assert _rerun_tests(None, "spline") is None
+    assert _rerun_tests(["dose_groups", "williams"], "spline") == [
+        "dose_groups",
+        "spline",
+    ]
+    assert _rerun_tests(["spline", "dunnett"], "dunnett") == ["spline", "dunnett"]
+    assert _rerun_tests(["williams"], "each_dose") == ["dose_groups"]
+    assert _rerun_tests(["linear_trend"], "each_dose") == ["linear_trend"]
+    cube = responsive()
+    design = Design(cube.samples, "~ 1")
+    for tests, gate in (
+        (("dose_groups", "williams"), None),
+        (("linear_trend",), {"fold_change": 1.5}),
+    ):
+        result = dose_response(cube, design, dose=AXIS, tests=tests, gate=gate, rng=4)
+        check = permutation_check(result, n_permutations=2, rng=5)
+        for entry in check.provenance["groups"]:
+            group = entry["group_id"]
+            found = again(cube, design, entry, 1, tests=tests, gate=gate, rng=4)
+            assert check.table(group)["n_genes_passing_gate"][1] == np.count_nonzero(
+                found.table(group, "gate")["passes_gate"]
+            )
+
+
+def test_units_that_each_hold_one_dose_leave_one_assignment() -> None:
+    # Animals of 2 samples received the vehicle, of 1 sample the first dose and of 3
+    # the second: blocks of animals of the same size each hold one dose, so no dose
+    # label can move.
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0], replicates=6, cell_types=1, cells=300.0, n_genes=60, rng=8
+    )
+    ids = cube.samples["sample_id"].tolist()
+    kept = ids[:4] + ids[6:8] + ids[12:18]
+    animal = ["v1", "v1", "v2", "v2", "a1", "a2", "b1", "b1", "b1", "b2", "b2", "b2"]
+    samples = cube.samples.filter(np.isin(cube.samples["sample_id"], kept))
+    assert samples["dose"].tolist() == [0.0] * 4 + [0.1] * 2 + [1.0] * 6
+    design = Design(
+        samples.with_columns({"animal": animal}), "~ 1", random="(1 | animal)"
+    )
+    result = dose_response(cube, design, dose=AXIS, analysis=dream_voom)
+    check = permutation_check(result, rng=1)
+    assert check.summary["n_assignments"].tolist() == [1.0]
+    assert check.summary["reason"][0] == (
+        "each block of units that the design treats alike holds one dose, so no "
+        "dose label can move"
+    )
