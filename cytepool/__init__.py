@@ -29,8 +29,9 @@ question they answer, the default first:
   :func:`meta_analysis`, :class:`MetaAnalysisResult`; replication, :func:`sumrank`,
   :class:`SumRankResult`, :func:`replication`, :class:`ReplicationResult`,
   :func:`held_out_prediction`, :class:`HeldOutPrediction`.
-- Dose response: :class:`DoseAxis`; simulated dose series with known curves,
-  :func:`simulate_dose_series`, :class:`DoseTruth`.
+- Dose response: :class:`DoseAxis`; whether a dose series supports tests in each
+  cell type, :func:`check_dose_design`, :class:`DoseDesignReport`; simulated dose
+  series with known curves, :func:`simulate_dose_series`, :class:`DoseTruth`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and
 mixed models, empirical Bayes moderation, voom, count models, multiple testing,
@@ -72,6 +73,7 @@ from .differential_expression import (  # noqa: E402
     limma_voom,
 )
 from .dose_axes import DoseAxis  # noqa: E402
+from .dose_designs import DoseDesignReport, check_dose_design  # noqa: E402
 from .gene_set_enrichment import gsea  # noqa: E402
 from .gene_set_tests import camera, fry  # noqa: E402
 from .gene_sets import GeneSets, read_gmt, write_gmt  # noqa: E402
@@ -175,6 +177,8 @@ __all__ = [
     "HeldOutPrediction",
     # Dose response.
     "DoseAxis",
+    "check_dose_design",
+    "DoseDesignReport",
     "simulate_dose_series",
     "DoseTruth",
     # The version.
