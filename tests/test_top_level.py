@@ -42,6 +42,7 @@ MODULES = {
     "cytepool.meta_analysis_of_studies": ("MetaAnalysisResult", "meta_analysis"),
     "cytepool.networks": ("Network", "collectri", "progeny"),
     "cytepool.over_representation_analysis": ("over_representation",),
+    "cytepool.permutation_checks": ("PermutationCheck", "permutation_check"),
     "cytepool.pathway_scores": (
         "PathwayScores",
         "combined_z_scores",
@@ -71,8 +72,8 @@ OPTIONAL = ("anndata", "matplotlib", "mudata", "pandas")
 
 def test_the_top_level_lists_the_names_of_its_docstring() -> None:
     documented = re.findall(r":(?:class|func):`(\w+)`", cytepool.__doc__ or "")
-    assert len(documented) == len(set(documented)) == 64
-    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 65
+    assert len(documented) == len(set(documented)) == 66
+    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 67
     assert set(cytepool.__all__) == {*documented, "__version__"}
     assert isinstance(cytepool.__version__, str) and cytepool.__version__
 

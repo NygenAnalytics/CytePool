@@ -2268,6 +2268,18 @@ ENTRY_POINTS: dict[str, Entry] = {
         options=("spline_df", "batch", "min_counts", "rng"),
         objects=("cube", "design", "dose", "candidates", "analysis"),
     ),
+    # The permutation check of a gate: the cell types checked.
+    "cytepool.permutation_checks.permutation_check": Entry(
+        lambda c: {
+            "result": _dose_result(),
+            "n_permutations": 2,
+            "groups": ["cell_type_1"],
+            "rng": 1,
+        },
+        {"groups": None},
+        options=("n_permutations", "rng"),
+        objects=("result",),
+    ),
     "cytepool.dose_responses.DoseResponseResult.curve": Entry(
         lambda c: {
             "group": "cell_type_1",
@@ -3257,6 +3269,15 @@ NO_ARRAY_INPUT = {
         "Tables, the analysis's results, a DoseDesignReport, a Cube and a Design, which "
         "were checked when they were built, and a record kept as JSON, which cannot "
         "hold an array",
+    ),
+    "cytepool.permutation_checks.PermutationCheck": (
+        ("summary", "tables", "provenance"),
+        "Tables, which were checked when they were built, and a record kept as JSON, "
+        "which cannot hold an array",
+    ),
+    "cytepool.permutation_checks.PermutationCheck.table": (
+        ("group",),
+        "a cell type, looked up",
     ),
     "cytepool.dose_responses.DoseResponseResult.table": (
         ("group", "name"),
