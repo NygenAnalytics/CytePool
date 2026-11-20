@@ -146,21 +146,16 @@ def prepare_group(
     checked on the samples used.
     """
     cube, settings = inputs.cube, inputs.settings
-    counts = cube.layer(COUNTS_LAYER, g)[inputs.cube_rows]  # design samples, cube order
-    cells = None if cube.n_cells is None else cube.n_cells[inputs.cube_rows, g]
-    min_counts = settings["min_counts"]
-    reasons = left_out(counts, cells, settings["min_cells"], min_counts)
-    used = np.array([not reason for reason in reasons], dtype=bool)
+    min_cells, min_counts = settings["min_cells"], settings["min_counts"]
+    counts, cells, reasons, used = group_samples(
+        cube, inputs.cube_rows, g, min_cells, min_counts
+    )
     fit = record_type(str(cube.groups["group_id"][g]), used, reasons)
     if counts.shape[1] == 0:
         return fit.stop("no_features", "the cube has no features"), None
     n_used = int(np.count_nonzero(used))
     if n_used == 0:
-        # No counts is fewer than any positive minimum.
-        rules = f"fewer than {amount(min_counts)} counts" if min_counts else "no counts"
-        if cells is not None:
-            rules = f"fewer than {settings['min_cells']} cells, or {rules}"
-        reason = f"every one of the {used.size} samples was left out ({rules})"
+        reason = no_samples_reason(used.size, min_cells, min_counts, cells is not None)
         return fit.stop("no_samples", reason), None
 
     # The rows of the full design, and the columns that span them.
@@ -252,6 +247,29 @@ def prepare_group(
         prior = np.asarray(cells[used], dtype=np.float64)
     data = GroupData(x_kept, columns, kept, estimable, y, sizes, factors, prior, parts)
     return fit, data
+
+
+def group_samples(
+    cube: Cube, cube_rows: np.ndarray, g: int, min_cells: int, min_counts: float
+) -> tuple[np.ndarray, np.ndarray | None, list[str], np.ndarray]:
+    """The counts and cells of the design samples in group g, why each is left out
+    of the group's fit ("" when used), and whether each is used."""
+    counts = cube.layer(COUNTS_LAYER, g)[cube_rows]  # design samples, cube order
+    cells = None if cube.n_cells is None else cube.n_cells[cube_rows, g]
+    reasons = left_out(counts, cells, min_cells, min_counts)
+    used = np.array([not reason for reason in reasons], dtype=bool)
+    return counts, cells, reasons, used
+
+
+def no_samples_reason(
+    n_samples: int, min_cells: int, min_counts: float, cells_recorded: bool
+) -> str:
+    """Why a group whose samples were all left out is not fitted."""
+    # No counts is fewer than any positive minimum.
+    rules = f"fewer than {amount(min_counts)} counts" if min_counts else "no counts"
+    if cells_recorded:
+        rules = f"fewer than {min_cells} cells, or {rules}"
+    return f"every one of the {n_samples} samples was left out ({rules})"
 
 
 def left_out(

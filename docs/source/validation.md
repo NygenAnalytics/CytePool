@@ -23,8 +23,6 @@ Each method is listed with the functions that implement it, the reference it is 
 | Fingerprints of cubes | {api}`Cube.fingerprint`, {api}`Cube.digests` | the documented encoding, with zarr-python 3.4.1 | exact: identical digests | [Cube fingerprints](#validation-cube-fingerprints) |
 | AnnData and MuData layouts of scanpy, decoupler and LIANA | {api}`to_anndata`, {api}`from_anndata`, {api}`to_mudata`, {api}`from_mudata` | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | exact: identical, 1e-10 for sums of normalized values | [Conversions to AnnData and MuData](#validation-anndata-conversion) |
 | Model matrices from R formulas, named contrasts, design checks | {api}`Design`, {api}`model_matrix`, {api}`make_contrasts`, {api}`Design.check` | R 4.4.3, limma 3.62.1, lme4 2.0-6 | exact: identical, 1e-10; 1e-8 (absolute) for the leverages of badly scaled designs | [Designs and contrasts](#validation-design) |
-| Dose axes: positions of the doses, the vehicle in a group of its own or on the axis at an offset, and the design columns of a spline of dose | {api}`DoseAxis` | R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; identical `dose_treated` and degrees of freedom; close: 1e-6 for limma's F-tests of Hmisc's columns | [Dose axes and their design columns](#validation-dose-axes) |
-| Simulated dose series with known curves: negative binomial counts per replicate and cell type with biological and donor effects, and their true curves, EC50s and benchmark doses | {api}`simulate_dose_series`, {api}`DoseTruth` | mpmath 1.3.0 | exact: 1e-10 for curves, EC50s and benchmark doses; calibrated: within 4 standard errors for the moments of cells and counts; identical allocation, seeds and threads | [Simulated dose series and their truths](#validation-simulate-dose-series) |
 | Linear models of every gene and their contrasts (limma's `lmFit`, `contrasts.fit`) | {api}`fit_linear_model`, {api}`contrasts_fit` | limma 3.62.1 | exact: 1e-10 | [Linear models](#validation-linear-models) |
 | Empirical Bayes moderation, moderated t and F, B-statistics, TREAT | {api}`moderated_statistics`, {api}`treat`, {api}`squeeze_variances`, {api}`fit_f_distribution`, {api}`fit_f_distribution_robust`, {api}`fit_f_distribution_likelihood` | limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust and likelihood priors | [Empirical Bayes moderation](#validation-empirical-bayes) |
 | Adjustment for multiple testing (R's `p.adjust`) | {api}`adjust_p_values` | R 4.4.3 | exact: 1e-10 | [Multiple testing](#validation-multiple-testing) |
@@ -43,6 +41,9 @@ Each method is listed with the functions that implement it, the reference it is 
 | dream on every cell type of a cube | {api}`dream_voom`, {api}`voom_with_dream_weights`, {api}`moderated_fixed_effect_tests` | variancePartition 1.36.2, limma 3.62.1, lme4 1.1-38, lmerTest 3.1-3 | close: 1e-6; 1e-5 for Satterthwaite's degrees of freedom and the p-values and z-statistics that use them; exact: 1e-10 for the likelihoods at given estimates | [dream's weights, fits and tests](#validation-dream) |
 | Variance partitioning (`fitExtractVarPartModel`) on every cell type of a cube, and its figures (`plotVarPart`, `plotPercentBars`) | {api}`variance_fractions`, {api}`variance_partitioning`, {api}`plot_variance_fractions`, {api}`plot_feature_variance_fractions` | variancePartition 1.36.2, lme4 1.1-38, ggplot2 4.0.3 | close: 1e-6; exact: 1e-10 at given estimates, for linear models and for the figures; 1e-3 for the widths of the violins | [Variance partitioning](#validation-variance-partitioning) |
 | Cell-type composition (speckle's propeller) | {api}`propeller` | speckle 1.6.0, limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust prior | [Cell-type composition](#validation-composition-tests) |
+| Dose axes: positions of the doses, the vehicle in a group of its own or on the axis at an offset, and the design columns of a spline of dose | {api}`DoseAxis` | R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; identical `dose_treated` and degrees of freedom; close: 1e-6 for limma's F-tests of Hmisc's columns | [Dose axes and their design columns](#validation-dose-axes) |
+| Dose designs: the samples each dose group keeps after filtering, the dose groups that other terms or a batch absorb, statuses, ETAP's design minimums | {api}`check_dose_design` | scanpy 1.12.4, pandas 3.1.0, R 4.4.3, limma 3.62.1 | exact: identical; statuses and ETAP's minimums against the same rules coded again in R; GSE208161: every cluster descriptive, as one participant per dose implies | [Dose designs](#validation-dose-design) |
+| Simulated dose series with known curves: negative binomial counts per replicate and cell type with biological and donor effects, and their true curves, EC50s and benchmark doses | {api}`simulate_dose_series`, {api}`DoseTruth` | mpmath 1.3.0 | exact: 1e-10 for curves, EC50s and benchmark doses; calibrated: within 4 standard errors for the moments of cells and counts; identical allocation, seeds and threads | [Simulated dose series and their truths](#validation-simulate-dose-series) |
 | Gene-set tests camera and fry | {api}`camera`, {api}`fry` | limma 3.62.1 | exact: 1e-10; close: 1e-6 with robust moderation; 1e-3 for fry's default standardization, which differs on purpose; 0.1 (absolute) for fry's mixed p-values against random rotations | [Gene-set tests](#validation-gene-set-tests) |
 | Rotation gene-set tests roast, mroast and romer | {api}`roast`, {api}`mroast`, {api}`romer` | limma 3.62.1 | calibrated: within 4 standard deviations of the Monte Carlo difference, plus 2 / (B + 1) for B rotations; exact: 1e-12 given limma's rotations; 0.1 (absolute) for fry's mixed p-values against the rotation test | [Rotation gene-set tests](#validation-rotation-gene-set-tests) |
 | Gene-set files (GMT) read and written; collections matched to an analysis (limma's `ids2indices`) and filtered by size | {api}`read_gmt`, {api}`write_gmt`, {api}`GeneSets` | R 4.4.3, limma 3.62.1, decoupler 2.2.0 | exact: identical, 1e-10 | [Gene-set files and over-representation](#validation-gene-set-files-and-ora) |
@@ -63,7 +64,7 @@ Each method is listed with the functions that implement it, the reference it is 
 | Tails and quantiles of distributions, special functions | {api}`cytepool.stats.distributions`, {api}`cytepool.stats.special` | mpmath 1.3.0 | exact: 1e-15 to 1e-12 | [Distributions and special functions](#validation-distributions) |
 | LOWESS; natural spline bases that keep their knots, in R's B-spline form and Harrell's restricted cubic form | {api}`lowess`, {api}`natural_spline_basis`, {api}`NaturalSplineBasis` | R 4.4.3, Hmisc 5.3-1, rms 8.2-1 | close: 1e-6 for LOWESS; exact: identical knots, 1e-10 for spline bases, restricted cubic columns and F-tests | [LOWESS and spline bases](#validation-smoothing) |
 
-In all, the scripts printed 2,891 checks: 2,499 pass, none failed; 234 information, 154 deliberate differences, 4 controls.
+In all, the scripts printed 2,937 checks: 2,543 pass, none failed; 236 information, 154 deliberate differences, 4 controls.
 
 Run time is the wall time of the whole script and peak memory the largest resident set of any of its processes, reference programs included, both of the second of two runs, one after the other, in the container described under [](#validation-timings). The first run downloaded the data that some scripts read and compiled CytePool's routines, which numba keeps in its cache for later runs. A first run in a new environment compiles them too: `differential_expression.py`, the first script in the container, took 52.7 s in its first run and 7.5 s in its second, and its peak memory fell from 578 to 362 MiB.
 
@@ -230,82 +231,6 @@ Deliberate differences:
 - Default level order is by code point in every locale, as R's is with `LC_COLLATE=C`. R's own default follows the session's collation, and agreed in 1 of the 4 formulas here.
 - Formulas that R accepts and CytePool rejects: a `-` that removes nothing (`~ a - b`, `~ x - z`, `~ a + (-b)`), `^` of a single term (`~ x^2`, which R reads as `x`), a fractional power (`~ (a + b)^2.5`), and function calls (`~ log(z)`, `~ I(x^2)`, `~ factor(w)`), which CytePool's formulas do not support; transform the column in the sample table instead.
 - Contrast expressions that limma turns into weights without meaning are rejected: limma gives `groupB - 1` the weights (-1, 0, -1, -1, -1), `groupA*groupB` (0, 0, 0, 0, 0), `groupA/groupB` (Inf, 0, NaN, NaN, NaN) and `groupA^2` (1, 0, 0, 0, 0).
-
-(validation-dose-axes)=
-### Dose axes and their design columns
-
-The script printed 234 checks (216 pass, 16 information and 2 deliberate differences) on 2026-11-20, in 20.2 s, with a peak memory of 346 MiB. [Dose axes and the vehicle](statistics/linear_models.md#dose-axes) explains what it checks.
-
-[`validation/dose_axes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_axes.py) builds `DoseAxis` designs for four dose series from fixed seeds (seeds 20261124 to 20261126): a ladder like the TCDD liver series, the vehicle and 0.01 to 30 ug/kg with 2 or 3 samples each; an in vitro half-log series, 6 vehicle wells and 4 doses in duplicate; an unbalanced ladder whose second dose has 10 of the 16 treated samples; and 24 measured exposures with 6 zeros. Each series is read on four axes, the vehicle in its own group or on the axis, on the log10 or the linear scale (on the log10 scale at an offset), with both forms of the spline and knots by `"levels"` and `"quantiles"` at df 1 to 8 and given as doses: 392 cases. R computes the positions, `dose_treated`, the knots with R's own functions (`ns(unique(x), df)`, `ns(x, df)`), the spline columns with `ns` or Hmisc's `rcspline.eval`, `model.matrix`, the F-statistics of nested `lm` fits of seeded responses (any dose, among the treated doses, departure from a line), `predict` of the full fit on a grid of doses from 0 to twice the highest, and limma-trend's moderated F-tests of the same columns on seeded counts of 200 genes (`cpm`, `lmFit`, `eBayes(trend = TRUE)` and `classifyTestsF`, which `topTable` of several columns calls), with their numerator degrees of freedom; CytePool runs `limma_trend` on the same counts. B-spline columns, whose basis differs from `ns()`'s, are compared through their column space. Restricted cubic columns are compared by their first column, element by element, and through Hmisc's columns as combinations of CytePool's, which differ from Hmisc's truncated cubes by a change of basis that keeps them well conditioned. R's F-statistics, curves and moderated F-tests are compared where R's design has a condition number of at most 1e5, so that rounding stays below the tier. limma computes the moderated F-tests of Hmisc's columns from the correlation of their coefficients, whose rounding grows with the square of that condition number, so those are compared at the close tier; the agreement of the two forms ties CytePool's restricted cubic F-tests to `ns()`'s at the exact tier. Reference: R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| Positions of the doses, 4 series on 4 axes | `log10(dose)`, `log10(dose + offset)`, the dose | 0 | 1e-10 | 16 pass |
-| `dose_treated` with the vehicle in its own group | `as.numeric(dose > 0)` | 0 mismatches | 0 | 8 pass |
-| Knots and boundary knots, 380 cases | `ns` | 0 | 1e-10 | 16 pass |
-| First restricted cubic column, 190 cases | `rcspline.eval` | 0 | 1e-10 | 16 pass |
-| Hmisc's restricted cubic columns as combinations of CytePool's, 190 cases | `rcspline.eval` | 2.6e-14 | 1e-10 | 16 pass |
-| B-spline columns, by their column space, 190 cases | `ns` | 2.4e-14 | 1e-10 | 16 pass |
-| Design matrices of `Design`, 380 cases | `model.matrix` | 6.4e-14 | 1e-10 | 16 pass |
-| F-statistics of any dose, among the treated doses and of departure from a line, 338 cases | `anova(lm)` | 8.3e-13 | 1e-10 | 16 pass |
-| Fitted curves on a grid of doses, 338 cases | `predict(lm)` | 9.6e-12 | 1e-10 | 16 pass |
-| Moderated F-statistics of the B-spline form, 190 cases | limma's `classifyTestsF` of `ns()`'s columns | 6.9e-13 | 1e-10 | 16 pass |
-| Moderated F-statistics of the restricted cubic form, 135 cases | limma's `classifyTestsF` of Hmisc's columns | 2.4e-9 | 1e-6 | 16 pass |
-| Numerator degrees of freedom of the moderated F-tests, which count every column tested, 380 cases | the columns tested | 0 mismatches | 0 | 16 pass |
-| Moderated F-statistics of the two forms on the same knots, 190 pairs of cases | the B-spline form | 1.3e-12 | 1e-10 | 16 pass |
-| Cases where one program places knots and the other raises, other than the deliberate differences | R | 0 | 0 | 16 pass |
-| F-statistics, curves and moderated F-tests of the 42 cases whose R design has a condition number above 1e5, up to 9.7e10: Hmisc's columns, 39 on a linear axis and 3 on the log10 axis of the exposures with the vehicle on it; R's `lm` drops a column as aliased in 8 of them | `lm` | not compared | n/a | 8 information |
-| Largest condition number of the designs of each axis and form: CytePool's restricted cubic columns 23 to 1.3e3, Hmisc's 6.4e4 to 9.7e10; the B-spline form 25 to 710 in both programs | `model.matrix` | n/a | n/a | 8 information |
-| Deliberate differences, listed below | `ns`, limma | R places knots, or limma counts fewer degrees of freedom | n/a | 2 deliberate differences |
-
-Deliberate differences:
-
-- On the unbalanced ladder, R's quantile rule places two knots at 0.1 mg/kg in 12 cases, and `ns()` takes the repeated knot, which makes the curve less smooth there; `DoseAxis.spline_basis` raises an error that names the rule and the dose.
-- In 13 cases, 7 of them on a log10 axis and 4 of those on the default axis with `"levels"`, limma's F-tests of Hmisc's columns count fewer degrees of freedom than columns: the correlation of their coefficients has an eigenvalue below 1e-8 of the largest, at condition numbers of R's design from 2.3e4 to 9.2e4. CytePool's restricted cubic columns span the same curves, and its F-tests count every column and agree with those of the B-spline form.
-
-(validation-simulate-dose-series)=
-### Simulated dose series and their truths
-
-The script printed 70 checks (43 pass, 25 information and 2 controls) on 2026-11-20, in 74.1 s, with a peak memory of 1,310 MiB. [Simulated dose series with known curves](statistics/linear_models.md#simulated-dose-series) explains what it checks.
-
-[`validation/simulate_dose_series.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/simulate_dose_series.py) draws four series from fixed seeds (20261127 to 20261130): a ladder like the TCDD liver series, the vehicle and eight doses from 0.01 to 30 ug/kg, 3 replicates, two cell types of 500 and 30 cells per profile, every one of 1,000 genes responsive; a half-log series, the vehicle and 0.1 to 3.16 uM, 2 replicates from donors crossed with dose, every one of 400 genes responsive; and two series of the doses 0, 0.1, 1 and 10 with 10,000 replicates each, 30 and 300 cells per profile, the second cell type at 70% and 40% of its cells at the two top doses, half of 50 genes responsive, one of them with 10,000 donors crossed with dose. mpmath, in a separate process at 50 digits on the exact binary values of the truth tables' parameters, evaluates the documented formula of each shape at 0, at each dose, at the geometric midpoints of neighbouring doses, at a tenth of the lowest dose and at ten times the top dose; finds each EC50 as the root of \|f\| = \|max_log2_change\| / 2 and each benchmark dose as the lowest root of \|f\| = c, by bisection on log10 dose, at c = `expression_sd`, 1.349 `expression_sd`, log2(1.1), 0.5 and \|max_log2_change\|; and computes the exact moments of the count model to the fourth, the Poisson-lognormal moments of the cells and the marginal moments of the counts through the factorial moments of the negative binomial distribution, with the covariance of one donor's counts at two doses. Means are compared within 4 standard errors from the exact variance, variances from the exact fourth central moment and covariances from the spread of the products. Reference: mpmath 1.3.0.
-
-| Check family | Reference | Largest difference | Tolerance | Outcome |
-| --- | --- | --- | --- | --- |
-| True curves of 2,900 genes of the seven shapes and of flat genes, 44,800 values, and 0 at the vehicle | mpmath, the documented formulas | 2.2e-16 of max_log2_change | 1e-10 | 9 pass |
-| EC50s of 1,852 Hill, exponential, Fréchet and step curves | mpmath, roots of \|f\| = \|max_log2_change\| / 2 | 0 | 1e-10 | 4 pass |
-| Benchmark doses of the seven shapes, 12,010 at the five changes | mpmath, lowest roots of \|f\| = c | 1.4e-15 | 1e-10 | 7 pass |
-| The tables' `bmd_expression_sd` and `bmd_fold_change`, 2,900 genes | mpmath | 1.2e-15 | 1e-10 | 2 pass |
-| Benchmark doses that are NaN, 2,490 of 14,500: flat genes, and changes a curve never reaches | mpmath | 0 mismatches | 0 | 1 pass |
-| Benchmark doses of 13 curves at a change of \|max_log2_change\|, 0.6 and 1.5 times it, where a plateau is never reached and a peak or a step is | mpmath | 2.0e-16 | 1e-10, and 0 NaN mismatches | 1 pass |
-| Responsive genes and their counts by shape, maximal change and direction, 4 series | the documented allocation | 0 mismatches | 0 | 4 pass |
-| Shares of 1.1-fold benchmark doses below the lowest dose and above the top dose: 1,300 Hill, exponential, Fréchet and step curves of the ladder (0.095 and 0.092) and 520 of the half-log series (0.083 and 0.096) | a tenth, binomial | abs(z) 1.32 | 4 standard errors | 4 pass |
-| Peaks of 580 bells within the positive doses | the documented placement | 0 outside | 0 | 1 pass |
-| Means and variances of the cells per profile, 2 cell types x 4 doses | mpmath, Poisson-lognormal | abs(z) 1.77 | 4 standard errors | 2 pass |
-| Means and variances of the counts, 8 genes x 2 cell types x 4 doses | mpmath, exact marginal moments | abs(z) 2.92 | 4 standard errors | 2 pass |
-| Variances of the counts with donors crossed with dose, from `expression_sd`, 64 | mpmath, exact marginal moments | abs(z) 2.62 | 4 standard errors | 1 pass |
-| Covariances of one donor's counts at the vehicle and at each dose, 48 | mpmath | abs(z) 3.27 | 4 standard errors | 1 pass |
-| Counts against a dispersion of 0.5 for every profile, not 0.5 / n, and against effects in natural-log units, not log2 | the wrong models' exact moments | abs(z) 22.8 and 10.8 | above 4 standard errors | 2 controls |
-| z-scores of the 260 calibrated comparisons: largest 3.27, 6.5% above 2 (4.6% expected) | standard normal | n/a | n/a | 1 information |
-| Cubes and truths of the four series at 1, 2 and 8 numba threads, in three processes | identical | identical | 0 | 1 pass |
-| An integer seed and the generator it seeds; two generators in the same state from jumped bit generators; the truth under other replicates, cells, composition and donor_sd, and with a third cell type | identical | identical | 0 | 3 pass |
-| Where 1.1-fold benchmark doses fall, by shape and over all, in the ladder | information | listed below | n/a | 8 information |
-| Where the EC50s of the shapes placed by their benchmark dose fall, at 9 and 4 dose groups | information | listed below | n/a | 2 information |
-| How many doses see each bell, at six designs, two of them unevenly spaced | information | listed below | n/a | 6 information |
-| The SD of observed log2-CPM between 2,000 vehicle replicates over `expression_sd`, at 30, 100 and 500 cells per profile | information | listed below | n/a | 3 information |
-| The change of observed log2-CPM from the vehicle to the top dose over the true change, at 30 and 100 cells per profile | information | listed below | n/a | 2 information |
-| The shift of the expected library size at the top dose, 50 default series of the ladder | information | median +0.079 log2; 95th percentile of the absolute shift 0.241 | n/a | 1 information |
-| The time of one series of 9 dose groups and 2 cell types of 1,000 genes, at 3 and 4 replicates | information | given under [](#validation-timings) | n/a | 2 information |
-
-Every gene of the ladder responds, in the default shares. Below the lowest dose and above the top dose lie the 1.1-fold benchmark doses of 7.8% and 9.8% of the 600 Hill curves, 11.7% and 9.0% of the 300 exponential, 8.5% and 10.0% of the 200 Fréchet and 12.0% and 7.0% of the 200 step curves; 31.2% and none of the 400 bells; none of the 100 linear and 200 power curves; and 12.4% and 6.0% of all 2,000.
-
-EC50s of 1,000 curves of each shape placed by its benchmark dose: at 9 dose groups (the ladder), 1.4%, 0.9%, 2.5% and 9.5% of the Hill, exponential, Fréchet and step EC50s lie below the lowest dose, 26.7%, 25.8%, 18.6% and 9.7% above the top dose, and 9.3%, 9.2%, 3.9% and none above 5 times the top dose, the bound of BMDS's Hill model on doses scaled to the top dose; at 4 dose groups (0 and 0.1 to 10 a decade apart), 0.2%, none, 1.9% and 11.2% below, 36.3%, 35.7%, 21.6% and 12.2% above, and 10.7%, 10.6%, 2.9% and none above 5 times the top dose.
-
-Bells peak within the doses, with widths from the gap between the doses on either side of the peak. At 3 dose groups (0, 1 and 10), 4 (0 and 0.1 to 10 a decade apart), 6 (0 and 0.01 to 30) and 9 (the ladder), and at the unevenly spaced 0, 1, 3, 10 and 100, and 0, 1, 2, 3, 4 and 1000, 98%, 98%, 98%, 99%, 99% and 99% of 2,000 bells reach half their peak at two or more doses; 14%, 56%, 73%, 87%, 57% and 30% fall by a quarter of their peak or more after their highest dose, the fall that a method can see; and the 1.1-fold benchmark dose lies below the lowest dose in 100%, 94%, 62%, 31%, 91% and 93%.
-
-The SD of voom's log2-CPM, log2((y + 0.5) / (N + 1) x 10^6), between 2,000 vehicle replicates, over `expression_sd`, median by the expected count at the vehicle: at 100 cells per profile, 3.56 below 1, 3.64 from 1 to 5, 2.29 from 5 to 20, 1.48 from 20 to 100 and 1.22 above; at 30 cells 3.67, 3.79, 2.43, 1.71 and 1.30; at 500 cells 4.98 (6 genes), 3.71, 2.24, 1.39 and 1.09.
-
-The change of voom's log2-CPM from the vehicle to the top dose, 2,000 replicates of each, over the true change, after the flat genes' median is removed, for responsive genes whose true change exceeds 0.5, median by the expected count at the vehicle: at 100 cells per profile, 0.40 below 1 (rises 0.56, falls 0.31), 0.80 from 1 to 2 (0.89 and 0.60), 0.95 from 2 to 5 (0.99 and 0.88), 0.99 from 5 to 20 and 1.00 above; at 30 cells, 0.34, 0.77, 0.93, 0.99 and 1.00.
 
 (validation-linear-models)=
 ### Linear models
@@ -885,6 +810,103 @@ Each row compares every column that speckle reports, matched by cell type, and t
 
 CytePool computes the transforms as log((x + 0.5) / (N - x + 0.5 (I - 1))) and arctan2(sqrt(x), sqrt(N - x)), equal to speckle's formulas but without the cancellation in 1 - q and the loss of digits of arcsin near 1; on these data the two agree to rounding.
 
+## Dose response
+
+(validation-dose-axes)=
+### Dose axes and their design columns
+
+The script printed 234 checks (216 pass, 16 information and 2 deliberate differences) on 2026-11-20, in 15.9 s, with a peak memory of 350 MiB. [Dose axes and the vehicle](statistics/dose_response.md#dose-axes) explains what it checks.
+
+[`validation/dose_axes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_axes.py) builds `DoseAxis` designs for four dose series from fixed seeds (seeds 20261124 to 20261126): a ladder like the TCDD liver series, the vehicle and 0.01 to 30 ug/kg with 2 or 3 samples each; an in vitro half-log series, 6 vehicle wells and 4 doses in duplicate; an unbalanced ladder whose second dose has 10 of the 16 treated samples; and 24 measured exposures with 6 zeros. Each series is read on four axes, the vehicle in its own group or on the axis, on the log10 or the linear scale (on the log10 scale at an offset), with both forms of the spline and knots by `"levels"` and `"quantiles"` at df 1 to 8 and given as doses: 392 cases. R computes the positions, `dose_treated`, the knots with R's own functions (`ns(unique(x), df)`, `ns(x, df)`), the spline columns with `ns` or Hmisc's `rcspline.eval`, `model.matrix`, the F-statistics of nested `lm` fits of seeded responses (any dose, among the treated doses, departure from a line), `predict` of the full fit on a grid of doses from 0 to twice the highest, and limma-trend's moderated F-tests of the same columns on seeded counts of 200 genes (`cpm`, `lmFit`, `eBayes(trend = TRUE)` and `classifyTestsF`, which `topTable` of several columns calls), with their numerator degrees of freedom; CytePool runs `limma_trend` on the same counts. B-spline columns, whose basis differs from `ns()`'s, are compared through their column space. Restricted cubic columns are compared by their first column, element by element, and through Hmisc's columns as combinations of CytePool's, which differ from Hmisc's truncated cubes by a change of basis that keeps them well conditioned. R's F-statistics, curves and moderated F-tests are compared where R's design has a condition number of at most 1e5, so that rounding stays below the tier. limma computes the moderated F-tests of Hmisc's columns from the correlation of their coefficients, whose rounding grows with the square of that condition number, so those are compared at the close tier; the agreement of the two forms ties CytePool's restricted cubic F-tests to `ns()`'s at the exact tier. Reference: R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Positions of the doses, 4 series on 4 axes | `log10(dose)`, `log10(dose + offset)`, the dose | 0 | 1e-10 | 16 pass |
+| `dose_treated` with the vehicle in its own group | `as.numeric(dose > 0)` | 0 mismatches | 0 | 8 pass |
+| Knots and boundary knots, 380 cases | `ns` | 0 | 1e-10 | 16 pass |
+| First restricted cubic column, 190 cases | `rcspline.eval` | 0 | 1e-10 | 16 pass |
+| Hmisc's restricted cubic columns as combinations of CytePool's, 190 cases | `rcspline.eval` | 2.6e-14 | 1e-10 | 16 pass |
+| B-spline columns, by their column space, 190 cases | `ns` | 2.4e-14 | 1e-10 | 16 pass |
+| Design matrices of `Design`, 380 cases | `model.matrix` | 6.4e-14 | 1e-10 | 16 pass |
+| F-statistics of any dose, among the treated doses and of departure from a line, 338 cases | `anova(lm)` | 8.3e-13 | 1e-10 | 16 pass |
+| Fitted curves on a grid of doses, 338 cases | `predict(lm)` | 9.6e-12 | 1e-10 | 16 pass |
+| Moderated F-statistics of the B-spline form, 190 cases | limma's `classifyTestsF` of `ns()`'s columns | 6.9e-13 | 1e-10 | 16 pass |
+| Moderated F-statistics of the restricted cubic form, 135 cases | limma's `classifyTestsF` of Hmisc's columns | 2.4e-9 | 1e-6 | 16 pass |
+| Numerator degrees of freedom of the moderated F-tests, which count every column tested, 380 cases | the columns tested | 0 mismatches | 0 | 16 pass |
+| Moderated F-statistics of the two forms on the same knots, 190 pairs of cases | the B-spline form | 1.3e-12 | 1e-10 | 16 pass |
+| Cases where one program places knots and the other raises, other than the deliberate differences | R | 0 | 0 | 16 pass |
+| F-statistics, curves and moderated F-tests of the 42 cases whose R design has a condition number above 1e5, up to 9.7e10: Hmisc's columns, 39 on a linear axis and 3 on the log10 axis of the exposures with the vehicle on it; R's `lm` drops a column as aliased in 8 of them | `lm` | not compared | n/a | 8 information |
+| Largest condition number of the designs of each axis and form: CytePool's restricted cubic columns 23 to 1.3e3, Hmisc's 6.4e4 to 9.7e10; the B-spline form 25 to 710 in both programs | `model.matrix` | n/a | n/a | 8 information |
+| Deliberate differences, listed below | `ns`, limma | R places knots, or limma counts fewer degrees of freedom | n/a | 2 deliberate differences |
+
+Deliberate differences:
+
+- On the unbalanced ladder, R's quantile rule places two knots at 0.1 mg/kg in 12 cases, and `ns()` takes the repeated knot, which makes the curve less smooth there; `DoseAxis.spline_basis` raises an error that names the rule and the dose.
+- In 13 cases, 7 of them on a log10 axis and 4 of those on the default axis with `"levels"`, limma's F-tests of Hmisc's columns count fewer degrees of freedom than columns: the correlation of their coefficients has an eigenvalue below 1e-8 of the largest, at condition numbers of R's design from 2.3e4 to 9.2e4. CytePool's restricted cubic columns span the same curves, and its F-tests count every column and agree with those of the B-spline form.
+
+(validation-dose-design)=
+### Dose designs
+
+The script printed 46 checks (44 pass and 2 information) on 2026-11-20, in 6.8 s, with a peak memory of 520 MiB. [Checking a dose design](statistics/dose_response.md#dose-design-check) explains what it checks, and [ETAP's design minimums](statistics/dose_response.md#dose-rule-minimums) the minimums.
+
+[`validation/dose_design.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_design.py) checks `check_dose_design` against three references and on published data. Counts (seeds 20261127 and 20261128): the cells of a TCDD-like series of 24 mice, the vehicle and 0.01 to 30 ug/kg in lanes of two mice, with 300 genes and 4 cell types: abundant hepatocytes, stellate cells that fall from about 60 per mouse to 6 at the top dose, cholangiocytes at about 9 per mouse, and macrophages that the vehicle mice lack. `from_cells` pools them; scanpy's `get.aggregate` sums the same cells per mouse and cell type, and pandas applies the filter (at least 10 cells, some counts, and `min_counts` 0 or 10,678, the median count of the stellate profiles of 10 cells or more) and groups the samples by cell type and dose. Aliasing and statuses: 25 designs with 32 cell types, among them the TCDD-like series with its lanes; a lane equal to the dose; two lanes that split the low and high doses; the vehicle in both lanes; a lane per sample; two vehicle samples, or two dose-1 samples, sharing a lane; the vehicle alone in its lane; one sample alone in its lane; sex and lane that absorb dose 1 only together; sex equal to the top dose's indicator; one sample per dose; a replicated vehicle with single doses; one participant per dose sampled before and after dosing, under `~ patient` and `~ patient + timepoint`; a bulk cube; the vehicle and one dose; two covariates that leave no residual degrees of freedom; `~ 0`; a covariate equal to the treated indicator; no vehicle; and four designs with a random intercept: the vehicle alone in its lane under `(1 | lane)`, two lanes of their own per dose under a random intercept that groups the samples as the lanes do, each treated dose in a lane of its own under `(1 | lane)`, and one animal of two samples per treated dose under `(1 | animal)`. R filters each cell type's samples from their cells and counts, builds the other terms with `model.matrix`, adds an intercept and an indicator of each treated dose group that keeps a sample, and takes the rank from `qr()`; a dose group is estimable when limma's `nonEstimable` does not name its column placed last, and confounded with the batch when it is estimable and `nonEstimable` names it once contrasts of the batches join the model, those of a single sample pooled into one and a sample alone in its batch, when it is the only one, left at 0. ETAP's minimums: 13 designs, the TCDD-like series with males only; a design of the vehicle and 0.03 to 300 mg/kg with 4 males and 4 females per dose, with cell types that keep every sample, keep one passing male at 1 mg/kg, or keep 2 female vehicle samples; the same with 3 females at one dose; and 10 ladders whose fourth step from the top is 2.5, 3, 10/3, 3.5, 3.6 or 4 and whose lowest step is 3, 8.5, 9 or 10, none within 1e-3 log10 of a bound of the tolerance. The statuses, with replicates counted as the levels of a random intercept's grouping and a random intercept of the batch excusing the doses it confounds when the vehicle and each such dose span two batches, and ETAP's minimums are compared with the same rules coded again in R for this check, which catches slips in either coding while the tests derive the rules by hand. Published data: GEO series GSE208161 [@sonigra2022], the per-cell metadata of a phase 1 trial with one participant per dose level, placebo included, sampled at day 1 and day 29, in 18 Seurat clusters; `from_cells` pools each cell's RNA count as the cube's one feature, and the doses (placebo, 0.3, 1 and 3 mL) come from GEO's sample records. Reference: scanpy 1.12.4, pandas 3.1.0, anndata 0.13.4; R 4.4.3, limma 3.62.1.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Cells, counts over every gene and use of each sample in each cell type, at `min_counts` 0 and 10,678, 96 samples each | scanpy's `get.aggregate`, pandas | 0 mismatches | 0 | 2 pass |
+| Samples used and left out, fewest cells and fewest counts of each dose group in each cell type, 36 groups each | scanpy's `get.aggregate`, pandas | 0 mismatches | 0 | 2 pass |
+| Samples used, residual degrees of freedom, estimable dose groups and statuses of 25 designs, and the dose groups confounded with the batch in the 13 that have one | R's `qr()`, limma's `nonEstimable`; statuses coded again in R | 0 mismatches | 0 | 25 pass |
+| Met and observed text of each of ETAP's minimums, 128 rows of 13 designs | ETAP's minimums coded again in R | 0 mismatches | 0 | 13 pass |
+| GSE208161: cells and RNA counts of 8 samples x 18 clusters | sums of the metadata's rows | 0 mismatches | 0 | 1 pass |
+| GSE208161 with the baselines at dose 0 and `~ patient`: every cluster descriptive, 13 with one residual degree of freedom and 5 with none | the published design, one participant per dose level | 18 descriptive | 18 descriptive | 1 pass |
+| GSE208161 with `~ 1`: 18 descriptive; with the day-29 samples alone: 16 descriptive, and clusters 14 and 17 refused, whose placebo sample keeps 3 cells | the published design | n/a | n/a | 2 information |
+
+On GSE208161 a rule that asked only for residual degrees of freedom would call 13 clusters inferential on one degree of freedom, the placebo participant's change from baseline; the check calls them descriptive, since no dose has a second participant.
+
+(validation-simulate-dose-series)=
+### Simulated dose series and their truths
+
+The script printed 70 checks (43 pass, 25 information and 2 controls) on 2026-11-20, in 74.1 s, with a peak memory of 1,310 MiB. [Simulated dose series with known curves](statistics/dose_response.md#simulated-dose-series) explains what it checks.
+
+[`validation/simulate_dose_series.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/simulate_dose_series.py) draws four series from fixed seeds (20261127 to 20261130): a ladder like the TCDD liver series, the vehicle and eight doses from 0.01 to 30 ug/kg, 3 replicates, two cell types of 500 and 30 cells per profile, every one of 1,000 genes responsive; a half-log series, the vehicle and 0.1 to 3.16 uM, 2 replicates from donors crossed with dose, every one of 400 genes responsive; and two series of the doses 0, 0.1, 1 and 10 with 10,000 replicates each, 30 and 300 cells per profile, the second cell type at 70% and 40% of its cells at the two top doses, half of 50 genes responsive, one of them with 10,000 donors crossed with dose. mpmath, in a separate process at 50 digits on the exact binary values of the truth tables' parameters, evaluates the documented formula of each shape at 0, at each dose, at the geometric midpoints of neighbouring doses, at a tenth of the lowest dose and at ten times the top dose; finds each EC50 as the root of \|f\| = \|max_log2_change\| / 2 and each benchmark dose as the lowest root of \|f\| = c, by bisection on log10 dose, at c = `expression_sd`, 1.349 `expression_sd`, log2(1.1), 0.5 and \|max_log2_change\|; and computes the exact moments of the count model to the fourth, the Poisson-lognormal moments of the cells and the marginal moments of the counts through the factorial moments of the negative binomial distribution, with the covariance of one donor's counts at two doses. Means are compared within 4 standard errors from the exact variance, variances from the exact fourth central moment and covariances from the spread of the products. Reference: mpmath 1.3.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| True curves of 2,900 genes of the seven shapes and of flat genes, 44,800 values, and 0 at the vehicle | mpmath, the documented formulas | 2.2e-16 of max_log2_change | 1e-10 | 9 pass |
+| EC50s of 1,852 Hill, exponential, Fréchet and step curves | mpmath, roots of \|f\| = \|max_log2_change\| / 2 | 0 | 1e-10 | 4 pass |
+| Benchmark doses of the seven shapes, 12,010 at the five changes | mpmath, lowest roots of \|f\| = c | 1.4e-15 | 1e-10 | 7 pass |
+| The tables' `bmd_expression_sd` and `bmd_fold_change`, 2,900 genes | mpmath | 1.2e-15 | 1e-10 | 2 pass |
+| Benchmark doses that are NaN, 2,490 of 14,500: flat genes, and changes a curve never reaches | mpmath | 0 mismatches | 0 | 1 pass |
+| Benchmark doses of 13 curves at a change of \|max_log2_change\|, 0.6 and 1.5 times it, where a plateau is never reached and a peak or a step is | mpmath | 2.0e-16 | 1e-10, and 0 NaN mismatches | 1 pass |
+| Responsive genes and their counts by shape, maximal change and direction, 4 series | the documented allocation | 0 mismatches | 0 | 4 pass |
+| Shares of 1.1-fold benchmark doses below the lowest dose and above the top dose: 1,300 Hill, exponential, Fréchet and step curves of the ladder (0.095 and 0.092) and 520 of the half-log series (0.083 and 0.096) | a tenth, binomial | abs(z) 1.32 | 4 standard errors | 4 pass |
+| Peaks of 580 bells within the positive doses | the documented placement | 0 outside | 0 | 1 pass |
+| Means and variances of the cells per profile, 2 cell types x 4 doses | mpmath, Poisson-lognormal | abs(z) 1.77 | 4 standard errors | 2 pass |
+| Means and variances of the counts, 8 genes x 2 cell types x 4 doses | mpmath, exact marginal moments | abs(z) 2.92 | 4 standard errors | 2 pass |
+| Variances of the counts with donors crossed with dose, from `expression_sd`, 64 | mpmath, exact marginal moments | abs(z) 2.62 | 4 standard errors | 1 pass |
+| Covariances of one donor's counts at the vehicle and at each dose, 48 | mpmath | abs(z) 3.27 | 4 standard errors | 1 pass |
+| Counts against a dispersion of 0.5 for every profile, not 0.5 / n, and against effects in natural-log units, not log2 | the wrong models' exact moments | abs(z) 22.8 and 10.8 | above 4 standard errors | 2 controls |
+| z-scores of the 260 calibrated comparisons: largest 3.27, 6.5% above 2 (4.6% expected) | standard normal | n/a | n/a | 1 information |
+| Cubes and truths of the four series at 1, 2 and 8 numba threads, in three processes | identical | identical | 0 | 1 pass |
+| An integer seed and the generator it seeds; two generators in the same state from jumped bit generators; the truth under other replicates, cells, composition and donor_sd, and with a third cell type | identical | identical | 0 | 3 pass |
+| Where 1.1-fold benchmark doses fall, by shape and over all, in the ladder | information | listed below | n/a | 8 information |
+| Where the EC50s of the shapes placed by their benchmark dose fall, at 9 and 4 dose groups | information | listed below | n/a | 2 information |
+| How many doses see each bell, at six designs, two of them unevenly spaced | information | listed below | n/a | 6 information |
+| The SD of observed log2-CPM between 2,000 vehicle replicates over `expression_sd`, at 30, 100 and 500 cells per profile | information | listed below | n/a | 3 information |
+| The change of observed log2-CPM from the vehicle to the top dose over the true change, at 30 and 100 cells per profile | information | listed below | n/a | 2 information |
+| The shift of the expected library size at the top dose, 50 default series of the ladder | information | median +0.079 log2; 95th percentile of the absolute shift 0.241 | n/a | 1 information |
+| The time of one series of 9 dose groups and 2 cell types of 1,000 genes, at 3 and 4 replicates | information | given under [](#validation-timings) | n/a | 2 information |
+
+Every gene of the ladder responds, in the default shares. Below the lowest dose and above the top dose lie the 1.1-fold benchmark doses of 7.8% and 9.8% of the 600 Hill curves, 11.7% and 9.0% of the 300 exponential, 8.5% and 10.0% of the 200 Fréchet and 12.0% and 7.0% of the 200 step curves; 31.2% and none of the 400 bells; none of the 100 linear and 200 power curves; and 12.4% and 6.0% of all 2,000.
+
+EC50s of 1,000 curves of each shape placed by its benchmark dose: at 9 dose groups (the ladder), 1.4%, 0.9%, 2.5% and 9.5% of the Hill, exponential, Fréchet and step EC50s lie below the lowest dose, 26.7%, 25.8%, 18.6% and 9.7% above the top dose, and 9.3%, 9.2%, 3.9% and none above 5 times the top dose, the bound of BMDS's Hill model on doses scaled to the top dose; at 4 dose groups (0 and 0.1 to 10 a decade apart), 0.2%, none, 1.9% and 11.2% below, 36.3%, 35.7%, 21.6% and 12.2% above, and 10.7%, 10.6%, 2.9% and none above 5 times the top dose.
+
+Bells peak within the doses, with widths from the gap between the doses on either side of the peak. At 3 dose groups (0, 1 and 10), 4 (0 and 0.1 to 10 a decade apart), 6 (0 and 0.01 to 30) and 9 (the ladder), and at the unevenly spaced 0, 1, 3, 10 and 100, and 0, 1, 2, 3, 4 and 1000, 98%, 98%, 98%, 99%, 99% and 99% of 2,000 bells reach half their peak at two or more doses; 14%, 56%, 73%, 87%, 57% and 30% fall by a quarter of their peak or more after their highest dose, the fall that a method can see; and the 1.1-fold benchmark dose lies below the lowest dose in 100%, 94%, 62%, 31%, 91% and 93%.
+
+The SD of voom's log2-CPM, log2((y + 0.5) / (N + 1) x 10^6), between 2,000 vehicle replicates, over `expression_sd`, median by the expected count at the vehicle: at 100 cells per profile, 3.56 below 1, 3.64 from 1 to 5, 2.29 from 5 to 20, 1.48 from 20 to 100 and 1.22 above; at 30 cells 3.67, 3.79, 2.43, 1.71 and 1.30; at 500 cells 4.98 (6 genes), 3.71, 2.24, 1.39 and 1.09.
+
+The change of voom's log2-CPM from the vehicle to the top dose, 2,000 replicates of each, over the true change, after the flat genes' median is removed, for responsive genes whose true change exceeds 0.5, median by the expected count at the vehicle: at 100 cells per profile, 0.40 below 1 (rises 0.56, falls 0.31), 0.80 from 1 to 2 (0.89 and 0.60), 0.95 from 2 to 5 (0.99 and 0.88), 0.99 from 5 to 20 and 1.00 above; at 30 cells, 0.34, 0.77, 0.93, 0.99 and 1.00.
+
 ## Gene sets and pathways
 
 (validation-gene-set-tests)=
@@ -1372,6 +1394,11 @@ python validation/multiple_testing.py
 # Hmisc, rms, limma and edgeR, in the R environment of the dose-response references (below).
 RSCRIPT=$REF/r-dose/bin/Rscript python validation/smoothing.py
 RSCRIPT=$REF/r-dose/bin/Rscript python validation/dose_axes.py
+# limma in the same R environment, and scanpy; downloads 1.7 MB from GEO on its first
+# run, into ~/.cache/cytepool-validation/GSE208161 unless --data or GSE208161_DATA
+# names another directory outside the repository.
+SCANPY_PYTHON=$REF/python-scanpy/bin/python RSCRIPT=$REF/r-dose/bin/Rscript \
+    python validation/dose_design.py
 python validation/normalization.py
 python validation/design.py
 python validation/linear_models.py

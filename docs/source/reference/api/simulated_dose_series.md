@@ -6,7 +6,7 @@ myst:
 
 # Simulated dose series
 
-Simulated dose series draw pseudobulk counts from known curves of expression along dose, with their truth; [Simulated dose series with known curves](../statistics/linear-models/#simulated-dose-series) explains them.
+Simulated dose series draw pseudobulk counts from known curves of expression along dose, with their truth; [Simulated dose series with known curves](../statistics/dose-response/#simulated-dose-series) explains them.
 
 ```{eval-rst}
 .. automodule:: cytepool.simulated_dose_series

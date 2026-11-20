@@ -12,7 +12,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
 
-**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from the vehicle by a stated change, the benchmark response (BMR), such as one SD of the vehicle or a fold change of 1.1. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from the vehicle by a stated change, the benchmark response (BMR), such as one SD of the vehicle or a fold change of 1.1. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
 
@@ -26,7 +26,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Counts per million (CPM).** Counts divided by the effective library size, times one million. [Counts per million and log-CPM](../statistics/normalization_and_filtering.md#log-cpm)
 
-**Coverage.** The share of intervals that contain the true value over repeated experiments, which a 95% interval should hold at 95%. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+**Coverage.** The share of intervals that contain the true value over repeated experiments, which a 95% interval should hold at 95%. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Cox-Reid adjusted profile likelihood.** The likelihood of a gene's dispersion with the coefficients fitted at each value, adjusted for most of the bias that fitting them gives, which edgeR and DESeq2 maximize to estimate dispersions. [The Cox-Reid adjusted profile likelihood](../statistics/count_models.md#cox-reid)
 
@@ -34,15 +34,19 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Design.** The sample table with the model to fit: an R formula of the fixed effects, random effects in lme4's notation, and named contrasts. [The design](../statistics/linear_models.md#designs-and-formulas)
 
+**Descriptive.** The status of a cell type whose dose series supports curves that describe the means of the dose groups, without p-values or bounds: no treated dose group that the design can compare with the vehicle has a second replicate (a second sample, or with random intercepts a second animal or other unit they name), the model leaves no residual degrees of freedom, or a batch is confounded with such a group and the design does not compare them through a random intercept of the batch. A cell type whose samples support tests is inferential, and one that supports no dose analysis, refused. [Checking a dose design](../statistics/dose_response.md#dose-design-check)
+
 **Digest.** The SHA-256 hash of one part of a cube, such as a table or one group of a layer, from which the fingerprint is built. [Fingerprints](cube_files.md#fingerprint-encoding)
 
 **Dispersion.** The parameter of a negative binomial distribution that sets how much the variance exceeds the mean, whose square root is the biological coefficient of variation. [The negative binomial model](../statistics/count_models.md#negative-binomial-model)
 
 **Dispersion outlier.** A gene whose own dispersion estimate lies so far above DESeq2's trend that DESeq2 keeps it rather than shrink it towards the trend. [DESeq2](../statistics/count_models.md#deseq2)
 
-**Dose axis.** The axis along which a curve of dose is fitted, usually log10 of the dose, with the unit, what the dose measures (administered, nominal, measured or internal), and where the vehicle goes: in a group of its own, or on the axis at a recorded offset. [Dose axes and the vehicle](../statistics/linear_models.md#dose-axes)
+**Dose axis.** The axis along which a curve of dose is fitted, usually log10 of the dose, with the unit, what the dose measures (administered, nominal, measured or internal), and where the vehicle goes: in a group of its own, or on the axis at a recorded offset. [Dose axes and the vehicle](../statistics/dose_response.md#dose-axes)
 
-**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/linear_models.md#simulated-dose-series)
+**Dose group.** The samples given one dose, the vehicle's included; in a cell type, the samples of a dose group that pass the cell type's filter of samples. [What a number of dose groups supports](../statistics/dose_response.md#dose-groups)
+
+**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
 
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
@@ -136,6 +140,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Rotation test.** A test that compares a statistic with its values under random rotations of a linear model's residual space, which leave the distribution of the data, the correlation between genes included, unchanged under the null hypothesis. [The effects of each gene](../statistics/gene_set_tests.md#gene-effects)
 
+**Rule set.** A named set of published rules that an analysis applies as one option, such as `rules="etap_2024"`, the design minimums of EPA's Transcriptomic Assessment Products. [ETAP's design minimums](../statistics/dose_response.md#dose-rule-minimums)
+
 **Sample.** The unit of replication, such as a donor or a donor under one condition, whose cells are pooled into one profile per group.
 
 **Sample quality weight.** A weight for each sample, from how closely its values follow the model across all genes. [Sample quality weights](../statistics/limma_voom.md#sample-quality-weights)
@@ -152,4 +158,4 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Variance fraction.** The share of a gene's variance that one variable of the design explains, from a mixed model fitted by maximum likelihood, which variancePartition's help page reports gives unbiased fractions where REML can show substantial bias. [Variance partitioning](../statistics/mixed_models.md#variance-fractions)
 
-**Vehicle.** The samples given the solvent or carrier of a treatment without the substance, dose 0 of a dose series, against which the doses are compared. [Dose axes and the vehicle](../statistics/linear_models.md#dose-axes)
+**Vehicle.** The samples given the solvent or carrier of a treatment without the substance, dose 0 of a dose series, against which the doses are compared. [Dose axes and the vehicle](../statistics/dose_response.md#dose-axes)

@@ -30,6 +30,7 @@ MODULES = {
         "limma_voom",
     ),
     "cytepool.dose_axes": ("DoseAxis",),
+    "cytepool.dose_designs": ("DoseDesignReport", "check_dose_design"),
     "cytepool.gene_set_enrichment": ("gsea",),
     "cytepool.gene_set_tests": ("camera", "fry"),
     "cytepool.gene_sets": ("GeneSets", "read_gmt", "write_gmt"),
@@ -68,8 +69,8 @@ OPTIONAL = ("anndata", "matplotlib", "mudata", "pandas")
 
 def test_the_top_level_lists_the_names_of_its_docstring() -> None:
     documented = re.findall(r":(?:class|func):`(\w+)`", cytepool.__doc__ or "")
-    assert len(documented) == len(set(documented)) == 59
-    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 60
+    assert len(documented) == len(set(documented)) == 61
+    assert len(cytepool.__all__) == len(set(cytepool.__all__)) == 62
     assert set(cytepool.__all__) == {*documented, "__version__"}
     assert isinstance(cytepool.__version__, str) and cytepool.__version__
 

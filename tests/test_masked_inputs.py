@@ -324,6 +324,28 @@ def _differential_expression(context: Context) -> dict[str, Any]:
     }
 
 
+def _dose_design(context: Context) -> dict[str, Any]:
+    """A bulk cube of COUNTS with a dose, lane and sex for each sample, the design of
+    its other terms, and every option."""
+    samples = {
+        "sample_id": SAMPLE_TABLE["sample_id"],
+        "dose": [0.0, 0.0, 1.0, 1.0],
+        "lane": ["a", "b", "a", "b"],
+        "sex": ["F", "M", "F", "M"],
+    }
+    return {
+        "cube": from_bulk(COUNTS, samples=samples),
+        "design": Design(samples, "~ 1"),
+        "dose": DOSE_AXIS,
+        "batch": "lane",
+        "rules": "etap_2024",
+        "sex": "sex",
+        "min_cells": 10,
+        "min_counts": 1,
+        "groups": ["bulk"],
+    }
+
+
 def _weighted_by_cells(context: Context) -> dict[str, Any]:
     """As _differential_expression, with a cube that records cell numbers, and prior
     weights from them instead of quality weights."""
@@ -2058,6 +2080,14 @@ ENTRY_POINTS: dict[str, Entry] = {
         instance=lambda c: DOSE_AXIS,
         keys={"samples": "dose"},
     ),
+    # The check of a dose design: min_cells goes through operator.index, as in
+    # limma_voom.
+    "cytepool.dose_designs.check_dose_design": Entry(
+        _dose_design,
+        {"groups": None, "min_cells": None},
+        options=("batch", "rules", "sex", "min_counts"),
+        objects=("cube", "design", "dose"),
+    ),
     # Simulated dose series: doses, the values per dose and per cell type, the shares
     # of shapes and the composition factors; the truth's doses, tables and genes.
     "cytepool.simulated_dose_series.simulate_dose_series": Entry(
@@ -3014,6 +3044,19 @@ NO_ARRAY_INPUT = {
     "cytepool.differential_expression.DifferentialExpressionResult.table": (
         ("group", "contrast"),
         "a group id and a contrast name, looked up",
+    ),
+    "cytepool.dose_designs.DoseDesignReport": (
+        ("summary", "doses", "samples", "minimums", "design_check", "settings"),
+        "Tables and a DesignReport, which were checked when they were built, and "
+        "settings kept as JSON, which cannot hold an array",
+    ),
+    "cytepool.dose_designs.DoseDesignReport.status": (
+        ("group",),
+        "a group id, looked up",
+    ),
+    "cytepool.dose_designs.DoseDesignReport.rules_status": (
+        ("group",),
+        "a group id, looked up",
     ),
     "cytepool.variance_components.VariancePartitioningResult": (
         ("variables", "summary", "samples", "tables", "provenance"),

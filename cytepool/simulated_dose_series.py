@@ -15,7 +15,7 @@ outside the families of curves that BMDS (US EPA 2026), drc (Ritz et al. 2015) a
 DRomics (Delignette-Muller et al. 2023) fit, so that a method is not checked only on
 curves of its own form; Hill, sigmoid Emax and four-parameter log-logistic curves are
 one family (Kappenberg et al. 2023)
-(https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
+(https://docs.nygen.io/CytePool/statistics/dose-response#simulated-dose-series).
 
 References:
     Crowell HL, Soneson C, Germain PL, Calini D, Collin L, Raposo C, Malhotra D,
@@ -197,7 +197,7 @@ class DoseTruth:
     and its benchmark doses (Crump 1984), the lowest dose at which the curve departs
     from the vehicle by a stated change, the benchmark response, at any change
     (:meth:`benchmark_doses`)
-    (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
+    (https://docs.nygen.io/CytePool/statistics/dose-response#simulated-dose-series).
 
     :meth:`table` gives the parameters and two benchmark doses per gene, with the
     columns
@@ -598,7 +598,7 @@ def simulate_dose_series(
     ``responsive``, ``shapes`` and ``max_log2_changes``: other ``replicates``,
     ``cells``, ``composition``, ``biological_sd`` or ``donor_sd`` give the same
     genes, and so does adding a cell type, which compares designs on the same truth
-    (https://docs.nygen.io/CytePool/statistics/linear-models#simulated-dose-series).
+    (https://docs.nygen.io/CytePool/statistics/dose-response#simulated-dose-series).
 
     Args:
         doses: The dose levels in ``unit``, strictly increasing from 0, the vehicle,

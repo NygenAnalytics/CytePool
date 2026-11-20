@@ -36,7 +36,7 @@ from cytepool import (
 
 DATA = Path(__file__).parent / "data" / "simulate_dose_series"
 CHAPTER = (
-    Path(__file__).resolve().parents[1] / "docs/source/statistics/linear_models.md"
+    Path(__file__).resolve().parents[1] / "docs/source/statistics/dose_response.md"
 )
 NAN = math.nan
 PARAMETERS = ("shape", "max_log2_change", "ec50", "slope", "peak_dose", "peak_width")

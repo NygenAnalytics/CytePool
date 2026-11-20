@@ -13,7 +13,7 @@ shown (McFaline-Figueroa et al. 2024); the offset decides where the vehicle sits
 the slope at the low end, which is why it is recorded rather than built in. The axis
 also records the unit and the metric, what the dose measures (administered, nominal,
 measured or internal), so that knots and curves print in the dose's own terms
-(https://docs.nygen.io/CytePool/statistics/linear-models#dose-axes).
+(https://docs.nygen.io/CytePool/statistics/dose-response#dose-axes).
 
 References:
     Bornkamp B, Pinheiro J, Bretz F, Sandig L, Thomas M, Sabanes Bove D (2026).
@@ -36,9 +36,16 @@ import numpy as np
 import numpy.typing as npt
 
 from ._columns import is_data_frame
-from ._doses import SAME_DOSE, checked_doses, real_vector
+from ._doses import (
+    checked_doses,
+    column_doses,
+    distinct_doses,
+    dose_text,
+    real_vector,
+    spline_column,
+    treated_column,
+)
 from ._masked_arrays import reject_masked
-from ._messages import close_matches, listing
 from ._options import checked_choice, positive_finite_number, positive_integer
 from .cube import Cube
 from .stats.smoothing import NaturalSplineBasis
@@ -53,8 +60,6 @@ SCALES = ("log10", "linear")
 VEHICLES = ("own_group", "on_axis")
 # The rules of NaturalSplineBasis that place knots on a dose ladder.
 RULES = ("levels", "quantiles")
-# The most doses a message lists: dose series rarely have more.
-_LISTED_DOSES = 20
 
 
 @dataclass(frozen=True)
@@ -70,7 +75,7 @@ class DoseAxis:
     doses; a dose of 0 has no position on the axis. From the axis,
     :meth:`spline_basis` places the knots of a natural cubic spline on the samples'
     doses, and :meth:`design_columns` gives the columns that enter the design
-    (https://docs.nygen.io/CytePool/statistics/linear-models#dose-axes).
+    (https://docs.nygen.io/CytePool/statistics/dose-response#dose-axes).
 
     Args:
         column: The column of the sample table that holds each sample's dose, finite
@@ -262,7 +267,7 @@ class DoseAxis:
         doses = self._sample_doses(samples)
         positions = self._positions(doses)
         on_axis = ~np.isnan(positions)
-        levels = np.unique(doses[on_axis])
+        levels = distinct_doses(doses[on_axis], self.unit)
         self._check_levels(levels)
         placing: str | FloatArray
         if isinstance(knots, str):
@@ -280,7 +285,7 @@ class DoseAxis:
             raise ValueError(
                 f"a spline of {columns} columns needs {columns + 1} distinct doses on "
                 f"the axis, and the samples have {levels.size}, "
-                f"{self._dose_text(levels)}{self._which_doses()}; lower df to at most "
+                f"{dose_text(levels, self.unit)}{self._which_doses()}; lower df to at most "
                 f"{levels.size - 1}"
             )
         try:
@@ -361,9 +366,9 @@ class DoseAxis:
         values[np.isnan(positions)] = 0.0
         columns: dict[str, FloatArray] = {}
         if self.vehicle == "own_group":
-            columns[f"{self.column}_treated"] = (doses > 0.0).astype(np.float64)
+            columns[treated_column(self.column)] = (doses > 0.0).astype(np.float64)
         for j in range(basis.df):
-            columns[f"{self.column}_s{j + 1}"] = values[:, j]
+            columns[spline_column(self.column, j + 1)] = values[:, j]
         return columns
 
     def to_dict(self) -> dict[str, Any]:
@@ -398,13 +403,7 @@ class DoseAxis:
                 f"a pandas DataFrame, got {type(samples).__name__}{hint}"
             )
         table = samples if isinstance(samples, Table) else Table(samples)
-        if self.column not in table:
-            raise ValueError(
-                f"the dose column {self.column!r} is not a column of the sample "
-                f"table{close_matches(self.column, table.columns)}; columns are: "
-                f"{listing([repr(name) for name in table.columns])}"
-            )
-        return checked_doses(table[self.column], f"samples[{self.column!r}]")
+        return column_doses(table, self.column)
 
     def _knot_positions(self, knots: npt.ArrayLike, levels: FloatArray) -> FloatArray:
         """The positions of interior knots given as doses, which must lie strictly
@@ -417,26 +416,19 @@ class DoseAxis:
             raise ValueError(
                 f"knots must lie strictly between the lowest and highest dose on the "
                 f"axis, {levels[0]:g} and {levels[-1]:g} {self.unit}"
-                f"{self._which_doses()}; got {self._dose_text(doses[outside])}"
+                f"{self._which_doses()}; got {dose_text(doses[outside], self.unit)}"
             )
         return self._positions(doses)
 
     def _check_levels(self, levels: FloatArray) -> None:
-        """Refuse fewer than two distinct doses on the axis, and doses that differ
-        only by rounding."""
+        """Refuse fewer than two distinct doses on the axis."""
         if levels.size < 2:
-            found = f"only one, {self._dose_text(levels)}" if levels.size else "none"
+            found = (
+                f"only one, {dose_text(levels, self.unit)}" if levels.size else "none"
+            )
             raise ValueError(
                 "a spline of dose needs at least two distinct doses on the axis, and "
                 f"the samples have {found}{self._which_doses()}"
-            )
-        close = np.flatnonzero(np.diff(levels) <= SAME_DOSE * levels[1:])
-        if close.size:
-            a, b = float(levels[close[0]]), float(levels[close[0] + 1])
-            raise ValueError(
-                f"the doses {a!r} and {b!r} {self.unit} differ by less than 1e-8 of "
-                "the dose, as a conversion of units can leave one dose as two; round "
-                "the dose column first, for example with numpy.round"
             )
 
     def _position_text(self) -> str:
@@ -453,7 +445,3 @@ class DoseAxis:
         if self.vehicle == "own_group":
             return " (the treated doses: the vehicle is a group of its own)"
         return ""
-
-    def _dose_text(self, doses: FloatArray) -> str:
-        """Doses for messages, such as "0.1, 1 and 10 ug/kg"."""
-        return f"{listing([f'{dose:g}' for dose in doses], limit=_LISTED_DOSES)} {self.unit}"
