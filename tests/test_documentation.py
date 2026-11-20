@@ -558,6 +558,7 @@ def test_every_api_page_is_in_the_api_index() -> None:
         "Designs and linear models",
         "Differential expression",
         "Composition",
+        "Dose response",
         "Gene sets and pathways",
         "Several studies",
         "Figures",

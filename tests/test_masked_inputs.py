@@ -48,6 +48,7 @@ from cytepool import (
     Cube,
     CubeCollection,
     Design,
+    DoseAxis,
     GeneSets,
     Network,
     StudyResults,
@@ -83,7 +84,7 @@ from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
 from cytepool.stats.multiple_testing import adjust_p_values
 from cytepool.stats.quasi_likelihood import fit_quasi_likelihood
-from cytepool.stats.smoothing import lowess
+from cytepool.stats.smoothing import NaturalSplineBasis, lowess
 from cytepool.stats.quasi_likelihood import quasi_likelihood_f_test
 from cytepool.stats.voom import voom, voom_with_quality_weights
 
@@ -161,6 +162,9 @@ RANKED = dict(
 CELL_COUNTS = np.array([[1, 0, 2], [3, 1, 0], [0, 2, 5], [4, 0, 1]])
 CELL_SAMPLES = ["S1", "S1", "S2", "S2"]
 CELL_GROUPS = ["B", "T", "B", "T"]
+# A dose axis, and samples with the vehicle and three doses.
+DOSE_AXIS = DoseAxis("dose", unit="uM", metric="nominal")
+DOSE_SAMPLES = {"dose": [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0]}
 CUBE_AXES = {
     "samples": {"sample_id": ["S1", "S2"]},
     "groups": {"group_id": ["B", "T"]},
@@ -1962,6 +1966,81 @@ ENTRY_POINTS: dict[str, Entry] = {
         lambda c: {"x": np.linspace(0.0, 1.0, 10), "df": 3},
         {"x": "NaN"},
         options=("df",),
+    ),
+    "cytepool.stats.smoothing.NaturalSplineBasis": Entry(
+        lambda c: {
+            "x": np.linspace(0.0, 1.0, 10),
+            "df": 2,
+            "knots": [0.5],
+            "boundary_knots": [0.0, 1.0],
+            "form": "restricted_cubic",
+        },
+        {"x": "NaN", "knots": None, "boundary_knots": None},
+        options=("df", "intercept", "form"),
+    ),
+    # A rule places the knots.
+    "cytepool.stats.smoothing.NaturalSplineBasis[rule]": Entry(
+        lambda c: {"x": np.linspace(0.0, 1.0, 10), "df": 3, "knots": "harrell"},
+        {"x": "NaN"},
+        options=("df", "knots"),
+    ),
+    "cytepool.stats.smoothing.NaturalSplineBasis.matrix": Entry(
+        lambda c: {"x": np.linspace(-0.5, 1.5, 7)},
+        {"x": "NaN"},
+        instance=lambda c: NaturalSplineBasis(knots=[0.5], boundary_knots=[0.0, 1.0]),
+    ),
+    # Dose axes: names and options, doses, positions and sample tables.
+    "cytepool.dose_axes.DoseAxis": Entry(
+        lambda c: {
+            "column": "dose",
+            "unit": "uM",
+            "metric": "nominal",
+            "scale": "log10",
+            "vehicle": "on_axis",
+            "offset": 0.1,
+        },
+        {},
+        options=("column", "unit", "metric", "scale", "vehicle", "offset"),
+    ),
+    "cytepool.dose_axes.DoseAxis.positions": Entry(
+        lambda c: {"doses": [0.0, 0.1, 1.0]},
+        {"doses": None},
+        instance=lambda c: DOSE_AXIS,
+    ),
+    "cytepool.dose_axes.DoseAxis.doses": Entry(
+        lambda c: {"positions": [-1.0, np.nan, 0.5]},
+        {"positions": "NaN"},
+        instance=lambda c: DOSE_AXIS,
+    ),
+    "cytepool.dose_axes.DoseAxis.spline_basis": Entry(
+        lambda c: {
+            "samples": DOSE_SAMPLES,
+            "df": 2,
+            "knots": [1.0],
+            "form": "b_spline",
+        },
+        {"samples": "None or NaN", "knots": None},
+        options=("df", "form"),
+        instance=lambda c: DOSE_AXIS,
+        keys={"samples": "dose"},
+    ),
+    # A rule places the knots.
+    "cytepool.dose_axes.DoseAxis.spline_basis[rule]": Entry(
+        lambda c: {"samples": DOSE_SAMPLES, "df": 2, "knots": "quantiles"},
+        {"samples": "None or NaN"},
+        options=("df", "knots"),
+        instance=lambda c: DOSE_AXIS,
+        keys={"samples": "dose"},
+    ),
+    "cytepool.dose_axes.DoseAxis.design_columns": Entry(
+        lambda c: {
+            "samples": DOSE_SAMPLES,
+            "basis": DOSE_AXIS.spline_basis(DOSE_SAMPLES, df=2),
+        },
+        {"samples": "None or NaN"},
+        objects=("basis",),
+        instance=lambda c: DOSE_AXIS,
+        keys={"samples": "dose"},
     ),
     # Differential expression. min_cells and n_threads go through operator.index,
     # which reads a 0-d masked integer.

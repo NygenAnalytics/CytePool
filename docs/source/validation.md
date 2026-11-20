@@ -23,6 +23,7 @@ Each method is listed with the functions that implement it, the reference it is 
 | Fingerprints of cubes | {api}`Cube.fingerprint`, {api}`Cube.digests` | the documented encoding, with zarr-python 3.4.1 | exact: identical digests | [Cube fingerprints](#validation-cube-fingerprints) |
 | AnnData and MuData layouts of scanpy, decoupler and LIANA | {api}`to_anndata`, {api}`from_anndata`, {api}`to_mudata`, {api}`from_mudata` | scanpy 1.12.4, decoupler 2.2.0, LIANA 1.10.0, anndata 0.13.4, mudata 0.4.1 | exact: identical, 1e-10 for sums of normalized values | [Conversions to AnnData and MuData](#validation-anndata-conversion) |
 | Model matrices from R formulas, named contrasts, design checks | {api}`Design`, {api}`model_matrix`, {api}`make_contrasts`, {api}`Design.check` | R 4.4.3, limma 3.62.1, lme4 2.0-6 | exact: identical, 1e-10; 1e-8 (absolute) for the leverages of badly scaled designs | [Designs and contrasts](#validation-design) |
+| Dose axes: positions of the doses, the vehicle in a group of its own or on the axis at an offset, and the design columns of a spline of dose | {api}`DoseAxis` | R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0 | exact: 1e-10; identical `dose_treated` and degrees of freedom; close: 1e-6 for limma's F-tests of Hmisc's columns | [Dose axes and their design columns](#validation-dose-axes) |
 | Linear models of every gene and their contrasts (limma's `lmFit`, `contrasts.fit`) | {api}`fit_linear_model`, {api}`contrasts_fit` | limma 3.62.1 | exact: 1e-10 | [Linear models](#validation-linear-models) |
 | Empirical Bayes moderation, moderated t and F, B-statistics, TREAT | {api}`moderated_statistics`, {api}`treat`, {api}`squeeze_variances`, {api}`fit_f_distribution`, {api}`fit_f_distribution_robust`, {api}`fit_f_distribution_likelihood` | limma 3.62.1 | exact: 1e-10; close: 1e-6 for the robust and likelihood priors | [Empirical Bayes moderation](#validation-empirical-bayes) |
 | Adjustment for multiple testing (R's `p.adjust`) | {api}`adjust_p_values` | R 4.4.3 | exact: 1e-10 | [Multiple testing](#validation-multiple-testing) |
@@ -59,9 +60,9 @@ Each method is listed with the functions that implement it, the reference it is 
 | Principal components of samples (DESeq2's `plotPCA`), of a matrix or a cell type of a cube, and their figure | {api}`principal_components`, {api}`plot_pca` | DESeq2 1.46.0, edgeR 4.4.0 | exact: 1e-10, up to the sign of each component | [Principal components and dot plots](#validation-pca-and-dot-plots) |
 | Dot plots of the fraction of cells that express each gene and their mean expression, per cell type, from a cube (scanpy's `dotplot`) | {api}`plot_dotplot` | scanpy 1.12.4 | exact: 1e-10 | [Principal components and dot plots](#validation-pca-and-dot-plots) |
 | Tails and quantiles of distributions, special functions | {api}`cytepool.stats.distributions`, {api}`cytepool.stats.special` | mpmath 1.3.0 | exact: 1e-15 to 1e-12 | [Distributions and special functions](#validation-distributions) |
-| LOWESS, natural spline bases | {api}`lowess`, {api}`natural_spline_basis` | R 4.4.3 | close: 1e-6 for LOWESS; exact: 1e-10 for spline bases | [LOWESS and spline bases](#validation-smoothing) |
+| LOWESS; natural spline bases that keep their knots, in R's B-spline form and Harrell's restricted cubic form | {api}`lowess`, {api}`natural_spline_basis`, {api}`NaturalSplineBasis` | R 4.4.3, Hmisc 5.3-1, rms 8.2-1 | close: 1e-6 for LOWESS; exact: identical knots, 1e-10 for spline bases, restricted cubic columns and F-tests | [LOWESS and spline bases](#validation-smoothing) |
 
-In all, the scripts printed 2,466 checks: 2,123 pass, none failed; 193 information, 148 deliberate differences, 2 controls.
+In all, the scripts printed 2,821 checks: 2,456 pass, none failed; 209 information, 154 deliberate differences, 2 controls.
 
 Run time is the wall time of the whole script and peak memory the largest resident set of any of its processes, reference programs included, both of the second of two runs, one after the other, in the container described under [](#validation-timings). The first run downloaded the data that some scripts read and compiled CytePool's routines, which numba keeps in its cache for later runs. A first run in a new environment compiles them too: `differential_expression.py`, the first script in the container, took 52.7 s in its first run and 7.5 s in its second, and its peak memory fell from 578 to 362 MiB.
 
@@ -228,6 +229,38 @@ Deliberate differences:
 - Default level order is by code point in every locale, as R's is with `LC_COLLATE=C`. R's own default follows the session's collation, and agreed in 1 of the 4 formulas here.
 - Formulas that R accepts and CytePool rejects: a `-` that removes nothing (`~ a - b`, `~ x - z`, `~ a + (-b)`), `^` of a single term (`~ x^2`, which R reads as `x`), a fractional power (`~ (a + b)^2.5`), and function calls (`~ log(z)`, `~ I(x^2)`, `~ factor(w)`), which CytePool's formulas do not support; transform the column in the sample table instead.
 - Contrast expressions that limma turns into weights without meaning are rejected: limma gives `groupB - 1` the weights (-1, 0, -1, -1, -1), `groupA*groupB` (0, 0, 0, 0, 0), `groupA/groupB` (Inf, 0, NaN, NaN, NaN) and `groupA^2` (1, 0, 0, 0, 0).
+
+(validation-dose-axes)=
+### Dose axes and their design columns
+
+The script printed 234 checks (216 pass, 16 information and 2 deliberate differences) on 2026-11-20, in 20.2 s, with a peak memory of 346 MiB. [Dose axes and the vehicle](statistics/linear_models.md#dose-axes) explains what it checks.
+
+[`validation/dose_axes.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/dose_axes.py) builds `DoseAxis` designs for four dose series from fixed seeds (seeds 20261124 to 20261126): a ladder like the TCDD liver series, the vehicle and 0.01 to 30 ug/kg with 2 or 3 samples each; an in vitro half-log series, 6 vehicle wells and 4 doses in duplicate; an unbalanced ladder whose second dose has 10 of the 16 treated samples; and 24 measured exposures with 6 zeros. Each series is read on four axes, the vehicle in its own group or on the axis, on the log10 or the linear scale (on the log10 scale at an offset), with both forms of the spline and knots by `"levels"` and `"quantiles"` at df 1 to 8 and given as doses: 392 cases. R computes the positions, `dose_treated`, the knots with R's own functions (`ns(unique(x), df)`, `ns(x, df)`), the spline columns with `ns` or Hmisc's `rcspline.eval`, `model.matrix`, the F-statistics of nested `lm` fits of seeded responses (any dose, among the treated doses, departure from a line), `predict` of the full fit on a grid of doses from 0 to twice the highest, and limma-trend's moderated F-tests of the same columns on seeded counts of 200 genes (`cpm`, `lmFit`, `eBayes(trend = TRUE)` and `classifyTestsF`, which `topTable` of several columns calls), with their numerator degrees of freedom; CytePool runs `limma_trend` on the same counts. B-spline columns, whose basis differs from `ns()`'s, are compared through their column space. Restricted cubic columns are compared by their first column, element by element, and through Hmisc's columns as combinations of CytePool's, which differ from Hmisc's truncated cubes by a change of basis that keeps them well conditioned. R's F-statistics, curves and moderated F-tests are compared where R's design has a condition number of at most 1e5, so that rounding stays below the tier. limma computes the moderated F-tests of Hmisc's columns from the correlation of their coefficients, whose rounding grows with the square of that condition number, so those are compared at the close tier; the agreement of the two forms ties CytePool's restricted cubic F-tests to `ns()`'s at the exact tier. Reference: R 4.4.3, Hmisc 5.3-1, limma 3.62.1, edgeR 4.4.0.
+
+| Check family | Reference | Largest difference | Tolerance | Outcome |
+| --- | --- | --- | --- | --- |
+| Positions of the doses, 4 series on 4 axes | `log10(dose)`, `log10(dose + offset)`, the dose | 0 | 1e-10 | 16 pass |
+| `dose_treated` with the vehicle in its own group | `as.numeric(dose > 0)` | 0 mismatches | 0 | 8 pass |
+| Knots and boundary knots, 380 cases | `ns` | 0 | 1e-10 | 16 pass |
+| First restricted cubic column, 190 cases | `rcspline.eval` | 0 | 1e-10 | 16 pass |
+| Hmisc's restricted cubic columns as combinations of CytePool's, 190 cases | `rcspline.eval` | 2.6e-14 | 1e-10 | 16 pass |
+| B-spline columns, by their column space, 190 cases | `ns` | 2.4e-14 | 1e-10 | 16 pass |
+| Design matrices of `Design`, 380 cases | `model.matrix` | 6.4e-14 | 1e-10 | 16 pass |
+| F-statistics of any dose, among the treated doses and of departure from a line, 338 cases | `anova(lm)` | 8.3e-13 | 1e-10 | 16 pass |
+| Fitted curves on a grid of doses, 338 cases | `predict(lm)` | 9.6e-12 | 1e-10 | 16 pass |
+| Moderated F-statistics of the B-spline form, 190 cases | limma's `classifyTestsF` of `ns()`'s columns | 6.9e-13 | 1e-10 | 16 pass |
+| Moderated F-statistics of the restricted cubic form, 135 cases | limma's `classifyTestsF` of Hmisc's columns | 2.4e-9 | 1e-6 | 16 pass |
+| Numerator degrees of freedom of the moderated F-tests, which count every column tested, 380 cases | the columns tested | 0 mismatches | 0 | 16 pass |
+| Moderated F-statistics of the two forms on the same knots, 190 pairs of cases | the B-spline form | 1.3e-12 | 1e-10 | 16 pass |
+| Cases where one program places knots and the other raises, other than the deliberate differences | R | 0 | 0 | 16 pass |
+| F-statistics, curves and moderated F-tests of the 42 cases whose R design has a condition number above 1e5, up to 9.7e10: Hmisc's columns, 39 on a linear axis and 3 on the log10 axis of the exposures with the vehicle on it; R's `lm` drops a column as aliased in 8 of them | `lm` | not compared | n/a | 8 information |
+| Largest condition number of the designs of each axis and form: CytePool's restricted cubic columns 23 to 1.3e3, Hmisc's 6.4e4 to 9.7e10; the B-spline form 25 to 710 in both programs | `model.matrix` | n/a | n/a | 8 information |
+| Deliberate differences, listed below | `ns`, limma | R places knots, or limma counts fewer degrees of freedom | n/a | 2 deliberate differences |
+
+Deliberate differences:
+
+- On the unbalanced ladder, R's quantile rule places two knots at 0.1 mg/kg in 12 cases, and `ns()` takes the repeated knot, which makes the curve less smooth there; `DoseAxis.spline_basis` raises an error that names the rule and the dose.
+- In 13 cases, 7 of them on a log10 axis and 4 of those on the default axis with `"levels"`, limma's F-tests of Hmisc's columns count fewer degrees of freedom than columns: the correlation of their coefficients has an eigenvalue below 1e-8 of the largest, at condition numbers of R's design from 2.3e4 to 9.2e4. CytePool's restricted cubic columns span the same curves, and its F-tests count every column and agree with those of the B-spline form.
 
 (validation-linear-models)=
 ### Linear models
@@ -1170,9 +1203,9 @@ Errors are relative for values of at least 1e-300, relative errors of the logari
 (validation-smoothing)=
 ### LOWESS and spline bases
 
-The script printed 90 checks (87 pass, 1 information and 2 deliberate differences) on 2026-11-20, in 2.0 s, with a peak memory of 338 MiB. [limma-voom and limma-trend](statistics/limma_voom.md#voom-span) explains what it checks.
+The script printed 211 checks (204 pass, 1 information and 6 deliberate differences) on 2026-11-20, in 6.3 s, with a peak memory of 382 MiB. [limma-voom and limma-trend](statistics/limma_voom.md#voom-span) explains its LOWESS, and [Spline columns](statistics/linear_models.md#spline-bases) its spline bases.
 
-[`validation/smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) compares `lowess` with R's `stats::lowess` and `natural_spline_basis` with `splines::ns`, on inputs from fixed seeds. LOWESS fits are compared relative to the largest absolute fitted value (close tier). Spline bases are compared through their column spaces: the least squares fits of random responses on either basis (exact tier), their ranks and their rows of NaN. Reference: R 4.4.3.
+[`validation/smoothing.py`](https://github.com/NygenAnalytics/CytePool/blob/master/validation/smoothing.py) compares `lowess` with R's `stats::lowess`, and `natural_spline_basis` and `NaturalSplineBasis` with `splines::ns`, Hmisc's `rcspline.eval` and rms's `rcs`, on inputs from fixed seeds. LOWESS fits are compared relative to the largest absolute fitted value (close tier). Spline bases are compared through their column spaces: the least squares fits of random responses on either basis (exact tier), their ranks and their rows of NaN; a basis at new points, inside the boundary knots, at the knots, beyond both boundary knots and at NaN, through the predictions there of fits at x. Knots must be identical to the last bit; a refusal for values tied at an extreme counts as Hmisc's method for ties only where Hmisc's knots differ from the percentiles of its help page. Restricted cubic columns are compared at points up to 50, far beyond knots between -1.2 and 1.5: the first column plus the lower boundary knot against Hmisc's x, relative to its largest absolute value, and Hmisc's columns, with an intercept, as combinations of CytePool's, by the largest residual relative to each column's largest absolute value. CytePool's columns after the first differ from Hmisc's truncated cubes by a change of basis that keeps them well conditioned, and regressing Hmisc's nearly collinear columns on them keeps rounding small. F-statistics are compared relative to rms's. Reference: R 4.4.3, Hmisc 5.3-1, rms 8.2-1.
 
 | Check family | Reference | Largest difference | Tolerance | Outcome |
 | --- | --- | --- | --- | --- |
@@ -1187,9 +1220,20 @@ The script printed 90 checks (87 pass, 1 information and 2 deliberate difference
 | Repeated knots, ties, few distinct values (rank-deficient bases), quantile knots that fall on a boundary | `splines::ns` | 1.7e-15 | 1e-10 | 15 pass |
 | NaN in x, and covariates of 2,000 genes | `splines::ns` | 2.7e-15 | 1e-10 | 4 pass |
 | Inputs for which R fails, where CytePool must fail too | `splines::ns` | 0 mismatches | 0 | 4 pass |
-| Deliberate differences, listed below | `splines::ns` | R returns a basis, CytePool raises | n/a | 2 deliberate differences |
+| Bases at new points, by the predictions of least squares fits, in the 29 cases of full rank | `predict(ns)` | 3.4e-15 | 1e-10 | 29 pass |
+| Knots and boundary knots by R's rule: the 21 cases above that place knots, and 11 seeded datasets (30 to 2,000 values, dose ladders, integers, rounded values) at df 2 to 8 with and without an intercept, 154 cases | `attr(ns(x, df), "knots")` | 0 cases differ | 0 | 12 pass |
+| Knots on the distinct values, of the same cases and datasets | `attr(ns(unique(x), df), "knots")` | 0 cases differ | 0 | 12 pass |
+| Harrell's knots on 26 datasets at nk 2 to 9 (6 to 200 values, NaN, dose ladders, values tied at an extreme or between the extremes): 93 identical, 36 where both fail | `rcspline.eval` | 0 cases differ | 0 | 26 pass |
+| First restricted cubic column plus the lower boundary knot, 3 to 8 knots and a dose ladder of 5 knots | `rcspline.eval` | 4.4e-18 | 1e-10 | 7 pass |
+| Hmisc's restricted cubic columns as combinations of CytePool's, the same cases | `rcspline.eval` | 2.2e-12 | 1e-10 | 7 pass |
+| Overall and non-linear F of the restricted cubic columns, overall F of the B-spline form on the same knots, and the knots, on 6 datasets with nk 3 to 5, NaN included | `anova(ols(y ~ rcs(x, nk)))` | 8.4e-12 | 1e-10 | 24 pass |
+| Deliberate differences, listed below | `splines::ns`, `rcspline.eval` | R or Hmisc returns a basis or knots, CytePool raises | n/a | 6 deliberate differences |
 
-Deliberate differences: where R's `ns` warns and increases a `df` below 1 plus the intercept, and where it accepts an interior knot on the lower boundary knot, returning a basis with a degenerate column, `natural_spline_basis` raises an error.
+Deliberate differences:
+
+- Where R's `ns` warns and increases a `df` below 1 plus the intercept, and where it accepts an interior knot on the lower boundary knot, returning a basis with a degenerate column, `natural_spline_basis` raises an error.
+- Harrell's rule raises where Hmisc departs from the rule of its help page: in 37 cases where 5% of the values or more tie at an extreme and none between ties as often, Hmisc switches to a method that its help page describes only in outline; in 39 cases it places fewer knots than asked, and in 3 it drops a repeated knot, which leaves fewer columns than asked too.
+- With a repeated knot, Hmisc's `rcspline.eval` drops one and returns one non-linear column fewer; the restricted cubic form of `NaturalSplineBasis` raises an error.
 
 (validation-timings)=
 ## Timings
@@ -1280,7 +1324,9 @@ export NUMBA_NUM_THREADS=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THRE
 export NPY_ENABLE_CPU_FEATURES="SSE SSE2 SSE3 SSSE3 SSE41 POPCNT SSE42 AVX F16C FMA3 AVX2"
 export OPENBLAS_CORETYPE=Haswell
 python validation/multiple_testing.py
-python validation/smoothing.py
+# Hmisc, rms, limma and edgeR, in the R environment of the dose-response references (below).
+RSCRIPT=$REF/r-dose/bin/Rscript python validation/smoothing.py
+RSCRIPT=$REF/r-dose/bin/Rscript python validation/dose_axes.py
 python validation/normalization.py
 python validation/design.py
 python validation/linear_models.py
@@ -1420,6 +1466,31 @@ progeny 1.28.0 (Bioconductor 3.20), which `activity.py` runs for PROGENy's weigh
 conda create -p $REF/r-progeny --override-channels -c conda-forge -c bioconda \
     r-base=4.4.3 bioconductor-progeny=1.28.0 r-jsonlite=2.0.0
 ```
+
+`smoothing.py` and `dose_axes.py` run R 4.4.3's `splines` and `stats` with Hmisc 5.3-1 and rms 8.2-1, and `dose_axes.py` limma 3.62.1 and edgeR, in the environment that holds the dose-response references: R 4.4.3 with DESeq2 1.46.0, limma 3.62.1, SummarizedExperiment 1.36.0 and stageR 1.28.0 (Bioconductor 3.20), tcplfit2 0.1.9, mvtnorm 1.4-2, multcomp 1.4-32, jsonlite 2.0.0 and TMB 1.9.19 from conda-forge and bioconda; and Hmisc 5.3-1, rms 8.2-1, DoseFinding 1.4-2, drc 4.0-0, DRomics 2.6.3, MuMIn 1.48.19 and muscat 1.20.0, which conda does not build for R 4.4, built from their CRAN and Bioconductor 3.20 source tarballs, whose dependencies come from conda unpinned. TMB is pinned at the version conda-forge's glmmTMB 1.1.14 for R 4.4 was built with, and lme4 is left free (2.0-6), with which variancePartition's `dream` fails, as above. The validation scripts of this page need R, Hmisc and rms from it, and `dose_axes.py` also limma and edgeR; the command leaves edgeR unpinned (4.4.0 in the run reported here):
+
+```bash
+conda create -p $REF/r-dose --override-channels -c conda-forge -c bioconda \
+    r-base=4.4.3 bioconductor-deseq2=1.46.0 bioconductor-limma=3.62.1 \
+    bioconductor-summarizedexperiment=1.36.0 bioconductor-stager=1.28.0 \
+    r-tcplfit2=0.1.9 r-mvtnorm=1.4_2 r-multcomp=1.4_32 r-jsonlite=2.0.0 r-tmb=1.9.19 \
+    r-cluster r-rpart r-nnet r-foreign r-gtable r-gridextra r-data.table r-htmltable \
+    r-viridislite r-htmltools r-base64enc r-colorspace r-rmarkdown r-knitr r-formula \
+    r-survival r-quantreg r-matrix r-sparsem r-nlme r-polspline r-digest r-tinytable \
+    r-ggplot2 r-lattice r-rdpack r-mass r-car r-gtools r-plotrix r-sandwich r-scales \
+    r-ggfortify r-rlang r-insight bioconductor-biocparallel r-blme \
+    bioconductor-complexheatmap r-dplyr bioconductor-edger r-glmmtmb r-lmertest r-lme4 \
+    r-matrixstats r-progress r-purrr bioconductor-s4vectors bioconductor-scater \
+    bioconductor-scuttle r-sctransform bioconductor-singlecellexperiment \
+    bioconductor-variancepartition r-viridis gcc_linux-64 gxx_linux-64 \
+    gfortran_linux-64 make
+# CRAN (or its archive) and Bioconductor 3.20; check the SHA-256 below before building.
+$REF/r-dose/bin/R CMD INSTALL Hmisc_5.3-1.tar.gz rms_8.2-1.tar.gz \
+    DoseFinding_1.4-2.tar.gz drc_4.0-0.tar.gz DRomics_2.6.3.tar.gz \
+    MuMIn_1.48.19.tar.gz muscat_1.20.0.tar.gz
+```
+
+SHA-256 of the tarballs: Hmisc_5.3-1 `75d4511e715227516a38322f4b7a21dd01e0731ab0658f04900d59f87dabcdbb`, rms_8.2-1 `b82ff163aaee4e229b0b40507b3644867a463dadc6e854c39e83f36bcf96c863`, DoseFinding_1.4-2 `e0c73d708e6229beb8f5c685debb41b4da5477aa60c1b38d0314400ca7c562dd`, drc_4.0-0 `4fec25ca2d44dbb69259051a18c7323def632976e78998eb950f1e93c23a552b`, DRomics_2.6.3 `916e5b2978459c47635a1b77170128285b6b34d4578939cf3a2f0e5c765e8af4`, MuMIn_1.48.19 `101f332c6546bc22ab9b958345e54ca44fded2342db91c33ccbeb69c3fc9ed4a`, muscat_1.20.0 `83ad4e39a1424855dc8b6290249bcdd9c92ac58a83b770aab2ba11b0698a7612`.
 
 The Python environments use Python 3.13.12. The main one also holds PyDESeq2, which `deseq2_tests.py` runs, and scikit-learn, which `sumrank.py` imports, added with the versions above kept; scanpy has its own environment, and `cube_files.py` ran CytePool on Python 3.14.4 for the zstd cases:
 
