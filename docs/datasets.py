@@ -47,6 +47,7 @@ from typing import Any
 import numpy as np
 
 from cytepool.cube import Cube, from_bulk, from_cells
+from cytepool.simulated_dose_series import simulate_dose_series
 from cytepool.io import read_cube, write_cube
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -259,6 +260,51 @@ def simulated_bulk(downloads: Path, output: Path) -> None:
         true_log2_fold_change_drug_a=log2_fc["drug_a"],
         true_log2_fold_change_drug_b=log2_fc["drug_b"],
         outlying_sample=np.array(outlier),
+    )
+
+
+# A dose series of four cell types from known curves: the vehicle and eight doses from
+# 0.01 to 30 ug/kg in half-log steps, with hepatocytes and stellate cells halved and
+# macrophages doubled at the top dose, and cholangiocytes too rare to replicate a dose.
+DOSE_SERIES_DOSES = (0.0, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0)
+DOSE_SERIES_CELL_TYPES = ("Hepatocyte", "Macrophage", "Stellate", "Cholangiocyte")
+
+
+def simulated_dose_series(downloads: Path, output: Path) -> None:
+    """A dose series drawn by ``simulate_dose_series`` from known curves, 3 replicates
+    of the vehicle and eight doses, four cell types of 800, 150, 40 and 8 cells per
+    profile and 2,000 genes, of which 20%, 15%, 5% and 10% respond. Writes the cube
+    and, for each cell type, the columns of its truth table, which ``DoseTruth``
+    rebuilds."""
+    cube, truth = simulate_dose_series(
+        list(DOSE_SERIES_DOSES),
+        replicates=3,
+        cell_types=list(DOSE_SERIES_CELL_TYPES),
+        cells=[800.0, 150.0, 40.0, 8.0],
+        n_genes=2_000,
+        responsive=[0.2, 0.15, 0.05, 0.1],
+        composition={
+            "Hepatocyte": [1.0] * 8 + [0.5],
+            "Macrophage": [1.0] * 8 + [2.0],
+            "Stellate": [1.0] * 8 + [0.5],
+        },
+        rng=20261226,
+    )
+    write_cube(cube, output / "simulated_dose_series.cube.zarr", overwrite=True)
+    columns = {
+        f"{cell_type}/{name}": np.asarray(values)
+        for cell_type in DOSE_SERIES_CELL_TYPES
+        for name, values in truth.table(cell_type).to_dict().items()
+    }
+    np.savez_compressed(
+        output / "simulated_dose_series_truth.npz",
+        doses=np.array(truth.doses),
+        unit=np.array(truth.unit),
+        metric=np.array(truth.metric),
+        **{
+            key: value.astype(str) if value.dtype == object else value
+            for key, value in columns.items()
+        },
     )
 
 
@@ -667,6 +713,24 @@ DATASETS = {
                 "6599ea11dddb183f630183846f7ece9991003a4cc77875e4e7822317f66346ec",
             },
             build=simulated_cohorts,
+        ),
+        Dataset(
+            id="simulated_dose_series",
+            title="Simulated dose series",
+            description="the vehicle and 8 doses x 3 replicates x 4 cell types, 2,000 "
+            "genes, drawn from known dose-response curves",
+            source="simulated by simulated_dose_series() in this script, with "
+            "cytepool.simulate_dose_series and numpy's PCG64 generator with seed "
+            "20261226",
+            licence=SIMULATION_LICENCE,
+            citation=None,
+            files={
+                "simulated_dose_series.cube.zarr": "sha256:"
+                "2442bbd7ef86c5d604d78cd21be10f334d2b4349fec4b811778c3c51e0d2eace",
+                "simulated_dose_series_truth.npz": "sha256:"
+                "96e793b9e83412a45681f800c7556ccb25c59abf5a006f7be99d03bf5c4f0ced",
+            },
+            build=simulated_dose_series,
         ),
         Dataset(
             id="kang2018",

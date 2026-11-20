@@ -1830,6 +1830,7 @@ def test_every_dataset_records_its_source_licence_citation_and_contents() -> Non
         "simulated_pbmc",
         "simulated_bulk",
         "simulated_cohorts",
+        "simulated_dose_series",
         "kang2018",
         "hallmark_interferon_alpha",
     }
