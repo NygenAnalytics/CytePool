@@ -2013,7 +2013,12 @@ ENTRY_POINTS: dict[str, Entry] = {
         instance=lambda c: DOSE_AXIS,
     ),
     "cytepool.dose_axes.DoseAxis.spline_basis": Entry(
-        lambda c: {"samples": DOSE_SAMPLES, "df": 2, "knots": [1.0], "form": "b_spline"},
+        lambda c: {
+            "samples": DOSE_SAMPLES,
+            "df": 2,
+            "knots": [1.0],
+            "form": "b_spline",
+        },
         {"samples": "None or NaN", "knots": None},
         options=("df", "form"),
         instance=lambda c: DOSE_AXIS,

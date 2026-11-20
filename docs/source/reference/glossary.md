@@ -36,6 +36,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Dispersion outlier.** A gene whose own dispersion estimate lies so far above DESeq2's trend that DESeq2 keeps it rather than shrink it towards the trend. [DESeq2](../statistics/count_models.md#deseq2)
 
+**Dose axis.** The axis along which a curve of dose is fitted, usually log10 of the dose, with the unit, what the dose measures (administered, nominal, measured or internal), and where the vehicle goes: in a group of its own, or on the axis at a recorded offset. [Dose axes and the vehicle](../statistics/linear_models.md#dose-axes)
+
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
 **Empirical Bayes moderation.** Shrinking each gene's residual variance towards a value estimated from all the genes, which steadies the tests of experiments with few samples. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
@@ -66,6 +68,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Kenward-Roger's method.** An adjustment of the covariance of a mixed model's estimates, and of the degrees of freedom of their tests, for the uncertainty of the variance components with few samples. [Kenward-Roger's method](../statistics/mixed_models.md#kenward-roger)
 
+**Knot.** A value at which the cubic pieces of a spline join; a natural cubic spline is a straight line beyond its two outer knots, the boundary knots, and a fitted curve cannot be reproduced without its knots. [Spline columns](../statistics/linear_models.md#spline-bases)
+
 **Layer.** One statistic of a cube summed over cells: the counts, the cells that detect each feature, or the sums of normalized and log-normalized values. [The layers](../statistics/cubes.md#cube-layers)
 
 **Leading edge.** The genes of a set that drive its GSEA score, from the top of the ranking to the walk's extreme for a positive score, or from the extreme to the bottom for a negative one. [Gene set enrichment analysis](../statistics/over_representation_and_gsea.md#gsea)
@@ -83,6 +87,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Moderated t-statistic.** A coefficient or contrast divided by a standard error that uses the gene's moderated variance, tested on the gene's residual degrees of freedom plus the prior's. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
 
 **Multidimensional scaling (MDS) plot.** limma's plot of the samples, placed so that their distances approximate the leading log2 fold changes between them. [Samples at a glance](../statistics/normalization_and_filtering.md#samples-at-a-glance)
+
+**Natural cubic spline (restricted cubic spline).** A curve made of cubic pieces joined smoothly at knots and straight beyond the outer knots, which enters a linear model as a few columns of the design, in R's B-spline form or Harrell's restricted cubic form. [Spline columns](../statistics/linear_models.md#spline-bases)
 
 **Network.** A map from each source, a transcription factor or a pathway, to its target genes with signed weights, such as CollecTRI's regulons or PROGENy's footprints. [Networks of regulators and pathways](../statistics/activities.md#regulator-networks)
 
@@ -139,3 +145,5 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Universe.** The genes that an over-representation analysis could have selected, by default the genes tested. [The universe](../statistics/over_representation_and_gsea.md#over-representation-universe)
 
 **Variance fraction.** The share of a gene's variance that one variable of the design explains, from a mixed model fitted by maximum likelihood, which variancePartition's help page reports gives unbiased fractions where REML can show substantial bias. [Variance partitioning](../statistics/mixed_models.md#variance-fractions)
+
+**Vehicle.** The samples given the solvent or carrier of a treatment without the substance, dose 0 of a dose series, against which the doses are compared. [Dose axes and the vehicle](../statistics/linear_models.md#dose-axes)

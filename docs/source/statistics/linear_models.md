@@ -40,6 +40,59 @@ When one factorization serves every gene, $V_g$ is the same for every gene. Othe
 
 When every donor gives a sample in each condition, the design `~ donor + condition` gives each donor a coefficient of its own, so that the conditions are compared within donors and the differences between donors do not count as noise; `conditionstim` then estimates the change that the stimulation makes within a donor. A variable that is constant within each donor, such as sex, age or disease, cannot be tested in this design: its column is a combination of the donor columns, and {api}`Design.check` reports it as aliased and confounded with the donor. A random effect for the donor tests such a variable ([Mixed models and dream](mixed_models.md)), and so does a comparison of the profiles pooled by donor ({api}`Cube.collapse_samples`), when every donor was sampled alike.
 
+(spline-bases)=
+## Spline columns
+
+How does expression change along a dose, a time or another number, when the shape is not known in advance? A natural cubic spline answers with a few columns of the design: cubic between its knots, joined smoothly at them, and straight beyond its two boundary knots. A linear model fits the columns' coefficients like any others, so voom's weights, moderation and F-tests ([F-tests of several contrasts](limma_voom.md#limma-f-tests)) apply unchanged. {api}`NaturalSplineBasis` builds the columns, keeps its knots, gives the columns at any other points with {api}`NaturalSplineBasis.matrix`, such as a grid of doses at which to draw a fitted curve, and records itself as plain values with {api}`NaturalSplineBasis.to_dict`.
+
+The basis comes in two forms that span the same curves for the same knots, so their fits and the F-test of all their columns agree [@durrleman1989; @harrell2015; @perperoglou2019]. `form="b_spline"` gives the columns of R's `ns()` up to a change of basis, and {api}`natural_spline_basis` gives them at x. `form="restricted_cubic"` gives Harrell's restricted cubic spline, the columns of Hmisc's `rcspline.eval` and rms's `rcs` [@harrell2026]: its first column is the value itself, minus the lower boundary knot, so the F-test of the other columns tests departure from a straight line [@desquilbet2010]. Without an intercept, every column of either form is 0 at the lower boundary knot.
+
+Default knots differ between tools, so a curve cannot be reproduced without its knots: {api}`NaturalSplineBasis` keeps them, and its repr prints them. A rule places them on the values, or they are given:
+
+| Rule | Where the knots go | The same knots in R |
+| --- | --- | --- |
+| `"quantiles"` | K interior knots at the quantiles of the values with probabilities k / (K + 1), K being `df - 1` without an intercept and `df - 2` with one; the boundary knots at the range of the values | `attr(ns(x, df), "knots")` |
+| `"levels"` | The same rule on the distinct values, each counted once, so that a dose with more replicates pulls no knot towards it; these knots never coincide | `attr(ns(unique(x), df), "knots")` |
+| `"harrell"` | All `df + 1` knots, boundary knots included, at percentiles from 10% to 90% for 3 knots, 5% to 95% for 4 to 6, 2.5% to 97.5% for more, equally spaced, with the 5th smallest and largest values as the outer knots below 100 values | `rcspline.eval(x, nk = df + 1, knots.only = TRUE)`, or `rcs(x, df + 1)` |
+| Given values | Where given, strictly inside the boundary knots | `ns(x, knots = k, Boundary.knots = b)` |
+
+The knots of R's rules equal R's to the last bit, and Harrell's knots equal Hmisc's wherever Hmisc follows the rule its help page gives. Where Hmisc places fewer knots than asked, drops a repeated knot, or switches to another method because 5% of the values or more tie at the smallest or largest value and none between them ties as often, `"harrell"` raises an error instead.
+
+(dose-axes)=
+## Dose axes and the vehicle
+
+Where does the vehicle, the dose of 0, go on a dose axis? A curve of dose usually follows log10 of the dose, on which a half-log series takes equal steps, and 0 has no logarithm. {api}`DoseAxis` records the dose column of the sample table, its unit, what the dose measures and the axis, and places the vehicle in one of two ways:
+
+| `vehicle` | Where the vehicle goes | What the design holds |
+| --- | --- | --- |
+| `"own_group"` (default) | In a group of its own, off the axis | A column `dose_treated`, 1 for a dose above 0; the spline of the treated doses, 0 for the vehicle |
+| `"on_axis"` | At log10(offset) on a log10 axis, with `offset` added to every dose, or at 0 on a linear one | The spline of every sample's dose |
+
+An offset decides where the vehicle sits and so the slope at the low end. DoseFinding's linear-in-log model adds one, `log(dose + off)` [@bornkamp2026], and sci-Plex-GxE added 0.001 to every dose, a value chosen from experiments whose data are not shown [@mcfaline2024]; {api}`DoseAxis` takes no default, and records the offset given. {api}`DoseAxis.positions` places doses on the axis and {api}`DoseAxis.doses` reads positions back as doses, which prints knots in the dose's unit. `metric` says what the dose measures: `"administered"`, the amount given to the animal or person, as mg/kg; `"nominal"`, the amount added to the medium; `"measured"`, an amount measured in the medium, blood or tissue; or `"internal"`, the amount at the target estimated by a model. Doses of different metrics are not comparable without a conversion, so the axis records the metric with the unit, and {api}`DoseAxis.to_dict` records the axis as plain values.
+
+{api}`DoseAxis.spline_basis` places the knots on the doses of the samples, by default on the distinct doses and in the restricted cubic form, and {api}`DoseAxis.design_columns` gives the columns of each sample. For a cube whose sample table holds each sample's dose in `dose`:
+
+```python
+axis = cp.DoseAxis("dose", unit="ug/kg", metric="administered")
+basis = axis.spline_basis(cube.samples, df=3)
+print(axis.doses(basis.knots), axis.doses(basis.boundary_knots))
+samples = cube.samples.with_columns(axis.design_columns(cube.samples, basis))
+columns = ["dose_treated", "dose_s1", "dose_s2", "dose_s3"]
+design = cp.Design(samples, "~ " + " + ".join(columns))
+result = cp.limma_voom(
+    cube,
+    design,
+    contrasts=columns,
+    f_tests={
+        "any_dose": columns,  # any dose against the vehicle
+        "among_doses": columns[1:],  # any change among the treated doses
+        "nonlinear": columns[2:],  # departure from a line in log10 dose
+    },
+)
+```
+
+`any_dose` tests whether a gene responds at all, and `among_doses` whether it changes along the treated doses, monotone or not. A spline of `df` columns and `dose_treated` fit at most `df + 1` treated doses, so `df` is at most the number of treated doses minus one; at that number the spline fits every dose group, and `any_dose` is the F-test of a factor of dose groups against the vehicle. Every spline column is 0 at the lower boundary knot, the lowest treated dose with the rules `"levels"` and `"quantiles"`, so `dose_treated` is the jump from the vehicle to the curve there; with `"harrell"` and fewer than 100 samples, that knot is the 5th smallest dose, above the lowest. The vehicle's rows of the spline columns change neither the three F-tests nor any fitted curve; they decide only what `dose_treated` and the intercept mean. With `vehicle="on_axis"`, the design holds the spline columns alone, and `df` can be one more.
+
 (estimable-contrasts)=
 ## Designs that cannot answer the question
 
@@ -61,6 +114,9 @@ Most problems of a design can be found before anything is fitted. {api}`Design.c
 - **Weights.** Sample weights, one per sample, or observation weights, one per sample and gene, such as voom's; a weight of zero leaves an observation out of the fit.
 - **A block correlation.** `block` and `correlation` fit a known correlation between the samples of each block; with a correlation of at least zero, that is a random intercept whose correlation is given rather than estimated.
 - **Contrast standard errors.** Exact by default; `method="limma"` reproduces limma's approximation ([Contrasts](#contrasts)).
+- **The spline form.** The restricted cubic form in {api}`DoseAxis.spline_basis`, whose columns after the first test departure from a line; the B-spline form, R's, in {api}`NaturalSplineBasis` and {api}`natural_spline_basis`, and wherever knots crowd ([Limits and differences](#linear-models-limits)).
+- **The knots.** On the distinct doses in {api}`DoseAxis.spline_basis`, so that the knots depend on the doses given and not on how many samples of each survived; R's quantile rule in {api}`NaturalSplineBasis` ([Spline columns](#spline-bases)).
+- **The vehicle.** In a group of its own; on the axis only at an offset that is given and recorded ([Dose axes and the vehicle](#dose-axes)).
 
 (linear-models-limits)=
 ## Limits and differences
@@ -73,6 +129,11 @@ Most problems of a design can be found before anything is fitted. {api}`Design.c
 - **Rank and random effects.** {api}`fit_linear_model` needs a design of full column rank, and refuses random effects, which it would drop, except one random intercept that `block` and `correlation` give; the message says what fits the design. limma's `duplicateCorrelation`, which estimates the correlation of the blocks, is not implemented.
 - **Memory.** A fit with observation weights or missing values keeps a covariance matrix for every gene ({api}`fit_linear_model` gives its size).
 - **Ordered factors.** An ordered pandas categorical is coded as an unordered factor, by treatment contrasts, where R would use polynomial contrasts.
+- **Splines in formulas.** Formulas refuse `ns()`, `bs()` and `poly()`; add the columns of {api}`DoseAxis.design_columns` or {api}`NaturalSplineBasis.matrix` to the sample table instead.
+- **The first restricted cubic column.** Hmisc's is the value itself, CytePool's the value minus the lower boundary knot, so that every column is 0 there. Fits, tests and the other coefficients are the same; the intercept differs by the first coefficient times the knot.
+- **Repeated knots.** R's `ns()` and {api}`natural_spline_basis` accept repeated knots, which lower the curve's smoothness there, as R's quantile rule gives on tied values; the restricted cubic form refuses them, and {api}`DoseAxis.spline_basis` refuses knots that coincide in either form, naming the rule and the dose.
+- **Crowded knots.** The restricted cubic form computes truncated cubes, which become nearly collinear when knots crowd: on a linear axis over doses from 0.01 to 30, its designs reached condition numbers of 1e11, and R's `qr()` dropped columns as aliased from 6 columns up. On the log10 axis the same doses gave at most 2.3e4, and the B-spline form stayed below 1e3 on every axis ([Validation](#validation-dose-axes)). Doses that span decades belong on the log10 axis, and crowded doses, such as measured exposures, in `form="b_spline"`.
+- **Doses that differ by rounding.** {api}`DoseAxis.spline_basis` refuses two doses that differ by less than 1e-8 of the dose, as `0.1 * 3` and `0.3` do, which a conversion of units can leave as two doses where there is one: round the dose column first.
 
 (linear-models-checks)=
 ## Checks and further reading
@@ -81,6 +142,8 @@ Designs and fits are compared with R and limma, run as separate programs on the 
 
 - Model matrices, R's terms, the rank and aliased columns of designs, leverages and the estimability of contrasts: R 4.4.3, exact (identical, and 1e-10; 1e-8 absolute for the leverages of badly scaled designs); named contrasts: limma 3.62.1; random-effect terms: lme4 2.0-6 ([Validation](#validation-design)).
 - {api}`fit_linear_model` and {api}`contrasts_fit`: `lmFit` and `contrasts.fit` of limma 3.62.1, exact (1e-10) ([Validation](#validation-linear-models)).
+- {api}`NaturalSplineBasis` and {api}`natural_spline_basis`: knots identical to those of R 4.4.3's `ns()` and Hmisc 5.3-1's `rcspline.eval`; bases at new points against `predict()`, restricted cubic columns against `rcspline.eval` and F-tests against rms 8.2-1, exact (1e-10) ([Validation](#validation-smoothing)).
+- {api}`DoseAxis`: positions, knots, columns, designs, F-tests and fitted curves against R 4.4.3's `ns()`, Hmisc's `rcspline.eval`, `model.matrix`, `lm` and `predict`, exact (1e-10) ([Validation](#validation-dose-axes)).
 
 Further reading:
 
@@ -88,5 +151,6 @@ Further reading:
 - @smyth2004 set out limma's approach to experiments with few samples: one linear model fitted to every gene, whose contrasts are tested by moderated statistics.
 - @searle1971 gave the theory of linear models of less than full rank, and of the functions of their coefficients that the data can estimate.
 - @hoaglin1978 described the hat matrix, whose diagonal gives the leverage of each sample.
+- @durrleman1989 introduced restricted cubic splines to medical regression, @harrell2015 sets out their use with knots at percentiles, and @desquilbet2010 shows how to test overall and non-linear dose-response associations with them; @perperoglou2019 reviews the spline functions of R, `ns()` among them.
 
 [Empirical Bayes moderation](empirical_bayes.md) makes the tests of these models hold with few samples.
