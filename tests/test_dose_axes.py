@@ -161,7 +161,7 @@ def test_dose_positions_by_hand() -> None:
 
 
 def test_design_columns_match_r(r_cases: list[dict[str, Any]]) -> None:
-    compared = 0
+    compared, tested = 0, 0
     for case in r_cases:
         if case["name"] == TIED_KNOTS:
             continue
@@ -201,8 +201,9 @@ def test_design_columns_match_r(r_cases: list[dict[str, Any]]) -> None:
             assert same_column_space(design.matrix, case["design"]) <= 1e-10
         compared += 1
         if np.linalg.cond(case["design"]) > CONDITION_LIMIT:
-            # R's restricted cubic columns on a linear axis: lm's fits are not exact.
+            # Hmisc's columns on a linear axis: lm's fits of them are not exact.
             continue
+        tested += 1
         # F-statistics of nested fits: any dose, among the treated doses, non-linear.
         splines = [j + 1 for j, n in enumerate(names) if n.startswith("dose_s")]
         dropped = {
@@ -229,7 +230,9 @@ def test_design_columns_match_r(r_cases: list[dict[str, Any]]) -> None:
         assert_allclose(
             curves, case["curves"], rtol=0, atol=1e-10 * scale, err_msg=name
         )
-    assert compared == len(r_cases) - 1
+    # Every case but the tied knots; F-tests and curves in all but one, whose design
+    # with Hmisc's columns has a condition number of 2.9e7.
+    assert (compared, tested) == (len(r_cases) - 1, len(r_cases) - 2)
 
 
 def test_coinciding_knots_are_refused_where_r_repeats_one(
@@ -336,9 +339,8 @@ def test_a_saturated_spline_is_the_dose_group_test(vehicle: str) -> None:
     ).table("bulk", "any_dose")
     assert_array_equal(spline["feature_id"], dose_groups["feature_id"])
     # The F-statistic reads the correlation of the coefficients, whose condition number
-    # is about 3e6 (vehicle in its own group) and 1e7 (on the axis) for the spline:
-    # rounding leaves about 1e-10 between the two parametrizations.
-    assert_allclose(spline["f_statistic"], dose_groups["f_statistic"], rtol=1e-8)
+    # is 13 (vehicle in its own group) and 7 (on the axis) for the spline.
+    assert_allclose(spline["f_statistic"], dose_groups["f_statistic"], rtol=1e-10)
     # p-values far in the tail, down to 1e-314, as differences relative to
     # max(p, 1e-300) max(1, |log p|), about the error in log p relative to |log p|.
     p = dose_groups["p_value"]
@@ -738,12 +740,22 @@ def test_an_axis_survives_its_record() -> None:
 
 
 def test_the_chapter_example_runs() -> None:
-    # The code of "Dose axes and the vehicle", run on a dose series.
-    text = CHAPTER.read_text()
-    blocks = re.findall(r"```python\n(.*?)```", text, re.S)
-    (example,) = [block for block in blocks if "cp.DoseAxis(" in block]
+    # The code of "Dose axes and the vehicle", run on a dose series of one group, which
+    # from_bulk names "bulk" where the chapter's cube holds hepatocytes.
+    section = CHAPTER.read_text().split("(dose-axes)=")[1].split("(estimable")[0]
+    blocks = re.findall(r"```python\n(.*?)```", section, re.S)
+    assert len(blocks) == 2
     namespace = {"cp": cytepool, "cube": dose_series(89)}
-    exec(example, namespace)  # noqa: S102
+    for block in blocks:
+        exec(block.replace('"hepatocyte"', '"bulk"'), namespace)  # noqa: S102
+    # The knots that the chapter prints, at quantiles of the distinct doses.
+    basis, axis = namespace["basis"], namespace["axis"]
+    assert_allclose(axis.doses(basis.knots), [0.14422496, 2.08008382], rtol=1e-7)
+    # The curves: the dose_treated column alone at the lowest dose, where every
+    # spline column is 0.
+    curves, table = namespace["curves"], namespace["table"]
+    assert curves.shape == (len(table["feature_id"]), 50)
+    assert_allclose(curves[:, 0], table["log2_fold_change_dose_treated"], atol=1e-12)
     result = namespace["result"]
     assert set(result.f_tests) == {"any_dose", "among_doses", "nonlinear"}
     tables = {test: result.table("bulk", test) for test in result.f_tests}

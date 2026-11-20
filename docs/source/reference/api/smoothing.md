@@ -6,6 +6,8 @@ myst:
 
 # Smoothing and spline bases
 
+LOWESS smoothing, limma's rule for its span, and natural cubic spline bases that keep their knots; [Spline columns](../statistics/linear-models/#spline-bases) explains the spline bases, and [The span](../statistics/limma-voom/#voom-span) the span of a LOWESS trend.
+
 ```{eval-rst}
 .. automodule:: cytepool.stats.smoothing
 ```
