@@ -2409,7 +2409,7 @@ def test_the_chapter_s_gate_example_runs() -> None:
     with contextlib.redirect_stdout(output):
         exec(blocks[0], namespace)  # noqa: S102
     printed = output.getvalue()
-    assert printed == "{'test': 'each_dose', 'fdr': 0.05, 'fold_change': 1.5} 24\n"
+    assert printed == "default gate: 88 genes; 1.5-fold gate: 24\n"
     assert "```text\n" + printed + "```" in gate_text
     result, large = namespace["result"], namespace["large"]
     gate = namespace["gate"]

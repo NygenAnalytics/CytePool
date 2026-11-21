@@ -34,9 +34,9 @@ question they answer, the default first:
   respond to dose in each cell type, :func:`dose_response`,
   :class:`DoseResponseResult`, with the candidate shapes of its MCP step, the test of
   MCP-Mod (multiple comparison procedure and modelling), :class:`CandidateShapes`;
-  how often noise passes its gate at the series' design, :func:`permutation_check`,
-  :class:`PermutationCheck`; simulated dose series with known curves,
-  :func:`simulate_dose_series`, :class:`DoseTruth`.
+  whether its true doses pass more genes through its gate than permuted doses,
+  :func:`permutation_check`, :class:`PermutationCheck`; simulated dose series with
+  known curves, :func:`simulate_dose_series`, :class:`DoseTruth`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and
 mixed models, empirical Bayes moderation, voom, count models, multiple testing,

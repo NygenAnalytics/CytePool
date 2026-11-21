@@ -337,7 +337,7 @@ def permutation_check(
     and must give the result's gate: the same genes, p-values equal up to rounding
     and the same calls, so that the runs are the analysis the result records. Each
     run takes the time of the cell type's analysis and of the gate's test: about
-    0.8 s for 20,000 genes and 24 samples with the spline test on two threads, twice
+    0.7 s for 20,000 genes and 24 samples with the spline test on two threads, twice
     that with a fold change, and more for a multiple contrast test or under dream.
 
     Args:

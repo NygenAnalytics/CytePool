@@ -599,6 +599,27 @@ def test_a_run_is_dose_response_on_the_permuted_doses(name: str) -> None:
         assert np.count_nonzero(passed) == runs[run]
 
 
+def test_a_monte_carlo_gate_runs_with_the_result_s_seed() -> None:
+    # The Williams-type test of three treated doses integrates its p-values by Monte
+    # Carlo, so another seed moves them; every run takes the result's seed, so that
+    # the true doses give the result's gate again and a run made again with that
+    # seed passes the genes the check counted.
+    cube = responsive()
+    design = Design(cube.samples, "~ 1")
+    gate = {"test": "williams"}
+    result = dose_response(cube, design, dose=AXIS, gate=gate, rng=7)
+    moved = dose_response(cube, design, dose=AXIS, gate=gate, rng=8)
+    first, second = (r.table("one", "gate")["p_value"] for r in (result, moved))
+    assert not np.allclose(first, second, rtol=1e-6)
+    check = permutation_check(result, n_permutations=2, rng=1)
+    for entry in check.provenance["groups"]:
+        group = entry["group_id"]
+        for run in range(2):
+            found = again(cube, design, entry, run, gate=gate, rng=7)
+            passed = np.count_nonzero(found.table(group, "gate")["passes_gate"])
+            assert passed == check.table(group)["n_genes_passing_gate"][run]
+
+
 def test_a_run_under_dream_is_dose_response_on_the_permuted_doses() -> None:
     cube, design, _ = designs()["donors crossed with dose"]
     result = dose_response(cube, design, dose=AXIS, analysis=dream_voom)
@@ -1144,7 +1165,7 @@ def test_the_chapter_s_check_example_runs() -> None:
     assert summary["group_id"].tolist() == ["hepatocyte", "stellate"]
     assert summary["share_of_runs_with_passing_genes"].tolist() == [0.03, 0.03]
     assert summary["p_value"].tolist() == [1 / 101] * 2
-    assert summary["smallest_p_value"].tolist() == [1 / 101] * 2
+    assert summary["smallest_possible_p_value"].tolist() == [1 / 101] * 2
     assert "the gate passed genes in 3 of 100 runs in each cell type" in text
     assert "so p is 1/101, the smallest that 100 runs can give" in text
 
@@ -1185,7 +1206,7 @@ def test_the_chapter_s_table_of_the_smallest_p_values() -> None:
         entry = check.provenance["groups"][0]
         assert entry["n_assignments"] == assignments
         if exhaustive:
-            smallest = float(check.summary["smallest_p_value"][0])
+            smallest = float(check.summary["smallest_possible_p_value"][0])
             assert smallest == int(ties) / assignments
         else:
             assert int(ties) == math.factorial(len(doses))
@@ -1199,7 +1220,9 @@ def test_the_chapter_s_table_of_the_smallest_p_values() -> None:
     result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS)
     assert result.gate["test"] == "spline"
     check = permutation_check(result, rng=1)
-    assert check.summary["smallest_p_value"].tolist() == [6 / 90]
+    assert check.summary["smallest_possible_p_value"].tolist() == [6 / 90]
     assert (
-        "At the vehicle and two doses in duplicate, no p-value of the default" in text
-    )
+        "At the vehicle and two doses in duplicate, with the vehicle in a group of "
+        "its own as the default axis places it, no p-value of the default gate falls "
+        "below 0.05"
+    ) in text

@@ -68,7 +68,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Fingerprint.** A SHA-256 digest of what an analysis reads of a cube, its tables, cell numbers, normalization and layers, which names the cube however it was made. [What a cube records](../statistics/cubes.md#what-a-cube-records)
 
-**Gate.** The test that decides which genes of a dose series count as responding: one test of any response at a stated false discovery rate, run after a filter of the genes that does not read the doses, with any fold change inside its null hypothesis. BMDExpress calls such a step a prefilter; the ANOVA gate of the National Toxicology Program tests the data set as a whole. [Which genes count as responding](../statistics/dose_response.md#dose-response-gate)
+**Gate.** The test that decides which genes of a dose series count as responding: one test of any response at a stated false discovery rate, run after a filter of the genes that does not read the doses, with any fold change inside its null hypothesis. It takes the place of BMDExpress's prefilter, the step that picks the genes that go on to curves: BMDExpress's default prefilter takes an unadjusted Williams p-value and cuts the estimated fold change, where the gate adjusts its p-values and puts any fold change inside the test. The ANOVA gate of the National Toxicology Program tests the data set as a whole. [Which genes count as responding](../statistics/dose_response.md#dose-response-gate)
 
 **Gene set.** A named list of genes that share a function or a response, such as a pathway or a signature, often read from a GMT file of a collection such as MSigDB. [Gene-set collections](../statistics/gene_set_tests.md#gene-set-collections)
 
@@ -136,7 +136,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Pathway score.** One number per sample for a gene set, such as a GSVA score, that summarizes the expression of the set's genes in that sample, so that pathways can be compared across samples and tested like genes. [GSVA](../statistics/pathway_scores.md#gsva)
 
-**Permutation check.** A check of how often a gate passes genes when the dose labels are permuted among the samples that the design treats alike, which shows at a series' own design how often noise passes the gate, with a permutation p-value for the genes the true doses pass. [Could the calls come from noise?](../statistics/dose_response.md#dose-permutation-check)
+**Permutation check.** A check of whether the true doses of a dose series pass more genes through its gate than permuted doses do: the dose labels are permuted among the samples that the design treats alike, and the permutation p-value compares the genes the true doses pass with those of each permuted labelling, beside how often the gate passes genes with the doses permuted. [Could the calls come from noise?](../statistics/dose_response.md#dose-permutation-check)
 
 **Precision weight.** A weight for each observation, the inverse of the variance that a mean-variance trend predicts for it, such as voom's. [voom](../statistics/limma_voom.md#voom)
 
