@@ -34,8 +34,9 @@ question they answer, the default first:
   respond to dose in each cell type, :func:`dose_response`,
   :class:`DoseResponseResult`, with the candidate shapes of its MCP step, the test of
   MCP-Mod (multiple comparison procedure and modelling), :class:`CandidateShapes`;
-  simulated dose series with known curves,
-  :func:`simulate_dose_series`, :class:`DoseTruth`.
+  whether its true doses pass more genes through its gate than permuted doses,
+  :func:`permutation_check`, :class:`PermutationCheck`; simulated dose series with
+  known curves, :func:`simulate_dose_series`, :class:`DoseTruth`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and
 mixed models, empirical Bayes moderation, voom, count models, multiple testing,
@@ -89,6 +90,7 @@ from .io.anndata import from_anndata, from_mudata, to_anndata, to_mudata  # noqa
 from .meta_analysis_of_studies import MetaAnalysisResult, meta_analysis  # noqa: E402
 from .networks import Network, collectri, progeny  # noqa: E402
 from .over_representation_analysis import over_representation  # noqa: E402
+from .permutation_checks import PermutationCheck, permutation_check  # noqa: E402
 from .pathway_scores import (  # noqa: E402
     PathwayScores,
     combined_z_scores,
@@ -188,6 +190,8 @@ __all__ = [
     "dose_response",
     "DoseResponseResult",
     "CandidateShapes",
+    "permutation_check",
+    "PermutationCheck",
     "simulate_dose_series",
     "DoseTruth",
     # The version.

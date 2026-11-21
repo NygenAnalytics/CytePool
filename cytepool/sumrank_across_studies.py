@@ -53,7 +53,6 @@ References:
     Society B 57, 289-300. doi:10.1111/j.2517-6161.1995.tb02031.x
 """
 
-import inspect
 import json
 import numbers
 import warnings
@@ -68,6 +67,7 @@ from ._columns import text_column
 from ._masked_arrays import reject_masked
 from ._messages import PACKAGE_DIRECTORY, fitted_lines, fitted_message, listing, quoted
 from ._options import index_integer, random_generator
+from ._reruns import recorded_options
 from ._study_statistics import (
     contrast_levels,
     signed_statistics,
@@ -550,16 +550,9 @@ def _rerun(
             f"study {study!r}; its variables are: {quoted(variables) or '(none)'}"
         )
     settings: dict[str, Any] = record["settings"]
-    parameters = inspect.signature(function).parameters
-    options = {
-        name: settings[name]
-        for name, parameter in parameters.items()
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY
-        and name not in ("groups", "contrasts")
-        and name in settings
-    }
-    if options.get("expression_filter", True) is None:
-        options["expression_filter"] = False  # recorded as None when it was off
+    options = recorded_options(
+        function, settings, set_by_caller=("groups", "contrasts")
+    )
     ids = samples["sample_id"]
     rows = {sample: position for position, sample in enumerate(ids)}
     table = result.samples

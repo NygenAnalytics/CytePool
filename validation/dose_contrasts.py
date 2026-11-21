@@ -996,7 +996,9 @@ class Job:
     def name(self) -> str:
         return f"{self.series.name} {self.analysis}"
 
-    def run(self, seed: int) -> Any:
+    def run(self, seed: int, gate: str = "spline") -> Any:
+        """dose_response on the job's series; with another gate than the spline, the
+        tests along dose alone, which give the same fit and tables."""
         options: dict[str, Any] = {}
         if self.analysis == "dream":
             # voomWithDreamWeights' span, which dream_voom takes from voom by default.
@@ -1010,7 +1012,8 @@ class Job:
             self.series.cube,
             self.series.design,
             dose=self.series.axis,
-            tests=("spline", "dose_groups", *TESTS),
+            tests=("spline", "dose_groups", *(TESTS if gate == "spline" else ())),
+            gate={"test": gate},
             analysis=analysis,
             rng=seed,
             **options,
@@ -1647,7 +1650,7 @@ def lowest_from(
 
 
 def compare_lowest_doses(rows: Rows, cells: list[CellType]) -> None:
-    for screen, label in (
+    for gate, label in (
         ("spline", "CytePool's spline test and per-dose tests"),
         ("dose_groups", "R's own dose-group test and per-dose tests, from the counts"),
     ):
@@ -1655,23 +1658,26 @@ def compare_lowest_doses(rows: Rows, cells: list[CellType]) -> None:
         gap = 0.0
         closure_same = closure_total = 0
         for cell in cells:
-            if cell.reference is None or screen not in cell.reference.get("stager", {}):
+            if cell.reference is None or gate not in cell.reference.get("stager", {}):
                 continue
             doses = np.asarray(cell.fit["doses"][1:], dtype=np.float64)
-            ours = cell.result.lowest_effective_doses(
-                cell.group, screen=screen, alpha=ALPHA
+            result = (
+                cell.result
+                if gate == "spline"
+                else cell.job.run(job_seed(cell.job.name), gate)
             )
-            stager = cell.reference["stager"][screen]
+            ours = result.lowest_effective_doses(cell.group)
+            stager = cell.reference["stager"][gate]
             adjusted = numbers(stager["adjusted"]).reshape(cell.genes, cell.k)
             lowest, n_called = lowest_from(adjusted, doses)
-            screen_p = numbers(cell.inputs["screens"][screen]["screen"]).ravel()
-            responds = _bh(screen_p) <= ALPHA
+            screen_p = numbers(cell.inputs["screens"][gate]["screen"]).ravel()
+            passes = _bh(screen_p) <= ALPHA
             checks = [
                 np.array_equal(
                     np.asarray(ours["lowest_effective_dose"]), lowest, equal_nan=True
                 ),
                 np.array_equal(np.asarray(ours["n_doses_called"]), n_called),
-                np.array_equal(np.asarray(ours["responds"]), responds),
+                np.array_equal(np.asarray(ours["passes_gate"]), passes),
             ]
             same += sum(checks)
             total += len(checks)
@@ -1686,9 +1692,9 @@ def compare_lowest_doses(rows: Rows, cells: list[CellType]) -> None:
             gap = max(
                 gap, relative(np.asarray(ours["stage_wise_adjusted_p_value"]), theirs)
             )
-            rejected = np.asarray(
-                cell.reference["closure"][screen], dtype=bool
-            ).reshape(cell.genes, cell.k)
+            rejected = np.asarray(cell.reference["closure"][gate], dtype=bool).reshape(
+                cell.genes, cell.k
+            )
             closure_lowest = np.where(
                 rejected.any(axis=1), doses[np.argmax(rejected, axis=1)], np.nan
             )
@@ -1705,21 +1711,21 @@ def compare_lowest_doses(rows: Rows, cells: list[CellType]) -> None:
         if not total:
             continue
         rows.identical(
-            f"lowest_effective_doses, screen '{screen}': lowest effective doses, doses called "
-            "and calls of the screen, every cell type",
+            f"lowest_effective_doses, gate '{gate}': lowest effective doses, doses called "
+            "and calls of the gate, every cell type",
             f"stageR stageWiseAdjustment('holm') on {label}",
             same,
             total,
         )
         rows.bound(
-            f"lowest_effective_doses, screen '{screen}': stage-wise adjusted p-value at the "
+            f"lowest_effective_doses, gate '{gate}': stage-wise adjusted p-value at the "
             "lowest effective dose",
             f"stageR on {label}",
             gap,
             EXACT,
         )
         rows.identical(
-            f"lowest_effective_doses, screen '{screen}': each gene's lowest effective dose",
+            f"lowest_effective_doses, gate '{gate}': each gene's lowest effective dose",
             "the closure of Bonferroni tests, every intersection enumerated (R)",
             closure_same,
             closure_total,

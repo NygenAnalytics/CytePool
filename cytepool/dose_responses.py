@@ -32,8 +32,13 @@ cube that supports tests, in one call
    multiple comparison procedure, of MCP-Mod (multiple comparison procedure and
    modelling): the contrasts that best detect each of a few candidate shapes (Bretz,
    Pinheiro and Branson 2005; Pinheiro et al. 2014).
-4. On demand, the lowest effective dose of each gene: the lowest dose called by
-   stage-wise testing after a screen (Heller et al. 2009; Van den Berge et al. 2017).
+4. The gate, which decides which genes count as responding: one test of any
+   response at a stated false discovery rate, after the dose-blind expression
+   filter (Bourgon, Gentleman and Huber 2010), with any fold change in the null
+   hypothesis of each dose against the vehicle by TREAT (McCarthy and Smyth 2009).
+5. On demand, the lowest effective dose of each gene the gate passes: the lowest
+   dose called by stage-wise testing (Heller et al. 2009; Van den Berge et al.
+   2017).
 
 The spline:
     In each cell type the spline is fitted by least squares to the means of the dose
@@ -55,7 +60,10 @@ Adjustment for multiple testing:
     the test, stacked into one family. The tests of each dose against the vehicle
     are adjusted within the cell type and dose only. A multiple contrast test's
     ``p_value`` is already adjusted for the gene's contrasts (single-step, Hothorn,
-    Bretz and Westfall 2008), and its adjusted p-values adjust it across genes.
+    Bretz and Westfall 2008), and its adjusted p-values adjust it across genes. The
+    gate adjusts its p-values by Benjamini-Hochberg within each cell type; a gate
+    with a fold change first takes, for each gene, the smallest of its doses' TREAT
+    p-values times the doses (Bonferroni), so that a gene counts once.
 
 References:
     Law CW, Chen Y, Shi W, Smyth GK (2014). voom: precision weights unlock linear model
@@ -116,12 +124,17 @@ References:
     stage-wise method for controlling the gene-level false discovery rate in
     differential expression and differential transcript usage. Genome Biology 18,
     151. doi:10.1186/s13059-017-1277-0
+
+    Bourgon R, Gentleman R, Huber W (2010). Independent filtering increases detection
+    power for high-throughput experiments. Proceedings of the National Academy of
+    Sciences 107, 9546-9551. doi:10.1073/pnas.0914005107
+
+    McCarthy DJ, Smyth GK (2009). Testing significance relative to a fold-change
+    threshold is a TREAT. Bioinformatics 25, 765-771. doi:10.1093/bioinformatics/btp053
 """
 
 import inspect
 import json
-import numbers
-import operator
 import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -144,7 +157,7 @@ from ._group_fits import COUNTS_LAYER, FITTED
 from ._linear_algebra import column_space
 from ._masked_arrays import reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
-from ._options import positive_integer, random_generator, real_number
+from ._options import positive_integer, real_number, recorded_seed
 from .candidate_shapes import BETA_SCALE_FACTOR, CandidateShapes
 from .cube import Cube
 from .design import Contrasts, Design
@@ -160,6 +173,7 @@ from .dose_axes import DoseAxis
 from .dose_designs import INFERENTIAL, DoseDesignReport, check_dose_design
 from .stats.distributions import t_ppf
 from .stats.dream import ModeratedFixedEffectTests
+from .stats.empirical_bayes import treat
 from .stats.multiple_contrasts import (
     dunnett_contrasts,
     multiple_contrast_test,
@@ -188,22 +202,32 @@ CONTRAST_TESTS = (DUNNETT, WILLIAMS, MCP)
 """The multiple contrast tests, run only when named, in the order of tables and
 printouts."""
 _ALL_TESTS = (*TESTS, *CONTRAST_TESTS)
-SCREENS = (SPLINE, DOSE_GROUPS, *CONTRAST_TESTS)
-"""The tests of any response, which can screen the genes whose doses are called."""
 EACH_DOSE = "each_dose"
-"""The table of each dose against the vehicle."""
+"""The table of each dose against the vehicle, and the test of a gate with a fold
+change."""
+GATE = "gate"
+"""The table of the gate's calls."""
+GATE_TESTS = (SPLINE, DOSE_GROUPS, *CONTRAST_TESTS)
+"""The tests of any response that a gate can take without a fold change."""
 # Of two tests of the same hypothesis in a cell type, the first of this order runs
 # when the tests are chosen by default.
 _PRIORITY = (SPLINE, DOSE_GROUPS, LINEAR_TREND, NONLINEARITY)
-_ANALYSES: dict[str, Callable[..., DifferentialExpressionResult]] = {
+ANALYSES: dict[str, Callable[..., DifferentialExpressionResult]] = {
     "limma_voom": limma_voom,
     "limma_trend": limma_trend,
     "dream_voom": dream_voom,
 }
+"""The analyses of dose_response, by the name its results record."""
 # The options of the analysis that dose_response sets itself.
 _SET_HERE = ("contrasts", "f_tests", "adjust_across_groups")
+SET_BY_DOSE_RESPONSE = (*_SET_HERE, "groups", "min_cells", "min_counts")
+"""The options of the analysis that dose_response sets, or takes as arguments of its
+own, and so does not pass on from its other options."""
 _ACROSS_GROUPS = "adjusted_p_value_across_groups"
-# The level of the calls a printout counts, and of the confidence bands.
+# The settings of a gate.
+_GATE_SETTINGS = ("test", "fdr", "fold_change")
+# The level of the calls a printout counts and of the default gate, and of the
+# confidence bands.
 _FDR = 0.05
 _LEVEL = 0.95
 # The doses of a curve by default, evenly spaced along the dose axis.
@@ -275,9 +299,14 @@ class DoseResponseResult:
       feature order: ``feature_id``, ``symbol``, ``dose`` (in the axis's unit), then
       the columns of the analysis's table of a contrast, adjusted within the cell
       type and dose.
+    - ``"gate"``: the gate's call of each gene (:attr:`gate`), with ``feature_id``,
+      ``symbol``, ``p_value`` (the p-value of the gate's test, or with a fold change
+      the smallest of the gene's TREAT p-values times the doses, capped at 1),
+      ``adjusted_p_value`` (Benjamini-Hochberg over the cell type's genes) and
+      ``passes_gate``, whether ``adjusted_p_value`` is at most the gate's FDR.
 
     :meth:`lowest_effective_doses` calls each dose against the vehicle in the genes
-    that a screen calls, and gives each gene's lowest effective dose.
+    that pass the gate, and gives each gene's lowest effective dose.
 
     ``summary`` has one row per cell type checked: ``group_id``; ``status``, the
     check's (``"inferential"``, ``"descriptive"`` or ``"refused"``); ``tested``;
@@ -285,32 +314,47 @@ class DoseResponseResult:
     analysis's when its fit stopped, empty when tested; ``n_dose_groups_tested``,
     the vehicle and the treated doses compared; ``n_samples_used``;
     ``n_features_tested``; ``df_residual`` and ``df_prior`` of the fit (medians for
-    dream), NaN where not tested; and ``tests_not_run``, the tests of the design
-    that a tested cell type did not run, whose reasons :meth:`table` gives.
+    dream), NaN where not tested; ``tests_not_run``, the tests of the design that a
+    tested cell type did not run, whose reasons :meth:`table` gives; and
+    ``n_genes_passing_gate``, NaN where the gate did not run, which is not a cell
+    type without responding genes.
 
     Built by :func:`dose_response` from the summary, the tables, the design check
     (``design_report``), the provenance and, as ``fits``, each tested cell type's
     result of the analysis without its tables, from which :meth:`fit` and
-    :meth:`curve` compute the cell type's fit again. A pickled result carries the
-    cube: a cube read from a cube file refers to its file, and a cube in memory
-    carries its arrays. Immutable.
+    :meth:`curve` compute the cell type's fit again, and with the ``cube`` and
+    ``design`` analysed, from which :func:`~cytepool.permutation_check` runs the
+    analysis again; a result built without them cannot be checked. A pickled result
+    carries the cube: a cube read from a cube file refers to its file, and a cube in
+    memory carries its arrays. Immutable.
 
     Raises:
         TypeError: If ``summary`` is not a ``Table``, ``tables`` not a mapping of
             (cell type, test) to ``Table``, ``fits`` not a mapping of cell type to
             ``DifferentialExpressionResult``, ``design_report`` not a
-            ``DoseDesignReport``, or ``provenance`` not a mapping that JSON can
-            write.
-        ValueError: If ``provenance`` holds a NaN or an infinity.
+            ``DoseDesignReport``, ``provenance`` not a mapping that JSON can write,
+            ``cube`` not a ``Cube`` or ``design`` not a ``Design``.
+        ValueError: If ``provenance`` holds a NaN or an infinity, or one of
+            ``cube`` and ``design`` is given without the other.
     """
 
-    __slots__ = ("_summary", "_tables", "_fits", "_report", "_record")
+    __slots__ = (
+        "_summary",
+        "_tables",
+        "_fits",
+        "_report",
+        "_record",
+        "_cube",
+        "_design",
+    )
 
     _summary: Table
     _tables: Mapping[tuple[str, str], Table]
     _fits: Mapping[str, DifferentialExpressionResult]
     _report: DoseDesignReport
     _record: str
+    _cube: Cube | None
+    _design: Design | None
 
     def __init__(
         self,
@@ -319,6 +363,9 @@ class DoseResponseResult:
         fits: Mapping[str, DifferentialExpressionResult],
         design_report: DoseDesignReport,
         provenance: Mapping[str, Any],
+        *,
+        cube: Cube | None = None,
+        design: Design | None = None,
     ) -> None:
         if not isinstance(summary, Table):
             raise TypeError(f"summary must be a Table, got {type(summary).__name__}")
@@ -357,6 +404,17 @@ class DoseResponseResult:
             raise TypeError(
                 f"provenance must be a mapping, got {type(provenance).__name__}"
             )
+        if cube is not None and not isinstance(cube, Cube):
+            raise TypeError(f"cube must be a Cube or None, got {type(cube).__name__}")
+        if design is not None and not isinstance(design, Design):
+            raise TypeError(
+                f"design must be a Design or None, got {type(design).__name__}"
+            )
+        if (cube is None) != (design is None):
+            raise ValueError(
+                "give both the cube and the design that dose_response analysed, or "
+                "neither: permutation_check needs both to run the analysis again"
+            )
         state = {
             "_summary": summary,
             "_tables": MappingProxyType(dict(tables)),
@@ -364,6 +422,8 @@ class DoseResponseResult:
             "_report": design_report,
             # JSON holds no arrays: json.dumps raises TypeError for one.
             "_record": json.dumps(provenance, allow_nan=False),
+            "_cube": cube,
+            "_design": design,
         }
         for name, value in state.items():
             object.__setattr__(self, name, value)
@@ -376,26 +436,48 @@ class DoseResponseResult:
 
     def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
         return (
-            DoseResponseResult,
+            _restore_result,
             (
                 self._summary,
                 dict(self._tables),
                 dict(self._fits),
                 self._report,
                 self.provenance,
+                self._cube,
+                self._design,
             ),
         )
 
     @property
     def summary(self) -> Table:
         """The status of each cell type checked, whether it was tested and why not,
-        and its dose groups, samples, genes and degrees of freedom."""
+        its dose groups, samples, genes and degrees of freedom, and the genes that
+        pass the gate."""
         return self._summary
 
     @property
     def tables(self) -> Mapping[tuple[str, str], Table]:
-        """Every table, by (cell type, test) and (cell type, ``"each_dose"``)."""
+        """Every table, by (cell type, test), (cell type, ``"each_dose"``) and
+        (cell type, ``"gate"``)."""
         return self._tables
+
+    @property
+    def cube(self) -> Cube | None:
+        """The cube analysed; None for a result built without it."""
+        return self._cube
+
+    @property
+    def design(self) -> Design | None:
+        """The design given, of the terms other than dose; None for a result built
+        without it."""
+        return self._design
+
+    @property
+    def gate(self) -> dict[str, Any]:
+        """The gate's ``test``, ``fdr`` and ``fold_change``, as a new dict that
+        ``dose_response(..., gate=result.gate)`` takes back."""
+        gate: dict[str, Any] = json.loads(self._record)["settings"]["gate"]
+        return gate
 
     @property
     def design_report(self) -> DoseDesignReport:
@@ -412,7 +494,7 @@ class DoseResponseResult:
         """The tests of the design, those named or, when none were, those it
         supports, in the order spline, nonlinearity, linear_trend and dose_groups,
         then the multiple contrast tests named, in the order dunnett, williams and
-        mcp."""
+        mcp; the gate's test is among them, named or not."""
         return tuple(json.loads(self._record)["tests"])
 
     @property
@@ -449,9 +531,10 @@ class DoseResponseResult:
         tests and ``spline_df`` as given, the candidate shapes of ``"mcp"``
         (``candidates``, as :meth:`CandidateShapes.to_dict` gives them; None without
         ``"mcp"``), the seed of the multiple contrast tests (``seed``; None when none
-        ran), the analysis, and ``batch``, ``groups``, ``min_cells`` and
-        ``min_counts``. The analysis's other options are in the provenance's
-        ``analysis_settings``, as the analysis records them.
+        ran), the gate (``gate``, as :attr:`gate` gives it), the analysis, and
+        ``batch``, ``groups``, ``min_cells`` and ``min_counts``. The analysis's other
+        options are in the provenance's ``analysis_settings``, as the analysis records
+        them.
         """
         settings: dict[str, Any] = json.loads(self._record)["settings"]
         return settings
@@ -465,7 +548,8 @@ class DoseResponseResult:
         provenance; the layer read; the model of the dose groups (``design``): its
         formula, columns, levels and the values of its variables for every sample;
         the settings, and the analysis's settings in full (``analysis_settings``,
-        null when no cell type was fitted); the tests of the design; and, for every
+        null when no cell type was fitted); the gate's adjustment for multiple testing
+        (``gate_adjustment``); the tests of the design; and, for every
         cell type (``groups``), its status, whether it was tested and why not, the
         doses it compares with their samples, the contrasts of each test it ran
         (``tests``), the tests it did not run with the reasons, the numerator
@@ -487,30 +571,33 @@ class DoseResponseResult:
             group: A cell type; it may be left out when one cell type was checked.
             name: A test the cell type ran, ``"spline"``, ``"nonlinearity"``,
                 ``"linear_trend"``, ``"dose_groups"``, ``"dunnett"``, ``"williams"``
-                or ``"mcp"``, or ``"each_dose"`` for each dose against the vehicle.
-                The class documentation gives the columns.
+                or ``"mcp"``; ``"each_dose"`` for each dose against the vehicle; or
+                ``"gate"`` for the gate's calls. The class documentation gives the
+                columns.
 
         Raises:
             ValueError: If ``group`` is left out and several cell types were
                 checked, or ``name`` is left out.
             TypeError: If ``group`` is not a string.
-            KeyError: If the cell type was not checked or not tested, or the test was
-                not run there; the message says why.
+            KeyError: If the cell type was not checked or not tested, or the test, or
+                the gate's test, was not run there; the message says why.
         """
         group = self._group(group)
-        name = only_key(name, [*self.tests, EACH_DOSE], "name", "tables")
+        names = [*self.tests, EACH_DOSE, GATE]
+        name = only_key(name, names, "name", "tables")
         found = self._tables.get((group, name))
         if found is not None:
             return found
         entry = self._tested(group)
+        if name == GATE:
+            raise KeyError(f"the gate was not run in {group!r}: {self._no_gate(entry)}")
         if name in entry["tests_not_run"]:
             raise KeyError(
                 f"{name!r} was not run in {group!r}: {entry['tests_not_run'][name]}"
             )
         raise KeyError(
-            f"no table {name!r}; the tables are: "
-            f"{listing([*self.tests, EACH_DOSE])}"
-            f"{close_matches(str(name), _ALL_TESTS)}"
+            f"no table {name!r}; the tables are: {listing(names)}"
+            f"{close_matches(str(name), (*_ALL_TESTS, EACH_DOSE, GATE))}"
         )
 
     def fit(self, group: str | None = None) -> GroupFit:
@@ -659,55 +746,48 @@ class DoseResponseResult:
             }
         )
 
-    def lowest_effective_doses(
-        self,
-        group: str | None = None,
-        *,
-        screen: str | None = None,
-        alpha: float = 0.05,
-    ) -> Table:
+    def lowest_effective_doses(self, group: str | None = None) -> Table:
         """Return the lowest dose from which each gene of a cell type responds, by
-        stage-wise calls of each dose against the vehicle.
+        stage-wise calls of each dose against the vehicle in the genes that pass the
+        gate.
 
         The calls of the stage-wise procedure of stageR (Heller et al. 2009; Van den
-        Berge et al. 2017): ``screen``, a test of any response of the gene, calls the
-        genes whose Benjamini-Hochberg adjusted p-value over the cell type's genes is
-        at most ``alpha``, R of the G genes it tested; in each gene called, the
-        moderated t-tests of each dose against the vehicle, those of the table
-        ``"each_dose"``, are called by Holm's step-down procedure with Shaffer's
-        first step at the level R alpha / G, through
-        :func:`~cytepool.stats.multiple_contrasts.stage_wise_adjusted_p_values`. The
-        lowest effective dose is the lowest dose called. The calls control the
-        overall false discovery rate (OFDR) at ``alpha``: the expected share of the
-        genes called with at least one false call, the screen's or a dose's, proved
-        under independence between genes (Heller et al. 2009) and expected wherever
-        Benjamini-Hochberg controls the false discovery rate (Van den Berge et al.
-        2017).
+        Berge et al. 2017), with the gate (:attr:`gate`) as its screen: the gate
+        passes R of the G genes it tested at its FDR, alpha; in each gene it passes,
+        each dose against the vehicle is called by Holm's step-down procedure with
+        Shaffer's first step at the level R alpha / G, through
+        :func:`~cytepool.stats.multiple_contrasts.stage_wise_adjusted_p_values`, on
+        the moderated t-tests of the table ``"each_dose"``, or, under a gate with a
+        fold change, on each dose's TREAT p-value against that fold change, from the
+        cell type's fit computed again, as :meth:`fit` computes it. The lowest
+        effective dose is the lowest dose called: the lowest whose change is called
+        or, with a fold change, the lowest whose change beyond it is called. The
+        calls control the overall false discovery rate (OFDR) at alpha: the
+        expected share of the genes passed with at least one false call, the gate's
+        or a dose's, proved under independence between genes (Heller et al. 2009)
+        and expected wherever Benjamini-Hochberg controls the false discovery rate
+        (Van den Berge et al. 2017).
 
         An effective dose here is a dose whose change is detectable at the stage-wise
-        level, with no threshold on its size: toxicology's lowest observed effect
-        level (LOEL), and the ICH E4 sense of a dose that shows an effect; the
-        clinical minimum effective dose usually adds a clinically relevant size. It
-        is a tested dose, not a potency between doses, and it moves with the
-        replicates, the spacing of the doses and ``alpha``. A gene can respond with
-        no dose called. The values hold only at the ``alpha`` given; a call is a
-        value at most ``alpha``, as stageR counts
+        level, with no threshold on its size but the gate's fold change: toxicology's
+        lowest observed effect level (LOEL), and the ICH E4 sense of a dose that
+        shows an effect; the clinical minimum effective dose usually adds a
+        clinically relevant size. It is a tested dose, not a potency between doses,
+        and it moves with the replicates, the spacing of the doses and the gate's
+        FDR. A gene can pass the gate with no dose called. The values hold only at the
+        gate's FDR, and a call is a value at most it, as stageR counts; another
+        level or another test is another gate, such as ``gate={"test": "williams",
+        "fdr": 0.1}`` in :func:`dose_response`
         (https://docs.nygen.io/CytePool/statistics/dose-response#lowest-effective-dose).
 
         Args:
             group: A cell type that was tested; it may be left out when one cell type
                 was checked.
-            screen: The test of any response that calls the genes, one the cell type
-                ran: None, the default, means ``"spline"``; or ``"dose_groups"``,
-                ``"dunnett"``, ``"williams"`` or ``"mcp"``. ``"linear_trend"`` and
-                ``"nonlinearity"`` test a straight line or a departure from one, not
-                any response.
-            alpha: The level of the calls, between 0 and 1.
 
         Returns:
             A table of one row per gene tested in the cell type, in the cube's
             feature order, with ``feature_id``, ``symbol`` (when the cube's feature
-            table has one), ``responds`` (the screen calls the gene),
+            table has one), ``passes_gate`` (as in the table ``"gate"``),
             ``lowest_effective_dose`` (in the axis's unit; NaN when no dose is
             called), ``log2_fold_change`` and ``stage_wise_adjusted_p_value`` (that
             dose's change from the vehicle and its stage-wise adjusted p-value; NaN
@@ -715,60 +795,53 @@ class DoseResponseResult:
 
         Raises:
             ValueError: If ``group`` is left out and several cell types were
-                checked, ``screen`` is not a test of any response, or ``alpha`` is
-                not between 0 and 1.
-            KeyError: If the cell type was not checked or not tested, or the screen
-                was not run there; the message says why and which tests ran.
-            TypeError: If ``group`` or ``screen`` is not a string, or ``alpha`` not
-                a real number.
+                checked, or, under a gate with a fold change, the fit computed again
+                no longer gives what the result records.
+            KeyError: If the cell type was not checked or not tested, or the gate was
+                not run there; the message says why.
+            TypeError: If ``group`` is not a string.
         """
         group = self._group(group)
-        level = real_number(alpha, "alpha", finite=True)
-        if not 0.0 < level < 1.0:
-            raise ValueError(f"alpha must be between 0 and 1, got {level}")
-        test = SPLINE if screen is None else screen
-        if not isinstance(test, str):
-            raise TypeError(f"screen must be a test name, got {type(test).__name__}")
-        if test not in SCREENS:
-            reason = (
-                "tests a straight line or a departure from one, not any response"
-                if test in (LINEAR_TREND, NONLINEARITY)
-                else "is not a test" + close_matches(test, SCREENS)
-            )
-            raise ValueError(
-                f"screen {test!r} {reason}; the screens are {quoted(SCREENS)}"
-            )
         entry = self._tested(group)
-        found = self._tables.get((group, test))
-        if found is None:
-            ran = [name for name in SCREENS if (group, name) in self._tables]
-            why = entry["tests_not_run"].get(test, "tests did not name it")
-            raise KeyError(
-                f"the screen {test!r} was not run in {group!r}: {why}; the tests of any "
-                f"response run there are {quoted(ran) or 'none'}: pass one as screen, "
-                f"or name {test!r} in dose_response's tests"
-            )
+        gate = self._tables.get((group, GATE))
+        if gate is None:
+            raise KeyError(f"the gate was not run in {group!r}: {self._no_gate(entry)}")
         doses = np.array(entry["doses"][1:], dtype=np.float64)
         each = self._tables[(group, EACH_DOSE)]
-        genes = len(found)
+        genes = len(gate)
 
         def by_dose(column: str) -> FloatArray:
             values = np.asarray(each[column], dtype=np.float64)
             return values.reshape(doses.size, genes).T
 
-        screened = np.asarray(found["p_value"], dtype=np.float64)
+        setting = self.gate
+        if setting["fold_change"] is None:
+            per_dose = by_dose("p_value")
+        else:
+            axis = self.dose
+            per_dose = _treat_p_values(
+                self.fit(group),
+                [dose_group_column(axis.column, dose) for dose in doses],
+                setting["fold_change"],
+                self.method,
+                self.provenance["analysis_settings"]["robust"],
+            )
+        level = setting["fdr"]
         adjusted = stage_wise_adjusted_p_values(
-            screened, by_dose("p_value"), alpha=level, method="holm"
+            np.asarray(gate["p_value"], dtype=np.float64),
+            per_dose,
+            alpha=level,
+            method="holm",
         )
         called = adjusted <= level
         lowest = np.argmax(called, axis=1)
         rows = np.arange(genes)
         some = called.any(axis=1)
-        columns = [name for name in ("feature_id", "symbol") if name in found]
+        columns = [name for name in ("feature_id", "symbol") if name in gate]
         return Table(
             {
-                **{name: found[name] for name in columns},
-                "responds": np.asarray(found["adjusted_p_value"]) <= level,
+                **{name: gate[name] for name in columns},
+                "passes_gate": gate["passes_gate"],
                 "lowest_effective_dose": np.where(some, doses[lowest], np.nan),
                 "log2_fold_change": np.where(
                     some, by_dose("log2_fold_change")[rows, lowest], np.nan
@@ -779,6 +852,12 @@ class DoseResponseResult:
                 "n_doses_called": called.sum(axis=1).astype(np.int64),
             }
         )
+
+    def _no_gate(self, entry: Mapping[str, Any]) -> str:
+        """Why the gate did not run in a tested cell type: its test did not."""
+        test = self.gate["test"]
+        why = entry["tests_not_run"].get(test, "it did not run there")
+        return f"its test, {test!r}, was not run: {why}"
 
     def _group(self, group: Any) -> str:
         """A cell type that was checked; the only one when ``group`` is left out."""
@@ -791,7 +870,7 @@ class DoseResponseResult:
             )
         if name in groups:
             return name
-        if name in (*_ALL_TESTS, EACH_DOSE):
+        if name in (*_ALL_TESTS, EACH_DOSE, GATE):
             raise KeyError(
                 f"{name!r} is a table, not a cell type; pass name={name!r}, with the "
                 "cell type as group, which may be left out when one was checked"
@@ -819,15 +898,15 @@ class DoseResponseResult:
         axis = self.dose
         tested = int(np.count_nonzero(self._summary["tested"]))
         n_groups = len(self._summary)
-        names = [f"{t} (read first)" if t == SPLINE else t for t in self.tests]
         dose = "  dose: " + _axis_text(axis, settings["spline_basis"])
         if LINEAR_TREND in self.tests:
             dose += f"; linear_trend slopes {_slope_unit(axis)}"
         lines = [
             f"DoseResponseResult ({record['method']}): {n_groups:,} cell "
             f"type{'' if n_groups == 1 else 's'}, {tested:,} tested; tests: "
-            + ", ".join(names),
+            + ", ".join(self.tests),
             dose,
+            "  gate: " + gate_text(settings["gate"]),
         ]
         for entry, row in zip(record["groups"], range(n_groups), strict=True):
             group = entry["group_id"]
@@ -842,10 +921,16 @@ class DoseResponseResult:
                 for test in self.tests
                 if (group, test) in self._tables
             ]
+            gate = self._tables.get((group, GATE))
+            passed = (
+                "gate not run"
+                if gate is None
+                else f"{int(np.count_nonzero(gate['passes_gate'])):,} pass the gate"
+            )
             text = (
                 f"  {group}: {len(entry['doses'])} dose groups, "
-                f"{sum(entry['samples']):g} samples, {genes:,} genes; calls at "
-                f"{_FDR:.0%} FDR: " + ", ".join(calls)
+                f"{sum(entry['samples']):g} samples, {genes:,} genes; {passed}; calls "
+                f"at {_FDR:.0%} FDR: " + ", ".join(calls)
             )
             if entry["tests_not_run"]:
                 text += "; not run: " + ", ".join(entry["tests_not_run"])
@@ -857,9 +942,10 @@ class DoseResponseResult:
         return fitted_lines("\n".join(lines))
 
     def _calls(self, group: str, test: str) -> int:
-        """The genes whose adjusted p-value of a test is below the printout's FDR."""
+        """The genes whose adjusted p-value of a test is at most the printout's FDR,
+        as the gate calls them."""
         adjusted = self._tables[(group, test)]["adjusted_p_value"]
-        return int(np.count_nonzero(adjusted < _FDR))
+        return int(np.count_nonzero(adjusted <= _FDR))
 
 
 def _mcp_notes(record: Mapping[str, Any], treated: int) -> list[str]:
@@ -885,6 +971,7 @@ def dose_response(
     tests: str | Sequence[str] | None = None,
     spline_df: int | None = None,
     candidates: CandidateShapes | None = None,
+    gate: Mapping[str, Any] | None = None,
     analysis: Callable[..., DifferentialExpressionResult] = limma_voom,
     batch: str | None = None,
     groups: str | Sequence[str] | None = None,
@@ -949,8 +1036,28 @@ def dose_response(
     multivariate t takes the smallest df of the gene's doses, an approximation:
     contrasts that combine doses can have fewer.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-contrasts
-    explains them. :meth:`DoseResponseResult.lowest_effective_doses` then gives the
-    lowest dose from which each gene responds.
+    explains them.
+
+    The gate decides which genes count as responding: one test of any response at a
+    stated false discovery rate, Benjamini-Hochberg within each cell type, after the
+    expression filter, which does not read the doses (Bourgon, Gentleman and Huber
+    2010). Its calls are the table ``"gate"``, with ``passes_gate``; the genes it
+    passes are those whose doses
+    :meth:`DoseResponseResult.lowest_effective_doses` calls. A fold change enters
+    the null hypothesis of each dose against the vehicle by TREAT (McCarthy and
+    Smyth 2009), and a gene passes when its change beyond the fold change at one dose
+    or more is called: the smallest of its doses' TREAT p-values times the doses
+    (Bonferroni), then Benjamini-Hochberg. The gate takes the place of BMDExpress's
+    prefilter, the step that picks the genes that go on to curves: BMDExpress's
+    default prefilter takes an unadjusted Williams p-value and cuts the estimated
+    fold change, where the gate adjusts its p-values and puts any fold change inside
+    the test. It is not the ANOVA gate of NTP's and EPA's rules, a test of the data
+    set that at least one gene must pass before the set is analysed further. With 2
+    replicates per dose, a cell type of 1,000 null genes had a gene pass the default
+    gate at 5% FDR in 10% to 16% of simulated series, against 7% with 3 replicates
+    (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-gate):
+    :func:`~cytepool.permutation_check` runs the gate again with the doses permuted
+    and tests whether the true doses pass more genes.
 
     The design is checked first by :func:`~cytepool.check_dose_design`, with
     ``batch``, ``groups``, ``min_cells`` and ``min_counts``, and the check is kept as
@@ -980,7 +1087,11 @@ def dose_response(
             vehicle is a group of its own, every dose when it is on the axis),
             ``"nonlinearity"`` a spline of two columns or more, and ``"mcp"`` two
             treated doses; a cell type that compares one treated dose does not run
-            ``"mcp"``, with the reason.
+            ``"mcp"``, with the reason. The gate's test, the spline by default, also
+            runs when ``tests`` does not name it, and decides which genes pass the
+            gate and whose lowest effective doses are called: ``tests="williams"``
+            runs the spline too, and ``gate={"test": "williams"}`` makes the
+            Williams-type test decide.
         spline_df: The number of spline columns, at least 1 and at most the doses on
             the axis minus 1; None gives 2 when the axis holds 4 doses or more, and
             1 otherwise. The knots are placed by :meth:`DoseAxis.spline_basis` with
@@ -988,9 +1099,19 @@ def dose_response(
         candidates: The :class:`~cytepool.CandidateShapes` of ``"mcp"``, with a
             ``beta_scale`` of at least the top dose; None spreads the default shapes
             over the design's doses, ``CandidateShapes.spread(dose,
-            design.samples)``. Given only with ``"mcp"``. A shape that does not
-            change at a cell type's doses is left out there, with the reason in the
-            record.
+            design.samples)``. Given only with ``"mcp"``, in ``tests`` or as the
+            gate's test. A shape that does not change at a cell type's doses is left
+            out there, with the reason in the record.
+        gate: None for the default gate, the spline test at 5% FDR, or a mapping of
+            its settings: ``"test"``, a test of any response, ``"spline"`` (the
+            default), ``"dose_groups"``, ``"dunnett"``, ``"williams"`` or
+            ``"mcp"``, which runs whether ``tests`` names it or not, with
+            ``"dose_groups"`` the default when fewer than two doses are on the axis,
+            where it asks the spline's question; ``"fdr"``, the false discovery rate
+            of the calls, between 0 and 1 (0.05); and ``"fold_change"``, a fold
+            change above 1, up or down, that a gene's change from the vehicle must
+            exceed at one dose or more, by TREAT, which the gate records as the test
+            ``"each_dose"``. ``gate=result.gate`` gives a result's gate back.
         analysis: :func:`~cytepool.limma_voom` (by default),
             :func:`~cytepool.limma_trend` or :func:`~cytepool.dream_voom`; a design
             with random intercepts needs ``dream_voom``.
@@ -1029,24 +1150,34 @@ def dose_response(
         TypeError: If ``analysis`` is not one of the three functions, an option is
             one the analysis does not take or one that dose_response sets
             (``contrasts``, ``f_tests``, ``adjust_across_groups``), ``tests``,
-            ``spline_df``, ``candidates`` or ``rng`` has the wrong type, or an
-            argument is of a type that :func:`~cytepool.check_dose_design` or the
-            analysis refuses.
+            ``spline_df``, ``candidates``, ``gate`` or one of its settings, or
+            ``rng`` has the wrong type, or an argument is of a type that
+            :func:`~cytepool.check_dose_design` or the analysis refuses.
         ValueError: If ``tests`` names no test or a test twice, or names a test
             that the design cannot support; ``spline_df`` is below 1 or above the
             doses on the axis minus 1, or given without two doses on the axis;
             ``candidates`` are given without ``"mcp"`` or with a ``beta_scale``
             below the top dose; a multiple contrast test is named with
-            ``contrast_standard_errors="limma"``; ``rng`` is a negative seed; the
-            design names contrasts, has random intercepts with an analysis of limma
-            or none with ``dream_voom``; the sample table already holds a column of
-            the name of a dose group's indicator; or as
+            ``contrast_standard_errors="limma"``; ``gate`` has a setting it does not
+            know, a test that is not a test of any response or that the design
+            cannot support, an FDR outside (0, 1), or a fold change that is not
+            finite and above 1, given with another test than ``"each_dose"`` or with
+            ``dream_voom``, or ``"each_dose"`` without one; ``rng`` is a negative
+            seed; the design names contrasts, has random intercepts with an analysis
+            of limma or none with ``dream_voom``; the sample table already holds a
+            column of the name of a dose group's indicator; or as
             :func:`~cytepool.check_dose_design` and the analysis raise.
         KeyError: If a group is not in the cube.
     """
     given = _tests_setting(tests)
+    asked = _gate_setting(gate)
     linear = None if given is None else [test for test in given if test in TESTS]
-    named = [test for test in CONTRAST_TESTS if given is not None and test in given]
+    # The gate's multiple contrast test runs whether tests names it or not.
+    named = [
+        test
+        for test in CONTRAST_TESTS
+        if (given is not None and test in given) or test == asked["test"]
+    ]
     if spline_df is not None:
         spline_df = positive_integer(spline_df, "spline_df")
     if candidates is not None and not isinstance(candidates, CandidateShapes):
@@ -1056,11 +1187,11 @@ def dose_response(
         )
     if candidates is not None and MCP not in named:
         raise ValueError(
-            "candidates are the shapes of the MCP step, and tests does not name 'mcp'; "
-            "add 'mcp' to tests, or leave candidates out"
+            "candidates are the shapes of the MCP step, and neither tests nor the gate "
+            "names 'mcp'; add 'mcp' to tests, or leave candidates out"
         )
     # The seed is checked whatever the tests, and recorded when one draws on it.
-    seed = _seed(rng)
+    seed = recorded_seed(rng)
     method = _analysis_name(analysis, design)
     _check_options(method, options)
     if named and options.get("contrast_standard_errors") == "limma":
@@ -1087,6 +1218,9 @@ def dose_response(
         groups=groups,
     )
     levels = np.unique(report.doses["dose"])
+    chosen = _gate(asked, dose, levels, method)
+    if linear is not None and chosen["test"] in TESTS and chosen["test"] not in linear:
+        linear.append(chosen["test"])
     splines = _splines(dose, design.samples, levels, linear, spline_df)
     shapes = _candidates(candidates, dose, design, levels) if MCP in named else None
     statuses = report.summary["status"].tolist()
@@ -1106,6 +1240,7 @@ def dose_response(
             given is None,
             named,
             shapes,
+            chosen["test"],
         )
         fit = _fit_cell_type(
             cube,
@@ -1119,10 +1254,13 @@ def dose_response(
         )
         if fit.result is not None and comparison.contrast_tests:
             _run_contrast_tests(fit, seed, options.get("n_threads"))
+        if fit.result is not None:
+            _run_gate(fit, chosen, method)
         fits.append(fit)
     _adjust_across_groups(fits, (*splines.tests, *named))
     return _result(
         cube,
+        design,
         report,
         model,
         splines,
@@ -1133,6 +1271,7 @@ def dose_response(
         shapes,
         seed if named else None,
         named,
+        chosen,
     )
 
 
@@ -1174,14 +1313,112 @@ def _tests_setting(value: Any) -> list[str] | None:
     return listed
 
 
-def _seed(rng: Any) -> int:
-    """The seed of the multiple contrast tests: an integer seed as given, or one drawn
-    from a generator, or from fresh entropy for None, so that the record reproduces
-    the p-values."""
-    generator = random_generator(rng)
-    if isinstance(rng, numbers.Integral) and not isinstance(rng, bool | np.bool_):
-        return operator.index(rng)
-    return int(generator.integers(0, 2**63))
+def _gate_setting(value: Any) -> dict[str, Any]:
+    """The gate's settings as given, checked: its test (None for the default), its
+    FDR and its fold change; a fold change makes the test ``"each_dose"``."""
+    reject_masked(value, "gate")
+    if value is None:
+        return {"test": None, "fdr": _FDR, "fold_change": None}
+    if not isinstance(value, Mapping):
+        raise TypeError(
+            "gate must be a mapping of its settings, such as {'test': 'spline', 'fdr': "
+            "0.05} or {'fold_change': 1.5}, or None for the spline test at 5% FDR, got "
+            f"{type(value).__name__}"
+        )
+    for key in value:
+        if key not in _GATE_SETTINGS:
+            raise ValueError(
+                f"gate has no setting {key!r}{close_matches(str(key), _GATE_SETTINGS)}; "
+                f"its settings are {quoted(_GATE_SETTINGS)}"
+            )
+    test = value.get("test")
+    if test is not None and not isinstance(test, str):
+        raise TypeError(f"gate['test'] must be a test name, got {type(test).__name__}")
+    if test in (LINEAR_TREND, NONLINEARITY):
+        raise ValueError(
+            f"gate['test'] is {test!r}, which tests a straight line or a departure from "
+            f"one, not any response; the gate's tests are {quoted(GATE_TESTS)}"
+        )
+    if test is not None and test not in (*GATE_TESTS, EACH_DOSE):
+        hint = (
+            " (the one-way ANOVA of the dose groups is 'dose_groups')"
+            if "anova" in test.lower()
+            else close_matches(test, (*GATE_TESTS, EACH_DOSE))
+        )
+        raise ValueError(
+            f"gate['test'] is {test!r}, which is not one of the gate's tests{hint}; "
+            f"they are {quoted(GATE_TESTS)}, and 'each_dose' with a fold change"
+        )
+    fdr = real_number(value.get("fdr", _FDR), "gate['fdr']", finite=True)
+    if not 0.0 < fdr < 1.0:
+        raise ValueError(f"gate['fdr'] must be between 0 and 1, got {fdr}")
+    fold_change = value.get("fold_change")
+    if fold_change is None:
+        if test == EACH_DOSE:
+            raise ValueError(
+                "the gate 'each_dose' tests each dose against a fold change by TREAT and "
+                "needs gate['fold_change'], such as 1.5; without one, 'dunnett' tests "
+                "each dose against the vehicle with control over the gene's doses"
+            )
+        return {"test": test, "fdr": fdr, "fold_change": None}
+    change = real_number(fold_change, "gate['fold_change']", finite=True)
+    if not change > 1.0:
+        raise ValueError(
+            "gate['fold_change'] must be above 1, the change from the vehicle, up or "
+            f"down, that a gene must exceed at one dose or more, such as 1.5; got {change}"
+        )
+    if test not in (None, EACH_DOSE):
+        raise ValueError(
+            f"the gate's test {test!r} takes no fold change; pass "
+            f"gate={{'fold_change': {change:g}}} alone, which tests each dose against "
+            "the vehicle beyond that fold change by TREAT"
+        )
+    return {"test": EACH_DOSE, "fdr": fdr, "fold_change": change}
+
+
+def _gate(
+    asked: Mapping[str, Any],
+    axis: DoseAxis,
+    levels: npt.NDArray[np.float64],
+    method: str,
+) -> dict[str, Any]:
+    """The gate of the design: its test as given, or the spline, or the dose groups
+    when fewer than two doses are on the axis, where no spline is placed and the
+    dose-group test asks the same question; refused where the design cannot run
+    it."""
+    on_axis = _doses_on_axis(axis, levels)
+    test = asked["test"]
+    if test is None:
+        test = SPLINE if on_axis >= 2 else DOSE_GROUPS
+    treated = levels[levels > 0.0]
+    if test == SPLINE and on_axis < 2:
+        raise ValueError(
+            "the gate's test 'spline' runs along the dose axis and needs two doses on "
+            f"it, and the design has {'one' if on_axis else 'none'}; pass "
+            "gate={'test': 'dose_groups'}, which asks the same question, or leave the "
+            "gate's test out"
+        )
+    if test == MCP and treated.size < 2:
+        raise ValueError(
+            "the gate's test 'mcp' compares candidate shapes along the treated doses, "
+            f"and the design has {treated.size}; pass gate={{'test': 'dose_groups'}}"
+        )
+    if test == EACH_DOSE and method == "dream_voom":
+        raise ValueError(
+            "a gate with a fold change tests each dose by TREAT on limma's moderated "
+            "t-tests, which dream_voom's tests are not; leave the fold change out. "
+            "TREAT runs under limma_voom and limma_trend, which fit designs without "
+            "random effects"
+        )
+    return {**asked, "test": test}
+
+
+def _doses_on_axis(axis: DoseAxis, levels: npt.NDArray[np.float64]) -> int:
+    """The doses on the axis: the treated ones when the vehicle is a group of its
+    own, all of them when it sits on the axis."""
+    if axis.vehicle == "own_group":
+        return int(np.count_nonzero(levels > 0.0))
+    return int(levels.size)
 
 
 def _candidates(
@@ -1216,9 +1453,7 @@ def _candidates(
 def _analysis_name(analysis: Any, design: Any) -> str:
     """The name of the analysis, which must be one of the three and suit the
     design's random effects."""
-    method = next(
-        (name for name, known in _ANALYSES.items() if analysis is known), None
-    )
+    method = next((name for name, known in ANALYSES.items() if analysis is known), None)
     if method is None:
         given = (
             f"the name {analysis!r}" if isinstance(analysis, str) else repr(analysis)
@@ -1251,7 +1486,7 @@ def _check_options(method: str, options: Mapping[str, Any]) -> None:
         reject_masked(value, name)
     accepted = [
         name
-        for name, parameter in inspect.signature(_ANALYSES[method]).parameters.items()
+        for name, parameter in inspect.signature(ANALYSES[method]).parameters.items()
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY
     ]
     for name in options:
@@ -1262,8 +1497,7 @@ def _check_options(method: str, options: Mapping[str, Any]) -> None:
             )
         if name not in accepted:
             # The options to name are those dose_response neither sets nor takes.
-            taken = (*_SET_HERE, "groups", "min_cells", "min_counts")
-            others = [option for option in accepted if option not in taken]
+            others = [o for o in accepted if o not in SET_BY_DOSE_RESPONSE]
             raise TypeError(
                 f"{method} has no option {name!r}{close_matches(name, others)}; its "
                 f"options are: {listing(others, limit=len(others))}"
@@ -1292,8 +1526,7 @@ def _splines(
     """The spline bases on the design's doses, and the tests the design supports:
     those given, refused with the reason when it cannot support them, or every test
     it supports."""
-    own_group = axis.vehicle == "own_group"
-    m = np.count_nonzero(levels > 0.0) if own_group else levels.size
+    m = _doses_on_axis(axis, levels)
     if m < 2 and spline_df is None:
         along = [test for test in (given or []) if test != DOSE_GROUPS]
         if along:
@@ -1410,9 +1643,11 @@ def _comparison(
     by_default: bool,
     named: Sequence[str],
     shapes: CandidateShapes | None,
+    gate: str,
 ) -> _Comparison:
     """The dose groups that a cell type compares, from its rows of the check's doses
-    table, and its tests as contrasts of the treated doses against the vehicle.
+    table, and its tests as contrasts of the treated doses against the vehicle; of
+    two tests of the same hypothesis, the gate's test runs.
 
     Each test's contrasts span its hypothesis: every dose equal to the vehicle, or a
     set of the spline's coefficients equal to zero, as linear functions of the
@@ -1462,7 +1697,7 @@ def _comparison(
     if DOSE_GROUPS in wanted:
         tests[DOSE_GROUPS] = names
     if by_default:
-        _leave_out_repeats(tests, contrasts, not_run)
+        _leave_out_repeats(tests, contrasts, not_run, gate)
     sets: dict[str, _ContrastSet] = {}
     for test in named:
         found = _contrast_set(test, levels, samples, shapes)
@@ -1557,12 +1792,13 @@ def _leave_out_repeats(
     tests: dict[str, list[str]],
     contrasts: Mapping[str, npt.NDArray[np.float64]],
     not_run: dict[str, str],
+    gate: str,
 ) -> None:
     """Leave out each test of the same hypothesis as one before it in ``_PRIORITY``,
-    with the reason: with few dose groups, the spline can pass through every group's
-    mean, or be the straight line itself."""
+    the gate's test first, with the reason: with few dose groups, the spline can pass
+    through every group's mean, or be the straight line itself."""
     kept: list[str] = []
-    for test in _PRIORITY:
+    for test in sorted(_PRIORITY, key=lambda name: name != gate):
         if test not in tests:
             continue
         rows = np.array([contrasts[name] for name in tests[test]])
@@ -1751,6 +1987,76 @@ def _run_contrast_tests(fit: _CellTypeFit, seed: int, n_threads: Any) -> None:
         )
 
 
+def _run_gate(fit: _CellTypeFit, gate: Mapping[str, Any], method: str) -> None:
+    """Add the gate's calls to a fitted cell type, where the gate's test ran.
+
+    The gate's p-values are those of its test, or, with a fold change, the smallest
+    of each gene's TREAT p-values of the doses times the doses, capped at 1; then
+    Benjamini-Hochberg over the cell type's genes, and a gene passes at an adjusted
+    p-value at most the gate's FDR.
+    """
+    test = gate["test"]
+    if test == EACH_DOSE:
+        comparison, result = fit.comparison, fit.result
+        assert comparison is not None and result is not None
+        # The analysis's result keeps the cell type it fitted last, so the fit that
+        # the multiple contrast tests computed, when they ran, serves here again.
+        per_dose = _treat_p_values(
+            result.fit(fit.group),
+            comparison.indicators,
+            gate["fold_change"],
+            method,
+            result.settings["robust"],
+        )
+        p_values = _smallest_times_doses(per_dose)
+        genes = fit.tables[EACH_DOSE].take(np.arange(per_dose.shape[0]))
+    elif test in fit.tables:
+        genes = fit.tables[test]
+        p_values = np.asarray(genes["p_value"], dtype=np.float64)
+    else:
+        return  # the test did not run here; tests_not_run says why
+    adjusted = np.asarray(adjust_p_values(p_values, "bh"), dtype=np.float64)
+    columns = [name for name in ("feature_id", "symbol") if name in genes]
+    fit.tables[GATE] = Table(
+        {
+            **{name: genes[name] for name in columns},
+            "p_value": p_values,
+            "adjusted_p_value": adjusted,
+            "passes_gate": adjusted <= gate["fdr"],
+        }
+    )
+
+
+def _treat_p_values(
+    fit: GroupFit,
+    names: Sequence[str],
+    fold_change: float,
+    method: str,
+    robust: bool,
+) -> FloatArray:
+    """Each dose's TREAT p-value against a fold change, ``(n_genes, n_doses)``: the
+    tests of |theta_k| <= log2(fold change) (McCarthy and Smyth 2009), on the
+    variances moderated as the cell type's fit moderates them."""
+    contrast_fit = fit.moderated.fit
+    tested = treat(
+        contrast_fit,
+        fc=fold_change,
+        trend=method == "limma_trend",
+        robust=robust,
+    )
+    columns = [contrast_fit.coefficient_names.index(name) for name in names]
+    return np.asarray(tested.p_value[:, columns], dtype=np.float64)
+
+
+def _smallest_times_doses(per_dose: FloatArray) -> FloatArray:
+    """Each gene's smallest p-value of its doses times the doses compared, capped at
+    1 (Bonferroni), so that a gene counts once; NaN where every dose is NaN."""
+    present = ~np.isnan(per_dose)
+    smallest = np.min(np.where(present, per_dose, np.inf), axis=1)
+    combined = np.minimum(1.0, per_dose.shape[1] * smallest)
+    return np.where(present.any(axis=1), combined, np.nan)
+
+
 def _contrasts(
     model: Design, comparison: _Comparison
 ) -> tuple[dict[str, npt.NDArray[np.float64]], dict[str, list[str]]]:
@@ -1825,6 +2131,7 @@ def _adjust_across_groups(fits: list["_CellTypeFit"], tests: Sequence[str]) -> N
 
 def _result(
     cube: Cube,
+    design: Design,
     report: DoseDesignReport,
     model: Design | None,
     splines: _Splines,
@@ -1835,16 +2142,17 @@ def _result(
     shapes: CandidateShapes | None,
     seed: int | None,
     named: Sequence[str],
+    gate: dict[str, Any],
 ) -> DoseResponseResult:
     check = report.settings
     first = next((fit.result for fit in fits if fit.result is not None), None)
-    design = None
+    model_record = None
     if model is not None:
         columns = model.columns
         record = (mixed_design_record if method == "dream_voom" else design_record)(
             model, Contrasts(np.empty((len(columns), 0)), (), columns)
         )
-        design = {key: value for key, value in record.items() if key != "contrasts"}
+        model_record = {k: value for k, value in record.items() if k != "contrasts"}
     settings = {
         "dose": check["dose"],
         "spline_basis": None if splines.basis is None else splines.basis.to_dict(),
@@ -1852,6 +2160,7 @@ def _result(
         "spline_df": spline_df,
         "candidates": None if shapes is None else shapes.to_dict(),
         "seed": seed,
+        "gate": gate,
         "analysis": method,
         "batch": check["batch"],
         "groups": check["groups"],
@@ -1863,9 +2172,10 @@ def _result(
         "versions": software_versions(),
         "cube": cube_record(cube),
         "layer": COUNTS_LAYER,
-        "design": design,
+        "design": model_record,
         "settings": settings,
         "analysis_settings": None if first is None else first.settings,
+        "gate_adjustment": _gate_adjustment(gate),
         "tests": [*splines.tests, *named],
         "groups": [_group_record(fit) for fit in fits],
     }
@@ -1875,7 +2185,29 @@ def _result(
     kept = {
         fit.group: _without_tables(fit.result) for fit in fits if fit.result is not None
     }
-    return DoseResponseResult(_summary(fits, report), tables, kept, report, provenance)
+    return DoseResponseResult(
+        _summary(fits, report),
+        tables,
+        kept,
+        report,
+        provenance,
+        cube=cube,
+        design=design,
+    )
+
+
+def _restore_result(
+    summary: Table,
+    tables: Mapping[tuple[str, str], Table],
+    fits: Mapping[str, DifferentialExpressionResult],
+    design_report: DoseDesignReport,
+    provenance: Mapping[str, Any],
+    cube: Cube | None,
+    design: Design | None,
+) -> DoseResponseResult:
+    return DoseResponseResult(
+        summary, tables, fits, design_report, provenance, cube=cube, design=design
+    )
 
 
 def _without_tables(
@@ -1979,6 +2311,15 @@ def _summary(fits: list[_CellTypeFit], report: DoseDesignReport) -> Table:
                     else ""
                     for fit, r in zip(fits, tested, strict=True)
                 ]
+            ),
+            "n_genes_passing_gate": np.array(
+                [
+                    float(np.count_nonzero(fit.tables[GATE]["passes_gate"]))
+                    if GATE in fit.tables
+                    else np.nan
+                    for fit in fits
+                ],
+                dtype=np.float64,
             ),
         }
     )
@@ -2142,6 +2483,24 @@ def _axis_text(axis: DoseAxis, basis: Mapping[str, Any] | None) -> str:
         f"{text}; spline of {spline.df} column{'' if spline.df == 1 else 's'}, "
         f"{interior}boundary knots at {bounds[0]:.3g} and {bounds[1]:.3g} {axis.unit}"
     )
+
+
+def gate_text(gate: Mapping[str, Any]) -> str:
+    """The gate in words, as printouts give it: its test, its adjustments for
+    multiple testing and its level."""
+    if gate["fold_change"] is None:
+        test = f"{gate['test']} test"
+    else:
+        test = f"TREAT beyond {gate['fold_change']:g}-fold at each dose"
+    return f"{test}, {_gate_adjustment(gate)}, at {100.0 * gate['fdr']:g}% FDR"
+
+
+def _gate_adjustment(gate: Mapping[str, Any]) -> str:
+    """The gate's adjustments for multiple testing, in words."""
+    within = "Benjamini-Hochberg within each cell type"
+    if gate["fold_change"] is None:
+        return within
+    return f"Bonferroni over the cell type's doses, {within}"
 
 
 def _slope_unit(axis: DoseAxis) -> str:

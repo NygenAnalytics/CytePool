@@ -728,6 +728,8 @@ NO_PUBLISHED_WORK = {
     "cytepool._masked_arrays": "refuses numpy masked arrays at the public boundary",
     "cytepool._messages": "formats lists of ids and names in error messages",
     "cytepool._options": "checks flags and choices among names",
+    "cytepool._reruns": "reads back the options that CytePool's own records of an "
+    "analysis hold",
     "cytepool._version": "holds the version that the build writes",
     "cytepool.cube": "the package's namespace; its modules cite their sources",
     "cytepool.cube._axes": "reads the axis tables, cell numbers and cell labels of "
@@ -2154,7 +2156,8 @@ OPENING = re.compile(
 )
 OPENING_FORM = "The script printed N checks (...) on YYYY-MM-DD, in ..."
 OUTCOME = re.compile(
-    r"(?P<count>[\d,]+) (?P<kind>pass|information|deliberate differences?|controls?)\b"
+    r"(?P<count>[\d,]+) "
+    r"(?P<kind>pass|information|deliberate differences?|controls?|known limits?)\b"
 )
 TOTAL = re.compile(
     r"^In all, the scripts printed (?P<checks>[\d,]+) checks: (?P<outcomes>.*)$", re.M
@@ -2166,7 +2169,7 @@ def _outcomes(text: str) -> Counter[str]:
     control", by kind, in the plural."""
     found: Counter[str] = Counter()
     for match in OUTCOME.finditer(text):
-        kind = re.sub(r"(difference|control)$", r"\1s", match["kind"])
+        kind = re.sub(r"(difference|control|limit)$", r"\1s", match["kind"])
         found[kind] += int(match["count"].replace(",", ""))
     return found
 
@@ -2241,6 +2244,9 @@ def test_the_check_of_totals_finds_what_is_wrong() -> None:
     more = sentence.replace(f"{count} checks", f"{checks + 1} checks")
     assert f"voom.py: {checks} outcomes for {checks + 1} checks" in _total_problems(
         page.replace(sentence, more)
+    )
+    assert _outcomes("3 pass, 1 known limit and 2 controls") == Counter(
+        {"pass": 3, "known limits": 1, "controls": 2}
     )
     unsaid = _total_problems(page.replace(sentence, ""))
     assert unsaid[0] == f'voom.py: the section must open with "{OPENING_FORM}"'

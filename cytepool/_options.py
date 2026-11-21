@@ -158,3 +158,19 @@ def random_generator(rng: Any, name: str = "rng") -> np.random.Generator:
     if seed < 0:
         raise ValueError(f"{name} must be a non-negative seed, got {seed}")
     return np.random.default_rng(seed)
+
+
+def recorded_seed(rng: Any, name: str = "rng") -> int:
+    """The seed that a result records for ``rng``: the integer seed given, or one
+    drawn from the generator given, or from fresh entropy for None, so that passing
+    the seed back as ``rng`` draws the same numbers.
+
+    Raises:
+        TypeError: If ``rng`` is not a numpy random generator, an integer seed or
+            None, or is a numpy masked array.
+        ValueError: If the seed is negative.
+    """
+    generator = random_generator(rng, name)
+    if isinstance(rng, numbers.Integral) and not isinstance(rng, bool | np.bool_):
+        return operator.index(rng)
+    return int(generator.integers(0, 2**63))
