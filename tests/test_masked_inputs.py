@@ -83,6 +83,7 @@ from cytepool.normalization import cpm, filter_by_expression, log2_cpm
 from cytepool.stats import distributions, special
 from cytepool.stats.deseq2 import deseq2_dispersions, deseq2_wald_test, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
+from cytepool.stats.dose_curves import fit_dose_curves
 from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
@@ -372,9 +373,22 @@ def _dose_response(context: Context) -> dict[str, Any]:
         "min_counts": 1,
         "rng": 1,
         "gate": {"test": "dose_groups", "fdr": 0.1},
+        "models": "epa",
+        "variance": "constant",
         # An option of the analysis, which dose_response passes on.
         "expression_filter": {"min_count": 5},
     }
+
+
+@functools.cache
+def _dose_curves_result() -> Any:
+    """The dose tests and curves of a small simulated series."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0, 10.0], replicates=2, cell_types=1, n_genes=60, rng=1
+    )
+    return dose_response(
+        cube, Design(cube.samples, "~ 1"), dose=DOSE_AXIS, models="epa"
+    )
 
 
 @functools.cache
@@ -2265,7 +2279,7 @@ ENTRY_POINTS: dict[str, Entry] = {
             "gate": None,
             "expression_filter": None,
         },
-        options=("spline_df", "batch", "min_counts", "rng"),
+        options=("spline_df", "batch", "min_counts", "rng", "models", "variance"),
         objects=("cube", "design", "dose", "candidates", "analysis"),
     ),
     # The permutation check of a gate: the cell types checked.
@@ -2285,10 +2299,31 @@ ENTRY_POINTS: dict[str, Entry] = {
             "group": "cell_type_1",
             "genes": ["gene_01", "gene_03"],
             "at": [0.0, 0.1, 1.0],
+            "model": "linear",
         },
         {"genes": None, "at": None},
-        options=("group",),
-        instance=lambda c: _dose_result(),
+        options=("group", "model"),
+        instance=lambda c: _dose_curves_result(),
+    ),
+    # Curves of named models: one dose per sample and the values, samples x genes;
+    # the table's ids.
+    "cytepool.stats.dose_curves.fit_dose_curves": Entry(
+        lambda c: {
+            "doses": [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0],
+            "values": np.log2(COUNTS[[0, 1, 2, 3, 0, 1, 2, 3]] + 1.0),
+            "models": "epa",
+            "n_threads": 1,
+        },
+        {"doses": None, "values": None},
+        options=("models", "n_threads"),
+    ),
+    "cytepool.stats.dose_curves.DoseCurveFits.table": Entry(
+        lambda c: {"feature_ids": [f"g{j}" for j in range(8)]},
+        {"feature_ids": None},
+        instance=lambda c: fit_dose_curves(
+            [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0],
+            np.log2(COUNTS[[0, 1, 2, 3, 0, 1, 2, 3]] + 1.0),
+        ),
     ),
     # Simulated dose series: doses, the values per dose and per cell type, the shares
     # of shapes and the composition factors; the truth's doses, tables and genes.
@@ -2958,13 +2993,14 @@ ENTRY_POINTS: dict[str, Entry] = {
     # A dose-response figure: the genes, as feature ids.
     "cytepool.plotting.plot_dose_response": Entry(
         lambda c: {
-            "result": _dose_result(),
+            "result": _dose_curves_result(),
             "group": "cell_type_1",
             "genes": ["gene_01", "gene_03"],
+            "model": "linear",
             "ax": _axes(),
         },
         {"genes": None},
-        options=("group",),
+        options=("group", "model"),
         objects=("result", "ax"),
     ),
     "cytepool.plotting.plot_top_activities": Entry(
@@ -3265,10 +3301,19 @@ NO_ARRAY_INPUT = {
         "settings kept as JSON, which cannot hold an array",
     ),
     "cytepool.dose_responses.DoseResponseResult": (
-        ("summary", "tables", "fits", "design_report", "provenance", "cube", "design"),
-        "Tables, the analysis's results, a DoseDesignReport, a Cube and a Design, which "
-        "were checked when they were built, and a record kept as JSON, which cannot "
-        "hold an array",
+        (
+            "summary",
+            "tables",
+            "fits",
+            "design_report",
+            "provenance",
+            "curves",
+            "cube",
+            "design",
+        ),
+        "Tables, the analysis's results, a DoseDesignReport, DoseCurveFits, a Cube and "
+        "a Design, which were checked when they were built, and a record kept as JSON, "
+        "which cannot hold an array",
     ),
     "cytepool.permutation_checks.PermutationCheck": (
         ("summary", "tables", "provenance"),
@@ -3276,6 +3321,10 @@ NO_ARRAY_INPUT = {
         "which cannot hold an array",
     ),
     "cytepool.permutation_checks.PermutationCheck.table": (
+        ("group",),
+        "a cell type, looked up",
+    ),
+    "cytepool.dose_responses.DoseResponseResult.curve_fits": (
         ("group",),
         "a cell type, looked up",
     ),
@@ -3406,6 +3455,7 @@ RECORDS = {
     "cytepool.differential_expression.GroupFit",
     "cytepool.pathway_scores.PathwayScores",
     "cytepool.activity.Activities",
+    "cytepool.stats.dose_curves.DoseCurveFits",
 }
 
 # Callables that modules with __all__ define but do not export.

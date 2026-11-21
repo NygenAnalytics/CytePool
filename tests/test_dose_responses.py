@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
+from scipy.stats import multivariate_normal
 from scipy.stats import t as student_t
 
 import cytepool
@@ -1371,6 +1372,7 @@ def test_the_result_refuses_fields_of_the_wrong_type() -> None:
         (2, {"full": 1}, "must be a DifferentialExpressionResult"),
         (3, None, "design_report must be a DoseDesignReport"),
         (4, [], "provenance must be a mapping"),
+        (5, [], "curves must be a mapping"),
     ):
         fields = list(good[:5])
         fields[position] = bad
@@ -2986,3 +2988,887 @@ def test_gate_refusals() -> None:
         )
     with pytest.raises(TypeError, match="masked"):
         dose_response(cube, design, dose=AXIS, gate={"fdr": np.ma.masked})
+
+
+# Curves of named models.
+
+
+@functools.cache
+def curves_result(variance: str, models: str = "epa") -> DoseResponseResult:
+    cube = fixture_cube()
+    return dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        models=models,
+        variance=variance,
+    )
+
+
+def test_constant_curves_fit_the_samples_values() -> None:
+    """Under constant variance, the curves of each cell type are fit_dose_curves of
+    the values of its fit against the samples' doses."""
+    from cytepool.stats.dose_curves import fit_dose_curves
+
+    result = curves_result("constant")
+    for group in result.groups:
+        fit = result.fit(group)
+        expected = fit_dose_curves(
+            np.asarray(fit.samples["dose"], dtype=float),
+            fit.log2_cpm,
+            models="epa",
+        )
+        found = result.curve_fits(group)
+        assert found.variance == "constant"
+        assert_array_equal(found.doses, expected.doses)
+        assert_array_equal(found.parameters, expected.parameters)
+        assert_array_equal(found.log_likelihood, expected.log_likelihood)
+        assert_array_equal(found.lack_of_fit_p_value, expected.lack_of_fit_p_value)
+        table = result.table(group, "curves")
+        n_models = len(found.models)
+        assert (
+            table["feature_id"].tolist()[::n_models]
+            == fit.features["feature_id"].tolist()
+        )
+        assert table.columns[:2] == ("feature_id", "model")
+
+
+def test_the_tables_of_the_tests_do_not_change_with_curves() -> None:
+    plain = fixture_result("voom")
+    for variance in ("constant", "weighted"):
+        result = dose_response(
+            fixture_cube(),
+            Design(fixture_cube().samples, "~ 1"),
+            dose=AXIS,
+            tests=list(TESTS),
+            spline_df=2,
+            models="ll4",
+            variance=variance,
+        )
+        assert result.tables.keys() == plain.tables.keys()
+        for key, table in plain.tables.items():
+            assert result.tables[key].equals(table), key
+        assert result.summary.equals(plain.summary)
+
+
+def test_weighted_curves_use_the_fits_means_and_variances() -> None:
+    """The weighted and moderated modes fit the dose-group means of the cell type's
+    fit, the vehicle's mean and each dose's difference from it, with their covariance
+    and the residual or moderated variance; checked here against the fit's own
+    coefficients, and against limma in validation/dose_curves.py."""
+    for variance in ("weighted", "moderated"):
+        result = curves_result(variance)
+        for group in result.groups:
+            fits = result.curve_fits(group)
+            fit = result.fit(group)
+            model = fit.moderated.fit
+            names = list(model.coefficient_names)
+            vehicle = model.coefficients[:, names.index("vehicle_mean")]
+            doses = [name for name in names if name.startswith("dose_")]
+            assert_allclose(fits.means[:, 0], vehicle, rtol=1e-13)
+            for k, name in enumerate(doses, start=1):
+                assert_allclose(
+                    fits.means[:, k] - fits.means[:, 0],
+                    model.coefficients[:, names.index(name)],
+                    rtol=1e-12,
+                    atol=1e-12,
+                )
+            if variance == "weighted":
+                assert_allclose(fits.covariance_scale, model.sigma**2, rtol=1e-13)
+                assert_array_equal(fits.df, model.df_residual)
+            else:
+                assert_allclose(
+                    fits.covariance_scale, fit.moderated.posterior_variance, rtol=1e-13
+                )
+                assert_allclose(
+                    fits.df, model.df_residual + fit.moderated.df_prior, rtol=1e-13
+                )
+            # The covariance of the means is that of (m_0, theta) mapped by M =
+            # [[1, 0], [1, I]], M V M': the vehicle's variance, and each other mean's
+            # the vehicle's plus the dose's plus twice their covariance.
+            estimates = _dose_group_estimates(fit, ["vehicle_mean", *doses])
+            k = fits.doses.size
+            to_means = np.eye(k)
+            to_means[:, 0] = 1.0
+            assert_allclose(
+                fits.covariance,
+                to_means @ estimates.covariance @ to_means.T,
+                rtol=1e-12,
+                atol=1e-15,
+            )
+
+
+# The fixture of limma's dose-group fits from validation/dose_curves.py, and the
+# series it was computed on.
+CURVES = Path(__file__).parent / "data" / "dose_curves"
+
+
+@functools.cache
+def limma_curves() -> dict[str, Any]:
+    found: dict[str, Any] = json.loads((CURVES / "limma.json").read_text())
+    return found
+
+
+@functools.cache
+def limma_series(name: str) -> tuple[Cube, Design]:
+    """A series of validation/dose_curves.py: its samples, counts and cells per cell
+    type, and its design."""
+    series = limma_curves()["series"][name]
+    samples = {"sample_id": series["sample_id"], "dose": series["dose"]}
+    if "sex" in series:
+        samples["sex"] = series["sex"]
+    cube = Cube(
+        {"counts": np.array(series["counts"], dtype=np.int64)},
+        samples=samples,
+        groups={"group_id": series["groups"]},
+        features={"feature_id": series["features"]},
+        n_cells=np.array(series["n_cells"], dtype=np.int64),
+    )
+    return cube, Design(cube.samples, series["formula"])
+
+
+@pytest.mark.parametrize(
+    ("job", "variance"),
+    [
+        ("ladder abundant voom", "weighted"),
+        ("ladder abundant voom", "moderated"),
+        ("ladder abundant trend", "weighted"),
+        ("ladder abundant trend", "moderated"),
+        ("sex cell_type_1 voom", "weighted"),
+        ("sex cell_type_1 voom", "moderated"),
+        ("sex cell_type_1 trend", "moderated"),
+    ],
+)
+def test_weighted_curve_data_match_limma(job: str, variance: str) -> None:
+    """The dose-group means, their covariance, the residual or moderated variance and
+    the lack-of-fit p-value of a line against limma: lmFit and eBayes of the dose
+    groups' indicators with the design's other terms, each gene's lm.wfit
+    covariance, and with limma-trend limma's own F of the lack-of-fit contrasts."""
+    from cytepool.stats.distributions import f_sf
+
+    name, group, analysis = job.split()
+    cube, design = limma_series(name)
+    result = dose_response(
+        cube,
+        design,
+        dose=AXIS,
+        models="epa",
+        variance=variance,
+        analysis=limma_voom if analysis == "voom" else limma_trend,
+    )
+    fits = result.curve_fits(group)
+    found = limma_curves()["jobs"][job]
+    features = limma_curves()["series"][name]["features"]
+    feature_ids = result.table(group, "curves")["feature_id"].tolist()
+    assert feature_ids[:: len(fits.models)] == [features[i] for i in found["kept"]]
+    k = fits.doses.size
+    to_means = np.eye(k)
+    to_means[:, 0] = 1.0
+    theta = np.asarray(found["theta"], dtype=float)
+    assert_scaled(fits.means[: len(theta)], theta @ to_means.T)
+    for g, covariance in enumerate(found["covariance"]):
+        expected = to_means @ np.asarray(covariance, dtype=float) @ to_means.T
+        assert np.max(np.abs(fits.covariance[g] - expected)) <= 1e-10 * np.max(
+            np.abs(expected)
+        )
+    weighted = variance == "weighted"
+    s2 = np.asarray(found["sigma2" if weighted else "s2_post"], dtype=float)
+    df = np.asarray(found["df_residual"], dtype=float)
+    if not weighted:
+        df = df + np.asarray(found["df_prior"], dtype=float)
+    assert_allclose(fits.covariance_scale, s2, rtol=1e-10)
+    assert_allclose(fits.df, df, rtol=1e-10)
+    line = fits.models.index("linear")
+    f = np.asarray(found["lof_f_weighted" if weighted else "lof_f_moderated"])
+    assert_p_values(fits.lack_of_fit_p_value[:, line], f_sf(f, k - 2.0, df))
+    if analysis == "trend" and not weighted:
+        f = np.asarray(found["lof_f_limma"], dtype=float)
+        assert_p_values(fits.lack_of_fit_p_value[:, line], f_sf(f, k - 2.0, df))
+
+
+def test_descriptive_curve_data_match_voom() -> None:
+    """A cell type without replicates at its doses: its genes, the means of each dose
+    group and the pooled within-group variance of voom's log2 CPM, which R computes."""
+    cube, design = limma_series("descriptive")
+    series = limma_curves()["series"]["descriptive"]
+    found = limma_curves()["jobs"]["descriptive"]
+    result = dose_response(cube, design, dose=AXIS, models="epa")
+    group = result.groups[0]
+    fits = result.curve_fits(group)
+    feature_ids = result.table(group, "curves")["feature_id"].tolist()
+    kept = [series["features"][i] for i in found["kept"]]
+    assert feature_ids[:: len(fits.models)] == kept
+    rows = result.design_report.samples.filter(group_id=group)
+    used = set(rows["sample_id"][np.asarray(rows["used"], dtype=bool)].tolist())
+    doses = np.array(
+        [d for i, d in zip(series["sample_id"], series["dose"]) if i in used]
+    )
+    values = np.asarray(found["values"], dtype=float)  # genes x samples
+    assert values.shape == (len(kept), doses.size)
+    means = np.column_stack([values[:, doses == d].mean(axis=1) for d in fits.doses])
+    within = sum(
+        ((values[:, doses == d] - means[:, [k]]) ** 2).sum(axis=1)
+        for k, d in enumerate(fits.doses)
+    )
+    assert_scaled(fits.means, means)
+    assert_allclose(
+        fits.covariance_scale, within / (doses.size - fits.doses.size), rtol=1e-10
+    )
+    assert np.isnan(fits.lack_of_fit_p_value).all()
+
+
+def test_the_vehicles_mean_is_at_the_average_of_the_other_terms() -> None:
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0, 10.0, 30.0], replicates=4, cell_types=1, n_genes=60, rng=31
+    )
+    sex = [
+        "F" if s.endswith(("_r1", "_r2")) else "M"
+        for s in cube.samples["sample_id"].tolist()
+    ]
+    samples = cube.samples.with_columns({"sex": sex})
+    design = Design(samples, "~ sex")
+    result = dose_response(cube, design, dose=AXIS, models="epa", variance="weighted")
+    group = result.groups[0]
+    fit = result.fit(group)
+    model = fit.moderated.fit
+    names = list(model.coefficient_names)
+    weights = result.provenance["groups"][0]["contrasts"]["vehicle_mean"]
+    columns = result.provenance["design"]["columns"]
+    share = np.mean([s == "M" for s in fit.samples["sex"].tolist()])
+    assert weights[columns.index("(Intercept)")] == 1.0
+    assert weights[columns.index("sexM")] == pytest.approx(share)
+    assert_allclose(
+        result.curve_fits(group).means[:, 0],
+        model.coefficients[:, names.index("vehicle_mean")],
+        rtol=1e-13,
+    )
+    with pytest.raises(ValueError, match="other terms"):
+        dose_response(cube, design, dose=AXIS, models="epa")
+
+
+def test_descriptive_cell_types_get_curves_without_p_values() -> None:
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
+        replicates=[3, 1, 1, 1, 1, 1],
+        cell_types=1,
+        n_genes=120,
+        rng=33,
+    )
+    design = Design(cube.samples, "~ 1")
+    for variance in ("constant", "weighted"):
+        result = dose_response(cube, design, dose=AXIS, models="epa", variance=variance)
+        group = result.groups[0]
+        assert not result.summary["tested"][0]
+        fits = result.curve_fits(group)
+        assert fits.variance == "constant"
+        assert np.isnan(fits.lack_of_fit_p_value).all()
+        assert np.isfinite(fits.log_likelihood[fits.not_fitted_reason == ""]).all()
+        assert result.provenance["groups"][0]["curves"]["variance"] == "constant"
+        assert "curves (constant variance)" in repr(result)
+        curve = result.curve(
+            group, result.table(group, "curves")["feature_id"][0], model="linear"
+        )
+        assert curve.columns == ("feature_id", "model", "dose", "log2_fold_change")
+        with pytest.raises(KeyError, match="was not tested"):
+            result.curve(group)
+        with pytest.raises(KeyError, match="was not tested"):
+            result.table(group, "spline")
+
+
+def test_descriptive_values_are_those_a_fit_computes() -> None:
+    """The values of a cell type that supports only description, from the check's
+    samples, the expression filter, TMM and voom's or limma-trend's log2 CPM, equal
+    the values of a fit where both exist."""
+    from cytepool.dose_responses import _descriptive_values
+    from cytepool.dose_responses import _dose_group_model
+
+    cube = fixture_cube()
+    design = Design(cube.samples, "~ 1")
+    for analysis, options in (
+        (limma_voom, {}),
+        (limma_trend, {}),
+        (limma_trend, {"prior_count": 1.0, "expression_filter": {"min_count": 20}}),
+        (limma_voom, {"normalization": None, "expression_filter": False}),
+    ):
+        result = dose_response(cube, design, dose=AXIS, analysis=analysis, **options)
+        model = _dose_group_model(design, AXIS, np.unique(cube.samples["dose"]))
+        defaults = {
+            name: parameter.default
+            for name, parameter in __import__("inspect")
+            .signature(analysis)
+            .parameters.items()
+            if name in ("expression_filter", "normalization", "prior_count")
+        }
+        for g, group in enumerate(result.groups):
+            fit = result.fit(group)
+            doses, values, rows = _descriptive_values(
+                cube,
+                model,
+                result.design_report.samples.filter(group_id=group),
+                g,
+                analysis.__name__,
+                options,
+                defaults,
+            )
+            assert (
+                cube.features["feature_id"][rows].tolist()
+                == fit.features["feature_id"].tolist()
+            )
+            assert_allclose(values, fit.log2_cpm, rtol=1e-14, atol=1e-14)
+            assert_array_equal(doses, np.asarray(fit.samples["dose"], dtype=float))
+
+
+def test_a_cell_type_of_two_dose_groups_gets_no_curves() -> None:
+    cube = fixture_cube()
+    samples = cube.samples
+    keep = np.isin(np.asarray(samples["dose"], dtype=float), [0.0, 1.0])
+    two = Cube(
+        {"counts": np.asarray(cube.layer("counts"))[:, keep]},
+        samples=samples.filter(keep),
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=np.asarray(cube.n_cells)[keep],
+    )
+    result = dose_response(two, Design(two.samples, "~ 1"), dose=AXIS, models="epa")
+    for group in result.groups:
+        entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
+        assert "spare dose group" in entry["curves"]["reason"]
+        with pytest.raises(KeyError, match="spare dose group"):
+            result.curve_fits(group)
+        with pytest.raises(KeyError, match="spare dose group"):
+            result.table(group, "curves")
+
+
+def test_a_cell_type_of_two_dose_groups_beside_one_with_curves() -> None:
+    """A cell type left with two dose groups, by cells below min_cells, beside one
+    with all of them: the first has no curves, with the reason, and the second's
+    curves are those of a run on it alone."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0, 10.0, 30.0], replicates=3, cell_types=2, n_genes=60, rng=7
+    )
+    doses = np.asarray(cube.samples["dose"], dtype=float)
+    n_cells = np.array(cube.n_cells).copy()
+    n_cells[~np.isin(doses, [0.0, 1.0]), 0] = 2
+    cube = Cube(
+        {"counts": np.stack([cube.layer("counts", g) for g in range(cube.n_groups)])},
+        samples=cube.samples,
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=n_cells,
+    )
+    first, second = cube.groups["group_id"].tolist()
+    design = Design(cube.samples, "~ 1")
+    both = dose_response(cube, design, dose=AXIS, models="epa")
+    with pytest.raises(KeyError, match="spare dose group"):
+        both.curve_fits(first)
+    alone = dose_response(cube, design, dose=AXIS, models="epa", groups=second)
+    assert_array_equal(
+        both.curve_fits(second).parameters, alone.curve_fits(second).parameters
+    )
+    assert both.table(second, "curves").equals(alone.table(second, "curves"))
+
+
+def test_weighted_curves_with_a_sample_left_out() -> None:
+    """A male vehicle sample with too few cells under "~ sex": the vehicle's mean is at
+    the share of males among the samples the fit uses, and the dose groups' sizes,
+    the log-likelihood of the means and AICc's n count those samples."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0, 10.0, 30.0], replicates=4, cell_types=1, n_genes=60, rng=31
+    )
+    ids = cube.samples["sample_id"].tolist()
+    sex = ["F" if s.endswith(("_r1", "_r2")) else "M" for s in ids]
+    doses = np.asarray(cube.samples["dose"], dtype=float)
+    dropped = next(i for i, s in enumerate(ids) if doses[i] == 0.0 and sex[i] == "M")
+    n_cells = np.array(cube.n_cells).copy()
+    n_cells[dropped, :] = 3
+    cube = Cube(
+        {"counts": np.stack([cube.layer("counts", g) for g in range(cube.n_groups)])},
+        samples=cube.samples.with_columns({"sex": sex}),
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=n_cells,
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ sex"),
+        dose=AXIS,
+        models="epa",
+        variance="weighted",
+    )
+    group = result.groups[0]
+    fit = result.fit(group)
+    assert ids[dropped] not in fit.samples["sample_id"].tolist()
+    share = np.mean([s == "M" for s in fit.samples["sex"].tolist()])
+    assert share < 0.5
+    weights = result.provenance["groups"][0]["contrasts"]["vehicle_mean"]
+    columns = result.provenance["design"]["columns"]
+    assert weights[columns.index("sexM")] == pytest.approx(share)
+    fits = result.curve_fits(group)
+    levels, counts = np.unique(
+        np.asarray(fit.samples["dose"], dtype=float), return_counts=True
+    )
+    assert_array_equal(fits.doses, levels)
+    assert_array_equal(fits.n_samples, counts)
+    n = counts.sum()
+    m = fits.models.index("linear")
+    names = fits.parameter_names
+    for g in range(fits.means.shape[0]):
+        if fits.not_fitted_reason[g, m]:
+            continue
+        g0, b1 = fits.parameters[g, m, [names.index("g"), names.index("b1")]]
+        cov = fits.covariance_scale[g] * fits.covariance[g]
+        ll = multivariate_normal.logpdf(
+            fits.means[g], mean=g0 + b1 * fits.doses, cov=cov
+        )
+        assert fits.log_likelihood[g, m] == pytest.approx(ll, rel=1e-9, abs=1e-9)
+        aicc = -2 * ll + 2 * 3 + 2 * 3 * 4 / (n - 3 - 1)
+        assert fits.aicc[g, m] == pytest.approx(aicc, rel=1e-9, abs=1e-9)
+
+
+def test_a_column_of_sample_groups_is_checked_before_curves() -> None:
+    """A cell type that supports only description runs no analysis: dose_response
+    checks the column that groups the samples for the expression filter itself."""
+    single, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
+        replicates=[4, 1, 1, 1, 1, 1],
+        cell_types=1,
+        n_genes=60,
+        rng=37,
+    )
+    design = Design(single.samples, "~ 1")
+    with pytest.raises(
+        KeyError, match="'no_such_column', which is not a column of the"
+    ):
+        dose_response(
+            single,
+            design,
+            dose=AXIS,
+            models="epa",
+            expression_filter={"sample_groups": "no_such_column"},
+        )
+    labels = single.samples["dose_group"].tolist()
+    labels[2] = None
+    missing = single.samples.with_columns({"label": labels})
+    sample = missing["sample_id"][2]
+    with pytest.raises(ValueError, match=f"missing for sample {sample!r}"):
+        dose_response(
+            single,
+            Design(missing, "~ 1"),
+            dose=AXIS,
+            models="epa",
+            expression_filter={"sample_groups": "label"},
+        )
+
+
+def test_curves_are_refused_with_a_fix() -> None:
+    cube = fixture_cube()
+    design = Design(cube.samples, "~ 1")
+    with pytest.raises(ValueError, match="models is None"):
+        dose_response(cube, design, dose=AXIS, variance="weighted")
+    with pytest.raises(ValueError, match="models names a set of models"):
+        dose_response(cube, design, dose=AXIS, models="bmds")
+    with pytest.raises(ValueError, match="'hill' is in 'epa'"):
+        dose_response(cube, design, dose=AXIS, models="hill")
+    with pytest.raises(ValueError, match="'constant', 'weighted', 'moderated'"):
+        dose_response(cube, design, dose=AXIS, models="epa", variance="reference")
+    with pytest.raises(TypeError, match="models"):
+        dose_response(cube, design, dose=AXIS, models=["epa"])  # type: ignore[arg-type]
+    donors = cube.samples.with_columns(
+        {"donor": [s[-1] for s in cube.samples["sample_id"].tolist()]}
+    )
+    with pytest.raises(ValueError, match="dream_voom's tests run without models"):
+        dose_response(
+            cube,
+            Design(donors, "~ 1", random="(1 | donor)"),
+            dose=AXIS,
+            models="epa",
+            analysis=dream_voom,
+        )
+    result = fixture_result("voom")
+    with pytest.raises(KeyError, match="'curves' is a table, not a cell type"):
+        result.curve_fits("curves")
+    with pytest.raises(KeyError, match="without models"):
+        result.curve_fits(result.groups[0])
+    with pytest.raises(KeyError, match="without models"):
+        result.table(result.groups[0], "curves")
+
+
+def test_cell_types_without_curves_say_why() -> None:
+    # A fit that stops, a descriptive cell type whose design has other terms, and a
+    # descriptive cell type whose genes all fail the expression filter get no curves,
+    # each with its reason.
+    cube = fixture_cube()
+    stopped = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        groups="full",
+        models="epa",
+        expression_filter={"min_count": 1e9, "min_total_count": 1e12},
+    )
+    with pytest.raises(KeyError, match="its fit stopped: no feature passed"):
+        stopped.curve_fits("full")
+    single, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
+        replicates=[4, 1, 1, 1, 1, 1],
+        cell_types=1,
+        n_genes=60,
+        rng=37,
+    )
+    group = single.groups["group_id"][0]
+    sex = ["F" if i % 2 else "M" for i in range(len(single.samples["sample_id"]))]
+    with_sex = Design(single.samples.with_columns({"sex": sex}), "~ sex")
+    result = dose_response(
+        single, with_sex, dose=AXIS, models="epa", variance="weighted"
+    )
+    with pytest.raises(KeyError, match="other terms, 'sex'"):
+        result.curve_fits(group)
+    filtered = dose_response(
+        single,
+        Design(single.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        expression_filter={"min_count": 1e9, "min_total_count": 1e12},
+    )
+    with pytest.raises(KeyError, match="no gene passed the expression filter"):
+        filtered.curve_fits(group)
+    # The filter by groups of samples reaches the descriptive values.
+    grouped = dose_response(
+        single,
+        Design(single.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        expression_filter={"sample_groups": "dose_group", "min_count": 5},
+    )
+    assert grouped.curve_fits(group).means.shape[0] > 0
+
+
+def test_a_descriptive_sample_without_counts_after_the_filter() -> None:
+    # A sample whose only counts are in a gene that the expression filter removes: the
+    # check keeps it, and the cell type gets no curves, with the reason.
+    rng = np.random.default_rng(41)
+    doses = [0.0, 0.0, 0.0, 0.1, 0.3, 1.0, 3.0, 10.0]
+    counts = rng.poisson(200.0, (len(doses), 40)).astype(np.int64)
+    counts[:, 0] = 0
+    counts[3] = 0
+    counts[3, 0] = 5
+    cube = Cube(
+        {"counts": counts[None]},
+        samples={"sample_id": [f"s{i}" for i in range(len(doses))], "dose": doses},
+        groups={"group_id": ["only"]},
+        features={"feature_id": [f"g{i}" for i in range(40)]},
+        n_cells=np.full((len(doses), 1), 200, dtype=np.int64),
+    )
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, models="epa")
+    assert result.summary["status"].tolist() == ["descriptive"]
+    with pytest.raises(KeyError, match="a sample has no counts in the genes that"):
+        result.curve_fits("only")
+
+
+def test_genes_without_a_best_model() -> None:
+    # A gene whose values do not vary: no model is fitted, so it has no best
+    # model, which curve() refuses by name and leaves out otherwise.
+    rng = np.random.default_rng(43)
+    doses = np.repeat([0.0, 0.1, 1.0, 3.0, 10.0], 3)
+    varied = rng.poisson(300.0, (doses.size, 30)).astype(np.int64)
+    constant = np.full((doses.size, 1), 500, dtype=np.int64)
+    # A last gene that brings every library to the same size, so that the constant
+    # gene's log2 CPM is the same in every sample without normalization.
+    rest = 20_000 - varied.sum(axis=1, keepdims=True) - constant
+    counts = np.concatenate([varied, constant, rest], axis=1)
+    names = [f"g{i}" for i in range(counts.shape[1])]
+    cube = Cube(
+        {"counts": counts[None]},
+        samples={"sample_id": [f"s{i}" for i in range(doses.size)], "dose": doses},
+        groups={"group_id": ["only"]},
+        features={"feature_id": names},
+        n_cells=np.full((doses.size, 1), 200, dtype=np.int64),
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        normalization=None,
+        expression_filter=False,
+    )
+    fits = result.curve_fits("only")
+    row = result.table("only", "curves")["feature_id"].tolist().index("g30") // len(
+        fits.models
+    )
+    assert (fits.not_fitted_reason[row] == "the values do not vary").all()
+    assert fits.best[row] == -1
+    assert "none 1" in repr(result)
+    with pytest.raises(ValueError, match="'g30' has no best model in 'only'"):
+        result.curve("only", ["g30"], model="best")
+    curve = result.curve("only", model="best", at=[1.0])
+    assert "g30" not in curve["feature_id"].tolist()
+    assert len(curve) == counts.shape[1] - 1
+    # In the weighted mode, the fit leaves the gene a residual variance at rounding.
+    weighted = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        variance="weighted",
+        normalization=None,
+        expression_filter=False,
+    ).curve_fits("only")
+    assert (weighted.not_fitted_reason[row] == "the variance of the means is 0").all()
+    assert (
+        weighted.not_fitted_reason[np.arange(weighted.best.size) != row] == ""
+    ).all()
+
+
+def test_the_curves_table_carries_symbols() -> None:
+    base = fixture_cube()
+    ids = base.features["feature_id"].tolist()
+    cube = Cube(
+        {"counts": np.stack([base.layer("counts", g) for g in range(base.n_groups)])},
+        samples=base.samples,
+        groups=base.groups,
+        features={"feature_id": ids, "symbol": [f"Gene{i}" for i in range(len(ids))]},
+        n_cells=base.n_cells,
+    )
+    result = dose_response(
+        cube, Design(cube.samples, "~ 1"), dose=AXIS, groups="full", models="ll4"
+    )
+    table = result.table("full", "curves")
+    assert table.columns[:3] == ("feature_id", "symbol", "model")
+    position = {gene: i for i, gene in enumerate(ids)}
+    assert table["symbol"].tolist() == [
+        f"Gene{position[gene]}" for gene in table["feature_id"].tolist()
+    ]
+
+
+def test_model_curves() -> None:
+    from cytepool.stats._dose_curve_models import model_of
+
+    result = curves_result("weighted", "dromics")
+    group = result.groups[0]
+    fits = result.curve_fits(group)
+    table = result.table(group, "curves")
+    genes = table["feature_id"][:: len(fits.models)].tolist()[:4]
+    at = np.array([0.0, 0.1, 0.5, 2.0, 10.0])
+    for model in ("ll4", "log_gauss_probit"):
+        curve = result.curve(group, genes, at=at, model=model)
+        assert curve["feature_id"].tolist() == list(np.repeat(genes, at.size))
+        assert curve["model"].tolist() == [model] * (len(genes) * at.size)
+        rows = table.filter(model=model)
+        spec = model_of("dromics", model)
+        for i, gene in enumerate(genes):
+            row = rows.filter(feature_id=gene)
+            theta = [float(row[name][0]) for name in spec.parameters]
+            if model == "ll4":
+                b, c, d, e = theta
+                expected = c + (d - c) / (1 + (at / e) ** b)
+            else:
+                b, c, d, e, f = theta
+                with np.errstate(divide="ignore"):
+                    z = np.where(
+                        at > 0,
+                        (np.log(np.where(at > 0, at, 1.0)) - np.log(e)) / b,
+                        -np.inf,
+                    )
+                phi = 0.5 * np.vectorize(__import__("math").erfc)(-z / np.sqrt(2))
+                expected = f * np.exp(-z * z / 2) + d + (c - d) * phi
+            baseline = fits.means[
+                table["feature_id"][:: len(fits.models)].tolist().index(gene), 0
+            ]
+            assert_allclose(
+                curve["log2_fold_change"][i * at.size : (i + 1) * at.size],
+                expected - baseline,
+                rtol=1e-12,
+                atol=1e-12,
+            )
+    best = result.curve(group, genes, at=at, model="best")
+    chosen = [
+        fits.models[
+            fits.best[table["feature_id"][:: len(fits.models)].tolist().index(gene)]
+        ]
+        for gene in genes
+    ]
+    assert best["model"].tolist() == list(np.repeat(chosen, at.size))
+    every = result.curve(group, model="best")
+    assert len(every) == int(np.count_nonzero(fits.best >= 0)) * 100
+    with pytest.raises(ValueError, match="'best'"):
+        result.curve(group, genes, model="hill")
+    with pytest.raises(ValueError, match="does not extrapolate"):
+        result.curve(group, genes, at=[100.0], model="ll4")
+    # Between the vehicle and the lowest dose a model's curve is defined, as every
+    # model is fitted with the vehicle at dose 0, whether the vehicle is in a group of
+    # its own or on the axis; the spline is defined there only on the axis.
+    lowest = float(fits.doses[1])
+    inside = result.curve(group, genes[0], at=[0.0, lowest / 2], model="ll4")
+    assert inside["dose"].tolist() == [0.0, lowest / 2]
+    with pytest.raises(ValueError, match="does not extrapolate"):
+        result.curve(group, genes[0], at=[lowest / 2])
+    on_axis = dose_response(
+        fixture_cube(),
+        Design(fixture_cube().samples, "~ 1"),
+        dose=ON_AXIS,
+        models="ll4",
+    )
+    for model in (None, "ll4"):
+        found = on_axis.curve(group, genes[0], at=[lowest / 2], model=model)
+        assert found["dose"].tolist() == [lowest / 2]
+    with pytest.raises(TypeError, match="model name"):
+        result.curve(group, genes, model=3)  # type: ignore[arg-type]
+    with pytest.raises(KeyError, match="was not fitted"):
+        result.curve(group, "no_such_gene", model="ll4")
+
+
+def test_the_result_reads_back_with_curves() -> None:
+    import pickle
+
+    result = curves_result("moderated", "dromics")
+    again = pickle.loads(pickle.dumps(result))
+    for group in result.groups:
+        assert_array_equal(
+            again.curve_fits(group).parameters, result.curve_fits(group).parameters
+        )
+        assert again.table(group, "curves").equals(result.table(group, "curves"))
+    assert again.settings["models"] == "dromics"
+    assert again.settings["variance"] == "moderated"
+    record = result.provenance
+    assert set(record["curves"]["models"]) == {
+        "linear",
+        "exponential",
+        "ll4",
+        "gauss_probit",
+        "gauss_probit_monotone",
+        "gauss_probit_symmetric",
+        "log_gauss_probit",
+        "log_gauss_probit_monotone",
+        "log_gauss_probit_symmetric",
+    }
+    entry = record["groups"][0]["curves"]
+    assert set(entry) == {
+        "variance",
+        "data",
+        "models",
+        "models_not_fitted",
+        "turns_unchecked",
+        "n_genes",
+        "reason",
+    }
+    assert entry["turns_unchecked"] == ""
+    # The cell type that loses its top dose keeps 5 dose groups, too few to check turns.
+    fewer = record["groups"][1]["curves"]
+    assert len(result.curve_fits(result.groups[1]).doses) == 5
+    assert fewer["turns_unchecked"].startswith(
+        "no model that can turn has a spare dose group among the 4 left"
+    )
+    assert "not checked for a dose group that drives them" in " ".join(
+        repr(result).split()
+    )
+    assert entry["variance"] == "moderated"
+    assert entry["n_genes"] == result.curve_fits(result.groups[0]).means.shape[0]
+    assert "curves: dromics, moderated variance" in repr(result)
+    assert " best fits turn, " in " ".join(repr(result).split())
+    with pytest.raises(TypeError, match="pair of a Table"):
+        DoseResponseResult(
+            result.summary,
+            dict(result.tables),
+            {},
+            result.design_report,
+            result.provenance,
+            curves={"a": result.curve_fits(result.groups[0])},  # type: ignore[dict-item]
+        )
+
+
+def test_the_curves_example_runs() -> None:
+    """The examples of the chapter's section on curves of named models, on the
+    chapter's series, and the numbers its text states."""
+    pytest.importorskip("matplotlib")
+    text = CHAPTER.read_text()
+    tests = text.split("(dose-response-tests)=")[1].split("\n(")[0]
+    curves = text.split("(dose-response-curves)=")[1].split("\n(")[0]
+    named = text.split("(dose-response-model-curves)=")[1].split(
+        "(simulated-dose-series)="
+    )[0]
+    namespace: dict[str, Any] = {"cp": cytepool}
+    for block in [
+        *re.findall(r"```python\n(.*?)```", tests, re.S),
+        *re.findall(r"```python\n(.*?)```", curves, re.S),
+    ]:
+        exec(block.replace("print(result)\n", ""), namespace)  # noqa: S102
+    blocks = re.findall(r"```python\n(.*?)```", named, re.S)
+    assert len(blocks) == 2
+    exec(blocks[0], namespace)  # noqa: S102
+    result = namespace["result"]
+    line = (
+        "curves (constant variance): best linear 342, exponential_2 328, "
+        "exponential_4 92, hill 40, exponential_5 9, power 6"
+    )
+    assert " ".join(repr(result).split()).count(line) == 1
+    assert f"`{line}`" in named
+    assert len(namespace["ax"].get_lines()) >= 4
+    # The 88 genes the spline calls: lack of fit and scaled residuals of their best
+    # models, and the best models of the true Hill responses.
+    spline = result.table("hepatocyte", "spline")
+    called = set(
+        spline.filter(spline["adjusted_p_value"] < 0.05)["feature_id"].tolist()
+    )
+    best = namespace["best"]
+    mine = np.isin(best["feature_id"], list(called))
+    assert int(mine.sum()) == 88
+    assert int(np.sum(best["lack_of_fit_p_value"][mine] < 0.1)) == 22
+    assert int(np.sum(best["max_abs_scaled_residual"][mine] > 2)) == 30
+    truth = namespace["truth"].table("hepatocyte")
+    shape = dict(zip(truth["feature_id"].tolist(), truth["shape"].tolist()))
+    hill = [
+        m
+        for g, m in zip(best["feature_id"][mine], best["model"][mine])
+        if shape[g] == "hill"
+    ]
+    assert (len(hill), hill.count("hill"), hill.count("exponential_4")) == (27, 6, 14)
+    for number in (
+        "Of the 88 genes",
+        "below 0.1 for 22",
+        "above 2 for 30",
+        "Of the 27 true Hill",
+        "6 have the Hill model",
+        "and 14 exponential 4",
+    ):
+        assert number in named
+    # Turns.
+    exec(blocks[1], namespace)  # noqa: S102
+    best = namespace["best"]
+    turns = np.isfinite(best["turn_dose"])
+    driven = np.isfinite(best["turn_driven_by_dose"])
+    kinds = np.array([shape[g] for g in best["feature_id"].tolist()])
+    bells, flat = kinds == "log_gauss_probit", kinds == "flat"
+    monotone = ~bells & ~flat
+    assert (len(best), int(turns.sum())) == (817, 159)
+    assert (
+        int(flat.sum()),
+        int((turns & flat).sum()),
+        int((turns & flat & driven).sum()),
+    ) == (655, 120, 113)
+    assert (int((turns & monotone).sum()), int((turns & monotone & driven).sum())) == (
+        18,
+        18,
+    )
+    assert (
+        int(bells.sum()),
+        int((turns & bells).sum()),
+        int((turns & bells & ~driven).sum()),
+    ) == (33, 21, 14)
+    assert (
+        "159 of the 817 genes" in named
+        and "120 of them are among the 655 flat genes" in named
+    )
+    # Among the spline's calls, the turns that keep without each group.
+    spline = namespace["turning"].table("hepatocyte", "spline")
+    called = spline.filter(spline["adjusted_p_value"] < 0.05)["feature_id"].tolist()
+    among = np.isin(best["feature_id"], called)
+    assert (int(among.sum()), int((among & turns).sum())) == (88, 27)
+    assert (
+        int((among & turns & ~driven).sum()),
+        int((among & turns & ~driven & bells).sum()),
+    ) == (14, 14)
+    assert (
+        "27 have a turning best fit, and the 14 that keep their turn are all true bells"
+        in named
+    )

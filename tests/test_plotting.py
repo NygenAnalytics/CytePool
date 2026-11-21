@@ -1552,3 +1552,84 @@ def test_plot_dose_response_leaves_out_labels_that_would_overlap() -> None:
     assert len(shown) < 6
     boxes = [label.get_window_extent() for label in shown]
     assert all(left.x1 <= right.x0 for left, right in zip(boxes, boxes[1:]))
+
+
+@cache
+def curve_result(models: str = "epa") -> Any:
+    """The dose tests and curves of the series of dose_result, under weighted
+    variance, and of a series that supports only description."""
+    cube, _ = simulate_dose_series(
+        [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
+        replicates=3,
+        cell_types=1,
+        n_genes=200,
+        rng=3,
+    )
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    return dose_response(
+        cube, Design(cube.samples, "~ 1"), dose=axis, models=models, variance="weighted"
+    )
+
+
+def test_plot_dose_response_draws_model_curves() -> None:
+    result = curve_result()
+    axis = result.dose
+    fits = result.curve_fits("cell_type_1")
+    genes = top_genes(result, 3)
+    for model in ("hill", "best"):
+        ax = plotting.plot_dose_response(
+            result, "cell_type_1", genes=genes, model=model, ax=axes()
+        )
+        lines, dots = artists(ax, "model_curve"), artists(ax, "doses")
+        assert len(lines) == len(dots) == 3
+        assert not artists(ax, "band") and not artists(ax, "curve")
+        curve = result.curve("cell_type_1", genes, model=model)
+        table = result.table("cell_type_1", "curves")
+        ids = table["feature_id"][:: len(fits.models)].tolist()
+        positions = axis.positions(np.asarray(fits.doses[1:], dtype=float))
+        vehicle = positions[0] - 1.0  # one median step of the doses below the lowest
+        for i, gene in enumerate(genes):
+            rows = curve["feature_id"] == gene
+            assert (
+                scaled(lines[i].get_ydata(), curve["log2_fold_change"][rows]) <= EXACT
+            )
+            assert (
+                scaled(
+                    lines[i].get_xdata(),
+                    axis.positions(np.asarray(curve["dose"][rows])),
+                )
+                <= EXACT
+            )
+            # The points: the means the curves were fitted to, minus the vehicle's.
+            means = fits.means[ids.index(gene)]
+            expected = np.column_stack(
+                [np.r_[vehicle, positions], np.r_[0.0, means[1:] - means[0]]]
+            )
+            assert scaled(dots[i].get_offsets(), expected) <= EXACT
+        # The legend names each gene's model, which differs among genes for "best".
+        drawn = [
+            f"{gene} ({curve['model'][curve['feature_id'] == gene][0]})"
+            for gene in genes
+        ]
+        assert [text.get_text() for text in ax.get_legend().get_texts()] == drawn
+        if model == "hill":
+            assert drawn == [f"{gene} (hill)" for gene in genes]
+    with pytest.raises(ValueError, match="'best'"):
+        plotting.plot_dose_response(result, genes=genes, model="ll4", ax=axes())
+
+
+def test_plot_dose_response_draws_cell_types_that_support_only_description() -> None:
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
+        replicates=[3, 1, 1, 1, 1, 1],
+        cell_types=1,
+        n_genes=120,
+        rng=5,
+    )
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=axis, models="epa")
+    gene = result.table("cell_type_1", "curves")["feature_id"][0]
+    ax = plotting.plot_dose_response(result, genes=gene, model="best", ax=axes())
+    assert len(artists(ax, "model_curve")) == 1
+    with pytest.raises(KeyError, match="was not tested"):
+        plotting.plot_dose_response(result, genes=gene, ax=axes())
