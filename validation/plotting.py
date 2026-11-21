@@ -52,8 +52,11 @@ with an outlying count.
   (``ns()`` with knots by R's rule, ``lmFit``, ``contrasts.fit``, ``eBayes(trend =
   TRUE)``): the drawn curves and 95% bands of 3 genes against ``topTable(confint =
   TRUE)`` of the curve's contrast at 100 doses evenly spaced on log10 dose, and the
-  points against each dose's ``logFC``. No R function draws this figure, so the
-  values R computes for it are compared with the drawn artists.
+  points against each dose's ``logFC``; with ``model="ll4"``, the drawn log-logistic
+  curves against drc's LL.4 formula evaluated in R at the curves table's parameters,
+  minus the vehicle's mean of R's own ``cpm(log = TRUE, prior.count = 3)``, and the
+  points against R's dose-group means of those values. No R function draws this
+  figure, so the values R computes for it are compared with the drawn artists.
 
 Differences are scaled by max(|reference|, 1). Tiers: exact (1e-10) for values both
 programs compute by the same deterministic steps; close (1e-6) for iterative fits
@@ -264,7 +267,15 @@ genes <- match(input$genes, rownames(dge))
 table <- function(e, j) topTable(e, coef = j, number = Inf, sort.by = "none",
                                   confint = TRUE)[genes, ]
 tops <- lapply(seq_along(grid), function(j) table(curve, j))
-out <- list(grid = grid,
+# The curves of a named model: drc's LL.4 formula at the parameters of CytePool's
+# curves table, minus the vehicle's mean of R's own log2 CPM values, and those means.
+E <- cpm(dge, log = TRUE, prior.count = 3)[genes, , drop = FALSE]
+means <- sapply(levels, function(l) rowMeans(E[, dose == l, drop = FALSE]))
+ll4 <- t(sapply(seq_along(genes), function(i) {
+  p <- input$parameters[i, ]  # b, c, d, e
+  p[2] + (p[3] - p[2]) / (1 + (grid / p[4])^p[1]) - means[i, 1]
+}))
+out <- list(grid = grid, model_curves = ll4, model_points = means[, -1] - means[, 1],
             estimate = sapply(tops, `[[`, "logFC"), lower = sapply(tops, `[[`, "CI.L"),
             upper = sapply(tops, `[[`, "CI.R"),
             points = sapply(seq_len(k), function(j) table(each, j)$logFC),
@@ -886,8 +897,9 @@ def check_composition(ref, cube):
 
 
 def dose_series():
-    """A dose series of the vehicle and 5 half-log doses x 3, its dose tests by
-    limma-trend, and the 3 genes of smallest p-value of the spline."""
+    """A dose series of the vehicle and 5 half-log doses x 3, its dose tests and
+    log-logistic curves by limma-trend, and the 3 genes of smallest p-value of the
+    spline."""
     cube, _ = simulate_dose_series(
         [0.0, 0.01, 0.03, 0.1, 0.3, 1.0],
         replicates=3,
@@ -897,10 +909,17 @@ def dose_series():
     )
     axis = DoseAxis("dose", unit="ug/kg", metric="administered")
     result = dose_response(
-        cube, Design(cube.samples, "~ 1"), dose=axis, analysis=limma_trend
+        cube, Design(cube.samples, "~ 1"), dose=axis, analysis=limma_trend, models="ll4"
     )
     genes = result.table("cell_type_1", "spline").sort("p_value")["feature_id"][:3]
     return cube, result, genes.tolist()
+
+
+def ll4_parameters(result, genes):
+    """The b, c, d and e of each gene's log-logistic curve, from the curves table."""
+    table = result.table("cell_type_1", "curves")
+    rows = [table["feature_id"].tolist().index(gene) for gene in genes]
+    return [[float(table[name][r]) for name in ("b", "c", "d", "e")] for r in rows]
 
 
 def check_dose_response(theirs, result, genes):
@@ -931,6 +950,25 @@ def check_dose_response(theirs, result, genes):
             [np.r_[doses[0] - 0.5, doses], np.r_[0.0, points[i]]]
         )
         points_value = max(points_value, scaled(offsets, expected))
+    model = plotting.plot_dose_response(
+        result, "cell_type_1", genes=genes, model="ll4", ax=axes()
+    )
+    lines, model_dots = artists(model, "model_curve"), artists(model, "doses")
+    model_curves = matrix_of(theirs["model_curves"], len(genes))
+    model_points = matrix_of(theirs["model_points"], len(genes))
+    lines_value = model_points_value = 0.0
+    for i in range(len(genes)):
+        lines_value = max(
+            lines_value,
+            scaled(lines[i].get_xdata(), grid),
+            scaled(lines[i].get_ydata(), model_curves[i]),
+        )
+        expected = np.column_stack(
+            [np.r_[doses[0] - 0.5, doses], np.r_[0.0, model_points[i]]]
+        )
+        model_points_value = max(
+            model_points_value, scaled(model_dots[i].get_offsets(), expected)
+        )
     return [
         row(
             "dose response: the doses of the curves, 100 evenly spaced on log10 dose",
@@ -956,6 +994,20 @@ def check_dose_response(theirs, result, genes):
             "vehicle at 0",
             "limma topTable",
             points_value,
+            EXACT,
+        ),
+        row(
+            "dose response with model='ll4': the drawn curves, the documented formula "
+            "at the curves table's parameters minus the vehicle's mean",
+            "R: c + (d - c) / (1 + (x/e)^b) on cpm(log = TRUE)",
+            lines_value,
+            EXACT,
+        ),
+        row(
+            "dose response with model='ll4': the dose groups' means the curves were "
+            "fitted to, minus the vehicle's",
+            "R: rowMeans of cpm(log = TRUE, prior.count = 3)",
+            model_points_value,
             EXACT,
         ),
     ]
@@ -1072,6 +1124,7 @@ def main():
                 "dose": np.asarray(dose_cube.samples["dose"], dtype=float).tolist(),
                 "df": dose_result.spline_basis.df,
                 "genes": dose_genes,
+                "parameters": ll4_parameters(dose_result, dose_genes),
             }
         },
         "RSCRIPT",
