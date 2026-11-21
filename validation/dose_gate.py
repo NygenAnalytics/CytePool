@@ -1200,9 +1200,8 @@ def write_fixtures(found: list[Case], limma: dict) -> None:
 def benchmark() -> None:
     """permutation_check of 100 runs of one cell type of 20,000 genes x 24 profiles,
     the vehicle and 7 doses x 3, with the spline gate and with a fold change, and of
-    5 runs with the Williams-type gate, against the baseline of the epic's targets:
-    the weighted fit of 20,000 genes x 200 samples, as multiple_contrast_tests.py
-    times it. The ordinary least squares fit that dose_contrasts.py times is printed
+    5 runs with the Williams-type gate, against a baseline, the weighted fit of
+    20,000 genes x 200 samples, as multiple_contrast_tests.py times it. The ordinary least squares fit that dose_contrasts.py times is printed
     beside it."""
     rng = np.random.default_rng(1)
     n_samples = 200

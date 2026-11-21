@@ -1603,7 +1603,7 @@ On 1,000 of the genes of 9 groups, a p-value took 222 points in all over its 16 
 
 `dose_contrasts.py --benchmark` ran `dose_response` on 20,000 genes of one cell type, the median of three runs after a first call, on 2 threads, with its default tests and with each multiple contrast test beside them. With the vehicle and 7 doses x 3 the default tests took 0.87 s, and Dunnett's test added 9.6 s (0.48 ms per gene), the Williams-type test 22.5 s (1.13 ms) and the MCP step 10.0 s (0.50 ms). With the vehicle and 3 doses x 3 the default tests took 0.38 s, and the three tests added 0.06, 0.08 and 0.60 ms per gene: the MCP step tests five contrasts there, of rank three, and the other two tests three. The ordinary least squares fit of 20,000 genes x 200 samples, the baseline of `linear_models.py --benchmark`, took 0.040 s in the same run.
 
-`dose_gate.py --benchmark` ran `permutation_check` with 100 runs on one cell type of 20,000 genes x 24 profiles (the vehicle and 7 doses x 3), on 2 threads, the median of three checks after a first one, each check with its run of the true doses. The baseline of the epic's targets, the weighted `fit_linear_model` of 20,000 genes x 200 samples, took 0.207 s in the same run (0.032 s by ordinary least squares), and the peak resident memory of the run was 1,208 MiB.
+`dose_gate.py --benchmark` ran `permutation_check` with 100 runs on one cell type of 20,000 genes x 24 profiles (the vehicle and 7 doses x 3), on 2 threads, the median of three checks after a first one, each check with its run of the true doses. The baseline, the weighted `fit_linear_model` of `linear_models.py --benchmark` on 20,000 genes x 200 samples, took 0.207 s in the same run (0.032 s by ordinary least squares), and the peak resident memory of the run was 1,208 MiB.
 
 | Gate | Runs | Seconds | Seconds per run | Baselines |
 | --- | --- | --- | --- | --- |
@@ -1611,7 +1611,7 @@ On 1,000 of the genes of 9 groups, a p-value took 222 points in all over its 16 
 | 1.5-fold, by TREAT | 100 | 140.6 | 1.39 | 678 |
 | The Williams-type test | 5 | 144.8 | 24.13 | 698 |
 
-The spline gate's 340 baselines lie within the target of 350 for 100 runs. A run fits the gate's test alone; the fold-change gate fits the cell type once more for TREAT, and the Williams-type gate's multivariate t probabilities take about 1.1 ms per gene, as `dose_contrasts.py --benchmark` found.
+Each run fits the gate's test alone, so a check of 100 runs of the spline gate costs about 100 analyses of the cell type; the fold-change gate fits the cell type once more for TREAT, and the Williams-type gate's multivariate t probabilities take about 1.1 ms per gene, as `dose_contrasts.py --benchmark` found.
 
 `cube_reads.py` read every layer of each selection of its cube file into memory with `to_memory()`. The file holds 720 MB of values in chunks of one group, every sample and 4,096 genes, 507 MB once compressed. Peak memory is the most that Python's `tracemalloc` traced during a read, and time the best of three reads after a first one:
 
