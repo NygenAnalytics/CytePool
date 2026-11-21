@@ -1360,9 +1360,9 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
 def test_the_result_refuses_fields_of_the_wrong_type() -> None:
     result = fixture_result("trend")
     # The fields of a result, as pickling passes them to the constructor: five
-    # positional, then the cube and the design by keyword.
+    # positional, then the curves, the cube and the design by keyword.
     good = result.__reduce__()[1]
-    assert good[5] is result.cube and good[6] is result.design
+    assert good[5] == {} and good[6] is result.cube and good[7] is result.design
     for position, bad, message in (
         (0, {}, "summary must be a Table"),
         (1, [], "tables must be a mapping"),
@@ -1372,7 +1372,6 @@ def test_the_result_refuses_fields_of_the_wrong_type() -> None:
         (2, {"full": 1}, "must be a DifferentialExpressionResult"),
         (3, None, "design_report must be a DoseDesignReport"),
         (4, [], "provenance must be a mapping"),
-        (5, [], "curves must be a mapping"),
     ):
         fields = list(good[:5])
         fields[position] = bad
@@ -1382,6 +1381,8 @@ def test_the_result_refuses_fields_of_the_wrong_type() -> None:
         DoseResponseResult(*good[:4], {"x": np.zeros(2)})
     with pytest.raises(ValueError):
         DoseResponseResult(*good[:4], {"x": float("nan")})
+    with pytest.raises(TypeError, match="curves must be a mapping"):
+        DoseResponseResult(*good[:5], curves=[])  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="cube must be a Cube or None"):
         DoseResponseResult(*good[:5], cube="cube", design=result.design)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="design must be a Design or None"):
