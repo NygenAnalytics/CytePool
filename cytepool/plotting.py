@@ -2263,33 +2263,44 @@ def plot_dose_response(
     group: str | None = None,
     *,
     genes: str | Sequence[str],
+    model: str | None = None,
     ax: "Axes | None" = None,
 ) -> "Axes":
     """Plot how genes respond to dose in a cell type: each dose group's estimate, the
-    fitted spline and its 95% band.
+    fitted spline and its 95% band, or the fitted curve of a named model.
 
     For each gene of a :func:`~cytepool.dose_response` result, its log2 fold change
     at each dose against the vehicle (the table ``"each_dose"``) as points, the
     vehicle at 0, and the fitted spline as a change from the vehicle
     (:meth:`~cytepool.DoseResponseResult.curve`) on 100 doses spaced evenly along
     the dose axis over the doses the cell type compares, with its pointwise 95% band.
-    The x axis is the dose axis, labelled in doses, a label left out where it would
-    overlap the one before it; with the vehicle in a group of its own, the vehicle
-    sits one median step of the doses below the lowest dose, beyond a break in the
-    axis. Up to 8 genes take the module's hues in order, and beyond 3, each also a
-    marker of its own.
+    With ``model``, the points are the dose-group means that the curves were fitted
+    to, minus the vehicle's (:meth:`~cytepool.DoseResponseResult.curve_fits`), and
+    the line is the gene's curve of the model on the same doses, without a band; a
+    cell type that supports only description is drawn too. The x axis is the dose
+    axis, labelled in doses, a label left out where it would overlap the one before
+    it; with the vehicle in a group of its own, the vehicle sits one median step of
+    the doses below the lowest dose, beyond a break in the axis. Up to 8 genes take
+    the module's hues in order, and beyond 3, each also a marker of its own.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-curves
-    explains the curve and its band.
+    explains the curve and its band, and
+    https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-model-curves
+    the curves of named models.
 
     Draws, for each gene in the order given, its points (gid ``"doses"``), its curve
-    (gid ``"curve"``) and its band (gid ``"band"``), and a line at 0.
+    (gid ``"curve"``) and its band (gid ``"band"``), or with ``model`` its points and
+    its model's curve (gid ``"model_curve"``), named in the legend with the model,
+    such as ``gene_0295 (hill)``, and a line at 0.
 
     Args:
         result: The result of ``dose_response`` by ``limma_voom`` or
             ``limma_trend``.
-        group: A cell type that was tested; None when the result checked one.
+        group: A cell type that was tested, or with ``model`` one with curves; None
+            when the result checked one.
         genes: A feature id or symbol, or a list of up to 8 of them, among the genes
-            tested in the cell type.
+            tested in the cell type, or fitted with ``model``.
+        model: None for the spline; a model of the cell type's curves, such as
+            ``"hill"``, or ``"best"`` for each gene's best model.
         ax: The Axes to draw into, or None for a new figure.
 
     Returns:
@@ -2300,9 +2311,11 @@ def plot_dose_response(
             feature id or symbol or a list of them, or is a numpy masked array.
         ValueError: If ``genes`` is empty or names more than 8 genes, or as
             :meth:`~cytepool.DoseResponseResult.curve` raises: for a result of
-            ``dream_voom``, a cell type whose doses cannot estimate the spline, or a
-            symbol that names several genes.
-        KeyError: If the cell type was not tested, or a gene was not tested there.
+            ``dream_voom``, a cell type whose doses cannot estimate the spline, a
+            symbol that names several genes, or a model the cell type was not
+            fitted with.
+        KeyError: If the cell type was not tested, or has no curves with
+            ``model``, or a gene was not tested or fitted there.
     """
     _check_axes(ax)
     if not isinstance(result, DoseResponseResult):
@@ -2311,6 +2324,7 @@ def plot_dose_response(
         )
     reject_masked(group, "group")
     reject_masked(genes, "genes")
+    reject_masked(model, "model")
     if isinstance(genes, str):
         names = [genes]
     elif isinstance(genes, Sequence | np.ndarray):
@@ -2327,12 +2341,47 @@ def plot_dose_response(
             f"genes names {len(names)} genes, more than the {len(_CATEGORICAL)} "
             "colours that stay distinguishable; draw them in several figures"
         )
-    # The table of each dose, which raises for a cell type not checked or not tested.
-    each = result.table(group, "each_dose")
-    # The curve on its default doses, the genes in the order given.
-    curve = result.curve(group, names)
+    if model is None:
+        # The table of each dose, which raises for a cell type not checked or not
+        # tested; the curve on its default doses, the genes in the order given.
+        each = result.table(group, "each_dose")
+        curve = result.curve(group, names)
+        treated = np.unique(np.asarray(each["dose"], dtype=np.float64))
+        labels = each["symbol"] if "symbol" in each else each["feature_id"]
+        label_of = dict(zip(each["feature_id"].tolist(), labels.tolist(), strict=True))
+
+        def points(feature: str) -> tuple[np.ndarray, np.ndarray]:
+            mine = each["feature_id"] == feature
+            return (
+                np.asarray(each["dose"][mine], dtype=np.float64),
+                np.asarray(each["log2_fold_change"][mine], dtype=np.float64),
+            )
+
+    else:
+        curve = result.curve(group, names, model=model)
+        fits = result.curve_fits(group)
+        table = result.table(group, "curves")
+        # The curves table holds each gene's models together, genes in the order of
+        # the fits' rows.
+        ids = table["feature_id"][:: len(fits.models)]
+        labels = (table["symbol"] if "symbol" in table else table["feature_id"])[
+            :: len(fits.models)
+        ]
+        # Each gene's curve may be another model: the legend names it.
+        drawn = dict(zip(curve["feature_id"].tolist(), curve["model"].tolist()))
+        label_of = {
+            feature: f"{label} ({drawn[feature]})"
+            for feature, label in zip(ids.tolist(), labels.tolist(), strict=True)
+            if feature in drawn
+        }
+        row_of = {feature: row for row, feature in enumerate(ids.tolist())}
+        treated = np.asarray(fits.doses[1:], dtype=np.float64)
+
+        def points(feature: str) -> tuple[np.ndarray, np.ndarray]:
+            means = fits.means[row_of[feature]]
+            return treated, np.asarray(means[1:] - means[0], dtype=np.float64)
+
     axis = result.dose
-    treated = np.unique(np.asarray(each["dose"], dtype=np.float64))
     own_group = axis.vehicle == "own_group"
     n = len(curve) // len(names)
     x = axis.positions(np.asarray(curve["dose"][:n], dtype=np.float64))
@@ -2342,8 +2391,6 @@ def plot_dose_response(
         vehicle = positions[0] - (float(np.median(steps)) if steps.size else 1.0)
     else:
         vehicle = float(axis.positions(np.zeros(1))[0])
-    labels = each["symbol"] if "symbol" in each else each["feature_id"]
-    label_of = dict(zip(each["feature_id"].tolist(), labels.tolist(), strict=True))
     features = curve["feature_id"].tolist()[::n]
     shapes = _shapes(names, "genes") if len(names) > _SCATTER_HUES else {}
     ax = _axes(ax, (6.5, 4.0))
@@ -2353,24 +2400,29 @@ def plot_dose_response(
         zip(names, features, _CATEGORICAL, strict=False)
     ):
         rows = slice(i * n, (i + 1) * n)
-        ax.fill_between(
-            x,
-            curve["ci_lower"][rows],
-            curve["ci_upper"][rows],
-            color=color,
-            alpha=0.18,
-            linewidth=0,
-            zorder=2,
-            gid="band",
-        )
+        if model is None:
+            ax.fill_between(
+                x,
+                curve["ci_lower"][rows],
+                curve["ci_upper"][rows],
+                color=color,
+                alpha=0.18,
+                linewidth=0,
+                zorder=2,
+                gid="band",
+            )
         ax.plot(
-            x, curve["log2_fold_change"][rows], color=color, linewidth=1.6, gid="curve"
+            x,
+            curve["log2_fold_change"][rows],
+            color=color,
+            linewidth=1.6,
+            gid="curve" if model is None else "model_curve",
         )
-        mine = each["feature_id"] == feature
+        doses, values = points(feature)
         marker = shapes.get(gene, _MARKERS[0])
         ax.scatter(
-            np.r_[vehicle, axis.positions(each["dose"][mine])],
-            np.r_[0.0, each["log2_fold_change"][mine]],
+            np.r_[vehicle, axis.positions(doses)],
+            np.r_[0.0, values],
             color=color,
             marker=marker,
             s=_SPARSE,
