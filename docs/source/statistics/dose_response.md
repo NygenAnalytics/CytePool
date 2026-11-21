@@ -1,10 +1,10 @@
 ---
-description: Where doses sit on a dose axis, what a dose series supports, which genes respond to dose in each cell type and how, a gate checked against noise, from which dose, and simulated dose series.
+description: Where doses sit on a dose axis, what a dose series supports, which genes respond to dose in each cell type and how, with curves of named models, a gate checked against noise, from which dose, and simulated dose series.
 ---
 
 # Dose response
 
-[Composition tests](composition.md) asked whether a condition changes which cells a sample holds. A dose series asks of each cell type which genes respond to a dose and how, and two things come before any test or curve: where each dose sits on the axis of a curve, which {api}`DoseAxis` records, and whether the samples of each cell type can support tests at all, which {api}`check_dose_design` reports. {api}`dose_response` then tests every cell type that supports tests, with a fitted curve and its band for each gene, tests of trends, of each dose against the vehicle and of candidate shapes of response, a gate that decides which genes count as responding, which {api}`permutation_check` checks against permuted doses, and the lowest dose from which each gene responds, and series simulated from known curves with {api}`simulate_dose_series` show how well a dose method recovers the responses at a design before it is run. [Dose response per cell type](../guides/dose_response.ipynb) runs the steps on a simulated series.
+[Composition tests](composition.md) asked whether a condition changes which cells a sample holds. A dose series asks of each cell type which genes respond to a dose and how, and two things come before any test or curve: where each dose sits on the axis of a curve, which {api}`DoseAxis` records, and whether the samples of each cell type can support tests at all, which {api}`check_dose_design` reports. {api}`dose_response` then tests every cell type that supports tests, with a fitted curve and its band for each gene, curves of named models such as BMDS's, tests of trends, of each dose against the vehicle and of candidate shapes of response, a gate that decides which genes count as responding, which {api}`permutation_check` checks against permuted doses, and the lowest dose from which each gene responds, and series simulated from known curves with {api}`simulate_dose_series` show how well a dose method recovers the responses at a design before it is run. [Dose response per cell type](../guides/dose_response.ipynb) runs the steps on a simulated series.
 
 (dose-axes)=
 ## Dose axes and the vehicle
@@ -77,9 +77,10 @@ How much can a dose series say? The number of dose groups K, the vehicle include
 | K | Tests | A curve with a spare group | What documents ask |
 | --- | --- | --- | --- |
 | 2 | The dose against the vehicle | None | |
-| 3 | Any dose, on 2 degrees of freedom; each dose against the vehicle; a spline of 1 column | A line | MCP-Mod's test step, placebo included |
-| 4 | A spline of up to 2 columns | An Emax curve, which rises to a maximum effect, of 3 parameters | MCP-Mod's modelling step |
-| 5 | A spline of up to 3 columns | A Hill curve, of 4 parameters | |
+| 3 | Any dose, on 2 degrees of freedom; each dose against the vehicle; a spline of 1 column | A line; exponential 2 | MCP-Mod's test step, placebo included |
+| 4 | A spline of up to 2 columns | An Emax curve, which rises to a maximum effect, of 3 parameters; the quadratic, power, exponential 3 and 4 and DRomics' exponential | MCP-Mod's modelling step |
+| 5 | A spline of up to 3 columns | A Hill curve, of 4 parameters; exponential 5, the log-logistic curve and the 4-parameter Gauss-probit curves | |
+| 6 | A spline of up to 4 columns | The 5-parameter Gauss-probit curves, which rise and then fall, and a check of whether one dose group drives a turn | |
 | 9 | A spline of up to 7 columns | Any curve of up to 8 parameters | ETAP: 8 doses and a vehicle |
 
 Replicates count too: n samples in each of K groups leave K(n - 1) residual degrees of freedom before moderation, 3 for a vehicle and two doses in duplicate, so the prior of the moderation ([Empirical Bayes moderation](empirical_bayes.md)) carries much of each gene's variance estimate.
@@ -478,6 +479,105 @@ adjusted = stage_wise_adjusted_p_values(spline["p_value"], p, alpha=0.05)
 calls = adjusted <= 0.05  # genes x doses
 ```
 
+(dose-response-model-curves)=
+## Curves of named models
+
+What shape does each response take? A test says that a gene responds, and the spline's band shows the response, but reports of dose response name a curve: the models of BMDS, EPA's Benchmark Dose Software, which NTP's genomic dose-response approach and EPA's Transcriptomic Assessment Products fit [@ntp2018; @usepa2024; @usepa2026], drc's four-parameter log-logistic curve for EC50s [@ritz2015], or DRomics' curves that rise and then fall [@larras2018; @delignettemuller2023]. With `models`, {api}`dose_response` fits a set of them to every gene of each cell type, and {api}`fit_dose_curves` to a matrix of values outside a cube:
+
+```python
+result = cp.dose_response(cube, cp.Design(cube.samples, "~ 1"), dose=axis, models="epa")
+curves = result.table("hepatocyte", "curves")
+best = curves.filter(curves["best"])
+ax = plot_dose_response(result, "hepatocyte", genes=genes, model="best")
+```
+
+The printout gains one line per cell type, such as `curves (constant variance): best linear 342, exponential_2 328, exponential_4 92, hill 40, exponential_5 9, power 6` for the hepatocytes' 817 genes: the model of lowest AICc, Akaike's criterion corrected for small samples, of each gene. Most genes do not respond, and their best model is a line or exponential 2, the models of fewest parameters. {api}`DoseResponseResult.curve_fits` gives a cell type's fits as a {api}`DoseCurveFits`, with the dose-group means and covariance they were fitted to, and {api}`DoseResponseResult.curve` the curve of a model at any dose, as a change from the vehicle's mean.
+
+(dose-curve-sets)=
+### The models of each set
+
+A set is one call's models, so that a model's name means one curve with one set of parameters and bounds there. x is the dose, D the top dose, d_min the lowest positive dose, and G the largest gap between adjacent doses, on ln dose among the positive doses for the log-Gauss-probit forms; Φ is the standard normal distribution function.
+
+| Set | Model | Mean | Bounds | Dose groups needed |
+| --- | --- | --- | --- | --- |
+| `"epa"` | `linear` | g + b1 x | none | 3 |
+| | `polynomial_2` | g + b1 x + b2 x^2 | b1 and b2 of one sign | 4 |
+| | `power` | g + v x^n | 1 ≤ n ≤ 18 | 4 |
+| | `hill` | g + v x^n / (k^n + x^n) | 0 ≤ k ≤ 5 D, 1 ≤ n ≤ 18 | 5 |
+| | `exponential_2` | a exp(b x) | a ≥ 0, -100 / D ≤ b ≤ 100 / D | 3 |
+| | `exponential_3` | a exp(sign(b) (abs(b) x)^d) | as `exponential_2`, 1 ≤ d ≤ 18 | 4 |
+| | `exponential_4` | a (c - (c - 1) exp(-b x)) | a ≥ 0, 0 ≤ b ≤ 100 / D, 0 ≤ c ≤ 1,000 | 4 |
+| | `exponential_5` | a (c - (c - 1) exp(-(b x)^d)) | as `exponential_4`, 1 ≤ d ≤ 18 | 5 |
+| `"ll4"` | `ll4` | c + (d - c) / (1 + (x/e)^b) | 0.1 ≤ b ≤ 18, d_min / 100 ≤ e ≤ 5 D | 5 |
+| `"dromics"` | `linear` | d + b x | none | 3 |
+| | `exponential` | d + b (exp(x/e) - 1) | D / 100 ≤ abs(e) ≤ 10,000 D | 4 |
+| | `ll4` | as in `"ll4"` | as in `"ll4"` | 5 |
+| | `gauss_probit` | f exp(-z^2/2) + d + (c - d) Φ(z), z = (x - e) / b | 0 ≤ e ≤ D, G / 3 ≤ b ≤ 10 D | 6 |
+| | `gauss_probit_monotone`, `gauss_probit_symmetric` | the same with f = 0, or with c = d | as `gauss_probit` | 5 |
+| | `log_gauss_probit` | as `gauss_probit`, with z = (ln x - ln e) / b and d at dose 0 | d_min ≤ e ≤ D, G / 3 ≤ b ≤ 10 ln(D / d_min) | 6 |
+| | `log_gauss_probit_monotone`, `log_gauss_probit_symmetric` | f = 0, or c = d | as `log_gauss_probit` | 5 |
+
+`"epa"` holds the eight models of NTP's approach and ETAP in BMDS's forms and with BMDS's letters, and its bounds are BMDS's, written in dose units where BMDS states them on doses divided by the top dose, with one of CytePool's own: c, which BMDS leaves unbounded above for a rising curve, at most 1,000 ([Limits and differences](#dose-response-limits)). Hill's k is the EC50, the dose of half the change v. The exponential models' a and c are on the values' own scale: a is the level at dose 0 and c the ratio of the plateau's level to a's, so, unlike the additive models, their fits change with where 0 lies on that scale, as log2 CPM puts it at 1 count per million. Two choices differ from a single BMDS run: the quadratic's coefficients share a sign, pybmds's default restriction, and the better of both signs is kept, as are both directions of the exponential models, where BMDS fits the direction it detects in the data. `"ll4"` is drc's LL.4, the Hill curve with a slope from 0.1; Hill, sigmoid Emax and four-parameter log-logistic curves are one family [@kappenberg2023]. Its letters are DRomics': b > 0 the slope, d the level at dose 0, c the level at high doses and e the EC50, the dose of half the change. drc reports a rising curve with b < 0 and c at dose 0, whose estimates (b, c, d, e) are CytePool's (-b, d, c, e). `"dromics"` holds DRomics' families, each four- and five-parameter Gauss-probit form a model of its own. Below a slope of 0.1 a log-logistic curve changes by about a fifth of its range over 4 decades of dose, a line in log dose that the slope and the plateaus cannot tell apart.
+
+A Gauss-probit curve's peak, or its inflection, lies within the doses, and its width is at least a third of the largest gap between adjacent doses: every dose of the range then lies within half a gap of a dose, where a bell keeps exp(-9/8) = 32% of its height or more. Without these bounds, a bell narrower than a gap can sit between two doses with a height of hundreds of log2 units that only its tails reach, and the likelihood rises along such a valley without reaching a maximum.
+
+A model of p parameters is fitted only with a spare dose group, K - p of at least 1, and the others are listed in `models_not_fitted`: a curve through every dose group's mean leaves nothing to test its shape against, and in simulations of four dose groups, non-protective lower bounds of the benchmark dose reached 80% in some scenarios [@ringblom2014]. Exponential 2 to 5 are not fitted to a gene with a dose-group mean at or below 0, since their means are positive, and no model to a gene whose values do not vary, or whose means, in the weighted and moderated modes, have a variance of 0 to rounding; `not_fitted_reason` says why.
+
+(dose-curve-variance)=
+### Constant, weighted or moderated variance
+
+Under `variance="constant"`, the default, each gene's values in the cell type's fit, voom's log2 CPM or limma-trend's, are refitted against dose with one variance for every sample, as BMDS, drc and DRomics fit a gene's samples. The dose-group means are sufficient: the samples' sum of squares about a curve f is the within-group sum of squares S_w plus Q = sum_k n_k (ybar_k - f(x_k))^2, so each model is fitted to the K means with weights n_k, and the log-likelihood is the samples', -n/2 (log(2π σ²) + 1) with σ² = (S_w + Q) / n.
+
+Under `"weighted"`, a curve is fitted by generalised least squares to the dose-group means of the cell type's moderated fit, ybar = M (m_0, θ), where m_0 is the vehicle's mean at the samples' average of the design's other terms, θ each dose's difference from it and M = [[1, 0], [1, I]], with their covariance s² C, C = M V M'. V, the fit's unscaled covariance of (m_0, θ), carries voom's weights and the design's other terms, and s² is the gene's residual variance; `"moderated"` takes its moderated variance, on the residual plus prior degrees of freedom. The log-likelihood is that of the means, -K/2 log(2π) - 1/2 log det(s² C) - Q / (2 s²) with Q = (ybar - f)' C^-1 (ybar - f), whose curve part is the generalised least squares of generalised MCP-Mod [@pinheiro2014]. Precision then comes from the cell type's whole fit. Under `"~ 1"`, the residual variance has the same n - K degrees of freedom as the pooled within-group variance of constant variance, 18 at 9 doses x 3, which put an SD within 0.68 to 1.32 times the true SD in 95% of experiments, and it weighs each sample by voom's weights; the moderated variance adds the prior's degrees of freedom ([Empirical Bayes moderation](empirical_bayes.md)). Constant variance stays the default until simulations show that weighted fits keep the coverage of benchmark-dose bounds, which are not implemented yet. A design with other terms than dose, such as `"~ sex"`, needs `"weighted"` or `"moderated"`: constant variance refits dose alone, so it refuses them.
+
+(dose-curve-fitting)=
+### How each fit is found
+
+No fit needs a start or a seed. A model's parameters split into linear ones, its levels and heights, and at most two nonlinear ones, such as a location and a slope. At each point of a fixed grid of the nonlinear parameters the linear ones are solved exactly, by weighted least squares within their constraints, which variable projection makes possible [@golub1973]; the three lowest local minima of the grid each start a refinement that moves the nonlinear parameters within their bounds and solves the linear ones again at each step, and the best result is kept. The grids hold 48 locations evenly spaced on log scale, from d_min / 100 to 5 D for the Hill and log-logistic curves and from d_min to D for Gauss-probit peaks, with 0 where a model allows it; 24 exponents from 1 to 18 (64 for the power model); 64 rates of each sign from 10^-4 / D to 100 / D; and 24 slopes and widths across their bounds. A refinement stops when the decrease that a full Gauss-Newton step predicts falls below 10^-12 of the objective, and `converged` is False for the few fits that reach 500 iterations first, which keep the best point found. The line and the quadratic are solved in closed form. A program that starts each fit from its own guesses can stop below this maximum; the Validation page counts how often pybmds, drc and DRomics do.
+
+(dose-curve-table)=
+### Read the curves table
+
+`table(g, "curves")`, built by {api}`DoseCurveFits.table`, has one row per gene and model fitted, each gene's models in set order, and the set's parameter columns, NaN where a model has no such parameter:
+
+| Column | What it says |
+| --- | --- |
+| `n_parameters`, `spare_groups` | p, and K - p |
+| `log_likelihood`, `aic`, `aicc` | AIC = -2 LL + 2k and AICc = AIC + 2k(k + 1) / (n - k - 1), with k = p + 1 for the variance and n the samples [@hurvich1989], as DRomics counts them; AICc is infinite when n ≤ k + 1 |
+| `akaike_weight`, `best` | exp(-Δ/2) over its sum, Δ the AICc minus the gene's lowest: each model's share of the gene's support [@burnham2002]; `best` marks the lowest AICc, the first in set order within 10^-8 |
+| `lack_of_fit_p_value` | The F-test of the curve against free dose-group means, F = Q / ((K - p) s²) on K - p and `df` degrees of freedom, with s² the pooled within-group variance under constant variance, the pure-error test, and the fit's variance otherwise; exact for curves linear in their parameters; below 0.1 the curve misses the means [@usepa2012] |
+| `max_abs_scaled_residual` | The largest abs(ybar_k - f(x_k)) / se_k over the doses; above 2 warrants a look [@usepa2012] |
+| `parameters_at_bounds`, `converged`, `not_fitted_reason` | The parameters at a bound, whether the refinement converged, and why a model was not fitted to the gene |
+| `turn_dose`, `turn_driven_by_dose` | Where a curve that rises and falls turns, and the dose group that drives the turn, 0 for the vehicle's group and NaN for none ([Find responses that turn](#dose-curve-turns)) |
+
+Of the 88 genes that the spline calls in the hepatocytes, the best model's lack-of-fit p-value is below 0.1 for 22 and its largest scaled residual above 2 for 30: steps, Fréchet curves and bells lie outside the EPA models, and three replicates leave the shape uncertain. Of the 27 true Hill responses among them, 6 have the Hill model as their best and 14 exponential 4, whose rise to a plateau differs from the Hill curve mostly in how it approaches the plateau; the Akaike weights say how sure each choice is. `curve(g, genes, model="best")` gives each gene's best curve as a change from the vehicle's mean that it was fitted to, whose value at the vehicle shows how far the curve misses that mean.
+
+BMDExpress, in which NTP and ETAP run these models, reports for each fit an AIC and a fit p-value, the likelihood ratio test that BMDS calls test 4 [@ntp2018]. Under constant variance, `aic` is that AIC with every parameter counted: BMDS's default leaves out a parameter at a bound, so its AIC is lower by 2 for each, such as a power curve's n at 1 or a Hill curve's n at 18. Test 4 compares the same curve with free dose-group means as the F-test, by the likelihood ratio n log(1 + (K - p) F / (n - K)) on a chi-square of K - p degrees of freedom, which rejects too often at a few replicates: for a correct straight line at 9 doses x 3, its p-value falls below 0.1 in 25% of experiments, where `lack_of_fit_p_value` does in 10%. `best` is the lowest AICc over every fit, whether it fits or not. BMDS takes the lowest AIC among adequate fits, those that pass its checks, when their BMDLs lie within 3-fold, and otherwise the lowest BMDL [@usepa2012; @usepa2026]; NTP and ETAP take the lowest AIC [@ntp2018; @usepa2024]. Until rule sets reproduce these choices, keep the rows with `lack_of_fit_p_value` of 0.1 or more and take each gene's lowest `aic` to come close.
+
+(dose-curve-turns)=
+### Find responses that turn
+
+Which responses rise and then fall? Of the models, only the Gauss-probit curves with f other than 0 can turn within the doses, which `"dromics"` holds. Their slope, exp(-z²/2) (-f z + (c - d) / sqrt(2π)) / b, changes sign once, at z* = (c - d) / (f sqrt(2π)), so the turn is at x* = e + b z*, or e exp(b z*) on ln dose, and `turn_dose` gives it when it lies strictly between 0 and D: a curve that peaks at the top dose rises over every dose. A bell can also fit one outlying dose group, which EFSA found behind most apparent non-monotone responses [@efsa2021]: for each gene whose best fit turns, the whole set is fitted again without each dose group in turn, the vehicle's included, and `turn_driven_by_dose` gives the lowest dose without whose group the best fit by AICc no longer turns, 0 when it is the vehicle's group. The check needs 6 dose groups: at 5, no model that can turn has a spare group among the 4 left without one, so no refit could turn; `turn_driven_by_dose` is then NaN for every gene, and the printout and the record say that the turns were not checked.
+
+```python
+turning = cp.dose_response(
+    cube,
+    cp.Design(cube.samples, "~ 1"),
+    dose=axis,
+    models="dromics",
+    groups="hepatocyte",
+)
+best = turning.table("hepatocyte", "curves")
+best = best.filter(best["best"])
+```
+
+In the hepatocytes, 159 of the 817 genes have a best fit that turns. 120 of them are among the 655 flat genes, and one dose group drives the turns of 113 of these and of all 18 monotone responses whose best fit turns. Of the 33 true bells, 21 have a turning best fit, and 14 of these keep their turn without each group, as do 7 flat genes. So read turns among the genes that a test calls, such as those that pass the gate, and keep those that turn without each group: of the 88 genes that the spline calls, 27 have a turning best fit, and the 14 that keep their turn are all true bells.
+
+(dose-curve-descriptive)=
+### Describe cell types without replicates
+
+A cell type that supports only description ([Checking a dose design](#dose-design-check)) gets curves under constant variance in every mode, from the values a fit would compute, the check's samples, the analysis's expression filter with the model of the dose groups as its design, TMM factors and voom's or limma-trend's log2 CPM, without lack-of-fit p-values: its within-group variance comes from the vehicle's replicates alone, if any. With other terms than dose in the design, such a cell type gets no curves, with the reason, since constant variance fits dose alone.
+
 (simulated-dose-series)=
 ## Simulated dose series with known curves
 
@@ -568,6 +668,7 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **The analysis.** {api}`limma_voom` with exact standard errors, its expression filter and TMM normalization, on the model of the dose groups.
 - **The spline.** 2 columns when the axis holds 4 doses or more, otherwise 1, in the restricted cubic form, with knots at quantiles of the distinct doses of the design's samples.
 - **FDR.** Benjamini-Hochberg within each cell type and test, and across the cell types that ran a test. With 2 replicates per dose, a cell type in which no gene responds has a call more often than 1 time in 20; {api}`permutation_check` tests whether a series' true doses pass more genes than permuted ones ([Limits and differences](#dose-response-limits)).
+- **Curves.** None; with `models`, constant variance, as BMDS fits a gene's samples, the best model by AICc, and the F-test of lack of fit read at 0.1 ([Curves of named models](#dose-response-model-curves)).
 - **Cells per profile.** Reported, with no threshold beyond `min_cells`. In muscat's benchmark of differential state tests, methods on pseudobulk profiles performed decently from about 100 cells per cell type and sample, with moderate gains beyond [@crowell2020], which makes `n_cells_min` worth reading.
 
 (dose-response-limits)=
@@ -581,7 +682,7 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **The expression filter.** It does not run, so a cell type that the check calls inferential can still stop in its fit when no gene passes the filter.
 - **Fits of descriptive designs.** {api}`limma_voom` fits a design that the check calls descriptive whenever residual degrees of freedom are left: in GSE208161, one participant per dose level sampled before and after dosing [@sonigra2022], 13 of 18 clusters keep one residual degree of freedom, the placebo participant's change from baseline.
 - **Doses that differ by rounding.** {api}`DoseAxis.spline_basis` and {api}`check_dose_design` refuse two doses that differ by less than 1e-8 of the dose, as `0.1 * 3` and `0.3` do, which a conversion of units can leave as two doses where there is one: round the dose column first.
-- **Descriptive cell types.** {api}`dose_response` lists them with the check's reason and gives them no estimates; curves that describe their dose groups' means are not implemented yet.
+- **Descriptive cell types.** {api}`dose_response` lists them with the check's reason and gives them no tests or estimates; with `models`, they get curves without lack-of-fit p-values ([Describe cell types without replicates](#dose-curve-descriptive)).
 - **Each dose against the vehicle.** The table `each_dose` adjusts each dose's tests within the cell type and dose, without control over the several doses of a gene, which {api}`multiple_contrast_test` on the cell type's fit gives dose by dose and `"dunnett"` for the gene as a whole ([Trends, doses against the vehicle and candidate shapes](#dose-response-contrasts)), or across genes, which {api}`DoseResponseResult.lowest_effective_doses` gives.
 - **Degrees of freedom that are not integers.** The multiple contrast tests take a gene's moderated degrees of freedom as they are, where DoseFinding's `MCTtest` and multcomp's `glht` refuse non-integer ones ([Validation](#validation-dose-contrasts)).
 - **Degrees of freedom under dream.** Under {api}`dream_voom` each contrast has its own degrees of freedom, and the multivariate t takes the smallest of the gene's doses', an approximation. It is conservative for Dunnett's test, whose contrasts are the doses. In a simulated design of 4 donors and 5 dose groups with 5 of its 20 samples left out, the Williams-type test's contrasts had more degrees of freedom than any dose, but the MCP step's had fewer in 19 to 174 of 240 genes, depending on the shape, down to 0.83 times the smallest dose's.
@@ -591,6 +692,12 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **Non-monotone responses.** The Williams-type test assumes the response grows in dose order and misses many bells; the spline and the MCP step detect most of them, the MCP step partly through its beta shape: many bells turn back only at the top doses, where they look monotone.
 - **The spline's weights.** The spline passes through the dose groups' means weighted by their samples, not by each gene's precision, so under voom's weights a dose group of few cells counts as much as its samples, though its mean is less precise.
 - **Bands where the spline cannot follow.** A band holds the spline fitted to the dose groups' true means, which misses a response that jumps or turns more sharply than the spline can follow; read the band beside each dose's estimate ([Curves with a band](#dose-response-curves)).
+- **Curves of `dream_voom` fits.** Not implemented yet: constant variance would leave out the random intercepts, and the weighted and moderated modes need the degrees of freedom of contrasts that dream's fits do not keep.
+- **AICc of the weighted and moderated modes.** Its correction counts the variance as estimated from the cell type's samples, as under constant variance, though the curve takes it from the cell type's fit.
+- **Weighted curves under limma's standard errors.** With `contrast_standard_errors="limma"`, the weighted and moderated modes take limma's approximate covariance of the dose groups' estimates, as its tests do.
+- **Levels far beyond the data.** A Hill or log-logistic curve whose midpoint lies at its bound beyond the top dose, or whose slope is at 18, can fit a change at the top dose with a level far beyond the data: in the hepatocytes of the example, 83 of the 817 Hill fits and 82 of the 817 log-logistic fits have a level beyond 100 log2 units, up to 5.8e12, none of them a gene's best fit. Each has a parameter at a bound, so read the levels, k and e only where `parameters_at_bounds` is empty, and the others by their curve.
+- **The bound on c.** BMDS sets no upper bound on c of a rising exponential 4 or 5 curve. CytePool bounds it at 1,000, which keeps finite the fits that approach a straight line, where c grows as b shrinks, and lies far beyond the plateaus of log2 values: c is the ratio of the plateau's log2 level to the vehicle's, not a fold change, so c = 1,000 is a plateau of 20 log2 CPM over a vehicle at 0.02. In the hepatocytes, 69 of the 817 exponential 4 fits stop at c = 1,000, fits that approach a line.
+- **DRomics' selection.** Its filters, a fit's AICc against the flat model's and checks of the residuals and of extrema beyond the doses, are not applied: each model's fit is reported, and the gate ([Which genes count as responding](#dose-response-gate)) decides which genes respond.
 - **Two replicates per dose.** In series where no gene responds, a cell type of 1,000 genes had a call at 5% FDR in 6.4% to 18.3% of the datasets with 2 replicates per dose, depending on the test and the number of doses, and in 4.5% to 7.5% with 3, the multiple contrast tests included, where Benjamini-Hochberg aims at 5% ([Validation](../validation.md#validation-dose-response-calibration)). The default gate passed a gene in 15.5% and 10.2% of such cell types at 4 and 9 dose groups with 2 replicates, beyond the 6.95% that 2,000 cell types allow at 5%, and in 6.9% and 6.8% with 3; the dose-group gate in 7.5% and 7.3% with 3, beyond it too; the 1.5-fold gate in at most 1.1%. With few residual degrees of freedom, 4 for the vehicle and three doses in duplicate, moderation pulls each gene's variance most of the way to a common prior, which understates the variance of genes that vary more than most between replicates. At 2 replicates per dose, read a few calls in a cell type as possibly due to chance, and run {api}`permutation_check`, whose p-value tests whether the true doses pass more genes than permuted ones ([Could the calls come from noise?](#dose-permutation-check)).
 - **Designs the check cannot permute.** {api}`permutation_check` refuses a design with more than one random effect or a random slope, whose exchangeable units it does not work out, and lists as not checked a cell type in which every sample is a block of its own, as a numeric covariate of the design makes it: drop the covariate, or bin it into a factor. The runs leave out `batch`, which a permuted labelling could confound by chance and which no fit models.
 - **Doses that change the cells.** The runs keep each sample's cells and library size. A dose that changes how many cells a sample holds changes the precision of its profile too, so the samples of different doses are not exchangeable even where no gene responds, and the check's share and p-value are then approximate.
@@ -604,13 +711,14 @@ The random draws come in independent streams, so a cell type's curves and expres
 (dose-response-checks)=
 ## Checks and further reading
 
-Dose axes, dose designs, dose tests and simulated dose series are compared with R, limma, scanpy, mpmath and published data, run as separate programs on the same inputs:
+Dose axes, dose designs, dose tests, curves of named models and simulated dose series are compared with R, limma, scanpy, pybmds, drc, DRomics, scipy, mpmath and published data, run as separate programs on the same inputs:
 
 - {api}`DoseAxis`: positions, knots, columns, designs, F-tests and fitted curves against R 4.4.3's `ns()`, Hmisc's `rcspline.eval`, `model.matrix`, `lm` and `predict`, exact (1e-10); moderated F-tests of `limma_trend` against limma 3.62.1's, exact on `ns()`'s columns and close (1e-6) on Hmisc's, with every column counted, and equal in the two forms ([Validation](#validation-dose-axes)).
 - {api}`check_dose_design`: cells, counts and the samples used per dose group against scanpy 1.12.4 and pandas; the residual degrees of freedom, estimable dose groups and groups confounded with a batch against R 4.4.3's `qr()` and limma 3.62.1's `nonEstimable`; statuses and ETAP's minimums against the same rules coded in R; and GSE208161, where every cluster is descriptive, all identical ([Validation](#validation-dose-design)).
 - {api}`simulate_dose_series` and {api}`DoseTruth`: true curves, EC50s and benchmark doses against mpmath 1.3.0, exact (1e-10); the means and variances of cells and counts within 4 standard errors of their exact values; the same series at 1, 2 and 8 threads ([Validation](#validation-simulate-dose-series)).
 - {api}`dose_response`: the samples, dose groups and genes of each cell type, its F-tests, slopes, each dose against the vehicle, adjusted p-values and curves with their bands against limma 3.62.1 and edgeR 4.4.0 run on R's own knots and spline columns, the exact default against each gene's weighted least squares in R, exact (1e-10); the spline's sums of squares against rms 8.2-1, exact; the dream route against variancePartition 1.36.2, close (1e-6); DRomics, dreamlet and muscat on the same profiles, as information ([Validation](#validation-dose-response-tests)); error rates under the null, power and the coverage of the bands on simulated series ([Validation](#validation-dose-response-calibration)).
-- {api}`plot_dose_response`: the drawn curves, bands and points against limma-trend's spline in R, exact ([Validation](#validation-plotting)).
+- {api}`fit_dose_curves` and the curves of {api}`dose_response`: each fit's maximum against pybmds 25.2, drc 4.0-0's LL.4 and a 200-start scipy 1.18.1 search on the same data, never lower by more than 1e-8 of the residual variance, and against DRomics 2.6.3's `drcfit`, never higher in AICc by more than 0.005, the rounding of its printed criteria, with the parameters where both reach the maximum; the AIC's penalty, and test 4 from the F-test, against pybmds; the F-test of lack of fit against R's `anova` under constant variance and limma 3.62.1 otherwise, with the means, covariance and variances of the weighted and moderated modes, exact; and whether each best fit turns, and the dose group that drives a turn, against the rules coded apart ([Validation](#validation-dose-curves)).
+- {api}`plot_dose_response`: the drawn curves, bands and points against limma-trend's spline in R, and the curves of a model against drc's log-logistic formula evaluated in R, exact ([Validation](#validation-plotting)).
 - {api}`CandidateShapes`, {api}`optimal_contrasts`, the three multiple contrast tests, {api}`stage_wise_adjusted_p_values` and {api}`DoseResponseResult.lowest_effective_doses`: shapes against DoseFinding 1.4-2's `Mods`, `getResp` and `guesst`; contrasts against `optContr` and `MCTtest`; the tests' statistics against limma 3.62.1 and variancePartition 1.36.2 fits in R with multcomp 1.4-32, exact (1e-10), close (1e-6) for dream; their p-values against mvtnorm 1.4-2 and scipy 1.18.1 within simulation error; stage-wise p-values and lowest effective doses against stageR 1.28.0 and a closed test enumerated in R, exact and identical ([Validation](#validation-dose-contrasts)); error rates and power on simulated series ([Validation](#validation-dose-response-calibration)).
 - The gate of {api}`dose_response` and {api}`permutation_check`: the dose-group gate's p-values against limma 3.62.1 from the counts, under voom's weights and with `classifyTestsF`, exact (1e-10) and close (1e-6) with robust priors; each dose's TREAT p-values against `treat` and `topTreat`, exact; the genes passed, and the lowest effective doses under a fold-change gate against stageR 1.28.0, identical; the units, the assignments that R counts and enumerates, and the genes passed in every run and the ties of designs of 90 and 36 assignments, refitted by limma in R, identical; runs under dream against variancePartition 1.36.2, close ([Validation](#validation-dose-gate)); the share of null cell types that each gate passes, and the check's runs against it, on simulated series ([Validation](#validation-dose-response-calibration)).
 
@@ -623,6 +731,7 @@ Further reading:
 - @usepa2024 sets out the agency's standard methods for transcriptomic assessment products, with the design minimums of Sections 3.4.1.3, 3.4.2 and 3.4.5.2.
 - @ema2014 qualified MCP-Mod for phase 2 dose finding, with its minimum numbers of doses; @bretz2005 introduced the combination of multiple comparisons and modelling behind it, and @pinheiro2014 its generalization to estimates and their covariance from any model; @duda2022 applied it gene by gene to expression data.
 - @ich1994 sets out the dose-response information that supports drug registration, including the effect of the lowest recommended dose; @heller2009 and @vandenberge2017 describe the stage-wise testing behind the lowest effective doses.
+- @hurvich1989 derived the AICc for small samples, and @burnham2002 explain Akaike weights; @larras2018 introduced DRomics' models and their selection; @ringblom2014 showed how often benchmark doses of curves without a spare dose group mislead; @efsa2021 weighs the evidence for non-monotone dose responses.
 - @nault2022 benchmarked tests of single-cell dose series simulated from the EPA's benchmark-dose equations; @crowell2020 and @song2024 describe the simulators of muscat and scDesign3; @crump1984 introduced the benchmark dose, and @kappenberg2023 reviews the design and analysis of 5,670 toxicological dose-response analyses.
 - @bourgon2010 showed that a filter before a test keeps the test's control of errors when the filter's statistic and the test's are independent under the null hypothesis, and that some filters in use lose it; @mccarthy2009 introduced TREAT, which tests changes against a fold-change threshold instead of filtering on the estimated changes.
 - @lee2024 measured how often a benchmark-dose workflow gives a point of departure from vehicle-only zebrafish embryos placed in mock dose groups, and how pooling embryos lowers it; @bruns2026 compared five workflows on one dose series, which reported 70 to 3,618 responsive genes at 4 h, and ran them on permuted concentration labels; @phipson2010 showed why permutation p-values should never be zero, and how to compute exact ones when the permutations are drawn at random.
