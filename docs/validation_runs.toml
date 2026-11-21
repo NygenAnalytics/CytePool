@@ -20,7 +20,7 @@
 "dose_contrasts.py" = "2b4511b517cb"
 "dose_design.py" = "968197121549"
 "dose_gate.py" = "819961d5824f"
-"dose_response_calibration.py" = "f83fc84d6f0e"
+"dose_response_calibration.py" = "e4de8160a93e"
 "dose_response_tests.py" = "f92a9775fdc2"
 "dream.py" = "8c67586802c1"
 "empirical_bayes.py" = "97ce313f438f"
