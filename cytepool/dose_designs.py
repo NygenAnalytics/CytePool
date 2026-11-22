@@ -9,7 +9,9 @@ supports, and returns a :class:`~cytepool.DoseDesignReport`
 
 1. Samples. A design sample enters a cell type as it enters the cell type's fit in
    limma_voom: with at least ``min_cells`` cells there, when the cube records cells,
-   some counts, and at least ``min_counts`` counts summed over all features.
+   some counts, and at least ``min_counts`` counts summed over all features. For the
+   pathway scores or activities of one cell type's samples, a design sample enters
+   when the scores hold it with a score that is not missing.
    Filtering can leave a dose group without a sample in some cell types, as
    dreamlet's documentation warns for the time points of an ordered covariate
    (Hoffman et al. 2026).
@@ -80,6 +82,7 @@ References:
 """
 
 import json
+import numbers
 from collections import Counter
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -88,7 +91,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import numpy.typing as npt
 
-from ._analysis_records import cube_samples, only_key
+from ._analysis_records import cube_samples, design_sample_ids, only_key
 from ._columns import missing_mask, text_column
 from ._doses import column_doses, distinct_doses, dose_text, is_axis_column
 from ._group_fits import (
@@ -102,12 +105,16 @@ from ._linear_algebra import column_space
 from ._masked_arrays import reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
 from ._options import checked_choice
+from ._sample_scores import SampleScores, sample_scores
+from .activity import Activities
 from .cube import Cube
 from .design import Design
+from .design._design_matrices import refuse_random_effects
 from .design.checks import DesignReport, _aliasing, _relation, _same_partition
 from .design.formula import RandomEffect
 from .dose_axes import DoseAxis
 from .normalization import library_sizes
+from .pathway_scores import PathwayScores
 from .stats._mixed_model_designs import mixed_design_of_samples, random_intercepts
 from .table import Table
 
@@ -154,18 +161,18 @@ class DoseDesignReport:
     - ``doses``: ``group_id``; ``dose``, in the axis's unit; ``n_samples_used`` and
       ``n_samples_left_out``; ``n_cells_min``, when the cube records cells, and
       ``total_counts_min``, over the samples used (NaN for a group that keeps no
-      sample); ``estimable``, whether the design can compare the treated dose group
-      with the vehicle apart from its other terms (False for the vehicle, the
-      reference, and for groups that keep no sample); and, with a batch,
-      ``confounded_with_batch``, whether the group's difference from the vehicle is
-      also a difference between batches (False for groups that are not estimable).
-      A design that has the batch as a random intercept compares such groups against
-      the variance between batches, so they do not make the cell type descriptive
-      when the vehicle and each of them span two or more batches.
+      sample), neither for scores; ``estimable``, whether the design can compare
+      the treated dose group with the vehicle apart from its other terms (False for
+      the vehicle, the reference, and for groups that keep no sample); and, with a
+      batch, ``confounded_with_batch``, whether the group's difference from the
+      vehicle is also a difference between batches (False for groups that are not
+      estimable). A design that has the batch as a random intercept compares such
+      groups against the variance between batches, so they do not make the cell type
+      descriptive when the vehicle and each of them span two or more batches.
     - ``samples``: ``group_id``; ``sample_id``; ``dose``; ``n_cells``, when the cube
       records cells; ``total_counts``, the counts summed over all features, which
-      ``min_counts`` reads; ``used``; and ``reason``, why the sample was left out,
-      empty when used.
+      ``min_counts`` reads, neither for scores; ``used``; and ``reason``, why the
+      sample was left out, empty when used.
     - ``minimums``: with a rule set, one row per minimum, met or not, and None
       without: ``group_id``, None for a minimum of the design; ``sex``, None for a
       minimum of the doses; ``minimum``, ``"dose_levels"``, ``"dose_spacing"``,
@@ -175,7 +182,8 @@ class DoseDesignReport:
       rule set does when the minimum is unmet.
 
     ``design_check`` is :meth:`Design.check` of the design given, and ``settings``
-    the settings of the check, the dose axis as :meth:`DoseAxis.to_dict` gives it.
+    the settings of the check, the dose axis as :meth:`DoseAxis.to_dict` gives it,
+    with None for ``min_cells`` and ``min_counts`` for scores.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-design-check
     explains how to read the report.
 
@@ -425,7 +433,7 @@ class DoseDesignReport:
 
 
 def check_dose_design(
-    cube: Cube,
+    data: Cube | PathwayScores | Activities,
     design: Design,
     *,
     dose: DoseAxis,
@@ -436,7 +444,8 @@ def check_dose_design(
     min_counts: float = 0,
     groups: str | Sequence[str] | None = None,
 ) -> DoseDesignReport:
-    """Check what a dose series supports in every cell type of a cube.
+    """Check what a dose series supports in every cell type of a cube, or in the
+    scores of one cell type's samples.
 
     For every cell type (group), before anything is fitted: the samples that the
     cell type's fit in :func:`~cytepool.limma_voom` would use, with the same
@@ -447,10 +456,15 @@ def check_dose_design(
     documentation gives the rules). With ``rules="etap_2024"``, the design minimums
     of EPA's Transcriptomic Assessment Products, each met or not (US EPA 2024).
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-design-check
-    explains the check.
+    explains the check. For pathway scores or activities, the samples are those the
+    scores hold with a score that is not missing, and the cell type is the scores'
+    (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-signatures).
 
     Args:
-        cube: A cube with a ``counts`` layer, as :func:`~cytepool.limma_voom` takes.
+        data: A cube with a ``counts`` layer, as :func:`~cytepool.limma_voom` takes;
+            or the :class:`~cytepool.PathwayScores` or :class:`~cytepool.Activities`
+            of the samples of one cell type, as :func:`~cytepool.dose_response`
+            takes them, matched to the design's rows by ``sample_id``.
         design: A :class:`~cytepool.Design` of the terms other than dose, such as
             ``Design(cube.samples, "~ 1")`` or ``"~ sex"``, with random intercepts if
             the analysis has them, whose sample table has a ``sample_id`` column with
@@ -476,15 +490,18 @@ def check_dose_design(
             numbers.
         min_counts: The fewest counts, summed over all features, a sample needs in
             a cell type, as in :func:`~cytepool.limma_voom`.
-        groups: A group id or a list of them; all groups by default.
+        groups: A group id or a list of them; all groups by default. ``groups``,
+            ``min_cells`` and ``min_counts`` stay at their defaults for scores,
+            which chose their samples when they were computed.
 
     Returns:
         The tables of the cell types, their dose groups, samples and, with
         ``rules``, the minimums, with :meth:`Design.check` of the design.
 
     Raises:
-        TypeError: If ``cube`` is not a Cube, ``design`` not a Design, ``dose`` not a
-            DoseAxis, an option has the wrong type, the dose column does not hold
+        TypeError: If ``data`` is not a Cube, PathwayScores or Activities, ``design``
+            not a Design, ``dose`` not a DoseAxis, an option has the wrong type, the
+            dose column does not hold
             real numbers, or ``groups`` or ``min_cells`` is or holds a numpy masked
             array.
         ValueError: If the design has random effects that are not random
@@ -494,13 +511,16 @@ def check_dose_design(
             column is missing or holds a missing value; if a dose is not finite or is
             negative, or two doses differ by less than 1e-8 of the dose; if
             ``rules`` names no rule set, ``rules`` is given without ``sex`` or
-            ``sex`` without ``rules``; or if an option is out of range.
+            ``sex`` without ``rules``; or if an option is out of range. For scores,
+            if the activities are of contrasts, no design sample is among the
+            scores' samples, the design has random effects, or ``groups``,
+            ``min_cells`` or ``min_counts`` is given.
         KeyError: If a group is not in the cube.
     """
     inputs = _checked_inputs(
-        cube, design, dose, batch, rules, sex, min_cells, min_counts, groups
+        data, design, dose, batch, rules, sex, min_cells, min_counts, groups
     )
-    checks = [_check_cell_type(inputs, g) for g in inputs.positions]
+    checks = [_check_cell_type(inputs, k) for k in range(len(inputs.group_ids))]
     minimums = None
     if inputs.sexes is not None:  # sex comes with rules
         used = {check.group_id: check.used for check in checks}
@@ -529,13 +549,17 @@ def check_dose_design(
 
 @dataclass(frozen=True)
 class _Inputs:
-    """The checked inputs, with the design's samples in cube order."""
+    """The checked inputs, with the design's samples in cube order, or in the
+    design's order for scores."""
 
-    cube: Cube
+    cube: Cube | None  # None for scores
+    scores: SampleScores | None  # None for a cube
     design: Design
     axis: DoseAxis
-    positions: list[int]  # the cube's groups to check
-    cube_rows: IntArray  # the cube position of each design sample, increasing
+    group_ids: list[str]  # the cell types to check
+    positions: list[int]  # their positions among the cube's groups; none for scores
+    sample_ids: list[str]  # the id of each design sample, in the order of the check
+    data_rows: IntArray  # its cube position, increasing, or its row of the scores (-1)
     model_rows: IntArray  # the design row of each
     doses: FloatArray  # the dose of each
     levels: FloatArray  # the distinct doses, ascending
@@ -544,12 +568,12 @@ class _Inputs:
     batches: list[str] | None  # the batch of each, as a label
     batch_modelled: bool  # a random intercept groups the samples as the batch does
     sexes: list[str] | None  # the sex of each, as a label
-    min_cells: int
-    min_counts: float
+    min_cells: int | None  # None for scores, which chose their samples
+    min_counts: float | None
 
 
 def _checked_inputs(
-    cube: Any,
+    data: Any,
     design: Any,
     axis: Any,
     batch: Any,
@@ -560,8 +584,12 @@ def _checked_inputs(
     groups: Any,
 ) -> _Inputs:
     reject_masked(groups, "groups")
-    if not isinstance(cube, Cube):
-        raise TypeError(f"cube must be a Cube, got {type(cube).__name__}")
+    scored = isinstance(data, PathwayScores | Activities)
+    if not scored and not isinstance(data, Cube):
+        raise TypeError(
+            "data must be a Cube, or the PathwayScores or Activities of the samples of "
+            f"one cell type, got {type(data).__name__}"
+        )
     if not isinstance(design, Design):
         raise TypeError(
             "design must be a Design of the terms other than dose, such as "
@@ -572,7 +600,9 @@ def _checked_inputs(
             "dose must be a DoseAxis, such as DoseAxis('dose', unit='ug/kg', "
             f"metric='administered'), got {type(axis).__name__}"
         )
-    if design.random:
+    if scored:
+        refuse_random_effects(design, "dose_response on scores")
+    elif design.random:
         random_intercepts(design)
     if rules is not None:
         checked_choice(rules, "rules", RULE_SETS)
@@ -588,9 +618,36 @@ def _checked_inputs(
             "leave sex out"
         )
     _refuse_dose_terms(design, axis)
-    min_cells, min_counts = min_cells_setting(min_cells), min_counts_setting(min_counts)
-    positions = group_positions(cube, groups)
-    cube_rows, model_rows = cube_samples(cube, design)
+    cube, scores = (
+        (None, sample_scores(data, "check_dose_design")) if scored else (data, None)
+    )
+    if scores is not None:
+        _refuse_cube_options(groups, min_cells, min_counts)
+        cells, counts, positions = None, None, []
+        group_ids = [scores.group]
+        sample_ids = design_sample_ids(
+            design,
+            no_ids="the design's sample table has no 'sample_id' column, so its rows "
+            "cannot be matched to the samples of the scores; build the Design from the "
+            "cube's samples",
+            text_ids="the scores' profiles do",
+        )
+        row_of = {sample: row for row, sample in enumerate(scores.sample_ids)}
+        data_rows = np.array([row_of.get(s, -1) for s in sample_ids], dtype=np.intp)
+        if not np.any(data_rows >= 0):
+            raise ValueError(
+                "none of the design's samples is among the samples of the scores: the "
+                f"scores' samples are such as {quoted(scores.sample_ids[:3])}, the "
+                f"design's such as {quoted(sample_ids[:3])}"
+            )
+        model_rows = np.arange(len(sample_ids), dtype=np.intp)
+    else:
+        assert cube is not None  # data is a cube
+        cells, counts = min_cells_setting(min_cells), min_counts_setting(min_counts)
+        positions = group_positions(cube, groups)
+        group_ids = [str(cube.groups["group_id"][g]) for g in positions]
+        data_rows, model_rows = cube_samples(cube, design)
+        sample_ids = cube.samples["sample_id"][data_rows].tolist()
     doses = column_doses(design.samples, axis.column)[model_rows]
     levels = distinct_doses(doses, axis.unit)
     batches = None
@@ -607,10 +664,13 @@ def _checked_inputs(
     )
     return _Inputs(
         cube=cube,
+        scores=scores,
         design=design,
         axis=axis,
+        group_ids=group_ids,
         positions=positions,
-        cube_rows=cube_rows,
+        sample_ids=sample_ids,
+        data_rows=data_rows,
         model_rows=model_rows,
         doses=doses,
         levels=levels,
@@ -619,9 +679,33 @@ def _checked_inputs(
         batches=batches,
         batch_modelled=batch_modelled,
         sexes=sexes,
-        min_cells=min_cells,
-        min_counts=min_counts,
+        min_cells=cells,
+        min_counts=counts,
     )
+
+
+def _refuse_cube_options(groups: Any, min_cells: Any, min_counts: Any) -> None:
+    """Refuse the options that choose a cube's cell types and samples, given with
+    scores, which are of one cell type and chose their samples when they were
+    computed."""
+    if groups is not None:
+        raise ValueError(
+            "groups chooses cell types of a cube, and scores are of the one cell type "
+            "they were computed in; leave groups out"
+        )
+    # The defaults of check_dose_design and dose_response.
+    for name, value, default in (
+        ("min_cells", min_cells, 10),
+        ("min_counts", min_counts, 0),
+    ):
+        reject_masked(value, name)
+        given = isinstance(value, numbers.Real) and not isinstance(value, bool)
+        if not (given and value == default):
+            raise ValueError(
+                f"{name} chooses the samples of a cube's cell type, and the scores "
+                "chose theirs when they were computed, as gsva(cube, ..., "
+                f"min_cells=...) does; leave {name} out"
+            )
 
 
 def _refuse_dose_terms(design: Design, axis: DoseAxis) -> None:
@@ -699,24 +783,79 @@ class _CellType:
     """What one cell type keeps and supports."""
 
     group_id: str
-    used: np.ndarray  # bool, per design sample in cube order
+    used: np.ndarray  # bool, per design sample in the order of the check
     reasons: list[str]  # why each design sample was left out; "" when used
-    cells: np.ndarray | None  # cells of each design sample, when recorded
-    totals: FloatArray  # counts of each design sample summed over all features
+    cells: np.ndarray | None  # cells of each design sample, when the cube records them
+    totals: FloatArray | None  # each design sample's counts over all features; a cube's
     model: _Model
     status: str
     reason: str
 
 
-def _check_cell_type(inputs: _Inputs, g: int) -> _CellType:
-    counts, cells, reasons, used = group_samples(
-        inputs.cube, inputs.cube_rows, g, inputs.min_cells, inputs.min_counts
+class _Samples(NamedTuple):
+    """The design samples a cell type uses, why the others are left out, their cells
+    and total counts when the data are a cube, and why none is used when none is."""
+
+    used: np.ndarray
+    reasons: list[str]
+    cells: np.ndarray | None
+    totals: FloatArray | None
+    none_used: str
+
+
+def _check_cell_type(inputs: _Inputs, k: int) -> _CellType:
+    found = _samples_of(inputs, k)
+    model = _dose_group_model(inputs, found.used)
+    status, reason = _status(inputs, model, found.none_used)
+    return _CellType(
+        inputs.group_ids[k],
+        found.used,
+        found.reasons,
+        found.cells,
+        found.totals,
+        model,
+        status,
+        reason,
     )
-    totals = library_sizes(counts) if counts.size else np.zeros(used.size)
-    model = _dose_group_model(inputs, used)
-    status, reason = _status(inputs, model)
-    group_id = str(inputs.cube.groups["group_id"][g])
-    return _CellType(group_id, used, reasons, cells, totals, model, status, reason)
+
+
+def _samples_of(inputs: _Inputs, k: int) -> _Samples:
+    """The samples of the k-th cell type checked: for a cube, those its fit in
+    limma_voom would use; for scores, those the scores hold with a score that is not
+    missing."""
+    scores = inputs.scores
+    if scores is None:
+        assert inputs.cube is not None and inputs.min_cells is not None
+        assert inputs.min_counts is not None
+        counts, cells, reasons, used = group_samples(
+            inputs.cube,
+            inputs.data_rows,
+            inputs.positions[k],
+            inputs.min_cells,
+            inputs.min_counts,
+        )
+        totals = library_sizes(counts) if counts.size else np.zeros(used.size)
+        none_used = no_samples_reason(
+            used.size, inputs.min_cells, inputs.min_counts, cells is not None
+        )
+        return _Samples(used, reasons, cells, totals, none_used)
+    rows = inputs.data_rows
+    held = rows >= 0
+    used = np.zeros(rows.size, dtype=bool)
+    used[held] = ~np.isnan(scores.values[rows[held]]).all(axis=1)
+    reasons = [
+        ""
+        if seen
+        else "every score of this sample is missing"
+        if kept
+        else "the scores do not hold this sample"
+        for kept, seen in zip(held.tolist(), used.tolist(), strict=True)
+    ]
+    none_used = (
+        f"every one of the {rows.size} samples was left out: every score of each "
+        "sample the scores hold is missing"
+    )
+    return _Samples(used, reasons, None, None, none_used)
 
 
 def _dose_group_model(inputs: _Inputs, used: np.ndarray) -> _Model:
@@ -789,17 +928,14 @@ def _dose_group_model(inputs: _Inputs, used: np.ndarray) -> _Model:
     )
 
 
-def _status(inputs: _Inputs, model: _Model) -> tuple[str, str]:
+def _status(inputs: _Inputs, model: _Model, none_used: str) -> tuple[str, str]:
     """The status of a cell type and the reason, from the facts of its dose-group
-    model, by the rules of the module documentation in order."""
+    model, by the rules of the module documentation in order; ``none_used`` is the
+    reason when no sample is used."""
     levels, level_of = inputs.levels, inputs.level_of
     n_used = int(model.kept.sum())
     if not n_used:
-        recorded = inputs.cube.n_cells is not None
-        reason = no_samples_reason(
-            level_of.size, inputs.min_cells, inputs.min_counts, recorded
-        )
-        return REFUSED, reason
+        return REFUSED, none_used
     if levels[0] != 0.0:
         return REFUSED, (
             "the design has no sample of dose 0, the vehicle, which every dose "
@@ -1025,13 +1161,14 @@ def _dose_table(inputs: _Inputs, checks: list[_CellType]) -> Table:
             [np.bincount(level_of[~check.used], minlength=k) for check in checks]
         ).astype(np.int64),
     }
-    if inputs.cube.n_cells is not None:
+    if checks[0].cells is not None:
         columns["n_cells_min"] = np.concatenate(
             [_group_min(check.cells, check, level_of) for check in checks]
         )
-    columns["total_counts_min"] = np.concatenate(
-        [_group_min(check.totals, check, level_of) for check in checks]
-    )
+    if checks[0].totals is not None:
+        columns["total_counts_min"] = np.concatenate(
+            [_group_min(check.totals, check, level_of) for check in checks]
+        )
     columns["estimable"] = np.concatenate([check.model.estimable for check in checks])
     if inputs.batches is not None:
         columns["confounded_with_batch"] = np.concatenate(
@@ -1051,17 +1188,19 @@ def _group_min(values: Any, check: _CellType, level_of: IntArray) -> FloatArray:
 
 
 def _sample_table(inputs: _Inputs, checks: list[_CellType]) -> Table:
-    ids = inputs.cube.samples["sample_id"][inputs.cube_rows].tolist()
+    ids = inputs.sample_ids
     columns: dict[str, Any] = {
         "group_id": text_column([check.group_id for check in checks for _ in ids]),
         "sample_id": text_column(ids * len(checks)),
         "dose": np.tile(inputs.doses, len(checks)),
     }
-    if inputs.cube.n_cells is not None:
-        cells = [check.cells for check in checks if check.cells is not None]
+    cells = [check.cells for check in checks if check.cells is not None]
+    if cells:
         columns["n_cells"] = np.concatenate(cells)
+    totals = [check.totals for check in checks if check.totals is not None]
+    if totals:
+        columns["total_counts"] = np.concatenate(totals)
     columns |= {
-        "total_counts": np.concatenate([check.totals for check in checks]),
         "used": np.concatenate([check.used for check in checks]),
         "reason": text_column([reason for check in checks for reason in check.reasons]),
     }

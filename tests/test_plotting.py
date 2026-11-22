@@ -1633,3 +1633,46 @@ def test_plot_dose_response_draws_cell_types_that_support_only_description() -> 
     assert len(artists(ax, "model_curve")) == 1
     with pytest.raises(KeyError, match="was not tested"):
         plotting.plot_dose_response(result, genes=gene, ax=axes())
+
+
+def test_plot_dose_response_draws_scores() -> None:
+    # Scores draw what curve() and the table of each dose give, by the names of their
+    # gene sets, with the change in score on the y axis.
+    from cytepool import gsva
+
+    cube, truth = simulate_dose_series(
+        [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
+        replicates=3,
+        cell_types=["pDC"],
+        n_genes=300,
+        responsive=0.4,
+        rng=3,
+    )
+    genes = cube.features["feature_id"].tolist()
+    scores = gsva(cube, {"first": genes[:30], "second": genes[30:80]}, group="pDC")
+    axis = DoseAxis("dose", unit="ug/kg", metric="administered")
+    result = dose_response(scores, Design(cube.samples, "~ 1"), dose=axis, models="ll4")
+    ax = plotting.plot_dose_response(result, genes=["second", "first"], ax=axes())
+    curves, bands, dots = (artists(ax, gid) for gid in ("curve", "band", "doses"))
+    assert len(curves) == len(bands) == len(dots) == 2
+    curve = result.curve(genes=["second", "first"])
+    each = result.table(name="each_dose")
+    positions = axis.positions(np.array([0.01, 0.1, 1.0, 10.0, 30.0]))
+    for i, name in enumerate(["second", "first"]):
+        rows = curve["gene_set"] == name
+        assert scaled(curves[i].get_ydata(), curve["estimate"][rows]) <= EXACT
+        mine = each.filter(each["gene_set"] == name)
+        expected = np.column_stack(
+            [np.r_[positions[0] - 1.0, positions], np.r_[0.0, mine["estimate"]]]
+        )
+        assert scaled(dots[i].get_offsets(), expected) <= EXACT
+    assert ax.get_ylabel() == "Change in score from the vehicle"
+    assert [t.get_text() for t in ax.get_legend().get_texts()] == ["second", "first"]
+    model = plotting.plot_dose_response(result, genes="first", model="ll4", ax=axes())
+    drawn = result.curve(genes="first", model="ll4")
+    assert (
+        scaled(artists(model, "model_curve")[0].get_ydata(), drawn["estimate"]) <= EXACT
+    )
+    assert model.get_ylabel() == "Change in score from the vehicle"
+    with pytest.raises(KeyError, match="gene set 'third' was not tested"):
+        plotting.plot_dose_response(result, genes="third", ax=axes())

@@ -227,6 +227,29 @@ def matched_samples(
         TypeError, ValueError: If the design's samples cannot be matched to those of
             the data by ``sample_id``.
     """
+    values = design_sample_ids(design, no_ids=no_ids, text_ids=text_ids)
+    index = {value: i for i, value in enumerate(cube.samples["sample_id"].tolist())}
+    unknown = [value for value in values if value not in index]
+    if unknown:
+        raise ValueError(
+            f"{len(unknown)} of the design's {len(values)} samples are not samples of "
+            f"{data}: {quoted(unknown)}; the design's 'sample_id' must hold "
+            f"{data_ids}, such as {quoted(list(index)[:3])}"
+        )
+    positions = np.array([index[value] for value in values], dtype=np.intp)
+    order = np.argsort(positions, kind="stable")
+    return positions[order], order
+
+
+def design_sample_ids(design: Design, *, no_ids: str, text_ids: str) -> list[str]:
+    """The design's sample ids, in its order: text, none missing and none repeated.
+
+    ``no_ids`` is the whole message for a sample table without a 'sample_id' column,
+    and ``text_ids`` ends the one for ids that are not text ("as ...").
+
+    Raises:
+        TypeError, ValueError: If the ids are missing, not text or repeated.
+    """
     table = design.samples
     if "sample_id" not in table:
         raise ValueError(no_ids)
@@ -236,7 +259,7 @@ def matched_samples(
             f"the design's 'sample_id' column must hold text ids, as {text_ids}, got "
             f"dtype {ids.dtype}"
         )
-    values = ids.tolist()
+    values: list[str] = ids.tolist()
     blank = [row for row, value in enumerate(values) if value is None]
     if blank:
         raise ValueError(
@@ -249,17 +272,7 @@ def matched_samples(
             f"the design's sample table repeats the sample id(s) {quoted(repeated)}; "
             "each sample must appear once"
         )
-    index = {value: i for i, value in enumerate(cube.samples["sample_id"].tolist())}
-    unknown = [value for value in values if value not in index]
-    if unknown:
-        raise ValueError(
-            f"{len(unknown)} of the design's {len(values)} samples are not samples of "
-            f"{data}: {quoted(unknown)}; the design's 'sample_id' must hold "
-            f"{data_ids}, such as {quoted(list(index)[:3])}"
-        )
-    positions = np.array([index[value] for value in values], dtype=np.intp)
-    order = np.argsort(positions, kind="stable")
-    return positions[order], order
+    return values
 
 
 def cube_samples(cube: Cube, design: Design) -> tuple[np.ndarray, np.ndarray]:

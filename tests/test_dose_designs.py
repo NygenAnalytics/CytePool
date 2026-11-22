@@ -1061,7 +1061,7 @@ def test_arguments_are_refused_with_a_fix() -> None:
     samples = samples_of(DOSE9, lane=list("aaabbccdd"), sex=["M"] * 9)
     cube = cube_of(samples)
     design = Design(samples, "~ 1")
-    with pytest.raises(TypeError, match="cube must be a Cube"):
+    with pytest.raises(TypeError, match="data must be a Cube"):
         check_dose_design(samples, design, dose=AXIS)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match=r"design must be a Design .* Design\(cube"):
         check_dose_design(cube, "~ 1", dose=AXIS)  # type: ignore[arg-type]
@@ -1382,3 +1382,143 @@ def tcdd_like_cube() -> Cube:
         features={"feature_id": [f"g{i}" for i in range(40)]},
         n_cells=cells,
     )
+
+
+# The check of scores.
+
+
+def scores_of_series() -> tuple[Cube, Design, Any]:
+    """A simulated series of two cell types, the second of few cells, and its
+    design."""
+    from cytepool import simulate_dose_series
+
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 1.0, 10.0],
+        replicates=3,
+        cell_types=["many", "few"],
+        cells=[60.0, 12.0],
+        n_genes=200,
+        rng=4,
+    )
+    return cube, Design(cube.samples, "~ 1"), cube.features["feature_id"].tolist()
+
+
+@pytest.mark.parametrize("min_cells", [10, 12])
+def test_the_check_of_scores_is_the_check_of_their_cube(min_cells: int) -> None:
+    from cytepool import gsva
+
+    cube, design, genes = scores_of_series()
+    sets = {"a": genes[:40], "b": genes[40:90]}
+    for group in ("many", "few"):
+        scores = gsva(cube, sets, group=group, min_cells=min_cells)
+        ours = check_dose_design(scores, design, dose=AXIS)
+        # The cube's check with the samples gsva keeps: its cells, and some counts.
+        theirs = check_dose_design(
+            cube, design, dose=AXIS, groups=group, min_cells=min_cells, min_counts=0
+        )
+        for column in theirs.summary.columns:
+            assert ours.summary[column].tolist() == theirs.summary[column].tolist()
+        cube_only = ("n_cells_min", "total_counts_min")
+        assert ours.doses.columns == tuple(
+            c for c in theirs.doses.columns if c not in cube_only
+        )
+        for column in ours.doses.columns:
+            assert ours.doses[column].tolist() == theirs.doses[column].tolist()
+        used = ours.samples["used"].tolist()
+        assert used == theirs.samples["used"].tolist()
+        assert ours.samples.columns == (
+            "group_id",
+            "sample_id",
+            "dose",
+            "used",
+            "reason",
+        )
+        reasons = ours.samples["reason"].tolist()
+        assert all(
+            (reason == "the scores do not hold this sample") != kept
+            for reason, kept in zip(reasons, used, strict=True)
+        )
+        assert ours.settings["min_cells"] is None
+        assert ours.settings["min_counts"] is None
+
+
+def test_the_check_of_scores_leaves_out_samples_without_a_score() -> None:
+    from types import MappingProxyType
+
+    from cytepool import GeneSets, PathwayScores
+
+    doses = [0, 0, 0, 1, 1, 1, 10, 10, 10]
+    samples = samples_of(doses)
+    values = np.arange(18.0).reshape(9, 2)
+    values[4] = np.nan  # every score of S5 missing
+    values[6, 0] = np.nan  # one score of S7 missing: the sample is used
+    ids = samples["sample_id"]
+    # The scores hold every sample but S9.
+    scores = PathwayScores(
+        values[:8],
+        Table({"profile_id": ids[:8], "sample_id": ids[:8], "dose": doses[:8]}),
+        GeneSets({"a": ["x"], "b": ["y"]}),
+        "gsva",
+        MappingProxyType({"group": "pDC"}),
+    )
+    report = check_dose_design(scores, Design(samples, "~ 1"), dose=AXIS)
+    assert report.summary["group_id"].tolist() == ["pDC"]
+    assert report.samples["used"].tolist() == [True] * 4 + [False] + [True] * 3 + [
+        False
+    ]
+    assert (
+        report.samples["reason"].tolist()[4] == "every score of this sample is missing"
+    )
+    assert report.samples["reason"].tolist()[8] == "the scores do not hold this sample"
+    assert dose_column(report, "n_samples_used") == [3, 2, 2]
+    # Scores of an array name no cell type: their group is "bulk".
+    plain = PathwayScores(
+        values[:8],
+        scores.profiles,
+        scores.gene_sets,
+        "gsva",
+        MappingProxyType({}),
+    )
+    assert check_dose_design(plain, Design(samples, "~ 1"), dose=AXIS).summary[
+        "group_id"
+    ].tolist() == ["bulk"]
+    # Every score of every sample missing: nothing to check.
+    empty = PathwayScores(
+        np.full((8, 2), np.nan),
+        scores.profiles,
+        scores.gene_sets,
+        "gsva",
+        MappingProxyType({}),
+    )
+    refused = check_dose_design(empty, Design(samples, "~ 1"), dose=AXIS)
+    assert refused.status() == "refused"
+    assert (
+        "every score of each sample the scores hold is missing"
+        in refused.summary["reason"][0]
+    )
+
+
+def test_the_check_of_scores_refuses_what_applies_to_a_cube() -> None:
+    from cytepool import gsva
+
+    cube, design, genes = scores_of_series()
+    scores = gsva(cube, {"a": genes[:40]}, group="many")
+    for name, value in (("min_cells", 3), ("min_counts", 1)):
+        with pytest.raises(ValueError, match=f"{name} chooses the samples"):
+            check_dose_design(scores, design, dose=AXIS, **{name: value})
+    with pytest.raises(ValueError, match="groups chooses cell types"):
+        check_dose_design(scores, design, dose=AXIS, groups="many")
+    with pytest.raises(ValueError, match="dose_response on scores fits fixed effects"):
+        check_dose_design(
+            scores,
+            Design(cube.samples, "~ 1", random="(1 | donor)"),
+            dose=AXIS,
+        )
+    elsewhere = Design(samples_of([0, 1]), "~ 1")
+    with pytest.raises(ValueError, match="none of the design's samples is among"):
+        check_dose_design(scores, elsewhere, dose=AXIS)
+    twice = Design({"sample_id": ["d0_r1", "d0_r1"], "dose": [0.0, 1.0]}, "~ 1")
+    with pytest.raises(ValueError, match="repeats the sample id"):
+        check_dose_design(scores, twice, dose=AXIS)
+    with pytest.raises(ValueError, match="no 'sample_id' column"):
+        check_dose_design(scores, Design({"dose": [0.0, 1.0]}, "~ 1"), dose=AXIS)

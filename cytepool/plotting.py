@@ -2281,7 +2281,9 @@ def plot_dose_response(
     axis, labelled in doses, a label left out where it would overlap the one before
     it; with the vehicle in a group of its own, the vehicle sits one median step of
     the doses below the lowest dose, beyond a break in the axis. Up to 8 genes take
-    the module's hues in order, and beyond 3, each also a marker of its own.
+    the module's hues in order, and beyond 3, each also a marker of its own. A result
+    of pathway scores or activities draws their gene sets or sources, as the change
+    in the score from the vehicle.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-curves
     explains the curve and its band, and
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-model-curves
@@ -2294,11 +2296,12 @@ def plot_dose_response(
 
     Args:
         result: The result of ``dose_response`` by ``limma_voom`` or
-            ``limma_trend``.
+            ``limma_trend``, or of scores.
         group: A cell type that was tested, or with ``model`` one with curves; None
             when the result checked one.
         genes: A feature id or symbol, or a list of up to 8 of them, among the genes
-            tested in the cell type, or fitted with ``model``.
+            tested in the cell type, or fitted with ``model``; for scores, gene sets
+            or sources by name.
         model: None for the spline; a model of the cell type's curves, such as
             ``"hill"``, or ``"best"`` for each gene's best model.
         ax: The Axes to draw into, or None for a new figure.
@@ -2347,14 +2350,16 @@ def plot_dose_response(
         each = result.table(group, "each_dose")
         curve = result.curve(group, names)
         treated = np.unique(np.asarray(each["dose"], dtype=np.float64))
-        labels = each["symbol"] if "symbol" in each else each["feature_id"]
-        label_of = dict(zip(each["feature_id"].tolist(), labels.tolist(), strict=True))
+        # The column that names the genes, or the gene sets or sources of scores.
+        column = each.columns[0]
+        labels = each["symbol"] if "symbol" in each else each[column]
+        label_of = dict(zip(each[column].tolist(), labels.tolist(), strict=True))
 
         def points(feature: str) -> tuple[np.ndarray, np.ndarray]:
-            mine = each["feature_id"] == feature
+            mine = each[column] == feature
             return (
                 np.asarray(each["dose"][mine], dtype=np.float64),
-                np.asarray(each["log2_fold_change"][mine], dtype=np.float64),
+                np.asarray(each[change][mine], dtype=np.float64),
             )
 
     else:
@@ -2363,12 +2368,13 @@ def plot_dose_response(
         table = result.table(group, "curves")
         # The curves table holds each gene's models together, genes in the order of
         # the fits' rows.
-        ids = table["feature_id"][:: len(fits.models)]
-        labels = (table["symbol"] if "symbol" in table else table["feature_id"])[
+        column = table.columns[0]
+        ids = table[column][:: len(fits.models)]
+        labels = (table["symbol"] if "symbol" in table else table[column])[
             :: len(fits.models)
         ]
         # Each gene's curve may be another model: the legend names it.
-        drawn = dict(zip(curve["feature_id"].tolist(), curve["model"].tolist()))
+        drawn = dict(zip(curve[column].tolist(), curve["model"].tolist()))
         label_of = {
             feature: f"{label} ({drawn[feature]})"
             for feature, label in zip(ids.tolist(), labels.tolist(), strict=True)
@@ -2384,6 +2390,8 @@ def plot_dose_response(
     axis = result.dose
     own_group = axis.vehicle == "own_group"
     n = len(curve) // len(names)
+    # A change from the vehicle: a gene's log2 fold change, or a score's estimate.
+    change = "log2_fold_change" if "log2_fold_change" in curve else "estimate"
     x = axis.positions(np.asarray(curve["dose"][:n], dtype=np.float64))
     positions = axis.positions(treated)
     if own_group:
@@ -2391,7 +2399,7 @@ def plot_dose_response(
         vehicle = positions[0] - (float(np.median(steps)) if steps.size else 1.0)
     else:
         vehicle = float(axis.positions(np.zeros(1))[0])
-    features = curve["feature_id"].tolist()[::n]
+    features = curve[curve.columns[0]].tolist()[::n]
     shapes = _shapes(names, "genes") if len(names) > _SCATTER_HUES else {}
     ax = _axes(ax, (6.5, 4.0))
     ax.axhline(0.0, color=_GREY, linewidth=0.8, zorder=1)
@@ -2413,7 +2421,7 @@ def plot_dose_response(
             )
         ax.plot(
             x,
-            curve["log2_fold_change"][rows],
+            curve[change][rows],
             color=color,
             linewidth=1.6,
             gid="curve" if model is None else "model_curve",
@@ -2454,7 +2462,11 @@ def plot_dose_response(
         )
     scale = "" if axis.scale == "linear" else ", log10 axis"
     ax.set_xlabel(f"Dose ({axis.unit}{scale})")
-    ax.set_ylabel("log2 fold change from the vehicle")
+    ax.set_ylabel(
+        "log2 fold change from the vehicle"
+        if change == "log2_fold_change"
+        else "Change in score from the vehicle"
+    )
     _legend(ax, handles, inside=True)
     return ax
 

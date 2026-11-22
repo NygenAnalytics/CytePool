@@ -1730,7 +1730,7 @@ def test_dunnett_t_is_each_dose_s_t() -> None:
             assert_allclose(dunnett["df"], df, rtol=1e-12)
         fit = result.fit("cell_type_1")
         estimates = _dose_group_estimates(
-            fit, [f"dose_{d:.12g}" for d in (0.1, 1.0, 10.0)]
+            fit.moderated, [f"dose_{d:.12g}" for d in (0.1, 1.0, 10.0)]
         )
         covariance = estimates.covariance * estimates.posterior_variance[:, None, None]
         wald = (
@@ -1908,7 +1908,7 @@ def test_contrast_tests_do_not_depend_on_threads_order_or_other_cell_types() -> 
     fit = base.fit("full")
     entry = next(e for e in base.provenance["groups"] if e["group_id"] == "full")
     estimates = _dose_group_estimates(
-        fit, [f"dose_{d:.12g}" for d in entry["doses"][1:]]
+        fit.moderated, [f"dose_{d:.12g}" for d in entry["doses"][1:]]
     )
     names, weights = contrast_weights(base, "full", "williams")
     direct = multiple_contrast_test(
@@ -3087,7 +3087,7 @@ def test_weighted_curves_use_the_fits_means_and_variances() -> None:
             # The covariance of the means is that of (m_0, theta) mapped by M =
             # [[1, 0], [1, I]], M V M': the vehicle's variance, and each other mean's
             # the vehicle's plus the dose's plus twice their covariance.
-            estimates = _dose_group_estimates(fit, ["vehicle_mean", *doses])
+            estimates = _dose_group_estimates(fit.moderated, ["vehicle_mean", *doses])
             k = fits.doses.size
             to_means = np.eye(k)
             to_means[:, 0] = 1.0
@@ -3274,6 +3274,24 @@ def test_descriptive_cell_types_get_curves_without_p_values() -> None:
             result.curve(group)
         with pytest.raises(KeyError, match="was not tested"):
             result.table(group, "spline")
+
+
+def test_cell_types_without_a_replicate_get_curves() -> None:
+    # One sample per dose group, the vehicle's too: no residual degrees of freedom
+    # and no variance to scale a gene's covariance, yet every gene gets its curves,
+    # since its values are complete; scores with a missing value are the ones left
+    # out (tests/test_dose_response_signatures.py).
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0], replicates=1, cell_types=1, n_genes=60, rng=8
+    )
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, models="ll4")
+    group = result.groups[0]
+    record = result.provenance["groups"][0]["curves"]
+    assert record["reason"] == "" and record["left_out"] == {}
+    fits = result.curve_fits(group)
+    assert fits.means.shape[0] == record["n_genes"] > 0
+    assert np.isnan(fits.lack_of_fit_p_value).all()
+    assert np.isfinite(fits.log_likelihood[fits.not_fitted_reason == ""]).all()
 
 
 def test_descriptive_values_are_those_a_fit_computes() -> None:
@@ -3775,9 +3793,10 @@ def test_the_result_reads_back_with_curves() -> None:
         "models_not_fitted",
         "turns_unchecked",
         "n_genes",
+        "left_out",
         "reason",
     }
-    assert entry["turns_unchecked"] == ""
+    assert entry["turns_unchecked"] == "" and entry["left_out"] == {}
     # The cell type that loses its top dose keeps 5 dose groups, too few to check turns.
     fewer = record["groups"][1]["curves"]
     assert len(result.curve_fits(result.groups[1]).doses) == 5
@@ -3809,9 +3828,8 @@ def test_the_curves_example_runs() -> None:
     text = CHAPTER.read_text()
     tests = text.split("(dose-response-tests)=")[1].split("\n(")[0]
     curves = text.split("(dose-response-curves)=")[1].split("\n(")[0]
-    named = text.split("(dose-response-model-curves)=")[1].split(
-        "(simulated-dose-series)="
-    )[0]
+    # The section up to the next of the chapter's sections, past its own labels.
+    named = text.split("(dose-response-model-curves)=")[1].split("\n## ")[1]
     namespace: dict[str, Any] = {"cp": cytepool}
     for block in [
         *re.findall(r"```python\n(.*?)```", tests, re.S),
