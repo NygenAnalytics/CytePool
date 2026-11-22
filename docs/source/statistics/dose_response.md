@@ -1,5 +1,5 @@
 ---
-description: Where doses sit on a dose axis, what a dose series supports, which genes respond to dose in each cell type and how, with curves of named models, a gate checked against noise, from which dose, and simulated dose series.
+description: Dose axes, what a dose series supports, which genes respond to dose in each cell type and how, a gate checked against noise, from which dose, curves of named models, and simulated dose series.
 ---
 
 # Dose response
