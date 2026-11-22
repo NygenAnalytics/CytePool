@@ -82,6 +82,7 @@ dose_curves
 benchmark_responses
 potency
 permutation_checks
+trend_tests
 simulated_dose_series
 ```
 

@@ -339,6 +339,26 @@ guessed = cp.dose_response(
 
 With the vehicle and K - 1 treated doses, the contrasts of the dose groups point in at most K - 1 directions, so more shapes than treated doses cannot all differ: five shapes on two treated doses span two dimensions, and the printout says so. The MCP step still tests every shape, at the cost of the multiplicity of shapes that duplicate one another; at three dose groups, EMA's minimum for the MCP step [@ema2014], Dunnett's test asks nearly the same. A shape that does not change at a cell type's doses, such as a narrow peak at a dose that the cell type does not keep, is left out there, and the record says why. MCP-Mod applied gene by gene to expression data at eight concentrations found that the sigmoid Emax model fitted the less noisy genes best and simpler models the noisy ones [@duda2022]; here the shapes give only contrasts, and fitting them, MCP-Mod's modelling step, is not implemented yet.
 
+(williams-trend-test)=
+## Williams' trend test as BMDExpress runs it
+
+Which genes would NTP's and ETAP's workflows fit curves to? Both keep a gene whose mean rises or falls steadily with dose, by the two-sided Williams trend test of BMDExpress 2 with a fold change [@ntp2018; @usepa2024; @phillips2019]. {api}`williams_trend_test` computes that test for every gene of a samples x genes matrix of log-scale values, such as log2(CPM + 1), and returns a {api}`WilliamsTrendTest`:
+
+```python
+from cytepool.stats.trend_tests import williams_trend_test
+
+test = williams_trend_test(doses, log2_values, rng=1)
+test.table(feature_ids=genes)  # feature_id, direction, statistic, p_value
+```
+
+{api}`WilliamsTrendTest.table` gives one row per gene: the `direction` the data take, `up` or `down`, the `statistic` and its `p_value`; the result also holds each gene's `isotonic_means`, the fitted means of the dose groups in that direction.
+
+Isotonic regression fits the dose groups' means, the vehicle included, once rising and once falling: each fit is the closest sequence of means in that order, weighted by the groups' sizes, found by pooling adjacent groups that break the order [@bartholomew1959]. A side's statistic is its fitted top dose minus its fitted vehicle, over the SD pooled within the dose groups times sqrt(1/n_top + 1/n_0), and the gene's `direction` is the side with the larger statistic. Williams [-@williams1971] fitted the treated groups alone and compared them with the vehicle's observed mean; BMDExpress 2.30.520 fits the vehicle with them, as enumerating every relabelling of small designs showed: of 18 forms of the test, only this one gave BMDExpress's p-values.
+
+The p-value comes from random relabellings of the samples' doses, shared by all genes. Of the relabellings whose larger statistic points the gene's way, it is the share that reach the gene's statistic, counting the observed labelling among them: (b + 1) / (n + 1) [@phipson2010]. About half the relabellings point each way, so 10,000 permutations give a smallest p-value near 2 / 10,000, and a p-value near 0.05 a Monte Carlo SD of about 0.003. The result records its seed, and passing the seed back as `rng` gives the same p-values; BMDExpress fixes a seed of its own that its options do not expose, so the two programs agree within Monte Carlo error rather than to the digit ([Validation](#validation-toxicology-rule-sets)).
+
+The Williams-type test of `dose_response(tests=["williams"])` asks a related question another way: it contrasts the vehicle with the pooled top doses in the moderated linear model of each cell type, and refers the largest contrast to the multivariate t distribution, so it uses moderated variances and voom's weights and needs no permutations ([Trends, doses against the vehicle and candidate shapes](#dose-response-contrasts)). Williams' trend test as BMDExpress runs it uses unmoderated values, and both documents apply it to every gene without adjusting for their number: with BMDExpress's Williams test and a 1.5-fold change, vehicle-only zebrafish embryos assigned to 4 mock concentrations of 6 samples each gave a transcriptomic point of departure in 93% of runs [@lee2024]. The ANOVA pre-modelling test that the rule sets run first adjusts across genes, so that a data set without responsive genes passes it at most 5% of the time.
+
 (dose-response-gate)=
 ## Which genes count as responding
 
