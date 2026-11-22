@@ -8,7 +8,7 @@ vehicle and 4 decades x 3; ``four``, the vehicle and 3 decades x 2; ``descriptiv
 the vehicle x 3 and 5 doses x 1, a cell type that supports only description; and
 ``sex``, ``"~ sex"`` with 2 females and 2 males at each of 5 doses.
 
-Under constant variance, each gene's values in the cell type's fit by limma_voom (36
+Under constant variance, each gene's values in the cell type's fit by limma_voom (28
 genes of the first three series, a spread of the true shapes and flat genes) are fitted
 by CytePool and, as separate programs seeing only the doses and values, by pybmds 25.2
 (``"epa"``'s linear, polynomial 2, power, Hill and exponential 3 and 5, normal errors of
@@ -17,10 +17,10 @@ increasing and decreasing and the larger maximum kept), drc 4.0-0's ``LL.4`` wit
 ``drmc(relTol = 1e-12, maxIt = 10000)``, and DRomics 2.6.3's ``drcfit`` (defaults,
 ``postfitfilter = FALSE`` and a very low ``deltaAICminfromnullmodel``, so that every
 item's criteria are reported). In the weighted and moderated modes, dose_response's
-dose-group means, covariance and variances of the ladder's two cell types and of the
-series with sex (each mode and set, a spread of 6 genes each) are compared with limma's
-(voom, lmFit with the dose groups' indicators, each gene's lm.wfit covariance,
-eBayes), and every set in every mode with scipy's least_squares from 200 random starts
+dose-group means, covariance and variances of every gene of the ladder's two cell types
+and of the series with sex are compared with limma's (voom, lmFit with the dose groups'
+indicators, each gene's lm.wfit covariance, eBayes), and every set in every mode, on a
+spread of 4 genes of each cell type, with scipy's least_squares from 200 random starts
 within the documented bounds on the same means and covariance, run in another process
 of this script that never imports CytePool. The means and bounds of every model are
 written here from the documentation, apart from CytePool's.
@@ -34,7 +34,8 @@ dLL of its maximum puts a parameter within sqrt(2 dLL) standard errors of it, so
 rows bound |d theta| / (SE sqrt(2 max(dLL, 1e-12))) by 10, with pybmds's and drc's own
 standard errors and, for DRomics, which reports none, CytePool's from the documented
 formula's Jacobian; DRomics prints its criteria to two decimals, which sets its dLL at
-0.0025. drc's LL.4 letters (b, c, d, e) with b < 0 are CytePool's (-b, d, c, e). DRomics' criteria may lie below CytePool's AICc by their rounding, 0.005, and then by
+0.0025. drc's LL.4 letters (b, c, d, e) with b < 0 are CytePool's (-b, d, c, e).
+DRomics' criteria may lie below CytePool's AICc by their rounding, 0.005, and then by
 1e-8 per sample. The quantities that are closed forms of the fit (AIC's count, test
 4's degrees of freedom, limma's means, covariances and F-tests, and the F-test of lack
 of fit under constant variance against R's ``anova`` of nested linear models) are exact
