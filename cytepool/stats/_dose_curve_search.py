@@ -1,6 +1,6 @@
 """The search for each gene's maximum of a dose-response model: a grid of the
 nonlinear parameters at which the linear ones are solved exactly, then a bounded
-Levenberg-Marquardt refinement.
+Levenberg-Marquardt refinement of the nonlinear ones.
 
 Every fit minimises Q(theta) = (ybar - f)' W (ybar - f) over the model's box, with ybar
 the K dose-group means and W = R'R their weight matrix, given as its factor R, so that
@@ -9,13 +9,16 @@ parameters minimise Q exactly (variable projection; Golub and Pereyra 1973), wit
 their constraints: a >= 0 for exponential 2 and 3, and for exponential 4 and 5 the cone
 a >= 0 with c = 1 + alpha_2 / a in [0, C_MAX], whose faces c = 0 and c = C_MAX are
 fitted when the unconstrained solution lies outside it. The lowest local minima of the
-grid start refinements, which move every parameter within its bounds: a parameter at a
-bound is held there while the gradient points out of the box, and the free ones take
-the damped Gauss-Newton step with Marquardt's scaling by the diagonal of J'J, which
-makes the step independent of each parameter's unit. The refinement stops when the
-decrease that a full Gauss-Newton step of the free parameters predicts,
-r'J (J'J)^-1 J'r, is at most 1e-12 of Q plus the scale of the objective, or when no
-step lowers Q at the largest damping, 1e16; after 500 iterations it stops unconverged.
+grid start refinements in Kaufman's form (Kaufman 1975), which move the nonlinear
+parameters within their bounds and solve the linear ones exactly again at every point
+tried: a parameter at a bound is held there while the gradient points out of the box,
+and the other nonlinear ones take the damped Gauss-Newton step along their Jacobian
+columns N, with the span of the free linear parameters' columns projected out, and
+with Marquardt's scaling by the diagonal of N'N, which makes the step independent of
+each parameter's unit. The refinement stops when the decrease that a full Gauss-Newton
+step predicts, r'N (N'N)^-1 N'r, is at most 1e-12 of Q plus the scale of the
+objective, or when no step lowers Q at the largest damping, 1e16, nor any step of one
+parameter alone; after 500 iterations it stops unconverged.
 The straight line and the restricted quadratic have no nonlinear parameters, so their
 linear solve is the fit: the quadratic's coefficients b1 and b2 share a sign, so its
 maximum is the best of the unrestricted fit, when its coefficients share a sign, and
@@ -483,12 +486,12 @@ def refine(
     whether the refinement converged within ``max_iterations``. ``z`` is R ybar, the
     whitened means.
 
-    Variable projection (Golub and Pereyra 1973) in Kaufman's form (Kaufman 1975): the linear
-    parameters are solved exactly, within their constraints (``linear``), at every
-    nonlinear point tried, and the nonlinear ones take damped Gauss-Newton steps
-    along the Jacobian columns with the span of the free linear columns projected
-    out, so that a step accounts for how the levels follow the location, width or
-    rate."""
+    Variable projection (Golub and Pereyra 1973) in Kaufman's form (Kaufman 1975):
+    the linear parameters are solved exactly, within their constraints (``linear``),
+    at every nonlinear point tried, and the nonlinear ones take damped Gauss-Newton
+    steps along the Jacobian columns with the span of the free linear columns
+    projected out, so that a step accounts for how the levels follow the location,
+    width or rate."""
     k, p = x.size, theta.size
     fitted, raw = np.zeros(k), np.zeros(k)
     r, r_trial = np.zeros(k), np.zeros(k)

@@ -391,9 +391,10 @@ def turn_doses(kind: int, theta: FloatArray, top: float) -> FloatArray:
     kinds. A curve whose slope changes sign at the top dose, or at 0, is monotone over
     the doses.
 
-    The slope of a Gauss-probit curve is exp(-z^2/2) (-f z + (c - d) / sqrt(2 pi)) / b
-    times dz/dx > 0, which changes sign once, at z* = (c - d) / (f sqrt(2 pi)): x* is
-    e + b z*, or e exp(b z*) on ln dose, and e when c = d.
+    The slope of a Gauss-probit curve is exp(-z^2/2) (-f z + (c - d) / sqrt(2 pi))
+    times dz/dx > 0, which is 1 / b, or 1 / (b x) on ln dose, so it changes sign once,
+    at z* = (c - d) / (f sqrt(2 pi)): x* is e + b z*, or e exp(b z*) on ln dose, and e
+    when c = d.
     """
     out = np.full(theta.shape[:-1], np.nan)
     if kind not in TURNING:
