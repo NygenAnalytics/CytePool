@@ -1557,7 +1557,7 @@ def test_plot_dose_response_leaves_out_labels_that_would_overlap() -> None:
 @cache
 def curve_result(models: str = "epa") -> Any:
     """The dose tests and curves of the series of dose_result, under weighted
-    variance, and of a series that supports only description."""
+    variance."""
     cube, _ = simulate_dose_series(
         [0.0, 0.01, 0.1, 1.0, 10.0, 30.0],
         replicates=3,
