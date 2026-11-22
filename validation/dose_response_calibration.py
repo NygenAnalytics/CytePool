@@ -22,6 +22,17 @@ design supports and the spline's default size.
   false discovery proportion, the share of calls that are flat genes, within and
   across cell types; and the spline's power by its number of columns, from 1 to the
   most the treated doses allow.
+- Shape rows: the curves of named models on the power datasets of K = 9: for
+  ``"epa"`` under constant, weighted and moderated variance and for ``"ll4"`` and
+  ``"dromics"`` under weighted variance, among the responsive genes, the share whose
+  best model by AICc contains the true shape (hill: hill and ll4; exponential:
+  exponential_4 and exponential_5, and DRomics' exponential; linear: linear,
+  polynomial_2 and power; power: power; log_gauss_probit: the log-Gauss-probit forms;
+  frechet and step: none), the share whose best fit has the true direction or, for
+  bells, turns, and the mean Akaike weight on the models that contain the true
+  shape; for ``"dromics"``, the share of best fits that turn among the true bells, the
+  other responsive genes and the flat ones, and the share of those turns that one
+  dose group drives.
 - Band rows: 12 datasets of K = 9 x 3 replicates, one cell type of 600 genes of which
   30% respond, with 3,000 cells per profile, so that counting compresses no change.
   At each treated dose, the share of the curves' pointwise 95% bands that hold the
@@ -161,6 +172,35 @@ def series(cell: DesignCell, kind: int, dataset: int) -> tuple[Any, Any]:
 
 def analyse(cube: Any, **options: Any) -> Any:
     return dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, **options)
+
+
+# The curves' shapes: which models of each set contain each true shape.
+CONTAINING = {
+    "epa": {
+        "hill": ("hill",),
+        "exponential": ("exponential_4", "exponential_5"),
+        "linear": ("linear", "polynomial_2", "power"),
+        "power": ("power",),
+    },
+    "ll4": {"hill": ("ll4",)},
+    "dromics": {
+        "hill": ("ll4",),
+        "exponential": ("exponential",),
+        "linear": ("linear",),
+        "log_gauss_probit": (
+            "log_gauss_probit",
+            "log_gauss_probit_monotone",
+            "log_gauss_probit_symmetric",
+        ),
+    },
+}
+CURVE_RUNS = (
+    ("epa", "constant"),
+    ("epa", "weighted"),
+    ("epa", "moderated"),
+    ("ll4", "weighted"),
+    ("dromics", "weighted"),
+)
 
 
 # The null rows.
@@ -862,6 +902,116 @@ def vehicle_only_rows(datasets: int) -> list[tuple[str, ...]]:
     ]
 
 
+# The shape rows.
+
+
+def shape_rows(cell: DesignCell) -> list[tuple[str, ...]]:
+    """How often the best curve of each set and mode finds the true shape, on the
+    power datasets of a design cell."""
+    found: dict[tuple[str, str, str], list[float]] = {}
+    for dataset in range(POWER_DATASETS):
+        cube, truth = series(cell, POWER, dataset)
+        for model_set, variance in CURVE_RUNS:
+            result = analyse(cube, models=model_set, variance=variance)
+            for group in result.groups:
+                fits = result.curve_fits(group)
+                table = truth.table(group)
+                info = {
+                    gene: (shape, change)
+                    for gene, shape, change in zip(
+                        table["feature_id"].tolist(),
+                        table["shape"].tolist(),
+                        table["max_log2_change"].tolist(),
+                        strict=True,
+                    )
+                }
+                genes = result.table(group, "curves")["feature_id"][
+                    :: len(fits.models)
+                ].tolist()
+                # Each best curve's change from dose 0 to the top dose.
+                ends = result.curve(
+                    group, model="best", at=[0.0, float(fits.doses[-1])]
+                )
+                change_of = dict(
+                    zip(
+                        ends["feature_id"][::2].tolist(),
+                        np.diff(
+                            np.asarray(ends["log2_fold_change"]).reshape(-1, 2), axis=1
+                        )[:, 0].tolist(),
+                        strict=True,
+                    )
+                )
+                key = (model_set, variance)
+                for g, gene in enumerate(genes):
+                    shape, change = info[gene]
+                    best = fits.best[g]
+                    if best < 0:
+                        continue
+                    turns = bool(np.isfinite(fits.turn_dose[g, best]))
+                    alone = bool(np.isfinite(fits.turn_driven_by_dose[g]))
+                    kind = (
+                        "bell"
+                        if shape == "log_gauss_probit"
+                        else "flat"
+                        if change == 0
+                        else "monotone"
+                    )
+                    if model_set == "dromics":
+                        found.setdefault((*key, f"turns {kind}"), []).append(turns)
+                        if turns:
+                            found.setdefault((*key, f"alone {kind}"), []).append(alone)
+                    if change == 0:
+                        continue
+                    members = CONTAINING[model_set].get(shape, ())
+                    found.setdefault((*key, "contains"), []).append(
+                        fits.models[best] in members
+                    )
+                    weight = sum(
+                        fits.akaike_weight[g, fits.models.index(m)]
+                        for m in members
+                        if m in fits.models
+                        and np.isfinite(fits.akaike_weight[g, fits.models.index(m)])
+                    )
+                    found.setdefault((*key, "weight"), []).append(weight)
+                    # The direction of the best fit: the sign of its change from the
+                    # vehicle's mean to the top dose, or a turn for a bell.
+                    if kind == "bell":
+                        right = turns
+                    else:
+                        right = (
+                            np.sign(change_of[gene]) == np.sign(change) and not turns
+                        )
+                    found.setdefault((*key, "direction"), []).append(bool(right))
+    rows = []
+    source = f"seed [{SEED}, {POWER}, {cell.number}, dataset]"
+    for model_set, variance in CURVE_RUNS:
+        key = (model_set, variance)
+        text = (
+            f"best model contains the true shape {np.mean(found[(*key, 'contains')]):.3f}, "
+            f"direction or turn right {np.mean(found[(*key, 'direction')]):.3f}, mean "
+            f"Akaike weight on the true family {np.mean(found[(*key, 'weight')]):.3f}"
+        )
+        if model_set == "dromics":
+            turning = "; ".join(
+                f"{kind}: turn {np.mean(found[(*key, f'turns {kind}')]):.3f}, of which driven "
+                f"by one dose group {np.mean(found.get((*key, f'alone {kind}'), [np.nan])):.3f}"
+                for kind in ("bell", "monotone", "flat")
+            )
+            text += f"; best fits that turn, {turning}"
+        rows.append(
+            (
+                f"{cell.label}: curves of {model_set!r}, {variance} variance, "
+                f"{len(found[(*key, 'contains')]):,} responsive genes of "
+                f"{POWER_DATASETS} datasets",
+                source,
+                text,
+                "n/a",
+                "info",
+            )
+        )
+    return rows
+
+
 # The band rows.
 
 
@@ -1017,6 +1167,8 @@ def main() -> int:
         rows += gate_power_rows(cell)
         rows += contrast_null_rows(cell, arguments.contrast_datasets)
         rows += contrast_power_rows(cell)
+        if cell.groups == 9:
+            rows += shape_rows(cell)
     rows += vehicle_only_rows(arguments.vehicle_only_datasets)
     rows += band_rows()
     print("| check | reference | value | tolerance | result |")

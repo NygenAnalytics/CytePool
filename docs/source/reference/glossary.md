@@ -8,6 +8,10 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Adjusted p-value.** A p-value corrected for the number of tests in its family, by default by the method of Benjamini and Hochberg, which controls the false discovery rate. [Error rates and their methods](../statistics/multiple_testing.md#error-rates)
 
+**AICc.** Akaike's information criterion corrected for small samples, -2 log-likelihood + 2k + 2k(k + 1) / (n - k - 1) for k parameters and n samples, lower for a better balance of fit and size. [Read the curves table](../statistics/dose_response.md#dose-curve-table)
+
+**Akaike weight.** A model's share of the support among the models fitted to a gene, from the differences of their AICc. [Read the curves table](../statistics/dose_response.md#dose-curve-table)
+
 **Aliased column.** A column of a design matrix that is a combination of the columns before it, so that its coefficient cannot be estimated apart from theirs. [Designs that cannot answer the question](../statistics/linear_models.md#estimable-contrasts)
 
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
@@ -88,6 +92,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Knot.** A value at which the cubic pieces of a spline join; a natural cubic spline is a straight line beyond its two outer knots, the boundary knots, and a fitted curve cannot be reproduced without its knots. [Spline columns](../statistics/linear_models.md#spline-bases)
 
+**Lack-of-fit test.** A test of a fitted curve against free means of the dose groups, whose small p-value says the curve misses the means, read at 0.1 for benchmark doses: an F-test in CytePool, and a likelihood ratio test, test 4, in BMDS. [Read the curves table](../statistics/dose_response.md#dose-curve-table)
+
 **Layer.** One statistic of a cube summed over cells: the counts, the cells that detect each feature, or the sums of normalized and log-normalized values. [The layers](../statistics/cubes.md#cube-layers)
 
 **Leading edge.** The genes of a set that drive its GSEA score, from the top of the ranking to the walk's extreme for a positive score, or from the extreme to the bottom for a negative one. [Gene set enrichment analysis](../statistics/over_representation_and_gsea.md#gsea)
@@ -121,6 +127,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Network.** A map from each source, a transcription factor or a pathway, to its target genes with signed weights, such as CollecTRI's regulons or PROGENy's footprints. [Networks of regulators and pathways](../statistics/activities.md#regulator-networks)
 
 **Non-linearity test.** The F-test of whether a fitted spline of dose bends away from a straight line along the dose axis: of its restricted cubic columns after the first, whose coefficients are all zero for a line. [Which genes respond to dose](../statistics/dose_response.md#dose-response-tests)
+
+**Non-monotone response.** A response that rises and then falls along dose, or falls and then rises, such as a bell; one outlying dose group may instead drive a fitted curve that turns. [Find responses that turn](../statistics/dose_response.md#dose-curve-turns)
 
 **Normalization factor and size factor.** Corrections for sequencing depth and composition: edgeR multiplies library sizes by normalization factors, such as TMM's, and DESeq2 replaces them by size factors. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
@@ -174,9 +182,13 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Satterthwaite's degrees of freedom.** An approximation of the degrees of freedom of a mixed model's t-test, from how precisely the estimated variance components determine its standard error. [Satterthwaite's degrees of freedom](../statistics/mixed_models.md#satterthwaite)
 
+**Scaled residual.** The difference of a dose group's mean from a fitted curve divided by the mean's standard error; a value above 2 in absolute value warrants a look. [Read the curves table](../statistics/dose_response.md#dose-curve-table)
+
 **Single-step adjusted p-value.** The chance that the largest of a family's correlated test statistics is at least as extreme as a given one. It controls the family-wise error rate of the family, as Bonferroni's adjustment does, and takes the correlation into account. [Several contrasts of one gene](../statistics/multiple_testing.md#correlated-tests)
 
 **Source record.** The caller's record of where a cube's data came from, kept in its provenance as it was given. [Provenance records](cube_files.md#provenance-keys)
+
+**Spare dose groups.** The dose groups beyond a curve's parameters, K - p for K groups and p parameters; a curve needs one to test its fit, so a model of p parameters needs p + 1 dose groups. [The models of each set](../statistics/dose_response.md#dose-curve-sets)
 
 **Stage-wise testing.** Calling the genes first, by a screen of any change at a false discovery rate, then their contrasts, each gene's adjusted for its own contrasts at the level the screen leaves. [Calling contrasts across genes](../statistics/multiple_testing.md#stage-wise-testing)
 

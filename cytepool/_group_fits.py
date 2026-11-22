@@ -211,21 +211,13 @@ def prepare_group(
             return fit.stop("random_effects_not_estimable", str(error)), None
 
     y = np.asarray(counts[used], dtype=np.float64)
-    filter_settings = settings["expression_filter"]
-    if filter_settings is None:
-        keep = np.ones(y.shape[1], dtype=bool)
-    elif SAMPLE_GROUPS in filter_settings:
-        numbers = {
-            name: value
-            for name, value in filter_settings.items()
-            if name != SAMPLE_GROUPS
-        }
-        labels = design.samples[filter_settings[SAMPLE_GROUPS]]
-        keep = filter_by_expression(
-            y, sample_groups=labels[inputs.model_rows[used]], **numbers
-        )
-    else:
-        keep = filter_by_expression(y, design=x_kept, **filter_settings)
+    keep = expressed_features(
+        y,
+        x_kept,
+        design.samples,
+        inputs.model_rows[used],
+        settings["expression_filter"],
+    )
     fit.tested = np.flatnonzero(keep)
     n_tested = fit.tested.size
     if n_tested == 0:
@@ -247,6 +239,33 @@ def prepare_group(
         prior = np.asarray(cells[used], dtype=np.float64)
     data = GroupData(x_kept, columns, kept, estimable, y, sizes, factors, prior, parts)
     return fit, data
+
+
+def expressed_features(
+    counts: np.ndarray,
+    design: np.ndarray,
+    samples: Table,
+    rows: np.ndarray,
+    filter_settings: Mapping[str, Any] | None,
+) -> np.ndarray:
+    """Whether each feature passes filterByExpr with its settings, as a group's fit
+    filters them: every feature without settings; by the groups of a column of the
+    samples when the settings name one (``sample_groups``); otherwise by the design.
+
+    ``counts`` are samples x features, ``design`` their design matrix of full rank,
+    and ``rows`` the rows of ``samples`` that the samples of ``counts`` are.
+    """
+    if filter_settings is None:
+        return np.ones(counts.shape[1], dtype=bool)
+    if SAMPLE_GROUPS in filter_settings:
+        numbers = {
+            name: value
+            for name, value in filter_settings.items()
+            if name != SAMPLE_GROUPS
+        }
+        labels = samples[filter_settings[SAMPLE_GROUPS]][rows]
+        return filter_by_expression(counts, sample_groups=labels, **numbers)
+    return filter_by_expression(counts, design=design, **filter_settings)
 
 
 def group_samples(

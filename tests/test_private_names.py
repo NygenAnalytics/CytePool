@@ -43,6 +43,12 @@ _VARIANCE_FRACTIONS = (
     "which variance_partitioning runs on each group of a cube"
 )
 
+_DOSE_CURVES = (
+    "parts of the public fit_dose_curves and DoseCurveFits of "
+    "cytepool.stats.dose_curves, which dose_response runs on the dose groups of each "
+    "cell type"
+)
+
 # (module, name): why other modules of the package import it from that module.
 SHARED_FROM_THEIR_MODULE = {
     ("cytepool.cube.cube", "_digest_of_read_group"): _DIGESTS,
@@ -92,6 +98,14 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.smoothing", "_quantile_knots"): (
         "the knots of the public natural_spline_basis, placed as R's ns() places them"
     ),
+    ("cytepool.stats.dose_curves", "_CurveData"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_best_counts"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_checked_model_set"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_constant_variance_data"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_fit_means"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_no_model_fits"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_turn_text"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_unchecked_turns"): _DOSE_CURVES,
     ("cytepool.stats.smoothing", "_smoothing_spline_fit"): (
         "R's smooth.spline, built from the B-splines of the public "
         "natural_spline_basis next to them, with which multiple_testing smooths "
