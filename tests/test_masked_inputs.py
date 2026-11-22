@@ -2038,10 +2038,11 @@ ENTRY_POINTS: dict[str, Entry] = {
             "df": 6.0,
             "two_sided": True,
             "relative_error": 0.05,
+            "relative_to": "complement",
             "rng": 1,
         },
         {"upper": "NaN", "correlation": "NaN", "df": "NaN"},
-        options=("two_sided", "relative_error", "rng"),
+        options=("two_sided", "relative_error", "relative_to", "rng"),
     ),
     "cytepool.stats.multivariate_t.multivariate_t_quantile": Entry(
         lambda c: {
