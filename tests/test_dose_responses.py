@@ -3031,7 +3031,7 @@ def test_constant_curves_fit_the_samples_values() -> None:
             table["feature_id"].tolist()[::n_models]
             == fit.features["feature_id"].tolist()
         )
-        assert table.columns[:2] == ("feature_id", "model")
+        assert table.columns[:3] == ("feature_id", "passes_gate", "model")
 
 
 def test_the_tables_of_the_tests_do_not_change_with_curves() -> None:
@@ -3635,11 +3635,35 @@ def test_the_curves_table_carries_symbols() -> None:
         cube, Design(cube.samples, "~ 1"), dose=AXIS, groups="full", models="ll4"
     )
     table = result.table("full", "curves")
-    assert table.columns[:3] == ("feature_id", "symbol", "model")
+    assert table.columns[:4] == ("feature_id", "symbol", "passes_gate", "model")
     position = {gene: i for i, gene in enumerate(ids)}
     assert table["symbol"].tolist() == [
         f"Gene{position[gene]}" for gene in table["feature_id"].tolist()
     ]
+
+
+def test_the_curves_table_carries_the_gates_call() -> None:
+    """Where the gate ran, every row of a gene in the curves table carries the gene's
+    call in the table "gate", matched by feature id; a cell type without the gate,
+    because its test did not run there or because the cell type supports only
+    description, gets curves without the column."""
+    cube = mixed_cube()
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, models="epa")
+    curves = result.table("all", "curves")
+    assert curves.columns[:3] == ("feature_id", "passes_gate", "model")
+    gate = result.table("all", "gate")
+    call = dict(zip(gate["feature_id"].tolist(), gate["passes_gate"].tolist()))
+    assert curves["passes_gate"].tolist() == [
+        call[gene] for gene in curves["feature_id"].tolist()
+    ]
+    # Both calls occur, so that a column of one value or of another gene's calls
+    # fails.
+    n_models = len(result.curve_fits("all").models)
+    per_gene = np.asarray(curves["passes_gate"])[::n_models]
+    assert 0 < per_gene.sum() < per_gene.size
+    for group in ("low", "single"):
+        assert (group, "gate") not in result.tables
+        assert result.table(group, "curves").columns[:2] == ("feature_id", "model")
 
 
 def test_model_curves() -> None:

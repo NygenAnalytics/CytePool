@@ -348,8 +348,10 @@ class DoseResponseResult:
 
     - ``"curves"``, with ``models``: one row per gene and model fitted, the columns of
       :meth:`DoseCurveFits.table <cytepool.stats.dose_curves.DoseCurveFits.table>`
-      with ``symbol`` after ``feature_id``, built from :meth:`curve_fits` when asked
-      for; also for cell types that support only description.
+      with ``symbol`` after ``feature_id`` and, where the gate ran, ``passes_gate``
+      after them, as in the table ``"gate"``, built from :meth:`curve_fits` when
+      asked for; also for cell types that support only description, which have no
+      gate.
 
     :meth:`lowest_effective_doses` calls each dose against the vehicle in the genes
     that pass the gate, and gives each gene's lowest effective dose.
@@ -666,16 +668,19 @@ class DoseResponseResult:
         if name == CURVES:
             genes, fits = self._curve_pair(group)
             table = fits.table(feature_ids=genes["feature_id"])
+            rows = np.repeat(np.arange(len(genes)), len(fits.models))
+            added: dict[str, Any] = {}
             if "symbol" in genes:
-                columns = list(table.columns)
-                table = table.with_columns(
-                    {
-                        "symbol": genes["symbol"][
-                            np.repeat(np.arange(len(genes)), len(fits.models))
-                        ]
-                    }
-                ).select([columns[0], "symbol", *columns[1:]])
-            return table
+                added["symbol"] = genes["symbol"][rows]
+            gate = self._tables.get((group, GATE))
+            if gate is not None:
+                # The gate's call of each gene, matched by feature id.
+                row_of = {gene: i for i, gene in enumerate(gate["feature_id"].tolist())}
+                calls = np.asarray(gate["passes_gate"], dtype=bool)
+                positions = [row_of[gene] for gene in genes["feature_id"].tolist()]
+                added["passes_gate"] = calls[positions][rows]
+            columns = list(table.columns)
+            return table.with_columns(added).select([columns[0], *added, *columns[1:]])
         found = self._tables.get((group, name))
         if found is not None:
             return found

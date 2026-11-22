@@ -542,6 +542,7 @@ No fit needs a start or a seed. A model's parameters split into linear ones, its
 
 | Column | What it says |
 | --- | --- |
+| `passes_gate` | After the gene's ids, where the gate ran: the gene's call in the table `"gate"` ([Which genes count as responding](#dose-response-gate)), so that `curves.filter(curves["passes_gate"])` keeps the curves of the genes that pass it |
 | `n_parameters`, `spare_groups` | p, and K - p |
 | `log_likelihood`, `aic`, `aicc` | AIC = -2 LL + 2k and AICc = AIC + 2k(k + 1) / (n - k - 1), with k = p + 1 for the variance and n the samples [@hurvich1989], as DRomics counts them; AICc is infinite when n ≤ k + 1 |
 | `akaike_weight`, `best` | exp(-Δ/2) over its sum, Δ the AICc minus the gene's lowest: each model's share of the gene's support [@burnham2002]; `best` marks the lowest AICc, the first in set order within 10^-8 |
@@ -571,7 +572,7 @@ best = turning.table("hepatocyte", "curves")
 best = best.filter(best["best"])
 ```
 
-In the hepatocytes, 159 of the 817 genes have a best fit that turns. 120 of them are among the 655 flat genes, and one dose group drives the turns of 113 of these and of all 18 monotone responses whose best fit turns. Of the 33 true bells, 21 have a turning best fit, and 14 of these keep their turn without each group, as do 7 flat genes. So read turns among the genes that a test calls, such as those that pass the gate, and keep those that turn without each group: of the 88 genes that the spline calls, 27 have a turning best fit, and the 14 that keep their turn are all true bells.
+In the hepatocytes, 159 of the 817 genes have a best fit that turns. 120 of them are among the 655 flat genes, and one dose group drives the turns of 113 of these and of all 18 monotone responses whose best fit turns. Of the 33 true bells, 21 have a turning best fit, and 14 of these keep their turn without each group, as do 7 flat genes. So read turns among the genes that a test calls, such as those that pass the gate (`passes_gate`), and keep those that turn without each group: of the 88 genes that the spline calls, 27 have a turning best fit, and the 14 that keep their turn are all true bells.
 
 (dose-curve-descriptive)=
 ### Describe cell types without replicates
