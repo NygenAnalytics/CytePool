@@ -47,7 +47,7 @@ ssGSEA ranks the values themselves, so that a set of highly expressed genes scor
 (testing-scores)=
 ## Testing scores with a design
 
-The scores of a set differ between conditions as the expression of a gene does, so they are tested as genes are, with limma's linear models, contrasts, moderated t-tests and adjusted p-values, as GSVA's guide does [@haenzelmann2013; @smyth2004]. {api}`limma` takes these steps in one call, with the {api}`Design` built for the cube. It fits the samples that have scores, so a sample that the scores leave out, such as one with too few cells, is not fitted either, and a design that the remaining samples no longer determine is fitted as {api}`limma_voom` fits a cell type ([Designs that cannot answer the question](#estimable-contrasts)). GSVA's guide notes that the scores of larger sets vary less, and lets the prior variance of the moderation follow the set sizes: `limma(scores, design, trend=scores.n_genes)` does the same. The activities of the [next chapter](activities.md) are tested alike.
+The scores of a set differ between conditions as the expression of a gene does, so they are tested as genes are, with limma's linear models, contrasts, moderated t-tests and adjusted p-values, as GSVA's guide does [@haenzelmann2013; @smyth2004]. {api}`limma` takes these steps in one call, with the {api}`Design` built for the cube. It fits the samples that have scores, so a sample that the scores leave out, such as one with too few cells, is not fitted either, and a design that the remaining samples no longer determine is fitted as {api}`limma_voom` fits a cell type ([Designs that cannot answer the question](#estimable-contrasts)). GSVA's guide notes that the scores of larger sets vary less, and lets the prior variance of the moderation follow the set sizes: `limma(scores, design, trend=scores.n_genes)` does the same. The activities of the [next chapter](activities.md) are tested alike. {api}`dose_response` tests the scores of a dose series along dose, with the same fit ([Signatures along dose](dose_response.md#dose-response-signatures)).
 
 (pathway-scores-defaults)=
 ## Defaults and choices
@@ -59,7 +59,7 @@ The scores of a set differ between conditions as the expression of a gene does, 
 - **ssGSEA's normalization.** `normalize=True` scales the scores by their range; `normalize=False` keeps each score independent of the others.
 - **The values of a cube.** log-CPM values by default, and `values="counts"` for GSVA's Poisson kernel; `min_cells` and `expression_filter` choose the samples and genes ([The values scored](#pathway-score-values)).
 - **Set sizes.** Every size by default, as in GSVA; `min_size` and `max_size` limit them.
-- **Tests.** {api}`limma` with the cube's design, `trend=scores.n_genes` to let the prior follow the set sizes, and `robust=True` for a robust prior.
+- **Tests.** {api}`limma` with the cube's design, `trend=scores.n_genes` to let the prior follow the set sizes, and `robust=True` for a robust prior; {api}`dose_response` along a dose axis.
 
 (pathway-scores-limits)=
 ## Limits and differences

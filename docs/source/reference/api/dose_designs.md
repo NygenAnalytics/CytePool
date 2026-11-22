@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    description: The check of a dose series in CytePool, which reports for every cell type of a cube the samples each dose group keeps after filtering, the dose groups that other terms or a batch absorb, a status of inferential, descriptive or refused, and ETAP's design minimums.
+    description: The check of a dose series in CytePool, which reports for every cell type of a cube, or for the scores of one cell type's samples, the samples each dose group keeps after filtering, the dose groups that other terms or a batch absorb, a status of inferential, descriptive or refused, and ETAP's design minimums.
 ---
 
 # Dose designs
