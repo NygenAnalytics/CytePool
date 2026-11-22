@@ -159,14 +159,14 @@ The {api}`DoseDesignReport` holds four tables:
 (dose-rule-minimums)=
 ## ETAP's design minimums
 
-Which of EPA's design requirements does a dose series miss? The standard methods of EPA's Transcriptomic Assessment Products (ETAP) set minimums for the design and for the samples that pass quality control [@usepa2024]. With `rules="etap_2024"` and `sex`, the column of each sample's sex, `minimums` lists those that samples show, each met or not, with what ETAP does when it is unmet in `when_unmet`:
+Which of EPA's design requirements does a dose series miss? The standard methods of EPA's Transcriptomic Assessment Products (ETAP) set minimums for the design and for the samples that pass quality control [@usepa2024]. With `rules="etap_2024"`, `minimums` lists those that samples show, each met or not, with what ETAP does when it is unmet in `when_unmet`. With `sex`, the column of each sample's sex, the check reads a study: its sexes and each sex's animals and samples. Without `sex`, it reads the design's samples as one data set of one sex, since ETAP analyses each sex apart (Sec. 3.4.5.3), and leaves the sexes unchecked; `dose_response(rules="etap_2024")` checks each call this way:
 
 | `minimum` | Section | Required | When unmet, ETAP |
 | --- | --- | --- | --- |
 | `dose_levels` | 3.4.1.3 | At least 8 doses and a vehicle | departs from its design |
 | `dose_spacing` | 3.4.1.3 | Half a log10 between doses, down from the highest, and the lowest dose a full log10 below the second lowest | departs from its design |
-| `sexes` | 3.4.2 | Male and female animals | departs from its design |
-| `animals_per_sex_and_dose` | 3.4.2 | At least 4 animals of each sex in each dose group, the vehicle's included | departs from its design |
+| `sexes` | 3.4.2 | Male and female animals, checked with `sex` | departs from its design |
+| `animals_per_sex_and_dose` | 3.4.2 | At least 4 animals of each sex, or of the data set, in each dose group, the vehicle's included | departs from its design |
 | `passing_samples_per_dose` | 3.4.5.2 | At least 2 passing samples at each dose level | excludes the dose level and goes on |
 | `passing_vehicle_samples` | 3.4.5.2 | At least 3 passing vehicle samples | does not model the dose response |
 

@@ -814,6 +814,48 @@ def unmet(report: DoseDesignReport) -> dict[tuple, str]:
     }
 
 
+def test_rules_without_sex_check_one_data_set() -> None:
+    """ETAP analyses each sex apart (Sec. 3.4.5.3): without sex, the design's samples
+    are one data set, whose minimums count its animals per dose group, with no row of
+    the sexes, which a call on one sex's samples would fail."""
+    axis = DoseAxis("dose", unit="mg/kg", metric="administered")
+    dose = [level for level in [0.0, *ETAP_LADDER] for _ in range(4)]
+    samples = samples_of(dose)
+    report = check_dose_design(
+        cube_of(samples), Design(samples, "~ 1"), dose=axis, rules="etap_2024"
+    )
+    assert report.rules_status() == "met"
+    assert report.minimums is not None
+    assert report.minimums["minimum"].tolist() == [
+        "dose_levels",
+        "dose_spacing",
+        "animals_per_sex_and_dose",
+        "passing_samples_per_dose",
+        "passing_vehicle_samples",
+    ]
+    assert report.minimums["sex"].tolist() == [None] * 5
+    assert "rules: met for one data set, the sexes not checked" in repr(report)
+    assert report.settings["sex"] is None
+    # Three animals at 1 mg/kg: the data set's minimum of 4 is unmet.
+    dose.remove(1.0)
+    samples = samples_of(dose)
+    report = check_dose_design(
+        cube_of(samples), Design(samples, "~ 1"), dose=axis, rules="etap_2024"
+    )
+    assert unmet(report) == {("animals_per_sex_and_dose", None): "3 at 1 mg/kg"}
+    assert report.rules_status() == "deviation"
+    # The same samples as a study of one sex: the sexes are checked, and fail.
+    report = check_dose_design(
+        cube_of(samples_of(dose, sex=["M"] * len(dose))),
+        Design(samples_of(dose, sex=["M"] * len(dose)), "~ 1"),
+        dose=axis,
+        rules="etap_2024",
+        sex="sex",
+    )
+    assert set(unmet(report)) == {("animals_per_sex_and_dose", "M"), ("sexes", None)}
+    assert "sexes not checked" not in repr(report)
+
+
 def test_etap_minimums_by_hand() -> None:
     # The ETAP design: 8 doses and a vehicle, 4 of each sex, every sample passing.
     report = etap(ETAP_LADDER)
@@ -1090,8 +1132,6 @@ def test_arguments_are_refused_with_a_fix() -> None:
         check_dose_design(cube, design, dose=AXIS, rules="ntp_2018", sex="sex")
     with pytest.raises(TypeError, match="rules must be one of"):
         check_dose_design(cube, design, dose=AXIS, rules=1, sex="sex")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="needs sex, the column of each sample's sex"):
-        check_dose_design(cube, design, dose=AXIS, rules="etap_2024")
     with pytest.raises(ValueError, match="sex is read by a rule set"):
         check_dose_design(cube, design, dose=AXIS, sex="sex")
     with pytest.raises(TypeError, match="batch must name a column"):
