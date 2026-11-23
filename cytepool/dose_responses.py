@@ -74,14 +74,15 @@ Scores of samples:
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-signatures).
 
 Tests in one direction:
-    With ``direction``, each test with a sign tests a change in that direction only:
-    the linear trend's p-value is P(T >= t) for a rise and P(T <= t) for a fall, p / 2
-    or 1 - p / 2 of its two-sided p, on any distribution of t symmetric about 0; the
-    multiple contrast tests refer the largest of their t-statistics in the stated
-    direction to the multivariate t distribution (Hothorn, Bretz and Westfall 2008).
-    The contrasts rise with dose, as DoseFinding's increasing models do, and a fall
-    is their mirror image. The F-tests have no direction, and each dose against the
-    vehicle stays two-sided
+    With ``direction``, each test with a sign is one-sided: the linear trend's
+    p-value is P(T >= t) for a rise and P(T <= t) for a fall, p / 2 or 1 - p / 2 of
+    its two-sided p, on any distribution of t symmetric about 0; the multiple
+    contrast tests refer the largest of their t-statistics in the stated direction
+    to the multivariate t distribution (Hothorn, Bretz and Westfall 2008). The
+    contrasts rise with dose, as DoseFinding's increasing models do, and a fall is
+    their mirror image. The gate's test is then the Williams-type test, which
+    compares the top doses with the vehicle. The F-tests have no direction, and
+    each dose against the vehicle stays two-sided
     (https://docs.nygen.io/CytePool/statistics/dose-response#one-sided-dose-tests).
 
 Adjustment for multiple testing:
@@ -189,6 +190,7 @@ from ._analysis_records import (
 from ._columns import text_column
 from ._counts import effective_library_sizes
 from ._doses import SAME_DOSE, checked_doses, dose_group_column, dose_label, dose_text
+from ._expression_values import MIN_CELLS
 from ._group_fits import (
     COUNTS_LAYER,
     FITTED,
@@ -196,12 +198,13 @@ from ._group_fits import (
     expressed_features,
     filter_setting,
     group_positions,
+    threads_setting,
 )
 from ._linear_algebra import column_space
 from ._masked_arrays import read_only, reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
 from ._options import checked_choice, positive_integer, real_number, recorded_seed
-from ._sample_scores import SampleScores, fit_scores, sample_scores
+from ._sample_scores import SampleScores, contrast_table, fit_scores, sample_scores
 from .activity import Activities
 from .candidate_shapes import BETA_SCALE_FACTOR, CandidateShapes
 from .cube import Cube
@@ -283,8 +286,9 @@ SIGNED_TESTS = (LINEAR_TREND, *CONTRAST_TESTS)
 # The alternative of the multiple contrast tests in each direction: the contrasts rise
 # with dose, so a fall is a contrast below 0.
 _ALTERNATIVES = {None: "two-sided", UP: "greater", DOWN: "less"}
-# The options of the fit of scores, as limma takes them.
-_SCORE_OPTIONS = ("trend", "robust")
+# The options of the fit of scores, as limma takes them, and the threads of the
+# multiple contrast tests and curves.
+_SCORE_OPTIONS = ("trend", "robust", "n_threads")
 # The analysis of scores, whose name the result records.
 _LIMMA = "limma"
 CURVES = "curves"
@@ -296,6 +300,10 @@ _BEST = "best"
 # The columns that name the features of a table: a cube's genes, or the gene sets or
 # sources of scores.
 _ID_COLUMNS = ("feature_id", "symbol", "gene_set", "source")
+# What the id column of a table names, in messages and printouts.
+_NOUNS = {"feature_id": "gene", "gene_set": "gene set", "source": "source"}
+# The numbers of a cell type's fit that the summary reports.
+_FIT_NUMBERS = ("n_features_tested", "df_residual", "df_prior")
 # Of two tests of the same hypothesis in a cell type, the first of this order runs
 # when the tests are chosen by default.
 _PRIORITY = (SPLINE, DOSE_GROUPS, LINEAR_TREND, NONLINEARITY)
@@ -327,6 +335,9 @@ _VEHICLE = "vehicle"
 # A candidate shape whose largest change at a cell type's treated doses is below the
 # smallest normal double does not change there, to double precision.
 _FLAT = float(np.finfo(np.float64).tiny)
+# A score whose residual standard deviation is at most this share of its largest value
+# has residuals of rounding alone.
+_ROUNDING = 64.0 * float(np.finfo(np.float64).eps)
 
 
 class _Estimates(NamedTuple):
@@ -347,7 +358,8 @@ class _Estimates(NamedTuple):
 
 
 class DoseResponseResult:
-    """The dose tests of every cell type of a cube, from :func:`dose_response`.
+    """The dose tests of every cell type of a cube, or of one cell type's scores, from
+    :func:`dose_response`.
 
     Tables, by cell type and test (:meth:`table`), one row per gene tested, in the
     cube's feature order:
@@ -370,14 +382,15 @@ class DoseResponseResult:
       dream adds ``df`` and ``z_statistic``.
     - ``"dunnett"``, ``"williams"`` and ``"mcp"``: multiple contrast tests, each
       gene as a whole, with ``feature_id``, ``symbol``, ``average_log2_cpm``,
-      ``contrast`` (the contrast with the largest \\|t\\|, such as ``"10 - vehicle"``,
-      ``"3 to 30 - vehicle"`` or a candidate shape's name: for the MCP step, the
-      candidate whose contrast best matches the observed changes, not a fitted
-      shape, since the shapes' contrasts are strongly correlated and fitting a shape
-      is MCP-Mod's modelling step, not implemented yet), its ``t``, ``df`` (of
-      the multivariate t), ``p_value`` (adjusted for the gene's contrasts, the
-      single-step max-t test) and ``p_value_error`` (its Monte Carlo standard
-      error), ``adjusted_p_value`` (Benjamini-Hochberg over the cell type's genes)
+      ``contrast`` (the contrast of the most extreme t: the largest \\|t\\|, or with a
+      direction the largest t for ``"up"`` and the smallest for ``"down"``; such as
+      ``"10 - vehicle"``, ``"3 to 30 - vehicle"`` or a candidate shape's name: for
+      the MCP step, the candidate whose contrast best matches the observed changes,
+      not a fitted shape, since the shapes' contrasts are strongly correlated and
+      fitting a shape is MCP-Mod's modelling step, not implemented yet), its ``t``,
+      ``df`` (of the multivariate t), ``p_value`` (adjusted for the gene's
+      contrasts, the single-step max-t test) and ``p_value_error`` (its Monte Carlo
+      standard error), ``adjusted_p_value`` (Benjamini-Hochberg over the cell type's genes)
       and ``adjusted_p_value_across_groups``. Each contrast's weights on the treated
       doses are in the cell type's entry of ``provenance["groups"]``
       (``contrast_tests``).
@@ -1315,7 +1328,7 @@ def dose_response(
     analysis: Callable[..., DifferentialExpressionResult] = limma_voom,
     batch: str | None = None,
     groups: str | Sequence[str] | None = None,
-    min_cells: int = 10,
+    min_cells: int = MIN_CELLS,
     min_counts: float = 0,
     rng: Any = None,
     **options: Any,
@@ -1353,8 +1366,8 @@ def dose_response(
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-tests
     explains the tests and how to read them.
 
-    Three multiple contrast tests run when named, each two-sided, with one error
-    rate for the gene's contrasts (the single-step max-t test, from the multivariate
+    Three multiple contrast tests run when named, each two-sided, or one-sided with
+    ``direction``, with one error rate for the gene's contrasts (the single-step max-t test, from the multivariate
     t distribution on the gene's df) and Benjamini-Hochberg across genes:
 
     - ``"dunnett"``: each dose against the vehicle (Dunnett 1955).
@@ -1417,12 +1430,14 @@ def dose_response(
     sources, with the change in the scores' units as ``estimate``
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-signatures).
 
-    With ``direction``, the tests with a sign, ``"linear_trend"``, ``"dunnett"``,
-    ``"williams"`` and ``"mcp"``, are one-sided: a rise or a fall only. The F-tests
-    have no direction and are refused with it; each dose against the vehicle, the
-    curves and the lowest effective doses stay two-sided. Use a direction fixed
-    before the data, such as the expected effect of a drug on a pharmacodynamic
-    signature
+    With ``direction``, the tests with a sign are one-sided: ``"dunnett"`` and
+    ``"williams"`` test a change from the vehicle that way, ``"linear_trend"`` a
+    slope, and ``"mcp"`` agreement with the candidate shapes or their mirror
+    images, which a response that moves the other way at some doses can show. The
+    F-tests have no direction and are refused with it; each dose against the
+    vehicle, the curves and the lowest effective doses stay two-sided. Use a
+    direction fixed before the data, such as the expected effect of a drug on a
+    pharmacodynamic signature
     (https://docs.nygen.io/CytePool/statistics/dose-response#one-sided-dose-tests).
 
     The design is checked first by :func:`~cytepool.check_dose_design`, with
@@ -1459,7 +1474,8 @@ def dose_response(
             when it is on the axis), ``"nonlinearity"`` a spline of two columns or
             more, and ``"mcp"`` two treated doses; a cell type that compares one
             treated dose does not run ``"mcp"``, with the reason. The gate's test,
-            the spline by default, also runs when ``tests`` does not name it, and
+            the spline by default (the Williams-type test with ``direction``), also
+            runs when ``tests`` does not name it, and
             decides which genes pass the gate and whose lowest effective doses are
             called: ``tests="williams"`` runs the spline too, and
             ``gate={"test": "williams"}`` makes the Williams-type test decide.
@@ -1476,8 +1492,9 @@ def dose_response(
             design.samples)``. Given only with ``"mcp"``, in ``tests`` or as the
             gate's test. A shape that does not change at a cell type's doses is left
             out there, with the reason in the record.
-        gate: None for the default gate, the spline test at 5% FDR, or a mapping of
-            its settings: ``"test"``, a test of any response, ``"spline"`` (the
+        gate: None for the default gate, the spline test at 5% FDR (with
+            ``direction``, the one-sided Williams-type test), or a mapping of its
+            settings: ``"test"``, a test of any response, ``"spline"`` (the
             default), ``"dose_groups"``, ``"dunnett"``, ``"williams"`` or
             ``"mcp"``, which runs whether ``tests`` names it or not, with
             ``"dose_groups"`` the default when fewer than two doses are on the axis,
@@ -1487,8 +1504,11 @@ def dose_response(
             exceed at one dose or more, by TREAT, which the gate records as the test
             ``"each_dose"``. ``gate=result.gate`` gives a result's gate back. With
             ``direction``, the gate's test is ``"dunnett"``, ``"williams"`` or
-            ``"mcp"``, one-sided: by default the first that ``tests`` names, or the
-            MCP step, which then runs too. Scores take no fold change.
+            ``"mcp"``, one-sided, ``"williams"`` by default, which compares the top
+            doses with the vehicle: the MCP step's one-sided test calls agreement
+            with the mirror image of a rising shape, which a response that rises at
+            the top doses only, or rises and returns, also shows. Scores take no
+            fold change.
         models: A set of dose-response models to fit to each cell type's genes,
             ``"epa"`` (the eight models of NTP and ETAP in BMDS's forms), ``"ll4"``
             (drc's four-parameter log-logistic curve) or ``"dromics"`` (DRomics'
@@ -1530,10 +1550,14 @@ def dose_response(
             ``contrast_standard_errors``, ``n_threads`` (which the multiple contrast
             tests also follow), ``prior_count`` (``limma_trend``) or ``df_method``
             (``dream_voom``); their values are checked by the analysis. For scores,
-            ``trend`` and ``robust``, as :func:`~cytepool.limma` takes them:
-            ``trend=scores.n_genes`` lets the prior variance of the moderation follow
-            the sizes of the sets, and ``trend=activities.n_targets.mean(axis=0)``
-            the targets of the sources.
+            ``trend`` and ``robust``, as :func:`~cytepool.limma` takes them, and
+            ``n_threads``. Moderating 30 sets or more of different sizes, pass
+            ``trend=scores.n_genes``, which lets the prior variance follow the set
+            sizes, or ``trend=activities.n_targets.mean(axis=0)``, the sources'
+            targets: on null series it held the sets' error near 5%, where the
+            default, as in limma, called the smallest third of the sets in up to
+            15%. With fewer sets, test each set alone
+            (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-signatures).
 
     Returns:
         The tables of every cell type tested, the summary, the design check, each
@@ -1547,7 +1571,7 @@ def dose_response(
         TypeError: If ``analysis`` is not one of the three functions, an option is
             one the analysis does not take or one that dose_response sets
             (``contrasts``, ``f_tests``, ``adjust_across_groups``), or for scores
-            other than ``trend`` and ``robust``; ``tests``, ``direction``,
+            other than ``trend``, ``robust`` and ``n_threads``; ``tests``, ``direction``,
             ``spline_df``, ``candidates``, ``gate`` or one of its settings,
             ``models``, ``variance`` or ``rng`` has the wrong type, or an argument
             is of a type that :func:`~cytepool.check_dose_design` or the analysis
@@ -1576,7 +1600,7 @@ def dose_response(
     """
     given = _tests_setting(tests)
     side = _direction_setting(direction, given)
-    asked = _signed_gate(_gate_setting(gate), side, given)
+    asked = _signed_gate(_gate_setting(gate), side)
     linear = None if given is None else [test for test in given if test in TESTS]
     # The gate's multiple contrast test runs whether tests names it or not.
     named = [
@@ -1607,7 +1631,7 @@ def dose_response(
         method = _analysis_name(analysis, design)
         _check_options(method, options)
     else:
-        _score_options(analysis, options)
+        _score_options(analysis, options, asked)
         method = _LIMMA
     if named and options.get("contrast_standard_errors") == "limma":
         raise ValueError(
@@ -1643,7 +1667,7 @@ def dose_response(
     # The check refused data that are neither a cube nor scores.
     source = cast(Cube, data) if scores is None else scores
     levels = np.unique(report.doses["dose"])
-    chosen = _gate(asked, dose, levels, method, side, scores is not None)
+    chosen = _gate(asked, dose, levels, method, side)
     if linear is not None and chosen["test"] in TESTS and chosen["test"] not in linear:
         linear.append(chosen["test"])
     splines = _splines(dose, design.samples, levels, linear, spline_df)
@@ -1746,7 +1770,6 @@ def dose_response(
         chosen,
         (model_set, variance, curves, curve_records),
         side,
-        options,
     )
 
 
@@ -1825,9 +1848,18 @@ def _direction_setting(direction: Any, given: list[str] | None) -> str | None:
     return direction
 
 
-def _score_options(analysis: Any, options: Mapping[str, Any]) -> None:
-    """Refuse an analysis and options that scores do not take: scores are fitted as
-    limma fits them, with its options ``trend`` and ``robust``."""
+def _score_options(
+    analysis: Any, options: Mapping[str, Any], gate: Mapping[str, Any]
+) -> None:
+    """Refuse an analysis, options and a gate that scores do not take: scores are
+    fitted as limma fits them, with its options ``trend`` and ``robust``, and have no
+    fold change; ``n_threads`` is checked here, since the fit does not read it."""
+    if gate["test"] == EACH_DOSE:
+        raise ValueError(
+            "a gate with a fold change tests each dose's log2 fold change against it "
+            "by TREAT, and scores have no fold change: their changes are in the "
+            "scores' own units; leave the fold change out"
+        )
     if analysis is not limma_voom:
         raise ValueError(
             "scores are fitted as limma fits them, by its linear model and empirical "
@@ -1840,8 +1872,9 @@ def _score_options(analysis: Any, options: Mapping[str, Any]) -> None:
             raise TypeError(
                 f"the fit of scores has no option {name!r}"
                 f"{close_matches(name, _SCORE_OPTIONS)}; its options are trend and "
-                "robust, as limma takes them"
+                "robust, as limma takes them, and n_threads"
             )
+    threads_setting(options.get("n_threads"))
 
 
 def _gate_setting(value: Any) -> dict[str, Any]:
@@ -1913,7 +1946,6 @@ def _gate(
     levels: npt.NDArray[np.float64],
     method: str,
     direction: str | None,
-    scored: bool,
 ) -> dict[str, Any]:
     """The gate of the design: its test as given, or the spline, or the dose groups
     when fewer than two doses are on the axis, where no spline is placed and the
@@ -1921,12 +1953,6 @@ def _gate(
     test, chosen already); refused where the design cannot run it."""
     on_axis = _doses_on_axis(axis, levels)
     test = asked["test"]
-    if test == EACH_DOSE and scored:
-        raise ValueError(
-            "a gate with a fold change tests each dose's log2 fold change against it "
-            "by TREAT, and scores have no fold change: their changes are in the "
-            "scores' own units; leave the fold change out"
-        )
     if test is None:
         test = SPLINE if on_axis >= 2 else DOSE_GROUPS
     treated = levels[levels > 0.0]
@@ -1953,18 +1979,21 @@ def _gate(
     return {**asked, "test": test}
 
 
-def _signed_gate(
-    asked: dict[str, Any], direction: str | None, given: list[str] | None
-) -> dict[str, Any]:
+def _signed_gate(asked: dict[str, Any], direction: str | None) -> dict[str, Any]:
     """The gate's settings with a direction: its test a multiple contrast test,
-    which has a sign, as given, or by default the first that the tests name, or the
-    MCP step, which then runs too; as given without a direction."""
+    which has a sign, as given, or by default the Williams-type test, which then runs
+    too; as given without a direction.
+
+    The Williams-type test compares the pooled top doses with the vehicle, as
+    Dunnett's test compares each dose, so a gate for a fall passes no response that
+    stays above the vehicle; the MCP step's contrasts compare the dose groups among
+    themselves, and a response that rises only at the top doses or rises and returns
+    follows the mirror image of a rising shape."""
     if direction is None:
         return asked
     test = asked["test"]
     if test is None:
-        named = [name for name in CONTRAST_TESTS if name in (given or [])]
-        return {**asked, "test": named[0] if named else MCP}
+        return {**asked, "test": WILLIAMS}
     if test not in CONTRAST_TESTS:
         what = (
             "each dose against a fold change either way, by TREAT"
@@ -2494,8 +2523,9 @@ class _CellTypeFit:
     # The fit as the multiple contrast tests and the curves read it, built when they
     # need it.
     stage: "_FirstStage | None" = None
-    # The record of the fit of scores, which a cube's analysis keeps in its own.
-    record: dict[str, Any] | None = None
+    # The record of a tested cell type's fit: its entry, its contrasts' weights, the
+    # summary's numbers and the analysis settings; empty when it was not tested.
+    record: dict[str, Any] = field(default_factory=dict)
 
 
 class _FirstStage(NamedTuple):
@@ -2565,7 +2595,15 @@ def _fit_cell_type(
         [result.table(group, name) for name in comparison.indicators],
         comparison.doses[1:],
     )
-    return _CellTypeFit(group, INFERENTIAL, "", comparison, result, tables)
+    record = {
+        "fit": entry,
+        "contrasts": result.provenance["design"]["contrasts"],
+        "summary": {name: float(result.summary[name][0]) for name in _FIT_NUMBERS},
+        "analysis": result.settings,
+    }
+    return _CellTypeFit(
+        group, INFERENTIAL, "", comparison, result, tables, None, record
+    )
 
 
 def _fit_scores(
@@ -2582,15 +2620,17 @@ def _fit_scores(
     ``samples`` are the cell type's rows of the check's sample table, whose used
     samples are fitted: the columns of the model of the dose groups that R's
     ``qr()`` keeps on their rows, without weights, moderated across the scores.
+
+    A score whose residuals are rounding errors, as those of a score that does not
+    vary within its dose groups, is fitted as a missing score, with the reason in
+    the record: limma would test its rounding noise, and its variance near 0 would
+    pull the prior of every other score towards 0.
     """
     group = str(samples["group_id"][0])
-    used = np.asarray(samples["used"], dtype=bool)
-    sample_ids = samples["sample_id"][used].tolist()
-    row_of_score = {sample: row for row, sample in enumerate(scores.sample_ids)}
+    sample_ids, values, doses = _used_scores(scores, samples)
     row_of_design = {
         sample: row for row, sample in enumerate(model.samples["sample_id"])
     }
-    rows = np.array([row_of_score[sample] for sample in sample_ids], dtype=np.intp)
     x = model.matrix[[row_of_design[sample] for sample in sample_ids]]
     aliasing = _aliasing(x)
     kept = list(aliasing.kept)
@@ -2598,21 +2638,32 @@ def _fit_scores(
     contrasts |= extra_contrasts
     names = tuple(contrasts)
     matrix = np.column_stack([contrasts[name] for name in names])
-    values = np.ascontiguousarray(scores.values[rows])
-    moderated = fit_scores(
-        values,
-        x[:, kept],
-        Contrasts(matrix[kept], names, tuple(model.columns[j] for j in kept)),
-        trend=options.get("trend", False),
-        robust=options.get("robust", False),
-    )
+    trend, robust = options.get("trend", False), options.get("robust", False)
+    tested = Contrasts(matrix[kept], names, tuple(model.columns[j] for j in kept))
+    moderated = fit_scores(values, x[:, kept], tested, trend=trend, robust=robust)
+    largest = np.abs(np.where(np.isnan(values), 0.0, values)).max(axis=0)
+    flat = moderated.fit.sigma <= _ROUNDING * largest
+    if flat.any():
+        if np.all(flat | np.isnan(moderated.fit.sigma)):
+            return _CellTypeFit(
+                group,
+                INFERENTIAL,
+                "no score varies beyond what the model of the dose groups fits: "
+                "their residuals are rounding errors, so none can be tested",
+                comparison,
+            )
+        values = np.where(flat, np.nan, values)
+        moderated = fit_scores(values, x[:, kept], tested, trend=trend, robust=robust)
     ids = Table({scores.id_column: scores.ids})
     tables: dict[str, Table] = {}
     f_test_df1: dict[str, int] = {}
-    for test, members in comparison.tests.items():
+    for test in comparison.tests:
         if test == LINEAR_TREND:
-            tables[test] = _score_t_table(ids, moderated, names.index(test))
+            tables[test] = contrast_table(
+                scores.id_column, scores.ids, moderated, names.index(test)
+            )
             continue
+        members = f_tests[test]
         found = _limma_f_test(moderated, [names.index(name) for name in members])
         f_test_df1[test] = found.df1
         tables[test] = ids.with_columns(
@@ -2626,10 +2677,12 @@ def _fit_scores(
             }
         )
     tables[EACH_DOSE] = _each_dose_table(
-        [_score_t_table(ids, moderated, names.index(i)) for i in comparison.indicators],
+        [
+            contrast_table(scores.id_column, scores.ids, moderated, names.index(i))
+            for i in comparison.indicators
+        ],
         comparison.doses[1:],
     )
-    doses = np.asarray(samples["dose"], dtype=np.float64)[used]
     record = {
         "fit": {
             "group_id": group,
@@ -2647,6 +2700,12 @@ def _fit_scores(
             },
             "aliased_columns": [model.columns[j] for j in aliasing.aliased],
             "n_features_tested": int(values.shape[1]),
+            "scores_not_tested": {
+                name: "its residuals are rounding errors: it does not vary beyond "
+                "what the model of the dose groups fits, so its tests would be "
+                "rounding noise"
+                for name in scores.ids[flat].tolist()
+            },
             "f_test_df1": f_test_df1,
         },
         "contrasts": {name: contrasts[name].tolist() for name in names},
@@ -2656,6 +2715,13 @@ def _fit_scores(
             "df_residual": float(len(sample_ids) - len(kept)),
             "df_prior": float(np.median(moderated.df_prior)),
         },
+        # The settings the fit has checked, as the result records an analysis's.
+        "analysis": {
+            "trend": trend
+            if isinstance(trend, bool | np.bool_)
+            else np.asarray(trend, dtype=np.float64).tolist(),
+            "robust": bool(robust),
+        },
     }
     stage = _FirstStage(ids, doses, values, moderated)
     return _CellTypeFit(
@@ -2663,24 +2729,16 @@ def _fit_scores(
     )
 
 
-def _score_t_table(ids: Table, moderated: ModeratedFit, column: int) -> Table:
-    """limma's table of one contrast of a fit of scores, as limma names its columns:
-    the contrast of the scores, its moderated standard error, the scores' mean,
-    the moderated t-test and the B-statistic."""
-    fit = moderated.fit
-    p_value = moderated.p_value[:, column]
-    return ids.with_columns(
-        {
-            "estimate": fit.coefficients[:, column],
-            "standard_error": fit.stdev_unscaled[:, column]
-            * np.sqrt(moderated.posterior_variance),
-            "average": fit.mean_expression,
-            "t": moderated.t[:, column],
-            "p_value": p_value,
-            "adjusted_p_value": adjust_p_values(p_value, "bh"),
-            "log_odds": moderated.log_odds[:, column],
-        }
-    )
+def _used_scores(
+    scores: SampleScores, samples: Table
+) -> tuple[list[str], FloatArray, FloatArray]:
+    """The samples a cell type of scores uses, by its rows of the check's sample
+    table, with their scores, samples x scores, and their doses."""
+    used = np.asarray(samples["used"], dtype=bool)
+    sample_ids = samples["sample_id"][used].tolist()
+    row_of = {sample: row for row, sample in enumerate(scores.sample_ids)}
+    values = scores.values[[row_of[sample] for sample in sample_ids]]
+    return sample_ids, values, np.asarray(samples["dose"], dtype=np.float64)[used]
 
 
 def _one_sided(table: Table, direction: str) -> Table:
@@ -2720,7 +2778,7 @@ def _run_contrast_tests(
     genes = each.take(np.arange(estimates.theta.shape[0]))
     # The features' columns, those before the dose; a cube's mean log-CPM, or the
     # scores' mean.
-    columns = list(each.columns[: each.columns.index("dose")])
+    columns = [name for name in _ID_COLUMNS if name in each]
     average = "average_log2_cpm" if "average_log2_cpm" in each else "average"
     for position, test in enumerate(CONTRAST_TESTS):
         found = comparison.contrast_tests.get(test)
@@ -2911,20 +2969,21 @@ def _cell_type_curves(
     # Scores with a missing value under constant variance, or whose dose groups the
     # samples they have cannot estimate, have no curve.
     complete = _complete(curve_data)
-    columns = [name for name in genes.columns if name != "symbol"][:1]
+    column = _id_column(genes)
     if not complete.all():
+        incomplete = "its data are incomplete: " + (
+            "a sample has no value"
+            if curve_data.variance == CONSTANT
+            else "the samples it has cannot estimate every dose group"
+        )
+        # Scores fitted as missing, whose residuals were rounding errors, say so.
+        untested = fit.record.get("fit", {}).get("scores_not_tested", {})
         record["left_out"] = {
-            name: "its data are incomplete: "
-            + (
-                "a sample has no value"
-                if curve_data.variance == CONSTANT
-                else "the samples it has cannot estimate every dose group"
-            )
-            for name in genes[columns[0]][~complete].tolist()
+            name: untested.get(name, incomplete)
+            for name in genes[column][~complete].tolist()
         }
         if not complete.any():
-            noun = {"gene_set": "gene set", "source": "source"}.get(columns[0], "gene")
-            record["reason"] = f"no {noun} has complete data"
+            record["reason"] = f"no {_NOUNS[column]} has complete data"
             return None, record
         curve_data = _subset(curve_data, complete)
         genes = genes.filter(complete)
@@ -3019,11 +3078,7 @@ def _curve_data(
     if isinstance(data, SampleScores):
         # A cell type of scores that supports only description: the scores of its
         # samples, under constant variance.
-        samples = report.samples.filter(group_id=fit.group)
-        used = np.asarray(samples["used"], dtype=bool)
-        row_of = {sample: row for row, sample in enumerate(data.sample_ids)}
-        held = data.values[[row_of[s] for s in samples["sample_id"][used].tolist()]]
-        doses = np.asarray(samples["dose"], dtype=np.float64)[used]
+        _, held, doses = _used_scores(data, report.samples.filter(group_id=fit.group))
         return (
             _constant_variance_data(doses, held),
             Table({data.id_column: data.ids}),
@@ -3219,17 +3274,13 @@ def _result(
         str | None, str, dict[str, tuple[Table, DoseCurveFits]], dict[str, Any]
     ],
     direction: str | None,
-    options: Mapping[str, Any],
 ) -> DoseResponseResult:
     model_set, variance, curves, curve_records = curve_parts
     check = report.settings
-    first = next((fit.result for fit in fits if fit.result is not None), None)
+    analysis = next((fit.record["analysis"] for fit in fits if fit.record), None)
     cube: dict[str, Any] | None
     if isinstance(data, Cube):
         cube, scores, layer = cube_record(data), None, COUNTS_LAYER
-        analysis: dict[str, Any] | None = (
-            first.settings if isinstance(first, DifferentialExpressionResult) else None
-        )
     else:
         found = data.provenance
         cube, layer = (None if found is None else found["cube"]), None
@@ -3241,13 +3292,6 @@ def _result(
             "method": data.method,
             "settings": dict(data.settings),
             "names": list(names),
-        }
-        trend = options.get("trend", False)
-        analysis = {
-            "trend": trend
-            if isinstance(trend, bool | np.bool_)
-            else np.asarray(trend, dtype=np.float64).tolist(),
-            "robust": bool(options.get("robust", False)),
         }
     model_record = None
     if model is not None:
@@ -3281,7 +3325,7 @@ def _result(
         "layer": layer,
         "design": model_record,
         "settings": settings,
-        "analysis_settings": None if first is None else analysis,
+        "analysis_settings": analysis,
         "gate_adjustment": _gate_adjustment(gate),
         "tests": [*splines.tests, *named],
         "curves": None if model_set is None else fitter_settings(model_set),
@@ -3376,7 +3420,7 @@ def _group_record(fit: _CellTypeFit) -> dict[str, Any]:
         assert comparison is not None  # a tested cell type compares dose groups
         entry["tests"] = {test: list(names) for test, names in comparison.tests.items()}
         entry["tests_not_run"] = dict(comparison.not_run)
-        group, contrasts = _fit_record(fit)
+        group, contrasts = fit.record["fit"], fit.record["contrasts"]
         trend = {LINEAR_TREND: 1} if LINEAR_TREND in fit.tables else {}
         df1 = {**group["f_test_df1"], **trend}
         entry["f_test_df1"] = {test: df1[test] for test in TESTS if test in df1}
@@ -3392,27 +3436,6 @@ def _group_record(fit: _CellTypeFit) -> dict[str, Any]:
     return entry
 
 
-def _fit_record(fit: _CellTypeFit) -> tuple[dict[str, Any], dict[str, Any]]:
-    """A tested cell type's record of its fit, and the weights of its contrasts on
-    the columns of the model of the dose groups: the analysis's, or those of the fit
-    of scores."""
-    if fit.record is not None:
-        return fit.record["fit"], fit.record["contrasts"]
-    assert isinstance(fit.result, DifferentialExpressionResult)
-    record = fit.result.provenance
-    (group,) = record["groups"]
-    return group, record["design"]["contrasts"]
-
-
-def _fit_number(fit: _CellTypeFit, column: str) -> float:
-    """A number of a tested cell type's fit, such as its residual degrees of freedom,
-    from the analysis's summary or the record of the fit of scores."""
-    if fit.record is not None:
-        return float(fit.record["summary"][column])
-    assert isinstance(fit.result, DifferentialExpressionResult)
-    return float(fit.result.summary[column][0])
-
-
 def _summary(fits: list[_CellTypeFit], report: DoseDesignReport) -> Table:
     summary = report.summary
     tested = [fit.result for fit in fits]
@@ -3420,7 +3443,7 @@ def _summary(fits: list[_CellTypeFit], report: DoseDesignReport) -> Table:
     def of_fit(column: str) -> FloatArray:
         return np.array(
             [
-                np.nan if fit.result is None else _fit_number(fit, column)
+                np.nan if fit.result is None else fit.record["summary"][column]
                 for fit in fits
             ],
             dtype=np.float64,
@@ -3446,7 +3469,7 @@ def _summary(fits: list[_CellTypeFit], report: DoseDesignReport) -> Table:
                 [
                     0
                     if fit.result is None
-                    else int(_fit_number(fit, "n_features_tested"))
+                    else int(fit.record["summary"]["n_features_tested"])
                     for fit in fits
                 ],
                 dtype=np.int64,
@@ -3584,16 +3607,21 @@ def _gene_rows(
     """The rows of the genes asked for among those tested, or fitted with curves
     (``verb``), by feature id or, when the features have one, symbol, in the order
     given; for scores, the gene sets or sources by name."""
-    if "feature_id" not in features:
-        return _score_rows(genes, features, group, verb)
-    ids = features["feature_id"].tolist()
+    column = _id_column(features)
+    noun = _NOUNS[column]
+    ids = features[column].tolist()
     if genes is None:
         return np.arange(len(ids))
+    one, many = (
+        ("feature id or symbol", "feature ids or symbols")
+        if column == "feature_id"
+        else (f"{noun}'s name", f"names of {noun}s")
+    )
     named = [genes] if isinstance(genes, str) else genes
     if isinstance(named, Mapping) or not isinstance(named, Sequence | np.ndarray):
         raise TypeError(
-            "genes must be a feature id or symbol, or a list of them, or None for "
-            f"every gene tested, got {type(genes).__name__}"
+            f"genes must be a {one}, or a list of them, or None for every {noun} "
+            f"tested, got {type(genes).__name__}"
         )
     by_id = {feature: row for row, feature in enumerate(ids)}
     by_symbol: dict[Any, list[int]] = {}
@@ -3604,8 +3632,7 @@ def _gene_rows(
     for gene in list(named):
         if not isinstance(gene, str):
             raise TypeError(
-                "genes must be feature ids or symbols (str), got "
-                f"{type(gene).__name__} {gene!r}"
+                f"genes must be {many} (str), got {type(gene).__name__} {gene!r}"
             )
         found = [by_id[gene]] if gene in by_id else by_symbol.get(gene, [])
         if len(found) > 1:
@@ -3614,47 +3641,25 @@ def _gene_rows(
                 f"{quoted([ids[row] for row in found])}; give their feature ids"
             )
         if not found:
-            kind = "feature id or symbol" if "symbol" in features else "feature id"
-            raise KeyError(
-                f"gene {gene!r} was not {verb} in {group!r}: no gene {verb} there has "
-                f"this {kind}; it is not in the cube, or did not pass the expression "
-                "filter there"
-            )
+            if column == "feature_id":
+                kind = "feature id or symbol" if "symbol" in features else "feature id"
+                hint = (
+                    f": no gene {verb} there has this {kind}; it is not in the cube, or "
+                    "did not pass the expression filter there"
+                )
+            else:
+                hint = (
+                    f"; the {noun}s {verb} there are {quoted(ids)}"
+                    f"{close_matches(gene, ids)}"
+                )
+            raise KeyError(f"{noun} {gene!r} was not {verb} in {group!r}{hint}")
         rows.append(found[0])
     return np.array(rows, dtype=np.intp)
 
 
-def _score_rows(
-    names: Any, features: Table, group: str, verb: str
-) -> npt.NDArray[np.intp]:
-    """The rows of the gene sets or sources asked for among those tested, or fitted
-    with curves (``verb``), by name, in the order given."""
-    column = features.columns[0]
-    noun = "gene set" if column == "gene_set" else "source"
-    ids = features[column].tolist()
-    if names is None:
-        return np.arange(len(ids))
-    named = [names] if isinstance(names, str) else names
-    if isinstance(named, Mapping) or not isinstance(named, Sequence | np.ndarray):
-        raise TypeError(
-            f"genes must be a {noun}'s name, or a list of them, or None for every "
-            f"{noun} tested, got {type(names).__name__}"
-        )
-    row_of = {name: row for row, name in enumerate(ids)}
-    rows = []
-    for name in list(named):
-        if not isinstance(name, str):
-            raise TypeError(
-                f"genes must be names of {noun}s (str), got {type(name).__name__} "
-                f"{name!r}"
-            )
-        if name not in row_of:
-            raise KeyError(
-                f"{noun} {name!r} was not {verb} in {group!r}; the {noun}s {verb} "
-                f"there are {quoted(ids)}{close_matches(name, ids)}"
-            )
-        rows.append(row_of[name])
-    return np.array(rows, dtype=np.intp)
+def _id_column(table: Table) -> str:
+    """The column that names a table's rows: feature_id, gene_set or source."""
+    return next(name for name in _NOUNS if name in table)
 
 
 # Printouts.

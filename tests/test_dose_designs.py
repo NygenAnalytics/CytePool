@@ -1403,18 +1403,39 @@ def scores_of_series() -> tuple[Cube, Design, Any]:
     return cube, Design(cube.samples, "~ 1"), cube.features["feature_id"].tolist()
 
 
-@pytest.mark.parametrize("min_cells", [10, 12])
-def test_the_check_of_scores_is_the_check_of_their_cube(min_cells: int) -> None:
+@pytest.mark.parametrize(
+    ("min_cells", "shuffled"), [(10, False), (12, False), (12, True)]
+)
+def test_the_check_of_scores_is_the_check_of_their_cube(
+    min_cells: int, shuffled: bool
+) -> None:
     from cytepool import gsva
 
     cube, design, genes = scores_of_series()
+    options: dict[str, Any] = {}
+    if shuffled:
+        # The design's rows shuffled, with a batch, ETAP's minimums and sex: the check
+        # of scores takes the samples in the design's order, the cube's in its own.
+        samples = cube.samples
+        order = np.random.default_rng(1).permutation(len(samples))
+        table = {c: np.asarray(samples[c].tolist())[order] for c in samples.columns}
+        table["lane"] = np.array(["a", "b"] * (len(samples) // 2))[order]
+        table["sex"] = np.array(["F", "M"] * (len(samples) // 2))[order]
+        design = Design(table, "~ 1")
+        options = {"batch": "lane", "rules": "etap_2024", "sex": "sex"}
     sets = {"a": genes[:40], "b": genes[40:90]}
     for group in ("many", "few"):
         scores = gsva(cube, sets, group=group, min_cells=min_cells)
-        ours = check_dose_design(scores, design, dose=AXIS)
+        ours = check_dose_design(scores, design, dose=AXIS, **options)
         # The cube's check with the samples gsva keeps: its cells, and some counts.
         theirs = check_dose_design(
-            cube, design, dose=AXIS, groups=group, min_cells=min_cells, min_counts=0
+            cube,
+            design,
+            dose=AXIS,
+            groups=group,
+            min_cells=min_cells,
+            min_counts=0,
+            **options,
         )
         for column in theirs.summary.columns:
             assert ours.summary[column].tolist() == theirs.summary[column].tolist()
@@ -1424,8 +1445,23 @@ def test_the_check_of_scores_is_the_check_of_their_cube(min_cells: int) -> None:
         )
         for column in ours.doses.columns:
             assert ours.doses[column].tolist() == theirs.doses[column].tolist()
+        if shuffled:
+            assert ours.minimums is not None and theirs.minimums is not None
+            for column in theirs.minimums.columns:
+                assert (
+                    ours.minimums[column].tolist() == theirs.minimums[column].tolist()
+                )
+        # The samples, by id: the check of scores lists them in the design's order.
         used = ours.samples["used"].tolist()
-        assert used == theirs.samples["used"].tolist()
+        ids = ours.samples["sample_id"].tolist()
+        assert dict(zip(ids, used, strict=True)) == dict(
+            zip(
+                theirs.samples["sample_id"].tolist(),
+                theirs.samples["used"].tolist(),
+                strict=True,
+            )
+        )
+        assert ids == design.samples["sample_id"].tolist()
         assert ours.samples.columns == (
             "group_id",
             "sample_id",

@@ -257,3 +257,38 @@ def test_what_limma_cannot_test_is_refused() -> None:
         limma(np.where(values > 0.5, np.inf, values), design(result.profiles))
     with pytest.raises(ValueError, match="sample_ids must be unique"):
         limma(values, design(), sample_ids=["S0"] * len(values))
+
+
+def test_limma_refuses_scores_that_repeat_a_sample_or_are_infinite() -> None:
+    # Each profile is one sample: scores that name a sample twice would fit it twice.
+    # An infinite score is refused as an array's is, with the score and the sample.
+    result = scores()
+    profiles = result.profiles
+    twice = PathwayScores(
+        np.vstack([result.scores, result.scores[:1]]),
+        Table(
+            {
+                name: [*profiles[name].tolist(), profiles[name].tolist()[0]]
+                for name in profiles.columns
+            }
+        ),
+        result.gene_sets,
+        "gsva",
+        result.settings,
+    )
+    with pytest.raises(ValueError, match=r"name the sample\(s\) 'S0' more than once"):
+        limma(twice, design())
+    values = np.array(result.scores)
+    values[4, 1] = -np.inf
+    infinite = PathwayScores(
+        values, profiles, result.gene_sets, "gsva", result.settings
+    )
+    sample = profiles["sample_id"].tolist()[4]
+    name = list(result.gene_sets)[1]
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            f"1 infinite value(s), such as the score of {name!r} in sample {sample!r}"
+        ),
+    ):
+        limma(infinite, design())

@@ -768,15 +768,18 @@ def test_complements_skip_boxes_bounded_within_their_target(
 
 
 def test_complements_of_other_boxes_are_those_of_the_default_rule() -> None:
-    """Boxes that no bound settles, two-sided or one-sided, are computed as without
-    ``relative_to``, to the last bit: the complement's target is met by the smaller
-    side's."""
+    """One-sided boxes that no bound settles, and every two-sided box, are computed
+    as without ``relative_to``, to the last bit: the complement's target is met by the
+    smaller side's. Limits of 0.005 give a two-sided box of probability 8.7e-10, which
+    a bound of its coordinates' intervals would put within the target."""
     correlation = product_correlation(np.array([0.8, 0.75, 0.9, 0.7]))
     for limits, two_sided in (
         ([2.2, 2.6, 2.4, 3.0], False),
         ([-0.3] * 4, False),
+        ([0.005] * 4, True),
         ([0.6] * 4, True),
         ([2.5] * 4, True),
+        ([4.0] * 4, True),
     ):
         default = multivariate_t_cdf(
             limits, correlation, 7.0, two_sided=two_sided, rng=3

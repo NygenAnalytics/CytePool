@@ -30,14 +30,13 @@ import numpy.typing as npt
 
 from ._masked_arrays import real_array, reject_masked, unmasked_array
 from ._messages import listing, quoted
-from ._sample_scores import fit_scores, sample_scores
+from ._sample_scores import NO_SAMPLE_IDS, contrast_table, fit_scores, sample_scores
 from .activity import Activities
 from .design import Contrasts, Design
 from .design._design_matrices import refuse_random_effects
 from .design.checks import _aliasing, _contrast_violations
 from .pathway_scores import PathwayScores
 from .stats._result_tables import feature_id_column
-from .stats.multiple_testing import adjust_p_values
 from .table import Table
 
 __all__ = ["limma"]
@@ -169,21 +168,7 @@ def limma(
         trend=trend,
         robust=robust,
     )
-    tested = moderated.fit
-    p_value = moderated.p_value[:, 0]
-    return Table(
-        {
-            id_column: ids,
-            "estimate": tested.coefficients[:, 0],
-            "standard_error": tested.stdev_unscaled[:, 0]
-            * np.sqrt(moderated.posterior_variance),
-            "average": tested.mean_expression,
-            "t": moderated.t[:, 0],
-            "p_value": p_value,
-            "adjusted_p_value": adjust_p_values(p_value, "bh"),
-            "log_odds": moderated.log_odds[:, 0],
-        }
-    )
+    return contrast_table(id_column, ids, moderated, 0)
 
 
 def _scores(
@@ -274,11 +259,7 @@ def _matched(rows: list[str] | None, design: Design) -> tuple[list[int], list[in
         every = list(range(design.n_samples))
         return every, every
     if "sample_id" not in design.samples:
-        raise ValueError(
-            "the design's sample table has no 'sample_id' column, so its rows cannot "
-            "be matched to the samples of the scores; build the Design from the "
-            "cube's samples"
-        )
+        raise ValueError(NO_SAMPLE_IDS)
     position = {
         value: i for i, value in enumerate(design.samples["sample_id"].tolist())
     }

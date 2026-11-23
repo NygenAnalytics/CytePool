@@ -91,9 +91,10 @@ from typing import Any, NamedTuple
 import numpy as np
 import numpy.typing as npt
 
-from ._analysis_records import cube_samples, design_sample_ids, only_key
+from ._analysis_records import cube_samples, only_key
 from ._columns import missing_mask, text_column
 from ._doses import column_doses, distinct_doses, dose_text, is_axis_column
+from ._expression_values import MIN_CELLS
 from ._group_fits import (
     group_positions,
     group_samples,
@@ -105,7 +106,7 @@ from ._linear_algebra import column_space
 from ._masked_arrays import reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
 from ._options import checked_choice
-from ._sample_scores import SampleScores, sample_scores
+from ._sample_scores import SampleScores, design_rows, sample_scores
 from .activity import Activities
 from .cube import Cube
 from .design import Design
@@ -440,7 +441,7 @@ def check_dose_design(
     batch: str | None = None,
     rules: str | None = None,
     sex: str | None = None,
-    min_cells: int = 10,
+    min_cells: int = MIN_CELLS,
     min_counts: float = 0,
     groups: str | Sequence[str] | None = None,
 ) -> DoseDesignReport:
@@ -618,31 +619,17 @@ def _checked_inputs(
             "leave sex out"
         )
     _refuse_dose_terms(design, axis)
-    cube, scores = (
-        (None, sample_scores(data, "check_dose_design")) if scored else (data, None)
-    )
-    if scores is not None:
+    cube: Cube | None
+    scores: SampleScores | None
+    if scored:
+        cube, scores = None, sample_scores(data, "check_dose_design")
         _refuse_cube_options(groups, min_cells, min_counts)
         cells, counts, positions = None, None, []
         group_ids = [scores.group]
-        sample_ids = design_sample_ids(
-            design,
-            no_ids="the design's sample table has no 'sample_id' column, so its rows "
-            "cannot be matched to the samples of the scores; build the Design from the "
-            "cube's samples",
-            text_ids="the scores' profiles do",
-        )
-        row_of = {sample: row for row, sample in enumerate(scores.sample_ids)}
-        data_rows = np.array([row_of.get(s, -1) for s in sample_ids], dtype=np.intp)
-        if not np.any(data_rows >= 0):
-            raise ValueError(
-                "none of the design's samples is among the samples of the scores: the "
-                f"scores' samples are such as {quoted(scores.sample_ids[:3])}, the "
-                f"design's such as {quoted(sample_ids[:3])}"
-            )
+        sample_ids, data_rows = design_rows(scores, design)
         model_rows = np.arange(len(sample_ids), dtype=np.intp)
     else:
-        assert cube is not None  # data is a cube
+        cube, scores = data, None
         cells, counts = min_cells_setting(min_cells), min_counts_setting(min_counts)
         positions = group_positions(cube, groups)
         group_ids = [str(cube.groups["group_id"][g]) for g in positions]
@@ -695,7 +682,7 @@ def _refuse_cube_options(groups: Any, min_cells: Any, min_counts: Any) -> None:
         )
     # The defaults of check_dose_design and dose_response.
     for name, value, default in (
-        ("min_cells", min_cells, 10),
+        ("min_cells", min_cells, MIN_CELLS),
         ("min_counts", min_counts, 0),
     ):
         reject_masked(value, name)

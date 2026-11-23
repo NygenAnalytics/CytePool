@@ -33,6 +33,7 @@ from cytepool import (
     Network,
     PathwayScores,
     Table,
+    check_dose_design,
     dose_response,
     dream_voom,
     gsva,
@@ -355,10 +356,15 @@ def test_one_score_s_contrast_tests_match_dosefinding_and_multcomp(
 
 
 def within_errors(table: Table, reference: dict[str, Any]) -> None:
-    """A max-t p-value within CALIBRATED combined standard errors of the draws'."""
+    """A max-t p-value within CALIBRATED combined standard errors of the draws'; a
+    p-value of 1 that a bound settled, whose error is that bound, covers the draws'
+    within their standard errors."""
     ours, error = float(table["p_value"][0]), float(table["p_value_error"][0])
-    combined = math.hypot(error, float(reference["se"]))
-    assert abs(ours - float(reference["p"])) <= CALIBRATED * combined
+    theirs, se = float(reference["p"]), float(reference["se"])
+    if ours == 1.0:
+        assert 1.0 - theirs <= error + CALIBRATED * se
+    else:
+        assert abs(ours - theirs) <= CALIBRATED * math.hypot(error, se)
 
 
 def test_one_treated_dose_dunnett_is_each_dose_s_t_test() -> None:
@@ -485,13 +491,18 @@ def test_activities_are_tested_as_pathway_scores() -> None:
         [0.0, 0.1, 1.0, 10.0], replicates=3, cell_types=["pDC"], n_genes=200, rng=4
     )
     genes = cube.features["feature_id"].tolist()
+    # A keeps too few targets after the expression filter to be scored; B, C and D,
+    # three sources, are moderated together.
     network = Network(
         {
             "A": {gene: 1.0 for gene in genes[:20]},
             "B": {gene: (-1.0) ** j for j, gene in enumerate(genes[20:50])},
+            "C": {gene: 1.0 for gene in genes[60:120]},
+            "D": {gene: (-1.0) ** j for j, gene in enumerate(genes[120:200])},
         }
     )
     activities = ulm(cube, network, group="pDC")
+    assert activities.sources == ("B", "C", "D")
     scores = PathwayScores(
         activities.scores,
         activities.profiles,
@@ -513,6 +524,28 @@ def test_activities_are_tested_as_pathway_scores() -> None:
     assert (
         by_activity.provenance["cube"]["fingerprint"] == cube.digests()["fingerprint"]
     )
+    # Curves and the printout name the sources.
+    one, other = by_activity.curve(), by_scores.curve()
+    assert one.columns[0] == "source" and other.columns[0] == "gene_set"
+    assert one["source"].tolist() == other["gene_set"].tolist()
+    for column in one.columns[1:]:
+        assert_array_equal(one[column], other[column])
+    assert "3 sources" in repr(by_activity) and "3 gene sets" in repr(by_scores)
+    # The targets of each source, averaged over the samples, as the trend's
+    # covariate, which moves the moderation of the three sources.
+    targets = activities.n_targets.mean(axis=0)
+    trended = dose_response(
+        activities, design, dose=AXIS, tests="linear_trend", trend=targets
+    )
+    same = dose_response(scores, design, dose=AXIS, tests="linear_trend", trend=targets)
+    flat = dose_response(activities, design, dose=AXIS, tests="linear_trend")
+    assert_array_equal(
+        trended.table(name="linear_trend")["t"], same.table(name="linear_trend")["t"]
+    )
+    assert np.all(
+        trended.table(name="linear_trend")["t"] != flat.table(name="linear_trend")["t"]
+    )
+    assert trended.provenance["analysis_settings"]["trend"] == targets.tolist()
 
 
 # One-sided tests.
@@ -632,14 +665,23 @@ def test_direction_is_refused_where_a_test_has_no_side() -> None:
 
 
 def test_a_direction_makes_the_gate_one_sided() -> None:
-    # The gate is the first multiple contrast test that tests names, or the MCP
-    # step, which then runs too; its p-values are that test's, in the direction
+    # The gate is the Williams-type test, which runs whether tests names it or not,
+    # or the test the gate names; its p-values are that test's, in the direction
     # given.
-    for tests, gate in (
-        (("linear_trend", "mcp", "williams"), "williams"),
-        (("linear_trend",), "mcp"),
+    scores = scores_of(limma_reference()["scores"]["ladder"], "full")
+    for tests, gate, asked in (
+        (("linear_trend", "mcp", "dunnett"), "williams", None),
+        (("linear_trend",), "williams", None),
+        (("linear_trend", "mcp"), "mcp", {"test": "mcp"}),
     ):
-        result = job_result("ladder", direction="down", tests=tests)
+        result = dose_response(
+            scores,
+            design_of(scores),
+            dose=AXIS,
+            tests=tests,
+            direction="down",
+            gate=asked,
+        )
         assert result.gate == {"test": gate, "fdr": 0.05, "fold_change": None}
         assert set(result.tests) == {*tests, gate}
         assert_array_equal(
@@ -658,6 +700,41 @@ def test_a_direction_makes_the_gate_one_sided() -> None:
     assert p_up[rising] < 1e-3 and p_down[rising] > 0.99
 
 
+def test_the_default_gate_for_a_fall_passes_no_rise() -> None:
+    # Scores that never fall below the vehicle, a rise at the top two doses, a bell
+    # and a rise at the lowest dose that returns, beside a fall, tested for a fall.
+    # The MCP step calls all four, since its contrasts compare the dose groups among
+    # themselves and the three rises follow the mirror images of the umbrella, the
+    # exponential and the Emax shapes; the linear trend along the treated doses
+    # calls the bell and the early rise. The default gate, the Williams-type test,
+    # compares the top doses with the vehicle and passes the fall alone.
+    levels = np.array([0.0, 0.1, 0.3, 1.0, 3.0, 10.0])
+    doses = np.repeat(levels, 4)
+    k = np.searchsorted(levels, doses)
+    means = [-0.25 * k, k >= 4, (k >= 2) & (k <= 3), k == 1]
+    noise = np.random.default_rng(0).normal(scale=0.15, size=(doses.size, 4))
+    values = np.column_stack(means).astype(float) + noise
+    scores = array_scores(values, doses, ["fall", "top rise", "bell", "early rise"])
+    result = dose_response(
+        scores,
+        design_of(scores),
+        dose=AXIS,
+        tests=("linear_trend", "mcp"),
+        direction="down",
+        rng=1,
+    )
+    assert result.gate["test"] == "williams"
+    assert result.table(name="gate")["passes_gate"].tolist() == [
+        True,
+        False,
+        False,
+        False,
+    ]
+    assert np.all(np.asarray(result.table(name="mcp")["p_value"]) < 1e-4)
+    trend = np.asarray(result.table(name="linear_trend")["p_value"])
+    assert trend[0] < 1e-10 and trend[1] > 0.99 and np.all(trend[2:] < 1e-3)
+
+
 def test_direction_leaves_estimates_two_sided() -> None:
     cube, _ = simulate_dose_series(
         [0.0, 0.1, 0.3, 1.0, 3.0, 10.0], replicates=3, cell_types=1, n_genes=200, rng=6
@@ -671,11 +748,11 @@ def test_direction_leaves_estimates_two_sided() -> None:
     for column in [name for name in each.columns if name != "passes_gate"]:
         assert_array_equal(each[column], each_one[column])
     assert_array_equal(two.curve()["ci_lower"], one.curve()["ci_lower"])
-    # The gate: the first multiple contrast test named, one-sided, where the
-    # two-sided result's is the spline.
-    assert (two.gate["test"], one.gate["test"]) == ("spline", "dunnett")
+    # The gate: the Williams-type test, one-sided, where the two-sided result's is the
+    # spline.
+    assert (two.gate["test"], one.gate["test"]) == ("spline", "williams")
     gate = one.table(name="gate")
-    assert_array_equal(gate["p_value"], one.table(name="dunnett")["p_value"])
+    assert_array_equal(gate["p_value"], one.table(name="williams")["p_value"])
     # Lowest effective doses: the one-sided gate, and each dose two-sided.
     lowest = one.lowest_effective_doses()
     k = len(one.provenance["groups"][0]["doses"]) - 1
@@ -863,12 +940,19 @@ def test_descriptive_scores_get_curves_without_lack_of_fit() -> None:
         :, None
     ] * np.array([0.5, -0.5])
     scores = array_scores(values, doses)
-    result = dose_response(scores, design_of(scores), dose=AXIS, models="ll4")
+    # The design's rows in reverse: each score keeps its own sample's dose.
+    ids = scores.profiles["sample_id"].tolist()
+    design = Design({"sample_id": ids[::-1], "dose": doses[::-1]}, "~ 1")
+    result = dose_response(scores, design, dose=AXIS, models="ll4")
     assert result.design_report.status() == "descriptive"
     assert not result.summary["tested"][0]
     fits = result.curve_fits()
     assert fits.variance == "constant"
     assert np.isnan(fits.lack_of_fit_p_value).all()
+    from cytepool.stats.dose_curves import fit_dose_curves
+
+    direct = fit_dose_curves(doses, values, models="ll4")
+    assert_allclose(fits.parameters, direct.parameters, rtol=1e-12)
 
 
 # Records.
@@ -894,13 +978,16 @@ def test_the_result_of_scores_reads_back() -> None:
             assert_array_equal(again.tables[key][column], table[column])
     for column in ("estimate", "ci_lower", "ci_upper"):
         assert_array_equal(again.curve()[column], result.curve()[column])
-    # The gate of scores: the MCP step, the first multiple contrast test named, in
-    # the direction given, over the gene sets.
-    assert result.gate["test"] == "mcp"
-    gate, mcp = result.table(name="gate"), result.table(name="mcp")
+    # The gate of scores: the Williams-type test, in the direction given, over the
+    # gene sets.
+    assert result.gate["test"] == "williams"
+    gate, williams = result.table(name="gate"), result.table(name="williams")
     assert gate.columns == ("gene_set", "p_value", "adjusted_p_value", "passes_gate")
-    assert_array_equal(gate["p_value"], mcp["p_value"])
-    assert_array_equal(gate["passes_gate"], np.asarray(mcp["adjusted_p_value"]) <= 0.05)
+    assert_array_equal(gate["p_value"], williams["p_value"])
+    assert_array_equal(
+        gate["passes_gate"], np.asarray(williams["adjusted_p_value"]) <= 0.05
+    )
+    mcp = result.table(name="mcp")
     lowest = result.lowest_effective_doses()
     assert lowest.columns == (
         "gene_set",
@@ -921,6 +1008,184 @@ def test_the_result_of_scores_reads_back() -> None:
         "adjusted_p_value",
         "adjusted_p_value_across_groups",
     )
+    # The covariate of a trend, as the fit took it, also after pickling.
+    sizes = scores_of(limma_reference()["scores"]["ladder"], "full").n_genes
+    trended = job_result("ladder, trend")
+    for found in (trended, pickle.loads(pickle.dumps(trended))):
+        assert found.provenance["analysis_settings"] == {
+            "trend": sizes.tolist(),
+            "robust": False,
+        }
+
+
+def tables_equal(ours: Any, theirs: Any, tolerance: float = 1e-12) -> None:
+    """Every table of two results alike: the same columns, text and NaN, and numbers
+    within ``tolerance`` of max(|theirs|, 1)."""
+    for test in (*theirs.tests, "each_dose"):
+        one, other = ours.table(name=test), theirs.table(name=test)
+        assert one.columns == other.columns
+        for column in one.columns:
+            a, b = np.asarray(one[column]), np.asarray(other[column])
+            if a.dtype.kind == "f":
+                assert_scaled(a, b, tolerance)
+            else:
+                assert_array_equal(a, b)
+
+
+def ladder_scores(rows: list[int], values: np.ndarray) -> PathwayScores:
+    """Scores of some samples of a ladder of 5 dose groups x 3."""
+    doses = np.repeat([0.0, 0.1, 1.0, 10.0, 30.0], 3)
+    ids = [f"s{i}" for i in range(doses.size)]
+    return PathwayScores(
+        values[rows],
+        Table(
+            {
+                "profile_id": [ids[i] for i in rows],
+                "sample_id": [ids[i] for i in rows],
+                "dose": doses[rows],
+            }
+        ),
+        GeneSets(
+            {
+                f"set{j}": [f"g{j}_{i}" for i in range(10)]
+                for j in range(values.shape[1])
+            }
+        ),
+        "gsva",
+        MappingProxyType({}),
+    )
+
+
+def ladder(rows: list[int]) -> Design:
+    doses = np.repeat([0.0, 0.1, 1.0, 10.0, 30.0], 3)
+    return Design({"sample_id": [f"s{i}" for i in rows], "dose": doses[rows]}, "~ 1")
+
+
+LADDER_TESTS = ("linear_trend", "dose_groups", "spline", "dunnett")
+
+
+def ladder_values() -> np.ndarray:
+    doses = np.repeat([0.0, 0.1, 1.0, 10.0, 30.0], 3)
+    values = np.random.default_rng(5).normal(size=(doses.size, 5))
+    values[:, 0] -= 0.8 * np.log10(np.where(doses > 0, doses, 0.01))
+    return values
+
+
+def test_scores_missing_a_dose_group_match_a_design_without_it() -> None:
+    # The scores hold no sample of 1 ug/kg, which the design has: the column of that
+    # dose is aliased among the samples fitted and left out of the fit, so the tests
+    # are those of the design without the dose, as limma's lmFit drops the column.
+    values = ladder_values()
+    held = [i for i in range(15) if i not in (6, 7, 8)]
+    tests = {"tests": LADDER_TESTS, "spline_df": 2, "rng": 1}
+    full = dose_response(
+        ladder_scores(held, values), ladder(list(range(15))), dose=AXIS, **tests
+    )
+    part = dose_response(ladder_scores(held, values), ladder(held), dose=AXIS, **tests)
+    tables_equal(full, part)
+    entry, other = (r.provenance["groups"][0] for r in (full, part))
+    assert entry["doses"] == other["doses"] == [0.0, 0.1, 10.0, 30.0]
+    assert entry["fit"]["aliased_columns"] == ["dose_1"]
+    assert other["fit"]["aliased_columns"] == []
+    assert full.summary["df_residual"][0] == part.summary["df_residual"][0] == 8.0
+
+
+def test_design_samples_the_scores_lack_are_left_out() -> None:
+    # A design sample the scores do not hold (s7) and one whose every score is
+    # missing (s4) are left out with their reasons, and the tests, curves and
+    # degrees of freedom are those of the design without them.
+    values = ladder_values()
+    values[4] = np.nan
+    held = [i for i in range(15) if i != 7]
+    tests = {"tests": LADDER_TESTS, "spline_df": 2, "rng": 1}
+    full = dose_response(
+        ladder_scores(held, values), ladder(list(range(15))), dose=AXIS, **tests
+    )
+    kept = [i for i in range(15) if i not in (4, 7)]
+    part = dose_response(ladder_scores(kept, values), ladder(kept), dose=AXIS, **tests)
+    tables_equal(full, part)
+    for column in ("estimate", "ci_lower", "ci_upper"):
+        assert_scaled(full.curve()[column], part.curve()[column], 1e-12)
+    fit = full.provenance["groups"][0]["fit"]
+    assert fit["samples"] == [f"s{i}" for i in kept]
+    assert fit["left_out"] == {
+        "s4": "every score of this sample is missing",
+        "s7": "the scores do not hold this sample",
+    }
+    assert full.summary["df_residual"][0] == part.summary["df_residual"][0] == 8.0
+
+
+def test_scores_that_do_not_vary_are_not_tested() -> None:
+    # A score of 0.3 in every sample, or one equal to its dose group's mean in every
+    # sample, has residuals of rounding alone. limma tests that rounding noise, which
+    # on this design gives the constant score a spline p-value of 0.021. Here a cell
+    # type of such scores alone is not tested, with the reason; beside other scores
+    # they are fitted as missing, NaN in every table, with the reason in the record
+    # and the curves, and the other scores' tests are those of the fit without them,
+    # whose prior their variances near 0 would have pulled towards 0.
+    levels = np.array([0.0, 0.03, 0.1, 0.3, 1.0, 3.0])
+    doses = np.repeat(levels, 4)
+    k = np.searchsorted(levels, doses).astype(float)
+    constant = array_scores(np.full((doses.size, 1), 0.3), doses)
+    design = design_of(constant)
+    alone = dose_response(constant, design, dose=AXIS, tests=TESTS, spline_df=2)
+    assert not alone.summary["tested"][0]
+    assert alone.summary["reason"][0].startswith(
+        "no score varies beyond what the model of the dose groups fits"
+    )
+    values = np.random.default_rng(2).normal(size=(doses.size, 5))
+    values[:, 0], values[:, 1] = 0.3, 0.1 * k
+    names = [f"set_{j}" for j in range(5)]
+    options = {"tests": (*TESTS, "dunnett"), "spline_df": 2, "rng": 1, "models": "ll4"}
+    beside = dose_response(
+        array_scores(values, doses, names), design, dose=AXIS, **options
+    )
+    without = dose_response(
+        array_scores(values[:, 2:], doses, names[2:]), design, dose=AXIS, **options
+    )
+    for test in (*TESTS, "dunnett"):
+        ours, theirs = beside.table(name=test), without.table(name=test)
+        p = np.asarray(ours["p_value"], dtype=float)
+        assert np.isnan(p[:2]).all()
+        assert_scaled(p[2:], np.asarray(theirs["p_value"]), 1e-12)
+    each = np.asarray(beside.table(name="each_dose")["t"], dtype=float).reshape(5, 5)
+    assert np.isnan(each[:, :2]).all() and not np.isnan(each[:, 2:]).any()
+    assert_scaled(beside.summary["df_prior"], without.summary["df_prior"], 1e-12)
+    record = beside.provenance["groups"][0]
+    assert sorted(record["fit"]["scores_not_tested"]) == ["set_0", "set_1"]
+    reason = record["fit"]["scores_not_tested"]["set_0"]
+    assert reason.startswith("its residuals are rounding errors")
+    assert record["curves"]["left_out"] == record["fit"]["scores_not_tested"]
+
+
+def test_infinite_scores_are_refused() -> None:
+    doses = np.repeat([0.0, 0.1, 1.0, 10.0], 3)
+    values = np.random.default_rng(0).normal(size=(12, 3))
+    values[2, 1] = np.inf
+    values[5, :] = -np.inf
+    scores = array_scores(values, doses)
+    design = design_of(scores)
+    message = r"4 infinite value\(s\), such as the score of 'set_1' in sample 's2'"
+    with pytest.raises(ValueError, match=message):
+        check_dose_design(scores, design, dose=AXIS)
+    with pytest.raises(ValueError, match=message):
+        dose_response(scores, design, dose=AXIS, tests="linear_trend")
+
+
+def test_scores_take_the_threads_of_the_contrast_tests() -> None:
+    # n_threads reaches the multiple contrast tests, whose p-values a seed fixes
+    # whatever the threads, and is checked even when no test reads it.
+    scores = alone("trial falling")
+    design = design_of(scores)
+    found = [
+        dose_response(scores, design, dose=AXIS, tests="mcp", rng=1, n_threads=n)
+        for n in (1, 2)
+    ]
+    assert_array_equal(
+        found[0].table(name="mcp")["p_value"], found[1].table(name="mcp")["p_value"]
+    )
+    with pytest.raises(ValueError, match="n_threads must be at least 1"):
+        dose_response(scores, design, dose=AXIS, tests="linear_trend", n_threads=0)
 
 
 def test_scores_of_an_array_form_one_group() -> None:

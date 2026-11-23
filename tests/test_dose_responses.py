@@ -2972,8 +2972,23 @@ def test_gate_refusals() -> None:
         ValueError, match="the gate's test 'spline' runs along the dose"
     ):
         dose_response(cube, one, dose=AXIS, gate={"test": "spline"})
-    with pytest.raises(ValueError, match="the gate's test 'mcp' compares"):
+    with pytest.raises(
+        ValueError,
+        match=r"the gate's test 'mcp' compares.*gate=\{'test': 'dose_groups'\}",
+    ):
         dose_response(cube, one, dose=AXIS, gate={"test": "mcp"})
+    # With a direction, the fix is a test with a sign.
+    with pytest.raises(
+        ValueError, match=r"the gate's test 'mcp' compares.*gate=\{'test': 'dunnett'\}"
+    ):
+        dose_response(
+            cube,
+            one,
+            dose=AXIS,
+            tests=("dunnett",),
+            direction="up",
+            gate={"test": "mcp"},
+        )
     donors, _ = simulate_dose_series(
         [0.0, 1.0, 10.0], replicates=3, cell_types=1, n_genes=60, donor_sd=0.3, rng=1
     )

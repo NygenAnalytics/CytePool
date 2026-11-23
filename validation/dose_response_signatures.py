@@ -1,5 +1,7 @@
-"""Check dose_response on pathway scores and activities, and its tests in one
-direction, against limma, Hmisc, DoseFinding, multcomp and mvtnorm.
+"""Check dose_response on pathway scores, and its tests in one direction, against
+limma, Hmisc, DoseFinding, multcomp and mvtnorm. Activities of samples take the same
+path, which ``tests/test_dose_response_signatures.py`` checks by their identical
+statistics.
 
 Inputs come from fixed seeds (20261250 to 20261254). ``ladder``: the vehicle and 0.1,
 0.3, 1, 3 and 10 ug/kg x 3, 1,000 genes of which 40% respond, a cell type of every
@@ -44,8 +46,10 @@ p max(1, |log p|)); close (1e-6) under ``robust = TRUE``, as
 ``empirical_bayes.py`` bounds limma's robust estimator; identical for samples, dose
 groups, degrees of freedom and chosen contrasts; calibrated: CytePool's p-values within
 5.5 combined standard errors of the draws', CytePool's reported error and the draws'
-binomial standard error. The information rows give error rates of scores on null dose
-series, which no reference has.
+binomial standard error, and a one-sided p-value of 1 that the bound of its box
+settles, whose error is that bound, no further below 1 minus the bound than 5.5 of
+the draws' standard errors. The information rows give error rates of scores on null
+dose series, which no reference has.
 
 Requirements:
     Python 3.13 with numpy and numba, run from the repository root.
@@ -79,6 +83,7 @@ from cytepool.dose_responses import dose_response
 from cytepool.gene_sets import GeneSets
 from cytepool.pathway_scores import PathwayScores, gsva
 from cytepool.simulated_dose_series import simulate_dose_series
+from cytepool.table import Table
 
 FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[1] / "tests" / "data" / "dose_response_signatures"
@@ -1090,18 +1095,12 @@ def compare_alone(
                 float(mcp["df"][0]) == df,
                 "n - K",
             )
-            z = _z(
-                float(mcp["p_value"][0]),
-                float(mcp["p_value_error"][0]),
-                float(found_p["p"]),
-                float(found_p["se"]),
-            )
-            checks.record(
+            calibrated(
+                checks,
                 "MCP step on one score: p-values, two-sided and in both directions, "
                 "5 shapes on 3 and on 5 treated doses (calibrated)",
-                z,
-                CALIBRATED,
-                DRAWN,
+                mcp,
+                found_p,
             )
             pmvt_rows.append(
                 (float(found_p["pmvt"]), float(found_p["p"]), float(found_p["se"]))
@@ -1136,17 +1135,12 @@ def compare_alone(
                     EXACT,
                     "multcomp glht on lm(score ~ factor(dose))",
                 )
-                checks.record(
+                calibrated(
+                    checks,
                     "Dunnett's and Williams-type tests on one score: p-values, "
                     "two-sided and in both directions (calibrated)",
-                    _z(
-                        float(table["p_value"][0]),
-                        float(table["p_value_error"][0]),
-                        float(values["p"]),
-                        float(values["se"]),
-                    ),
-                    CALIBRATED,
-                    DRAWN,
+                    table,
+                    values,
                 )
                 pmvt_rows.append(
                     (float(values["pmvt"]), float(values["p"]), float(values["se"]))
@@ -1172,15 +1166,25 @@ def _unit(rows: np.ndarray) -> np.ndarray:
     return rows / np.linalg.norm(rows, axis=1, keepdims=True)
 
 
-def _z(ours: float, ours_error: float, reference: float, reference_se: float) -> float:
-    """The difference of two Monte Carlo p-values in their combined standard
-    errors."""
-    combined = math.sqrt(ours_error**2 + reference_se**2)
-    return (
-        abs(ours - reference) / combined
-        if combined > 0.0
-        else (0.0 if ours == reference else math.inf)
-    )
+SETTLED = (
+    "Tests of one score: one-sided p-values of 1 that the bound of their box settles, "
+    "the draws' p-value against 1 minus the bound (calibrated)"
+)
+
+
+def calibrated(
+    checks: Checks, family: str, table: Table, reference: dict[str, Any]
+) -> None:
+    """A max-t p-value of one score against the draws': within its combined standard
+    errors, or, for a p-value of 1 that a bound settled, whose error is that bound,
+    how far the draws' p-value lies below 1 minus the bound, in its standard errors
+    (0 within it)."""
+    ours, error = float(table["p_value"][0]), float(table["p_value_error"][0])
+    drawn, se = float(reference["p"]), float(reference["se"])
+    if ours == 1.0:
+        checks.record(SETTLED, max(0.0, 1.0 - error - drawn) / se, CALIBRATED, DRAWN)
+        return
+    checks.record(family, abs(ours - drawn) / math.hypot(error, se), CALIBRATED, DRAWN)
 
 
 # The curves compared with fitMod: (set, model), and how each maps to DoseFinding's
@@ -1281,18 +1285,18 @@ def compare_curves(checks: Checks, found: Inputs, reference: dict[str, Any]) -> 
 
 
 def compare_constant(checks: Checks, found: Inputs, reference: dict[str, Any]) -> None:
-    """A score that does not vary, tested alone: what limma and CytePool give."""
+    """A score that does not vary, tested alone: limma tests its residuals of
+    rounding, and CytePool does not test it."""
     result = ours(found, JOBS[-1], "full")
     theirs = reference["jobs"]["constant"]["cell_types"]["full"]["tests"]
-    ours_f = float(result.table("full", "dose_groups")["f_statistic"][0])
-    ours_t = float(result.table("full", "linear_trend")["t"][0])
-    checks.information(
-        "A score that does not vary (0.3 in every sample), tested alone: the dose-group "
-        "F and the linear trend's t, from residuals of rounding",
+    tested = bool(result.summary["tested"][0])
+    checks.deliberate(
+        "A score that does not vary (0.3 in every sample), tested alone: limma's "
+        "dose-group F and linear trend's t come from residuals of rounding",
         "limma lmFit, eBayes",
         f"limma F {numbers(theirs['dose_groups']['F']).ravel()[0]:.3g} and t "
-        f"{numbers(theirs['linear_trend']['t']).ravel()[0]:.3g}; CytePool F {ours_f:.3g} and t "
-        f"{ours_t:.3g}",
+        f"{numbers(theirs['linear_trend']['t']).ravel()[0]:.3g}; CytePool "
+        + ("tests it" if tested else "does not test it"),
     )
 
 

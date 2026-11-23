@@ -7,9 +7,9 @@ of T stays below its limit, or within plus or minus its limit, and the complemen
 the chance that some coordinate leaves its interval, which is the adjusted p-value of
 a max-t test. :func:`multivariate_t_quantile` gives the equicoordinate quantile, the
 critical value of such a test. Each value comes with its error, and the computation
-stops when the error of the smaller of the probability and its complement, or of the
-complement alone, is at most a requested fraction of it, so that a p-value of 1e-10 is
-as accurate, relative to its size, as one of 0.04.
+stops when the error of the smaller of the probability and its complement is at most a
+requested fraction of it, so that a p-value of 1e-10 is as accurate, relative to its
+size, as one of 0.04.
 https://docs.nygen.io/CytePool/statistics/multiple-testing#multivariate-t-probabilities
 explains the method and its accuracy.
 
@@ -65,15 +65,16 @@ Methods:
       probability and its complement, and small boxes cost about what large ones do.
       A one-sided box whose limits lie far below 0 is the exception: its probability
       falls exponentially, and at 1% of it, one such box of 5 correlated contrasts
-      took 24 s. A max-t p-value needs only the complement's accuracy, which
-      ``relative_to="complement"`` asks for. The box's probability is at most the
-      smallest probability of its coordinates' intervals, exact from the t
-      distribution, and at most that of its least correlated pair; when that bound
-      is at most ``relative_error``, the box is not integrated: its probability is
-      0 and its complement 1, with the bound as their error, which bounds the
-      difference from the true values. So a max-t p-value near 1 is 1, never below
-      that of a more extreme contrast of the same test, whose box is larger. Other
-      boxes are computed as without it.
+      took 24 s. A one-sided max-t p-value needs only the complement's accuracy, and
+      with ``relative_to="complement"`` such a box is bounded instead: its
+      probability is at most the smallest probability of its coordinates'
+      intervals, exact from the t distribution, and at most that of its least
+      correlated pair; when that bound is at most ``relative_error``, the box is not
+      integrated: its probability is 0 and its complement 1, with the bound as their
+      error, which bounds the difference from the true values. So a max-t p-value
+      near 1 is 1, never below that of a more extreme contrast of the same test,
+      whose box is larger. Every other box, two-sided ones included, is computed as
+      without it, to the smaller side's target, which meets the complement's too.
     - Points and errors. Randomly shifted Kronecker points, x_n = frac(n alpha + Delta)
       with alpha_j the fractional part of the square root of the j-th prime, folded by
       the baker's transform 1 - |2 x - 1|; 16 random shifts are drawn once per call,
@@ -82,8 +83,7 @@ Methods:
       the 16 shift estimates and its standard error their standard deviation over 4
       (randomized quasi-Monte Carlo with independent shifts; Genz and Bretz 2002).
       Points per shift double from 4 until the standard error of the smaller of the
-      probability and the complement, or of the complement alone with
-      ``relative_to="complement"``, is at most ``relative_error`` of it, or until
+      probability and the complement is at most ``relative_error`` of it, or until
       2^16 points per shift (2^20 in all); the error then shows that the limit was
       reached. A problem with rare overlaps, or with a coordinate correlated beyond
       0.999 with the one it conditions on, takes at least 16 points per shift: both
@@ -251,9 +251,10 @@ class MultivariateTProbability:
             adjusted p-value of a max-t test.
         error: The estimated error of both: the standard error of the Monte Carlo
             estimate with three or more coordinates, the error bound of the quadrature
-            with two, and 0 with one; with ``relative_to="complement"``, a box that
-            is not integrated has probability 0 and the bound on its probability
-            as its error, which bounds the difference from the true value.
+            with two, and 0 with one; with ``relative_to="complement"``, a one-sided
+            box that a bound settles has probability 0 and that bound on its
+            probability as its error, which bounds the difference from the true
+            value.
 
     Each is a float for one problem, and a read-only array of the problems' shape
     otherwise.
@@ -1094,16 +1095,16 @@ def _sampled_box(
 ) -> tuple[float, float, float, FloatArray, float, int]:
     """The probability, complement and standard error of a box of three or more
     coordinates, with the chi-squared table for the next problem; with
-    ``on_complement``, a box whose probability is bounded within the complement's
-    target is not integrated: it gets probability 0, complement 1 and the bound as
-    their error."""
+    ``on_complement``, a one-sided box whose probability is bounded within the
+    complement's target is not integrated: it gets probability 0, complement 1 and
+    the bound as their error."""
     k = correlation.shape[0]
     lower = -upper if two_sided else np.full(k, -_INF)
     factor = 2.0 if two_sided else 1.0
     tails = np.empty(k)
     for i in range(k):
         tails[i] = factor * t_sf_scalar(upper[i], df)
-    if on_complement:
+    if on_complement and not two_sided:
         # The box lies within each coordinate's interval and each pair's box, so
         # its probability is at most the smallest of their probabilities; when
         # that bound is within the target of a complement near 1, the probability
@@ -1111,36 +1112,26 @@ def _sampled_box(
         # 1, the end that a less extreme contrast's p-value can never fall below.
         bound = 1.0
         for i in range(k):
-            if two_sided:
-                inside = 1.0 - tails[i]
-            else:
-                inside = t_sf_scalar(-upper[i], df)
-            bound = min(bound, inside)
+            bound = min(bound, t_sf_scalar(-upper[i], df))
         if relative_error < bound <= 0.5:
-            # Of the pairs, the one whose box is the smallest when the limits are
-            # equal, as those of a max-t p-value are: of the smallest correlation
-            # for one-sided limits, of the smallest absolute one for two-sided. A
-            # pair's box is at least the product of its coordinates' interval
-            # probabilities, so at least the bound squared, for a two-sided box at
-            # any correlation (Sidak's inequality) and for a one-sided box at a
-            # correlation of at least 0 (Slepian's), given S and then over S by
-            # Jensen's inequality: then it cannot settle the box when that square
-            # is beyond the target.
+            # Of the pairs, the one of the smallest correlation, whose box is the
+            # smallest when the limits are equal, as those of a max-t p-value are.
+            # At a correlation of at least 0, a pair's box is at least the product
+            # of its coordinates' interval probabilities (Slepian's inequality,
+            # given S and then over S by Jensen's inequality), so at least the bound
+            # squared: then it cannot settle the box when that square is beyond the
+            # target.
             first, second = 0, 1
             for i in range(k):
                 for j in range(i + 1, k):
-                    rho = correlation[i, j]
-                    best = correlation[first, second]
-                    if (abs(rho) < abs(best)) if two_sided else (rho < best):
+                    if correlation[i, j] < correlation[first, second]:
                         first, second = i, j
-            unbounded = not two_sided and correlation[first, second] < 0.0
-            if unbounded or bound * bound <= relative_error:
+            rho = correlation[first, second]
+            if rho < 0.0 or bound * bound <= relative_error:
                 pair = np.empty(2)
                 pair[0] = upper[first]
                 pair[1] = upper[second]
-                inside, _, error = _plane_box(
-                    correlation[first, second], pair, df, two_sided
-                )
+                inside, _, error = _plane_box(rho, pair, df, False)
                 bound = min(bound, inside + error)
         if bound <= relative_error:
             return 0.0, 1.0, bound, table, table_df, table_points
@@ -1879,10 +1870,9 @@ def multivariate_t_cdf(
     accuracy when it is small: it is the adjusted p-value of a max-t test, such as
     P(max |T_i| >= c) for a two-sided box with every limit c. With three or more
     coordinates, the computation is randomized and stops when the standard error of
-    the smaller of the probability and the complement, or of the complement with
-    ``relative_to="complement"``, is at most ``relative_error`` times it; with two it
-    is a deterministic quadrature, accurate to about 1e-12 relative, and with one it
-    is the t distribution itself.
+    the smaller of the probability and the complement is at most ``relative_error``
+    times it; with two it is a deterministic quadrature, accurate to about 1e-12
+    relative, and with one it is the t distribution itself.
     https://docs.nygen.io/CytePool/statistics/multiple-testing#multivariate-t-probabilities
     explains the method.
 
@@ -1905,13 +1895,14 @@ def multivariate_t_cdf(
             problem whatever the error, which ``error`` then shows.
         relative_to: ``"smaller"`` (default) for the error of the smaller of the
             probability and its complement, or ``"complement"`` for the error of the
-            complement alone, as a max-t p-value needs: a box of three or more
-            coordinates whose probability is at most ``relative_error``, by the
-            smallest probability of its coordinates' intervals or of its least
-            correlated pair, is then not integrated, and gets probability 0 and
-            complement 1, with that bound as their error. A one-sided box whose
-            limits lie far below 0 has such a small probability, which costs up to
-            2^20 points to reach at its own relative error.
+            complement alone, as a one-sided max-t p-value needs: a one-sided box of
+            three or more coordinates whose probability is at most
+            ``relative_error``, by the smallest probability of its coordinates'
+            intervals or of its least correlated pair, is then not integrated, and
+            gets probability 0 and complement 1, with that bound as their error.
+            Such a box, whose limits lie far below 0, costs up to 2^20 points to
+            reach its own relative error. Every other box is computed as with
+            ``"smaller"``, whose target meets the complement's too.
         rng: A numpy random generator, a non-negative integer seed, or None. One
             set of 16 random shifts is drawn per call and serves every problem, so a
             seed gives the same values whatever the order of the problems and the

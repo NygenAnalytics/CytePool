@@ -395,6 +395,24 @@ def test_one_sided_p_values_of_the_other_sign_come_from_a_bound() -> None:
             assert abs(p[i, j] - box.complement) <= allowed
 
 
+def test_two_sided_p_values_near_1_keep_their_relative_error() -> None:
+    # Doses whose means all lie within 0.01 of the vehicle's: two-sided, each
+    # contrast's p-value is near 1, and its error meets 1% of 1 - p, the smaller
+    # side's rule, with nothing settled by a bound and nothing short of its target.
+    names = ["vehicle", "low", "mid", "high"]
+    covariance = np.diag(0.2 / np.array([4.0, 3.0, 3.0, 4.0]))
+    means = np.array([5.0, 5.01, 4.99, 5.005])
+    test = multiple_contrast_test(
+        means, covariance, dunnett_contrasts(names), df=10.0, estimate_names=names,
+        alternative="two-sided", rng=1,
+    )  # fmt: skip
+    p, error = test.p_value[0], test.p_value_error[0]
+    assert np.all(np.abs(test.t[0]) < 0.05)
+    assert np.all(p < 1.0) and np.all(p > 0.9999)
+    assert np.all(error <= 0.01 * (1.0 - p))
+    assert "p_values_short_of_relative_error=0" in repr(test)
+
+
 def test_p_values_from_a_bound_keep_their_order_and_their_errors() -> None:
     # Tukey's contrasts of 4 groups, of rank 3, tested for a rise on 5 df, a feature
     # of the validation: the bound settles the boxes of contrasts that point the

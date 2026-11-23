@@ -23,19 +23,25 @@ from typing import Any, NamedTuple
 import numpy as np
 import numpy.typing as npt
 
+from ._analysis_records import design_sample_ids
 from ._columns import text_column
 from ._messages import quoted
 from .activity import Activities
-from .design import Contrasts
+from .cube.pool import BULK_GROUP
+from .design import Contrasts, Design
 from .pathway_scores import PathwayScores
 from .stats.empirical_bayes import ModeratedFit, moderated_statistics
 from .stats.linear_models import contrasts_fit, fit_linear_model
+from .stats.multiple_testing import adjust_p_values
+from .table import Table
 
 FloatArray = npt.NDArray[np.float64]
 
-BULK = "bulk"
-"""The cell type of scores of an array, which name none, as from_bulk names the group
-of bulk counts."""
+NO_SAMPLE_IDS = (
+    "the design's sample table has no 'sample_id' column, so its rows cannot be "
+    "matched to the samples of the scores; build the Design from the cube's samples"
+)
+"""The message for a design whose samples cannot be matched to those of scores."""
 
 
 class SampleScores(NamedTuple):
@@ -54,7 +60,8 @@ def sample_scores(data: PathwayScores | Activities, caller: str) -> SampleScores
 
     Raises:
         ValueError: If the activities are of the statistics of contrasts, whose
-            profiles name no sample.
+            profiles name no sample, the profiles name a sample twice, or a score is
+            infinite.
     """
     if isinstance(data, PathwayScores):
         id_column, names = "gene_set", list(data.gene_sets)
@@ -74,14 +81,45 @@ def sample_scores(data: PathwayScores | Activities, caller: str) -> SampleScores
             f"the profiles of the scores name the sample(s) {quoted(repeated)} more "
             "than once; each profile must be one sample, as gsva and ulm give them"
         )
+    values = np.asarray(data.scores, dtype=np.float64)
+    infinite = np.argwhere(np.isinf(values))
+    if infinite.size:
+        row, column = infinite[0]
+        raise ValueError(
+            f"the scores hold {len(infinite)} infinite value(s), such as the score of "
+            f"{names[column]!r} in sample {samples[row]!r}; mark a missing score with "
+            "NaN"
+        )
     group = data.settings.get("group")
     return SampleScores(
-        np.asarray(data.scores, dtype=np.float64),
+        values,
         samples,
         id_column,
         text_column(names),
-        BULK if group is None else str(group),
+        BULK_GROUP if group is None else str(group),
     )
+
+
+def design_rows(scores: SampleScores, design: Design) -> tuple[list[str], np.ndarray]:
+    """The design's samples, in its order, and the row of the scores that holds each,
+    -1 for a sample the scores do not hold.
+
+    Raises:
+        TypeError, ValueError: If the design's sample ids are missing, not text or
+            repeated, or none is among the scores' samples.
+    """
+    sample_ids = design_sample_ids(
+        design, no_ids=NO_SAMPLE_IDS, text_ids="the scores' profiles do"
+    )
+    row_of = {sample: row for row, sample in enumerate(scores.sample_ids)}
+    rows = np.array([row_of.get(sample, -1) for sample in sample_ids], dtype=np.intp)
+    if not np.any(rows >= 0):
+        raise ValueError(
+            "none of the design's samples is among the samples of the scores: the "
+            f"scores' samples are such as {quoted(scores.sample_ids[:3])}, the "
+            f"design's such as {quoted(sample_ids[:3])}"
+        )
+    return sample_ids, rows
 
 
 def fit_scores(
@@ -107,3 +145,26 @@ def fit_scores(
     )
     tested = contrasts_fit(fit, contrasts, method="exact")
     return moderated_statistics(tested, trend=trend, robust=robust)
+
+
+def contrast_table(
+    id_column: str, ids: np.ndarray, moderated: ModeratedFit, column: int
+) -> Table:
+    """limma's table of one contrast of a fit of scores, as ``topTable`` gives it:
+    the contrast, its moderated standard error, the scores' mean, t, the p-values
+    and the B-statistic."""
+    fit = moderated.fit
+    p_value = moderated.p_value[:, column]
+    return Table(
+        {
+            id_column: ids,
+            "estimate": fit.coefficients[:, column],
+            "standard_error": fit.stdev_unscaled[:, column]
+            * np.sqrt(moderated.posterior_variance),
+            "average": fit.mean_expression,
+            "t": moderated.t[:, column],
+            "p_value": p_value,
+            "adjusted_p_value": adjust_p_values(p_value, "bh"),
+            "log_odds": moderated.log_odds[:, column],
+        }
+    )
