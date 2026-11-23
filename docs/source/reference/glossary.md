@@ -96,7 +96,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Knot.** A value at which the cubic pieces of a spline join; a natural cubic spline is a straight line beyond its two outer knots, the boundary knots, and a fitted curve cannot be reproduced without its knots. [Spline columns](../statistics/linear_models.md#spline-bases)
 
-**Lack-of-fit test.** A test of a fitted curve against free means of the dose groups, whose small p-value says the curve misses the means, read at 0.1 for benchmark doses: an F-test in CytePool, and a likelihood ratio test, test 4, in BMDS. [Read the curves table](../statistics/dose_response.md#dose-curve-table)
+**Lack-of-fit test.** A test of a fitted curve against free means of the dose groups, whose small p-value says the curve misses the means: an F-test in the table of curves, and its likelihood ratio form, BMDS's test 4, which the flag sets of benchmark doses read at 0.1 as the fit p-value. [Read the curves table](../statistics/dose_response.md#dose-curve-table)
 
 **Layer.** One statistic of a cube summed over cells: the counts, the cells that detect each feature, or the sums of normalized and log-normalized values. [The layers](../statistics/cubes.md#cube-layers)
 
@@ -158,7 +158,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Prior degrees of freedom.** How much the value that all genes share counts in empirical Bayes moderation, as a number of degrees of freedom added to each gene's own. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
 
-**Profile likelihood.** The largest log-likelihood of a model with one quantity held at a value, such as a curve's change at a dose; the values whose profile lies within a chi-square quantile of the maximum form a confidence interval. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
+**Profile likelihood.** The largest log-likelihood of a model with one quantity held at a value, such as a curve's change at a dose; the values whose profile lies within half a chi-square quantile of the maximum, so that the deviance, twice the drop, lies within the quantile, form a confidence interval. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
 
 **Proportion of true nulls (π₀).** The share of a family's tests without an effect, estimated from the p-values above a threshold, since those of tests without an effect are uniform. [The proportion of true nulls](../statistics/multiple_testing.md#proportion-of-true-nulls)
 

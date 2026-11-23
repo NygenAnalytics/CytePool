@@ -811,4 +811,4 @@ Further reading:
 - @bourgon2010 showed that a filter before a test keeps the test's control of errors when the filter's statistic and the test's are independent under the null hypothesis, and that some filters in use lose it; @mccarthy2009 introduced TREAT, which tests changes against a fold-change threshold instead of filtering on the estimated changes.
 - @lee2024 measured how often a benchmark-dose workflow gives a point of departure from vehicle-only zebrafish embryos placed in mock dose groups, and how pooling embryos lowers it; @bruns2026 compared five workflows on one dose series, which reported 70 to 3,618 responsive genes at 4 h, and ran them on permuted concentration labels; @phipson2010 showed why permutation p-values should never be zero, and how to compute exact ones when the permutations are drawn at random.
 
-[Potency and points of departure](potency.md) reads from each curve the dose at which the response starts, its benchmark dose, with bounds.
+[Potency and points of departure](potency.md) reads from each curve the dose at which the response reaches a stated change, its benchmark dose, with bounds.
