@@ -479,9 +479,12 @@ def _power_log(x: float, exponent: float) -> tuple[float, float]:
 
 @jit_numpy_errors
 def _exp_rate_term(rate: float, x: float) -> float:
-    """(exp(s x) - 1) / s, x at s = 0."""
+    """(exp(s x) - 1) / s, x at s = 0, and infinity beyond the largest double, as
+    ``safe_exp`` gives it, instead of an overflow."""
     if rate == 0.0:
         return x
+    if rate * x > _EXP_MAX:
+        return math.inf
     return math.expm1(rate * x) / rate
 
 

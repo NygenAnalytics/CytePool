@@ -649,7 +649,7 @@ def fit_gene(
         else:
             _whiten(root, bases[point], whitened)
             grid_values[point] = point_fit(constraint, whitened, z, q, alpha)
-    starts = _grid_minima(grid_values, inner)
+    starts = grid_minima(grid_values, inner)
     low, high = lower.copy(), upper.copy()
     candidate = np.zeros(theta.size)
     best, best_converged = math.inf, False
@@ -697,7 +697,7 @@ def fit_gene(
 
 
 @jit_numpy_errors
-def _grid_minima(values: FloatArray, inner: int) -> npt.NDArray[np.int64]:
+def grid_minima(values: FloatArray, inner: int) -> npt.NDArray[np.int64]:
     """The positions of the lowest local minima of a grid's values, at most
     ``STARTS``, lowest first, -1 where there are fewer; a point is a local minimum
     when no neighbour along either axis is lower. The second axis has ``inner``

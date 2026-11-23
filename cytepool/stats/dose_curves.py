@@ -193,6 +193,10 @@ class DoseCurveFits:
             :func:`~cytepool.dose_response` (``"weighted"``); or its moderated
             variance (``"moderated"``).
         df: ``(n_genes,)`` the degrees of freedom of ``covariance_scale``.
+        within_group_sd: ``(n_genes, K)`` under constant variance, the sample SD of
+            each dose group's values, with n_k - 1 in the denominator; NaN for a
+            group of one sample, and in the weighted and moderated modes, whose
+            means come from a fit rather than from samples.
         parameters: ``(n_genes, n_models, n_parameter_names)`` the parameters of
             each fit, NaN where a model has no such parameter or was not fitted.
         log_likelihood: ``(n_genes, n_models)``: under constant variance that of the
@@ -254,6 +258,7 @@ class DoseCurveFits:
     covariance: FloatArray
     covariance_scale: FloatArray
     df: FloatArray
+    within_group_sd: FloatArray
     parameters: FloatArray
     log_likelihood: FloatArray
     aic: FloatArray
@@ -669,6 +674,7 @@ def _fit_means(
         covariance=read_only(data.covariance),
         covariance_scale=read_only(data.covariance_scale),
         df=read_only(data.df),
+        within_group_sd=read_only(_within_group_sd(data)),
         parameters=read_only(parameters),
         log_likelihood=read_only(statistics["log_likelihood"]),
         aic=read_only(statistics["aic"]),
@@ -685,6 +691,18 @@ def _fit_means(
         best=read_only(best),
         turn_driven_by_dose=read_only(driven),
     )
+
+
+def _within_group_sd(data: _CurveData) -> FloatArray:
+    """Each dose group's sample SD under constant variance, NaN for a group of one
+    sample; NaN in the modes whose means come from a fit."""
+    shape = data.means.shape
+    if data.within is None:
+        return np.full(shape, np.nan)
+    replicated = data.n_samples > 1.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sd = np.sqrt(data.within / (data.n_samples - 1.0))
+    return np.where(replicated, sd, np.nan)
 
 
 def _models_not_fitted(model_set: str, n_groups: int) -> dict[str, str]:

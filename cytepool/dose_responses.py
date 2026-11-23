@@ -85,6 +85,12 @@ Tests in one direction:
     each dose against the vehicle stays two-sided
     (https://docs.nygen.io/CytePool/statistics/dose-response#one-sided-dose-tests).
 
+Benchmark doses:
+    With ``bmr`` as well, each gene's best curve gives its benchmark dose at each
+    benchmark response, and at 1 SD beside them, with one-sided 95% profile-likelihood
+    bounds in cell types that support tests and without bounds in those that support
+    only description (:mod:`cytepool.stats.potency`).
+
 Adjustment for multiple testing:
     ``adjusted_p_value`` adjusts the p-values of one cell type and test by
     Benjamini-Hochberg (Benjamini and Hochberg 1995), as limma's ``topTable`` does,
@@ -206,6 +212,7 @@ from ._messages import close_matches, fitted_lines, listing, quoted
 from ._options import checked_choice, positive_integer, real_number, recorded_seed
 from ._sample_scores import SampleScores, contrast_table, fit_scores, sample_scores
 from .activity import Activities
+from .benchmark_responses import BenchmarkResponse
 from .candidate_shapes import BETA_SCALE_FACTOR, CandidateShapes
 from .cube import Cube
 from .design import Contrasts, Design
@@ -223,6 +230,8 @@ from .dose_axes import DoseAxis
 from .dose_designs import DESCRIPTIVE, INFERENTIAL, DoseDesignReport, check_dose_design
 from .normalization import library_sizes, log2_cpm, tmm_factors
 from .pathway_scores import PathwayScores
+from .stats._benchmark_dose_flags import checked_flag_sets
+from .stats._benchmark_dose_search import search_range, search_settings
 from .stats._dose_curve_models import curve_values, model_of
 from .stats._dose_curve_search import fitter_settings
 from .stats.distributions import t_ppf
@@ -250,6 +259,14 @@ from .stats.multiple_contrasts import (
     williams_contrasts,
 )
 from .stats.multiple_testing import adjust_p_values
+from .stats.potency import (
+    BOUNDS,
+    BenchmarkDoses,
+    _checked_responses,
+    _status_counts,
+    _threshold_name,
+    benchmark_doses,
+)
 from .stats.smoothing import NaturalSplineBasis
 from .table import Table
 
@@ -293,6 +310,8 @@ _SCORE_OPTIONS = ("trend", "robust", "n_threads")
 _LIMMA = "limma"
 CURVES = "curves"
 """The table of the curves of named models, built from the fits on demand."""
+BENCHMARK_DOSES = "benchmark_doses"
+"""The table of the benchmark doses of the curves, built on demand."""
 # The options of the analyses that change the values a fit would use, which curves of
 # cell types that support only description use too.
 _VALUE_OPTIONS = ("expression_filter", "normalization", "prior_count")
@@ -411,6 +430,12 @@ class DoseResponseResult:
       after them, as in the table ``"gate"``, built from :meth:`curve_fits` when
       asked for; also for cell types that support only description, which have no
       gate.
+    - ``"benchmark_doses"``, with ``bmr``: one row per BMR and gene with curves, the
+      columns of :meth:`BenchmarkDoses.table <cytepool.stats.potency.BenchmarkDoses.table>`
+      with ``symbol`` and ``passes_gate`` (as in the table ``"gate"``, in cell types
+      where the gate ran) after ``feature_id``, and a column of failed checks per set
+      of ``flags``, built from :meth:`benchmark_doses` when asked for; for cell types
+      that support only description, without bounds or ``passes_gate``.
 
     The tables of pathway scores or activities have one row per gene set or source,
     in the scores' order, with the columns :func:`~cytepool.limma` gives scores:
@@ -441,11 +466,13 @@ class DoseResponseResult:
     (:class:`~cytepool.stats.empirical_bayes.ModeratedFit`), which :meth:`curve`
     reads; as ``curves``, each cell type's genes fitted (``feature_id``, and
     ``symbol`` when the cube has one) with their
-    :class:`~cytepool.stats.dose_curves.DoseCurveFits`; and with the ``cube`` and
-    ``design`` analysed, from which :func:`~cytepool.permutation_check` runs the
-    analysis again; a result of scores, or one built without them, cannot be
-    checked. A pickled result carries the cube: a cube read from a cube file refers
-    to its file, and a cube in memory carries its arrays. Immutable.
+    :class:`~cytepool.stats.dose_curves.DoseCurveFits`; as ``benchmark_doses``, the
+    :class:`~cytepool.stats.potency.BenchmarkDoses` of each cell type's curves; and
+    with the ``cube`` and ``design`` analysed, from which
+    :func:`~cytepool.permutation_check` runs the analysis again; a result of scores,
+    or one built without them, cannot be checked. A pickled result carries the cube:
+    a cube read from a cube file refers to its file, and a cube in memory carries its
+    arrays. Immutable.
 
     Raises:
         TypeError: If ``summary`` is not a ``Table``, ``tables`` not a mapping of
@@ -453,7 +480,8 @@ class DoseResponseResult:
             ``DifferentialExpressionResult`` or ``ModeratedFit``, ``design_report``
             not a ``DoseDesignReport``, ``provenance`` not a mapping that JSON can
             write, ``curves`` not a mapping of cell type to a pair of a ``Table``
-            and a ``DoseCurveFits``, ``cube`` not a ``Cube`` or ``design`` not a
+            and a ``DoseCurveFits``, ``benchmark_doses`` not a mapping of cell type
+            to ``BenchmarkDoses``, ``cube`` not a ``Cube`` or ``design`` not a
             ``Design``.
         ValueError: If ``provenance`` holds a NaN or an infinity, or one of
             ``cube`` and ``design`` is given without the other.
@@ -466,6 +494,7 @@ class DoseResponseResult:
         "_report",
         "_record",
         "_curves",
+        "_benchmark_doses",
         "_cube",
         "_design",
     )
@@ -476,6 +505,7 @@ class DoseResponseResult:
     _report: DoseDesignReport
     _record: str
     _curves: Mapping[str, tuple[Table, DoseCurveFits]]
+    _benchmark_doses: Mapping[str, BenchmarkDoses]
     _cube: Cube | None
     _design: Design | None
 
@@ -488,6 +518,7 @@ class DoseResponseResult:
         provenance: Mapping[str, Any],
         *,
         curves: Mapping[str, tuple[Table, DoseCurveFits]] | None = None,
+        benchmark_doses: Mapping[str, BenchmarkDoses] | None = None,
         cube: Cube | None = None,
         design: Design | None = None,
     ) -> None:
@@ -545,6 +576,18 @@ class DoseResponseResult:
                     f"curves[{group!r}] must be a pair of a Table of genes and their "
                     f"DoseCurveFits, got {type(item).__name__}"
                 )
+        benchmark_doses = {} if benchmark_doses is None else benchmark_doses
+        if not isinstance(benchmark_doses, Mapping):
+            raise TypeError(
+                "benchmark_doses must be a mapping of cell type to BenchmarkDoses, got "
+                f"{type(benchmark_doses).__name__}"
+            )
+        for group, found in benchmark_doses.items():
+            if not isinstance(found, BenchmarkDoses):
+                raise TypeError(
+                    f"benchmark_doses[{group!r}] must be a BenchmarkDoses, got "
+                    f"{type(found).__name__}"
+                )
         if cube is not None and not isinstance(cube, Cube):
             raise TypeError(f"cube must be a Cube or None, got {type(cube).__name__}")
         if design is not None and not isinstance(design, Design):
@@ -564,6 +607,7 @@ class DoseResponseResult:
             # JSON holds no arrays: json.dumps raises TypeError for one.
             "_record": json.dumps(provenance, allow_nan=False),
             "_curves": MappingProxyType(dict(curves)),
+            "_benchmark_doses": MappingProxyType(dict(benchmark_doses)),
             "_cube": cube,
             "_design": design,
         }
@@ -586,6 +630,7 @@ class DoseResponseResult:
                 self._report,
                 self.provenance,
                 dict(self._curves),
+                dict(self._benchmark_doses),
                 self._cube,
                 self._design,
             ),
@@ -601,8 +646,8 @@ class DoseResponseResult:
     @property
     def tables(self) -> Mapping[tuple[str, str], Table]:
         """The tables of the tests, by (cell type, test), (cell type, ``"each_dose"``)
-        and (cell type, ``"gate"``); the curves tables are built by :meth:`table`
-        when asked for."""
+        and (cell type, ``"gate"``); the tables of curves and benchmark doses are built
+        by :meth:`table` when asked for."""
         return self._tables
 
     @property
@@ -678,10 +723,12 @@ class DoseResponseResult:
         ``"mcp"``), the seed of the multiple contrast tests (``seed``; None when none
         ran), the gate (``gate``, as :attr:`gate` gives it), the ``direction`` of
         one-sided tests (None for two-sided ones), the curves' ``models`` and
-        ``variance``, the analysis, and ``batch``, ``groups``, ``min_cells`` and
-        ``min_counts`` (None for scores). The analysis's other options are in the
-        provenance's ``analysis_settings``, as the analysis records them, and for
-        scores ``trend`` and ``robust``.
+        ``variance``, the BMRs given (``bmr``, as :meth:`BenchmarkResponse.to_dict`
+        gives each; None without) and the sets of checks (``flags``), the analysis,
+        and ``batch``, ``groups``, ``min_cells`` and ``min_counts`` (None for
+        scores). The analysis's other options are in the provenance's
+        ``analysis_settings``, as the analysis records them, and for scores
+        ``trend`` and ``robust``.
         """
         settings: dict[str, Any] = json.loads(self._record)["settings"]
         return settings
@@ -715,8 +762,13 @@ class DoseResponseResult:
         with the reasons, why turns could not be checked for a dose group that drives
         them (``turns_unchecked``, empty when they could), the genes, the scores left
         out with their reasons (``left_out``, empty for a cube's genes), or why the
-        cell type has none). With ``models``, ``curves`` also holds each model's mean
-        and parameters, the sizes of the grids and the refinement's settings.
+        cell type has none), and, with ``bmr``, its benchmark doses
+        (``benchmark_doses``: the BMRs with the 1 SD comparison added, the bounds or
+        why there are none, the threshold of each BMR's bounds, the range of doses
+        searched and the count of BMDs whose bounds could not be computed; None
+        without curves). With ``models``, ``curves`` also holds each model's mean
+        and parameters, the sizes of the grids and the refinement's settings, and
+        with ``bmr``, ``benchmark_doses`` how BMDs and their bounds are searched.
         """
         record: dict[str, Any] = json.loads(self._record)
         return record
@@ -729,8 +781,9 @@ class DoseResponseResult:
             name: A test the cell type ran, ``"spline"``, ``"nonlinearity"``,
                 ``"linear_trend"``, ``"dose_groups"``, ``"dunnett"``, ``"williams"``
                 or ``"mcp"``; ``"each_dose"`` for each dose against the vehicle;
-                ``"gate"`` for the gate's calls; or ``"curves"`` for the curves of
-                named models. The class documentation gives the columns.
+                ``"gate"`` for the gate's calls; ``"curves"`` for the curves of
+                named models; or ``"benchmark_doses"`` for their benchmark doses. The
+                class documentation gives the columns.
 
         Raises:
             ValueError: If ``group`` is left out and several cell types were
@@ -744,24 +797,23 @@ class DoseResponseResult:
         name = only_key(name, self._table_names(), "name", "tables")
         if name == CURVES:
             genes, fits = self._curve_pair(group)
-            # feature_id, or the gene_set or source of scores.
-            column = genes.columns[0]
-            table = fits.table(feature_ids=genes[column])
-            if column != "feature_id":
-                table = table.rename({"feature_id": column})
             rows = np.repeat(np.arange(len(genes)), len(fits.models))
-            added: dict[str, Any] = {}
-            if "symbol" in genes:
-                added["symbol"] = genes["symbol"][rows]
-            gate = self._tables.get((group, GATE))
-            if gate is not None:
-                # The gate's call of each gene or score, matched by its id.
-                row_of = {gene: i for i, gene in enumerate(gate[column].tolist())}
-                calls = np.asarray(gate["passes_gate"], dtype=bool)
-                positions = [row_of[gene] for gene in genes[column].tolist()]
-                added["passes_gate"] = calls[positions][rows]
-            columns = list(table.columns)
-            return table.with_columns(added).select([columns[0], *added, *columns[1:]])
+            return _with_gene_columns(
+                fits.table(feature_ids=genes[genes.columns[0]]),
+                genes,
+                rows,
+                self._tables.get((group, GATE)),
+            )
+        if name == BENCHMARK_DOSES:
+            genes, _ = self._curve_pair(group)
+            doses = self.benchmark_doses(group)
+            table = doses.table(
+                feature_ids=genes[genes.columns[0]], flags=self.settings["flags"]
+            )
+            rows = np.tile(np.arange(len(genes)), len(doses.benchmark_responses))
+            return _with_gene_columns(
+                table, genes, rows, self._tables.get((group, GATE))
+            )
         found = self._tables.get((group, name))
         if found is not None:
             return found
@@ -772,17 +824,19 @@ class DoseResponseResult:
             raise KeyError(
                 f"{name!r} was not run in {group!r}: {entry['tests_not_run'][name]}"
             )
+        known = [*_ALL_TESTS, EACH_DOSE, GATE, CURVES, BENCHMARK_DOSES]
         raise KeyError(
             f"no table {name!r}; the tables are: "
-            f"{listing(self._table_names())}"
-            f"{close_matches(str(name), [*_ALL_TESTS, EACH_DOSE, GATE, CURVES])}"
+            f"{listing(self._table_names())}{close_matches(str(name), known)}"
         )
 
     def _table_names(self) -> list[str]:
         """The names of the tables: the tests, each dose, the gate and, with models,
-        curves."""
-        curves = [CURVES] if self.settings.get("models") is not None else []
-        return [*self.tests, EACH_DOSE, GATE, *curves]
+        curves, and with bmr, benchmark doses."""
+        settings = self.settings
+        curves = [CURVES] if settings.get("models") is not None else []
+        doses = [BENCHMARK_DOSES] if settings.get("bmr") is not None else []
+        return [*self.tests, EACH_DOSE, GATE, *curves, *doses]
 
     def fit(self, group: str | None = None) -> GroupFit:
         """Compute the fit of a tested cell type again: its values, weights and
@@ -1096,6 +1150,33 @@ class DoseResponseResult:
         """
         return self._curve_pair(self._group(group))[1]
 
+    def benchmark_doses(self, group: str | None = None) -> BenchmarkDoses:
+        """Return the benchmark doses of a cell type's curves, with their bounds and
+        what the documents' checks read.
+
+        Their table with other sets of checks needs no new bounds:
+        ``result.benchmark_doses(group).table(flags="ntp_2018")``.
+
+        Args:
+            group: A cell type with curves; it may be left out when one cell type
+                was checked.
+
+        Raises:
+            ValueError: If ``group`` is left out and several cell types were
+                checked.
+            TypeError: If ``group`` is not a string.
+            KeyError: If the cell type was not checked or has no curves, or
+                dose_response ran without ``bmr``; the message says why.
+        """
+        group = self._group(group)
+        if self.settings.get("bmr") is None:
+            raise KeyError(
+                "no benchmark doses were computed: dose_response ran without bmr; "
+                "pass bmr=BenchmarkResponse.sd(1), for instance, with models"
+            )
+        self._curve_pair(group)
+        return self._benchmark_doses[group]
+
     def _curve_pair(self, group: str) -> tuple[Table, DoseCurveFits]:
         """The genes and curves of a checked cell type, which must have curves."""
         found = self._curves.get(group)
@@ -1195,7 +1276,7 @@ class DoseResponseResult:
             )
         if name in groups:
             return name
-        if name in (*_ALL_TESTS, EACH_DOSE, GATE, CURVES):
+        if name in (*_ALL_TESTS, EACH_DOSE, GATE, CURVES, BENCHMARK_DOSES):
             raise KeyError(
                 f"{name!r} is a table, not a cell type; pass name={name!r}, with the "
                 "cell type as group, which may be left out when one was checked"
@@ -1244,12 +1325,19 @@ class DoseResponseResult:
             lines.append(
                 f"  curves: {settings['models']}, {settings['variance']} variance"
             )
+        if settings.get("bmr") is not None:
+            labels = [BenchmarkResponse(**bmr).label for bmr in settings["bmr"]]
+            text = "  benchmark doses at " + ", ".join(labels)
+            if settings["flags"]:
+                text += "; flags: " + ", ".join(settings["flags"])
+            lines.append(text)
         for entry, row in zip(record["groups"], range(n_groups), strict=True):
             group = entry["group_id"]
             if not entry["tested"]:
                 lines.append(
                     f"  {group}: not tested, {entry['status']}: {entry['reason']}"
                     + self._curve_text(group)
+                    + self._benchmark_text(group)
                 )
                 continue
             genes = int(self._summary["n_features_tested"][row])
@@ -1276,7 +1364,7 @@ class DoseResponseResult:
             notes = [] if mcp is None else _mcp_notes(mcp, len(entry["doses"]) - 1)
             if notes:
                 text += "; mcp: " + ", and ".join(notes)
-            lines.append(text + self._curve_text(group))
+            lines.append(text + self._curve_text(group) + self._benchmark_text(group))
         return fitted_lines("\n".join(lines))
 
     def _curve_text(self, group: str) -> str:
@@ -1290,11 +1378,47 @@ class DoseResponseResult:
         turns = _turn_text(fits)
         return f"{text}; {turns}" if turns else text
 
+    def _benchmark_text(self, group: str) -> str:
+        """Where a cell type's BMDs lie, for each BMR, for the printout; empty
+        without them."""
+        found = self._benchmark_doses.get(group)
+        if found is None:
+            return ""
+        parts = [
+            f"BMDs at {bmr.label}: {_status_counts(found.status[i])}"
+            for i, bmr in enumerate(found.benchmark_responses)
+        ]
+        bounds = "" if found.bounds else " (no bounds)"
+        return "; " + "; ".join(parts) + bounds
+
     def _calls(self, group: str, test: str) -> int:
         """The genes whose adjusted p-value of a test is at most the printout's FDR,
         as the gate calls them."""
         adjusted = self._tables[(group, test)]["adjusted_p_value"]
         return int(np.count_nonzero(adjusted <= _FDR))
+
+
+def _with_gene_columns(
+    table: Table, genes: Table, rows: np.ndarray, gate: Table | None
+) -> Table:
+    """A table of a cell type's genes, the gene of each row at ``rows`` of ``genes``:
+    its ``feature_id`` named as in ``genes`` (``gene_set`` or ``source`` for scores),
+    with ``symbol`` after it when the cube has symbols, and the gate's call of each
+    gene, ``passes_gate``, after them where the gate ran."""
+    column = genes.columns[0]
+    if column != "feature_id":
+        table = table.rename({"feature_id": column})
+    added: dict[str, Any] = {}
+    if "symbol" in genes:
+        added["symbol"] = genes["symbol"][rows]
+    if gate is not None:
+        # The gate's call of each gene or score, matched by its id.
+        row_of = {gene: i for i, gene in enumerate(gate[column].tolist())}
+        calls = np.asarray(gate["passes_gate"], dtype=bool)
+        positions = [row_of[gene] for gene in genes[column].tolist()]
+        added["passes_gate"] = calls[positions][rows]
+    columns = list(table.columns)
+    return table.with_columns(added).select([columns[0], *added, *columns[1:]])
 
 
 def _mcp_notes(record: Mapping[str, Any], treated: int) -> list[str]:
@@ -1324,6 +1448,8 @@ def dose_response(
     gate: Mapping[str, Any] | None = None,
     models: str | None = None,
     variance: str = CONSTANT,
+    bmr: BenchmarkResponse | Sequence[BenchmarkResponse] | None = None,
+    flags: str | Sequence[str] | None = None,
     analysis: Callable[..., DifferentialExpressionResult] = limma_voom,
     batch: str | None = None,
     groups: str | Sequence[str] | None = None,
@@ -1419,7 +1545,13 @@ def dose_response(
     tests and best model (:mod:`cytepool.stats.dose_curves`), in the table
     ``"curves"`` and in :meth:`DoseResponseResult.curve_fits`.
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-model-curves
-    explains the models, the variance modes and how to read the curves.
+    explains the models, the variance modes and how to read the curves. With ``bmr``
+    as well, each gene's best curve gives its benchmark dose (BMD), the dose at which
+    the curve departs from its level at dose 0 by the benchmark response (BMR), with
+    one-sided 95% profile-likelihood bounds, BMDL and BMDU, in cell types that
+    support tests (:func:`~cytepool.stats.potency.benchmark_doses`), in the table
+    ``"benchmark_doses"`` and in :meth:`DoseResponseResult.benchmark_doses`;
+    https://docs.nygen.io/CytePool/statistics/potency#benchmark-doses explains them.
 
     The pathway scores or activities of one cell type's samples, such as those of
     ``gsva(cube, sets, group="pDC")``, are tested in place of the genes, with every
@@ -1523,6 +1655,14 @@ def dose_response(
             design's other terms, and the gene's residual variance; or
             ``"moderated"``, the same with the gene's moderated variance. Cell types
             that support only description are fitted under constant variance.
+        bmr: The benchmark response, a :class:`~cytepool.BenchmarkResponse` such as
+            ``BenchmarkResponse.sd(1.349)`` or ``BenchmarkResponse.absolute(0.5)``,
+            or a list of them, for the BMDs of each gene's best curve, with the 1 SD
+            BMD beside them; None (default) for none. Needs ``models``.
+        flags: The documents' sets of checks whose failures the table
+            ``"benchmark_doses"`` lists: ``"bmds_2026"``, ``"ntp_2018"``,
+            ``"etap_2024"`` or ``"efsa_2022"``, or a list of them; None (default)
+            for none. Needs ``bmr``.
         analysis: :func:`~cytepool.limma_voom` (by default),
             :func:`~cytepool.limma_trend` or :func:`~cytepool.dream_voom`; a design
             with random intercepts needs ``dream_voom``. Left at its default for
@@ -1573,9 +1713,9 @@ def dose_response(
             (``contrasts``, ``f_tests``, ``adjust_across_groups``), or for scores
             other than ``trend``, ``robust`` and ``n_threads``; ``tests``, ``direction``,
             ``spline_df``, ``candidates``, ``gate`` or one of its settings,
-            ``models``, ``variance`` or ``rng`` has the wrong type, or an argument
-            is of a type that :func:`~cytepool.check_dose_design` or the analysis
-            refuses.
+            ``models``, ``variance``, ``bmr``, ``flags`` or ``rng`` has the wrong
+            type, or an argument is of a type that
+            :func:`~cytepool.check_dose_design` or the analysis refuses.
         ValueError: If ``tests`` names no test or a test twice, or names a test
             that the design cannot support; ``spline_df`` is below 1 or above the
             doses on the axis minus 1, or given without two doses on the axis;
@@ -1594,7 +1734,9 @@ def dose_response(
             ``dream_voom``, or ``variance="constant"`` with a design of other terms
             than dose; ``direction`` names no direction, or is given with
             ``tests=None``, with an F-test or with a gate of a test without a sign;
-            with scores, ``analysis`` is not the default; or as
+            with scores, ``analysis`` is not the default; ``bmr`` is empty, repeats
+            a BMR or is given without ``models``; ``flags`` names an unknown set or
+            one twice, or is given without ``bmr``; or as
             :func:`~cytepool.check_dose_design` and the analysis raise.
         KeyError: If a group is not in the cube.
     """
@@ -1641,6 +1783,7 @@ def dose_response(
             "refuses them too; leave contrast_standard_errors out, for the exact default"
         )
     model_set, variance = _curve_settings(models, variance, method, design)
+    responses, flag_sets = _benchmark_settings(bmr, flags, model_set)
     if isinstance(design, Design) and "expression_filter" in options:
         # The column of sample groups, if any, is checked here for every cell type,
         # also those that only describe and so run no analysis.
@@ -1681,6 +1824,7 @@ def dose_response(
     fits: list[_CellTypeFit] = []
     curves: dict[str, tuple[Table, DoseCurveFits]] = {}
     curve_records: dict[str, dict[str, Any]] = {}
+    doses_of: dict[str, BenchmarkDoses] = {}
     groups_checked = report.summary["group_id"].tolist()
     for group, status, reason in zip(groups_checked, statuses, reasons, strict=True):
         if status != INFERENTIAL:
@@ -1753,6 +1897,13 @@ def dose_response(
             )
             if found is not None:
                 curves[group] = found
+                if responses is not None:
+                    doses_of[group] = benchmark_doses(
+                        found[1],
+                        responses,
+                        bounds=status == INFERENTIAL,
+                        n_threads=options.get("n_threads"),
+                    )
     _adjust_across_groups(fits, (*splines.tests, *named))
     return _result(
         data,
@@ -1770,6 +1921,7 @@ def dose_response(
         chosen,
         (model_set, variance, curves, curve_records),
         side,
+        (responses, flag_sets, doses_of),
     )
 
 
@@ -2131,6 +2283,30 @@ def _curve_settings(
             "the dose-group means of each cell type's fit, adjusted for them"
         )
     return model_set, mode
+
+
+def _benchmark_settings(
+    bmr: Any, flags: Any, model_set: str | None
+) -> tuple[list[BenchmarkResponse] | None, tuple[str, ...] | None]:
+    """The BMRs and the sets of checks of the benchmark doses, refused before anything
+    runs when they do not suit the curves."""
+    if bmr is None:
+        if flags is not None:
+            raise ValueError(
+                "flags name the documents' checks of benchmark doses, and bmr is None, "
+                "so no benchmark doses are computed; give bmr, such as "
+                "BenchmarkResponse.sd(1), or leave flags out"
+            )
+        return None, None
+    responses = _checked_responses(bmr)
+    flag_sets = checked_flag_sets(flags)
+    if model_set is None:
+        raise ValueError(
+            "bmr sets the change that defines each gene's benchmark dose on its curve, "
+            "and models is None, so no curves are fitted; name a model set, such as "
+            "models='epa'"
+        )
+    return responses, flag_sets
 
 
 # The splines of the design.
@@ -3274,8 +3450,14 @@ def _result(
         str | None, str, dict[str, tuple[Table, DoseCurveFits]], dict[str, Any]
     ],
     direction: str | None,
+    benchmark_parts: tuple[
+        list[BenchmarkResponse] | None,
+        tuple[str, ...] | None,
+        dict[str, BenchmarkDoses],
+    ],
 ) -> DoseResponseResult:
     model_set, variance, curves, curve_records = curve_parts
+    responses, flag_sets, doses_of = benchmark_parts
     check = report.settings
     analysis = next((fit.record["analysis"] for fit in fits if fit.record), None)
     cube: dict[str, Any] | None
@@ -3311,6 +3493,8 @@ def _result(
         "direction": direction,
         "models": model_set,
         "variance": variance,
+        "bmr": None if responses is None else [bmr.to_dict() for bmr in responses],
+        "flags": None if flag_sets is None else list(flag_sets),
         "analysis": method,
         "batch": check["batch"],
         "groups": check["groups"],
@@ -3329,8 +3513,13 @@ def _result(
         "gate_adjustment": _gate_adjustment(gate),
         "tests": [*splines.tests, *named],
         "curves": None if model_set is None else fitter_settings(model_set),
+        "benchmark_doses": None if responses is None else search_settings(),
         "groups": [
-            _group_record(fit) | {"curves": curve_records.get(fit.group)}
+            _group_record(fit)
+            | {
+                "curves": curve_records.get(fit.group),
+                "benchmark_doses": _benchmark_record(doses_of.get(fit.group)),
+            }
             for fit in fits
         ],
     }
@@ -3351,6 +3540,7 @@ def _result(
         report,
         provenance,
         curves=curves,
+        benchmark_doses=doses_of,
         cube=data if isinstance(data, Cube) else None,
         design=design if isinstance(data, Cube) else None,
     )
@@ -3363,6 +3553,7 @@ def _restore_result(
     design_report: DoseDesignReport,
     provenance: Mapping[str, Any],
     curves: Mapping[str, tuple[Table, DoseCurveFits]],
+    benchmark_doses: Mapping[str, BenchmarkDoses],
     cube: Cube | None,
     design: Design | None,
 ) -> DoseResponseResult:
@@ -3373,9 +3564,30 @@ def _restore_result(
         design_report,
         provenance,
         curves=curves,
+        benchmark_doses=benchmark_doses,
         cube=cube,
         design=design,
     )
+
+
+def _benchmark_record(found: BenchmarkDoses | None) -> dict[str, Any] | None:
+    """The record of a cell type's benchmark doses; None without them."""
+    if found is None:
+        return None
+    low, high = search_range(found.lowest_dose, found.top_dose)
+    missing = found.bounds & np.isfinite(found.bmd) & np.isnan(found.bmdl)
+    return {
+        "bmrs": [bmr.to_dict() for bmr in found.benchmark_responses],
+        "bounds": (
+            BOUNDS if found.bounds else "none: the cell type supports only description"
+        ),
+        "thresholds": {
+            bmr.label: _threshold_name(found.variance, bmr)
+            for bmr in found.benchmark_responses
+        },
+        "doses_searched": [low, high],
+        "n_bounds_not_computed": int(np.count_nonzero(missing)),
+    }
 
 
 def _without_tables(
