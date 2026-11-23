@@ -4312,6 +4312,10 @@ def test_a_cell_type_without_curves_has_no_benchmark_doses() -> None:
         with pytest.raises(KeyError, match="spare dose group"):
             result.table(group, "benchmark_doses")
     assert all(e["benchmark_doses"] is None for e in result.provenance["groups"])
+    # The printout names the BMR, without sets of checks, and no cell type's BMDs.
+    text = " ".join(repr(result).split())
+    assert "benchmark doses at 1 SD" in text
+    assert "flags:" not in text and "BMDs at" not in text
 
 
 def test_the_record_names_the_threshold_of_each_bmr() -> None:
