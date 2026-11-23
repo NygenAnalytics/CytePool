@@ -1,5 +1,5 @@
 """Check benchmark_doses and BenchmarkResponse against DRomics, pybmds, scipy and
-mpmath, and the documents' checks against the same rules coded in R.
+mpmath, and the checks of BMDS, NTP, ETAP and EFSA against the same rules coded in R.
 
 Series simulated by ``simulate_dose_series`` from fixed seeds (20261230 to 20261234):
 ``half_log``, the vehicle and 8 half-log doses from 0.01 to 30 ug/kg x 3, 150 genes,
@@ -15,7 +15,8 @@ log2-CPM values of limma_voom's fit in ``dose_response`` are the samples' values
 References, each a separate program that sees the values, doses and settings and
 nothing that CytePool computed from them, except where a row says "given":
 
-- DRomics 2.6.3 (``DOSE_RSCRIPT``) fits half_log's large cell type with ``drcfit`` and
+- DRomics 2.6.3 (``DOSE_RSCRIPT``) fits half_log's large cell type, and two straight
+  lines steep enough that their BMDs lie below ``minBMD``, with ``drcfit`` and
   computes ``bmdcalc(z = 1, x = 10)``; CytePool computes the BMD of DRomics' own
   parameters at a change of DRomics' SDres (BMD-zSD) and of 10% of its y0 (BMD-xfold),
   as absolute BMRs. Linear, exponential, Hill and the monotone Gauss-probit forms are
@@ -28,8 +29,10 @@ nothing that CytePool computed from them, except where a row says "given":
   variance, at 1 SD and at a change of 0.5, with NLopt's fallback optimizer, since
   the wheel lacks NLopt's Luksan algorithms. BMDs given pybmds's parameters and SD are
   close (1e-5; pybmds stops its search within about 5e-7 of the root); test 2 against
-  mpmath is exact (1e-10); the checks of ``bmds_2026`` on pybmds's own numbers equal
-  its recommender's default rules (identical); BMDLs and BMDUs where pybmds reaches
+  mpmath is exact (1e-10); test 4, the fit p-value that the checks read, where pybmds
+  reaches CytePool's maximum, is close (1e-6 relative to p max(1, |log p|)); the
+  checks of ``bmds_2026`` on pybmds's own numbers equal its recommender's default
+  rules (identical); BMDLs and BMDUs where pybmds reaches
   CytePool's maximum agree within 5e-3, pybmds's root precision, and where they do
   not, the documented profile at pybmds's bound decides: a curve of the documented
   likelihood within the threshold there puts pybmds's bound inside the region, and
@@ -44,9 +47,10 @@ nothing that CytePool computed from them, except where a row says "given":
   bounds, changes by the BMR at the bound and has the threshold's deviance (close,
   1e-6).
 - mpmath 1.3.0 gives the straight line's profile in closed form at 50 digits, under
-  constant variance and for weighted means (Fieller's bound): exact (1e-10).
-- The sets of checks coded in R 4.4.3 from the documents, on every BMD table computed
-  here: identical.
+  constant variance and for weighted means (Fieller's bound), with the threshold it
+  computes from the level and the degrees of freedom: exact (1e-10).
+- The sets of checks coded in R 4.4.3 from pybmds's rules, NTP 2018, US EPA 2024 and
+  EFSA 2022, on every BMD table computed here: identical.
 
 Requirements:
     Python 3.13 with numpy and numba, scipy and mpmath, run from the repository root.
@@ -79,9 +83,10 @@ FIXTURE_DIRECTORY = (
 )
 
 FLAGS_R = r"""
-# The documents' checks of benchmark doses, coded in R from pybmds 25.2's default
-# rules of BMDS's model recommendation (default.json and checks.py), NTP 2018 pp. 8
-# to 9, US EPA 2024 Sec. 3.4.5.3 and EFSA 2022 Sec. 2.6.5.
+# The checks of benchmark doses by BMDS, NTP, ETAP and EFSA, coded in R from pybmds
+# 25.2's default rules of BMDS's model recommendation (default.json and checks.py),
+# NTP 2018 pp. 8 to 9, US EPA 2024 Sec. 3.4.5.3 and EFSA 2022 Sec. 2.6.5. The fit
+# p-value is BMDS's test 4.
 # Reads rows of BMDs, bounds and fit statistics; writes, per set, the failed checks
 # of each row joined by "; ".
 suppressPackageStartupMessages(library(jsonlite))
@@ -96,7 +101,7 @@ rows <- input$rows
 bmd <- num(rows$bmd)
 bmdl <- num(rows$bmdl)
 bmdu <- num(rows$bmdu)
-p <- num(rows$lack_of_fit_p_value)
+p <- num(rows$fit_p_value)
 roi <- num(rows$residual_near_bmd)
 vehicle_residual <- num(rows$residual_at_vehicle)
 sd_ratio <- num(rows$vehicle_sd_ratio)
@@ -145,9 +150,9 @@ checks <- list(
          gt(abs(vehicle_residual), 2))
   ),
   ntp_2018 = list(
-    list("BMD more than 10-fold below the lowest dose (kept)",
+    list("BMD more than 10-fold below the lowest dose (NTP keeps the gene)",
          known(bmd) & bmd < lowest / 10),
-    list("BMD, BMDL or BMDU not computed",
+    list("BMD, BMDL or BMDU not computed, or beyond the search",
          !known(bmd) | (rep(bounds, n) & !(bmdl_usable & known(bmdu)))),
     list("BMD not below the highest dose", known(bmd) & bmd >= top),
     list("fit p-value <= 0.1", known(p) & p <= 0.1),
@@ -727,7 +732,9 @@ def line_bounds(task: dict[str, Any]) -> dict[str, Any]:
       / v) = 0 with u = s v_R / b, the -2 log-likelihood N log sigma^2 + (A + (b1 - u
       sigma)^2 / v) / sigma^2 against its value at the fit, N log(A / N) + N.
     Each bound is the root of deviance = threshold on the side of the BMD, by
-    bisection at 50 digits; 0 or infinity where none lies within [low, high]."""
+    bisection at 50 digits; 0 or infinity where none lies within [low, high]. The
+    threshold is computed here from the level, 0.90: the chi-square(1) quantile, or,
+    for an absolute BMR of weighted means, the F(1, df) quantile."""
     import mpmath as mp
 
     mp.mp.dps = 50
@@ -746,7 +753,7 @@ def line_bounds(task: dict[str, Any]) -> dict[str, Any]:
     a = mp.mpf(task["a0"]) + q
     n_eff = mp.mpf(task["n_eff"])
     s2 = mp.mpf(task["s2"])
-    threshold = mp.mpf(task["threshold"])
+    threshold = line_threshold(task["mode"], task["form"], task["df"])
     s = 1 if b1 > 0 else -1
     form, mode = task["form"], task["mode"]
     value = mp.mpf(task["value"])
@@ -796,6 +803,30 @@ def line_bounds(task: dict[str, Any]) -> dict[str, Any]:
     # Fieller's bound beside the constant-variance one: the t-based bound with the
     # pooled variance on its degrees of freedom, as information.
     return out
+
+
+def line_threshold(mode: str, form: str, df: float) -> Any:
+    """The 0.90 quantile that a straight line's bounds read, at 50 digits: chi-square
+    with 1 degree of freedom, the square of the standard normal's 0.95 quantile; or,
+    for an absolute BMR of weighted means, F(1, df), the root of its distribution
+    function, the regularized incomplete beta function I_{f / (f + df)}(1/2, df/2),
+    at 0.90."""
+    import mpmath as mp
+
+    mp.mp.dps = 50
+    level = mp.mpf(CHI_SQUARE_LEVEL)
+    chi_square = 2 * mp.erfinv(level) ** 2
+    if mode == "constant" or form == "sd" or math.isinf(df):
+        return chi_square
+    half_df = mp.mpf(df) / 2
+
+    def excess(f: Any) -> Any:
+        return (
+            mp.betainc(mp.mpf(1) / 2, half_df, 0, f / (f + df), regularized=True)
+            - level
+        )
+
+    return mp.findroot(excess, chi_square)
 
 
 def constant_variance_test(task: dict[str, Any]) -> dict[str, Any]:
@@ -1149,6 +1180,16 @@ def edge_series() -> Series:
 
 # ---- DRomics, given its parameters --------------------------------------------------
 
+
+def steep_items(doses: np.ndarray) -> np.ndarray:
+    """Two straight lines steep enough that a change of their SD, or of 10% of their
+    level at dose 0, comes below a hundredth of the lowest dose, DRomics' minBMD: a
+    rise and a fall of 10,000 per dose unit, with noise of SD 0.3 about a level of 6."""
+    rng = np.random.default_rng(20261235)
+    lines = [6.0 + 1e4 * doses, 6.0 - 1e4 * doses]
+    return np.column_stack([line + rng.normal(0.0, 0.3, doses.size) for line in lines])
+
+
 DROMICS_NAMES = {"linear": "linear", "exponential": "exponential", "Hill": "ll4"}
 
 
@@ -1249,8 +1290,8 @@ def compare_dromics(
         f"BMDs at minBMD, the lowest dose / 100 ({len(floors)}), and NA or NaN ({len(codes)})",
         "DRomics 2.6.3 bmdcalc",
         f"{sum(floors) + sum(codes)} of {len(floors) + len(codes)} as DRomics codes them",
-        "identical",
-        all(floors) and all(codes),
+        "identical, with at least one BMD at minBMD",
+        bool(floors) and all(floors) and all(codes),
     )
     return records
 
@@ -1302,6 +1343,12 @@ PYBMDS_MESSAGES = {
     ),
     "|scaled residual at the vehicle| > 2 (warning)": ("Residual at control > 2.0", 0),
 }
+
+
+def p_distance(ours: float, reference: float) -> float:
+    """The difference of two p-values relative to p max(1, |log p|)."""
+    scale = max(reference * max(1.0, abs(math.log(max(reference, 1e-300)))), 1e-300)
+    return abs(ours - reference) / scale
 
 
 def pybmds_value(value: Any) -> float:
@@ -1369,6 +1416,7 @@ def compare_pybmds(
     exact_test2 = {r["key"]: r for r in test2}
     bmd_differences, bound_differences, checks = [], [], []
     test2_differences, a2_shortfalls, p_ratios = [], [], []
+    test4_differences: list[float] = []
     beyond, shortfalls, not_completed = 0, 0, 0
     negative: list[str] = []
     one_only: list[str] = []
@@ -1451,7 +1499,7 @@ def compare_pybmds(
                 bounds=True,
                 lowest_dose=lowest,
                 top_dose=top,
-                lack_of_fit_p_value=np.array([pybmds_value(row["test4_p"])]),
+                fit_p_value=np.array([pybmds_value(row["test4_p"])]),
                 residual_near_bmd=np.array([pybmds_value(row["roi"])]),
                 residual_at_vehicle=np.array([pybmds_value(row["roi_control"])]),
                 vehicle_sd_ratio=np.array(
@@ -1488,6 +1536,13 @@ def compare_pybmds(
                 else BenchmarkResponse.absolute(0.5)
             )
             mine_model = benchmark_doses(one, bmr, model=model)
+            if form == "sd" and math.isfinite(pybmds_value(row["test4_p"])):
+                # Test 4 of the same maximum, which the flags read as the fit p-value.
+                test4_differences.append(
+                    p_distance(
+                        float(mine_model.fit_p_value[0]), pybmds_value(row["test4_p"])
+                    )
+                )
             for name_ in ("bmdl", "bmdu"):
                 ours_bound = float(getattr(mine_model, name_)[0, 0])
                 ref_bound = pybmds_value(row[name_])
@@ -1555,6 +1610,15 @@ def compare_pybmds(
         "n/a",
         None,
         deliberate=True,
+    )
+    rows.add(
+        f"Test 4, the fit p-value, of the fits where pybmds reaches CytePool's maximum "
+        f"({len(test4_differences)} fits)",
+        "pybmds 25.2 test 4",
+        f"largest difference relative to p max(1, |log p|) "
+        f"{max(test4_differences, default=0.0):.1e}",
+        f"close ({CLOSE:g})",
+        max(test4_differences, default=0.0) <= CLOSE,
     )
     rows.add(
         f"bmds_2026's checks on pybmds's own numbers ({len(checks)} completed fits)",
@@ -1770,7 +1834,6 @@ def case_inputs(case: Case, low: float, high: float) -> dict[str, Any]:
         "high": high,
         "bmdl": float(case.result.bmdl[0, 0]),
         "bmdu": float(case.result.bmdu[0, 0]),
-        "threshold": float(case.result.threshold[0, 0]),
         "seed": zlib.crc32(case.key.encode()),
         "starts": 12,
         "data": case.data,
@@ -1780,151 +1843,90 @@ def case_inputs(case: Case, low: float, high: float) -> dict[str, Any]:
 def profile_witness(case: Case, b: float) -> dict[str, Any]:
     """CytePool's curve of largest likelihood among those whose change at the dose b is
     the BMR in the BMD's direction, as its search finds it at a dose of its scan: the
-    grid of the model's nonlinear parameters at b, refined from the grid's lowest
-    minima and from the fit. Its reported parameters, its SD for an SD-based BMR, and
-    CytePool's deviance at b."""
+    grid of the model's nonlinear parameters at b, refined from the fit and from the
+    grid's lowest minima by ``profile_at``. Its reported parameters, its SD for an
+    SD-based BMR, and CytePool's deviance at b."""
     from cytepool.stats._benchmark_dose_search import (
         CHANGE_IN_SD,
+        FORM,
         GRID_MARGIN,
-        MAX_ITERATIONS,
-        _refine_start,
-        constrained_minimum,
-        face_fits,
+        MAX_CARRIED,
+        OBJECTIVE_FIT,
+        THRESHOLD,
+        grid_faces,
+        grid_values,
+        profile_at,
         profile_point,
         workspace,
     )
-    from cytepool.stats._dose_curve_models import (
-        DoseScale,
-        bounds,
-        constraint,
-        exponential_sign_gap,
-        grid,
-        is_linear,
-        n_linear,
-        reported,
-    )
+    from cytepool.stats._dose_curve_models import reported
     from cytepool.stats._dose_curve_search import grid_bases, grid_minima
-    from cytepool.stats.potency import _chosen_models, _GeneFits, _likelihood
+    from cytepool.stats.potency import (
+        _chosen_models,
+        _gene_numbers,
+        _GeneFits,
+        _grid_changes,
+        _likelihood,
+        _search_model,
+    )
 
     fits = case.fits
     genes = _GeneFits.of(fits, _chosen_models(fits, case.model))
     likelihood = _likelihood(fits, genes, case.bmr)
     kind = int(genes.kinds[0])
-    theta_fit = genes.theta[0]
-    q, p = n_linear(kind), theta_fit.size
-    # The nonlinear parameters' positions; the straight line and the quadratic have
-    # none.
-    nonlinear = [j for j in range(p) if not is_linear(kind, j)] if p > q else []
-    index = np.array(nonlinear, dtype=np.int64)
-    linear = constraint(kind)
-    scale = DoseScale.of(fits.doses)
-    root = np.ascontiguousarray(genes.roots[0])
+    model, points, inner, phi_fit = _search_model(fits, kind, genes.theta[0][None])
+    linear, q, r = model[1], model[2], model[3].size
+    s = 1.0 if case.result.direction[0, 0] == "up" else -1.0
+    row = _gene_numbers(
+        likelihood, np.zeros(1, dtype=np.int64), np.array([s]), case.result.bmd[0]
+    )[0]
     x = fits.doses
+    root = np.ascontiguousarray(genes.roots[0])
     ybar = np.ascontiguousarray(fits.means[0], dtype=np.float64)
     z = root @ ybar
-    s = 1.0 if case.result.direction[0, 0] == "up" else -1.0
-    form, value = int(likelihood.forms[0]), float(likelihood.values[0])
-    a0, n_eff = float(likelihood.a0[0]), float(likelihood.n_eff[0])
-    s2 = float(likelihood.s2[0])
-    objective_fit = float(likelihood.objective_fit[0])
-    threshold = float(likelihood.thresholds[0])
     space = workspace(x.size)
-    phi = np.zeros(max(index.size, 1))
-    if index.size:
-        lower, upper = (limits[index] for limits in bounds(kind, scale))
-        points, inner = grid(kind, scale)
+    # The grid's values at b and their lowest minima within the margin, after the fit.
+    starts = [phi_fit[0]]
+    if r:
         bases, usable = grid_bases(kind, q, points, x)
-        at_b, _ = grid_bases(kind, q, points, np.array([b]))
-        at_0, _ = grid_bases(kind, q, points, np.zeros(1))
-        values = np.full(points.shape[0], np.inf)
-        inverses, betas = np.zeros((3, 3, 3)), np.zeros((3, 3))
-        sums, sizes = np.zeros(3), np.zeros(3, dtype=np.int64)
-        alpha, extra, work = np.zeros(3), np.zeros(3), np.zeros((6, 3))
-        columns = np.zeros((x.size, 3))
-        for point in np.flatnonzero(usable):
-            columns[:, :q] = root @ bases[point]
-            face_fits(linear, q, columns, z, inverses, betas, sums, sizes)
-            change = np.ascontiguousarray(at_b[point, 0] - at_0[point, 0])
-            if np.all(np.isfinite(change)):
-                values[point] = constrained_minimum(
-                    linear,
-                    q,
-                    inverses,
-                    betas,
-                    sums,
-                    sizes,
-                    change,
-                    form,
-                    value,
-                    s,
-                    a0,
-                    n_eff,
-                    s2,
-                    alpha,
-                    extra,
-                    work,
-                )
-        minima = grid_minima(values, inner)
-        starts = [np.ascontiguousarray(theta_fit[index])] + [
-            np.ascontiguousarray(points[m], dtype=np.float64)
-            for m in minima
-            if m >= 0 and values[m] - objective_fit <= threshold + GRID_MARGIN
+        n_points = points.shape[0]
+        inverses, betas = np.zeros((n_points, 3, 3, 3)), np.zeros((n_points, 3, 3))
+        sums, sizes = np.zeros((n_points, 3)), np.zeros((n_points, 3), dtype=np.int64)
+        grid_faces(linear, q, bases, usable, root, z, inverses, betas, sums, sizes)
+        values = np.full(n_points, np.inf)
+        change = _grid_changes(kind, q, points, np.array([b]))[:, 0]
+        grid_values(
+            linear, q, usable, inverses, betas, sums, sizes, change, row, values
+        )
+        margin = row[THRESHOLD] + GRID_MARGIN
+        starts += [
+            points[m]
+            for m in grid_minima(values, inner)
+            if m >= 0 and values[m] - row[OBJECTIVE_FIT] <= margin
         ]
-        best = math.inf
-        for start in starts:
-            trial, theta = np.zeros(index.size), np.zeros(p)
-            objective = _refine_start(
-                kind,
-                linear,
-                q,
-                start,
-                lower,
-                upper,
-                exponential_sign_gap(scale),
-                b,
-                x,
-                ybar,
-                root,
-                z,
-                form,
-                value,
-                s,
-                a0,
-                n_eff,
-                s2,
-                index,
-                trial,
-                theta,
-                space,
-                MAX_ITERATIONS,
-            )
-            if objective < best:
-                best, phi = objective, trial.copy()
-    theta, extra = np.zeros(p), np.zeros(3)
-    objective = profile_point(
-        kind,
-        linear,
-        q,
-        phi,
+    kept = np.zeros((MAX_CARRIED, max(r, 1)))
+    kept_values = np.zeros(MAX_CARRIED)
+    profile_at(
+        model,
+        row,
         b,
+        np.ascontiguousarray(np.array(starts)),
+        len(starts),
         x,
+        ybar,
         root,
         z,
-        form,
-        value,
-        s,
-        a0,
-        n_eff,
-        s2,
-        theta,
-        extra,
+        kept,
+        kept_values,
         space,
     )
+    theta, extra = np.zeros(genes.theta[0].size), np.zeros(3)
+    objective = profile_point(model, row, kept[0], b, x, root, z, theta, extra, space)
     return {
         "dose": b,
         "theta": reported(kind, theta).tolist(),
-        "sigma": math.sqrt(extra[1]) if form == CHANGE_IN_SD else None,
-        "deviance": objective - objective_fit,
+        "sigma": math.sqrt(extra[1]) if row[FORM] == CHANGE_IN_SD else None,
+        "deviance": objective - row[OBJECTIVE_FIT],
     }
 
 
@@ -2172,7 +2174,7 @@ def compare_lines(rows: Rows, cases: list[Case], reference: dict[str, Any]) -> N
         )
 
 
-# ---- the documents' checks in R -----------------------------------------------------
+# ---- the checks of BMDS, NTP, ETAP and EFSA in R ---------------------------------------
 
 
 def flag_rows(results: list[Any]) -> dict[str, Any]:
@@ -2181,7 +2183,7 @@ def flag_rows(results: list[Any]) -> dict[str, Any]:
         "bmd",
         "bmdl",
         "bmdu",
-        "lack_of_fit_p_value",
+        "fit_p_value",
         "residual_near_bmd",
         "residual_at_vehicle",
         "vehicle_sd_ratio",
@@ -2224,7 +2226,7 @@ def compare_flags(rows: Rows, payload: dict[str, Any]) -> list[dict]:
                 agree += ours == theirs
     rows.add(
         f"Failed checks of the four sets on every BMD table ({total:,} rows and sets)",
-        "the sets coded in R 4.4.3 from the documents",
+        "the sets coded in R 4.4.3 from pybmds's rules and the guidance",
         f"{agree:,} of {total:,} identical",
         "identical",
         agree == total,
@@ -2375,20 +2377,27 @@ def main() -> int:
     found.append(edge_series())
     plugin = plugin_fits()
 
-    # DRomics, given its parameters.
+    # DRomics, given its parameters, on half_log's large cell type and two steep lines
+    # whose BMDs lie below minBMD.
     half_log = next(s for s in found if s.name == "half_log/cell_type_1")
+    items = Series(
+        "dromics",
+        half_log.doses,
+        np.column_stack([half_log.values, steep_items(half_log.doses)]),
+        [*half_log.feature_ids, "steep_rise", "steep_fall"],
+    )
     dromics = run_r(
         DROMICS_R,
         {
-            "doses": half_log.doses.tolist(),
-            "values": half_log.values.T.tolist(),
+            "doses": items.doses.tolist(),
+            "values": items.values.T.tolist(),
             "z": 1,
             "x": 10,
         },
         "DOSE_RSCRIPT",
     )
     print("DRomics: " + ", ".join(f"{k} {v}" for k, v in dromics["versions"].items()))
-    dromics_records = compare_dromics(rows, half_log, dromics)
+    dromics_records = compare_dromics(rows, items, dromics)
 
     # pybmds.
     tasks = pybmds_tasks(found)
@@ -2466,7 +2475,7 @@ def main() -> int:
         None,
     )
 
-    # The documents' checks in R, on every table computed here.
+    # The checks of BMDS, NTP, ETAP and EFSA in R, on every table computed here.
     from cytepool.benchmark_responses import BenchmarkResponse
     from cytepool.stats.dose_curves import fit_dose_curves
     from cytepool.stats.potency import benchmark_doses
@@ -2509,7 +2518,7 @@ def main() -> int:
                 {
                     "dromics": {
                         "minBMD": dromics["minBMD"],
-                        "doses": half_log.doses.tolist(),
+                        "doses": items.doses.tolist(),
                         "rows": dromics_records,
                     },
                     "pybmds": {"tasks": tasks[:8], "results": pybmds["results"][:8]},

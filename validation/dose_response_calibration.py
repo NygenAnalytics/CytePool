@@ -52,6 +52,12 @@ design supports and the spline's default size.
   ``benchmark_doses``'s profile-likelihood BMDL and BMDU of the line, and of the
   bound of a change held at 1.349 times the vehicle replicates' sample SD, which
   ignores that SD's error.
+- Named-model rows: Hill curves with normal errors simulated directly at K = 9 x 3 and
+  9 x 8, fitted with the ``"epa"`` set and read with the true model named
+  (``model="hill"``), so that no model is chosen: one-sided BMDL and BMDU coverage of
+  the true BMD at a change of 0.5 and at 1.349 SD, and how often BMDL to BMDU holds it,
+  which shows what the chi-square threshold gives at few replicates when the model is
+  right.
 - Band rows: 12 datasets of K = 9 x 3 replicates, one cell type of 600 genes of which
   30% respond, with 3,000 cells per profile, so that counting compresses no change.
   At each treated dose, the share of the curves' pointwise 95% bands that hold the
@@ -96,8 +102,9 @@ Seeds: ``numpy.random.default_rng([20261201, kind, design_cell, dataset])``, wit
 for power, 1 for null, 2 for the band's and 4 for the vehicle-only datasets, the design
 cells numbered in the order of the grid, as each row prints, and the band's and the
 vehicle-only design numbered 0; the multiple contrast tests of a dataset take their
-seed from kind 3, the permutation checks theirs from kind 5, and the straight lines
-from kind 6 with the true BMD's case. Each estimate comes with its Monte Carlo standard
+seed from kind 3, the permutation checks theirs from kind 5, the straight lines from
+kind 6 with the true BMD's case, and the named Hill curves from kind 7 with the
+replicates. Each estimate comes with its Monte Carlo standard
 error between datasets and, for shares of p-values and coverages, the binomial bound
 of that error, which p-values that a dataset's moderation ties together exceed. Every
 row is information but the spline and fold-change gates' rows at 3 replicates, the
@@ -132,7 +139,7 @@ from cytepool.stats.distributions import t_ppf
 from cytepool.stats.multiple_contrasts import stage_wise_adjusted_p_values
 
 SEED = 20261201
-POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS, LINES = 0, 1, 2, 3, 4, 5, 6
+POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS, LINES, NAMED = range(8)
 FDR = 0.05
 AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
 DOSES = {
@@ -166,6 +173,11 @@ LINE_SD = 0.3
 LINE_CHANGE = 0.4
 LINE_SD_MULTIPLE = 1.349
 LINE_BMDS = (1.0, 10.0)
+# Hill curves g + v x^n / (k^n + x^n), the model named, with normal errors.
+NAMED_HILL = {"g": 6.0, "v": 1.0, "k": 1.0, "n": 1.5}
+NAMED_CHANGE = 0.5
+NAMED_DATASETS = 2000
+NAMED_REPLICATES = (3, 8)
 
 
 @dataclass(frozen=True)
@@ -1264,6 +1276,9 @@ def line_rows() -> list[tuple[str, ...]]:
             standard = float(np.sqrt(0.95 * 0.05 / LINE_DATASETS))
             ours_low = float(np.mean(found.bmdl[row] <= truth))
             ours_high = float(np.mean(found.bmdu[row] >= truth))
+            ours_both = float(
+                np.mean((found.bmdl[row] <= truth) & (found.bmdu[row] >= truth))
+            )
             exact = "Fieller's t-based bound" if row == 0 else "the noncentral t bound"
             rows.append(
                 (
@@ -1281,7 +1296,7 @@ def line_rows() -> list[tuple[str, ...]]:
                     "profile-likelihood bounds of the line",
                     f"seed [{SEED}, {LINES}, {case}, 0]",
                     f"BMDL coverage {ours_low:.4f}, BMDU coverage {ours_high:.4f} (SE "
-                    f"{standard:.4f})",
+                    f"{standard:.4f}); BMDL to BMDU {ours_both:.4f}",
                     "n/a",
                     "info",
                 )
@@ -1298,6 +1313,60 @@ def line_rows() -> list[tuple[str, ...]]:
                 "info",
             )
         )
+    return rows
+
+
+# The named-model rows.
+
+
+def named_model_rows() -> list[tuple[str, ...]]:
+    """Coverage of the profile-likelihood bounds of Hill curves with normal errors,
+    the Hill model named, at 3 and 8 replicates: with the model right and chosen by
+    no one, what remains is the chi-square threshold's approximation."""
+    from cytepool.stats.dose_curves import fit_dose_curves
+    from cytepool.stats.potency import benchmark_doses
+
+    g, v, k, n = (NAMED_HILL[name] for name in ("g", "v", "k", "n"))
+    rows = []
+    for replicates in NAMED_REPLICATES:
+        rng = np.random.default_rng([SEED, NAMED, replicates, 0])
+        doses = np.repeat(np.array(DOSES[9]), replicates)
+        positive = np.where(doses > 0, doses, 1.0)
+        mean = g + v * (doses > 0) / (1.0 + (k / positive) ** n)
+        values = mean[:, None] + rng.normal(0.0, LINE_SD, (doses.size, NAMED_DATASETS))
+        found = benchmark_doses(
+            fit_dose_curves(doses, values, models="epa"),
+            [
+                BenchmarkResponse.absolute(NAMED_CHANGE),
+                BenchmarkResponse.sd(LINE_SD_MULTIPLE),
+            ],
+            model="hill",
+        )
+        for row, (label, change) in enumerate(
+            (
+                (f"a change of {NAMED_CHANGE:g}", NAMED_CHANGE),
+                (f"{LINE_SD_MULTIPLE:g} SD", LINE_SD_MULTIPLE * LINE_SD),
+            )
+        ):
+            truth = k / (v / change - 1.0) ** (1.0 / n)
+            bounded = np.isfinite(found.bmd[row]) & ~np.isnan(found.bmdl[row])
+            low = found.bmdl[row][bounded] <= truth
+            high = found.bmdu[row][bounded] >= truth
+            standard = float(np.sqrt(0.95 * 0.05 / max(int(bounded.sum()), 1)))
+            rows.append(
+                (
+                    f"Hill curves with normal errors, the model named, K = 9 x "
+                    f"{replicates}, SD {LINE_SD:g}, true BMD {truth:.4g} at {label}, "
+                    f"{int(bounded.sum()):,} of {NAMED_DATASETS:,} datasets with "
+                    "bounds: benchmark_doses's profile-likelihood bounds",
+                    f"seed [{SEED}, {NAMED}, {replicates}, 0]",
+                    f"BMDL coverage {float(np.mean(low)):.4f}, BMDU coverage "
+                    f"{float(np.mean(high)):.4f} (SE {standard:.4f}); BMDL to BMDU "
+                    f"{float(np.mean(low & high)):.4f}",
+                    "n/a",
+                    "info",
+                )
+            )
     return rows
 
 
@@ -1461,6 +1530,7 @@ def main() -> int:
     rows += vehicle_only_rows(arguments.vehicle_only_datasets)
     rows += band_rows()
     rows += line_rows()
+    rows += named_model_rows()
     print("| check | reference | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- |")
     for row in rows:
