@@ -2,10 +2,12 @@
 source, as data; then the steps of the documents' workflow that run on arrays.
 
 NTP 2018 and ETAP (US EPA 2024) run BMDExpress 2, whose settings the documents leave
-partly open. Where NTP 2018 leaves a setting to each platform or does not state it,
-the NTP rule set takes ETAP's, since ETAP states that its steps are consistent with
-NTP 2018 (Sec. 3.4.5.3); neither document states the number of permutations of
-Williams' trend test. :func:`~cytepool.dose_response` reads the data below for its
+partly open. NTP 2018 leaves the prefilter's thresholds to each platform; the NTP
+rule set takes those of NTP's study of the S1500+ platform (Gwinn et al. 2020), which
+match ETAP's, and takes ETAP's where neither states a setting, since ETAP states that
+its steps are consistent with NTP 2018 (Sec. 3.4.5.3). ETAP states no number of
+permutations of Williams' trend test, and both take Gwinn et al.'s 10,000.
+:func:`~cytepool.dose_response` reads the data below for its
 ``rules`` option, :func:`~cytepool.check_dose_design` reads ETAP's design minimums,
 and the documentation prints both rule sets from them.
 
@@ -22,6 +24,13 @@ References:
     method to integrate benchmark dose estimates with genomic data to assess the
     functional effects of chemical exposure. Toxicological Sciences 98, 240-248.
     doi:10.1093/toxsci/kfm092
+
+    Gwinn WM, Auerbach SS, Parham F, Stout MD, Waidyanatha S, Mutlu E, Collins B,
+    Paules RS, Merrick BA, Ferguson S, Ramaiahgari S, Bucher JR, Sparrow B, Toy H,
+    Gorospe J, Machesky N, Shah RR, Balik-Meisner MR, Mav D, Phadke DP, Roberts G,
+    DeVito MJ (2020). Evaluation of 5-day in vivo rat liver and kidney with
+    high-throughput transcriptomics for estimating benchmark doses of apical outcomes.
+    Toxicological Sciences 176, 343-354. doi:10.1093/toxsci/kfaa081
 
     Ringblom J, Johanson G, Öberg M (2014). Current modeling practice may lead to
     falsely high benchmark dose estimates. Regulatory Toxicology and Pharmacology 69,
@@ -63,9 +72,13 @@ WILLIAMS_P = 0.05
 FOLD_CHANGE = 1.5
 """A gene passes the fold change when a dose's mean differs from the vehicle's by at
 least this factor, either way."""
+MODELS = "bmdexpress"
+"""The curves both rule sets fit: the eight models with the bounds of BMDS 2's
+programs, as BMDExpress 2 fits them."""
 N_PERMUTATIONS = 10_000
-"""The permutations of Williams' trend test: neither document states a number; at this
-many, a p-value near 0.05 has a Monte Carlo SD of about 0.003."""
+"""The permutations of Williams' trend test, those of NTP's S1500+ study (Gwinn et al.
+2020), which ETAP does not state; at this many, a p-value near 0.05 has a Monte Carlo
+SD of about 0.003."""
 
 
 @dataclass(frozen=True)
@@ -97,8 +110,16 @@ class RuleSet:
 
 _ETAP = "US EPA 2024"
 _NTP = "NTP 2018"
-_FROM_ETAP = "taken from ETAP (US EPA 2024, Sec. 3.4.5.3)"
+_GWINN = "Gwinn et al. 2020"
 _PREFILTER = "williams prefilter"
+
+_BOUNDS = Setting(
+    "bounds",
+    "one-sided 95% profile-likelihood bounds of the BMD, the ends of the piece of the "
+    "likelihood's region that holds it",
+    "confidenceLevel 0.95",
+    "BMDS 2's programs in BMDExpress 2.30.520, observed",
+)
 
 _SHARED_NOT_APPLIED = (
     Setting(
@@ -165,11 +186,11 @@ ETAP = RuleSet(
         ),
         Setting(
             "Williams' trend test",
-            f"two-sided, {N_PERMUTATIONS:,} permutations; p < {WILLIAMS_P:g}, not "
-            "adjusted",
+            "rising or falling, whichever statistic is larger, on "
+            f"{N_PERMUTATIONS:,} permutations; p < {WILLIAMS_P:g}, not adjusted",
             f"{_PREFILTER}: numberOfPermutations {N_PERMUTATIONS}, pValueCutoff "
             f"{WILLIAMS_P:g}, useMultipleTestingCorrection false",
-            f"{_ETAP}, Sec. 3.4.5.3; permutations not stated",
+            f"{_ETAP}, Sec. 3.4.5.3; permutations not stated, {_GWINN}'s",
         ),
         Setting(
             "fold change",
@@ -205,6 +226,7 @@ ETAP = RuleSet(
             "bmrFactor 1.349",
             f"{_ETAP}, Sec. 3.4.5.3; Thomas et al. 2007",
         ),
+        _BOUNDS,
         Setting(
             "model choice",
             "the lowest AIC, counting the parameters not at a bound, among the "
@@ -270,7 +292,8 @@ NTP = RuleSet(
             f"genes with a mean count of at least {MEAN_COUNT:g}, counts per million "
             "over them, log2(CPM + 1)",
             "logTransformation: BASE2",
-            f"{_NTP}, p. 9 (log2 values after normalization); {_FROM_ETAP}",
+            f"{_NTP}, p. 9: log2 values after normalization; {_GWINN}: log2(CPM + "
+            "1); ETAP's count filter",
         ),
         Setting(
             "ANOVA pre-modelling test",
@@ -282,19 +305,20 @@ NTP = RuleSet(
         ),
         Setting(
             "Williams' trend test",
-            f"two-sided, {N_PERMUTATIONS:,} permutations; p < {WILLIAMS_P:g}, not "
-            "adjusted",
+            "rising or falling, whichever statistic is larger, on "
+            f"{N_PERMUTATIONS:,} permutations; p < {WILLIAMS_P:g}, not adjusted",
             f"{_PREFILTER}: numberOfPermutations {N_PERMUTATIONS}, pValueCutoff "
             f"{WILLIAMS_P:g}, useMultipleTestingCorrection false",
-            f"{_NTP}, pp. 5 to 6 (threshold set per platform); {_FROM_ETAP}; "
-            "permutations not stated",
+            f"{_NTP}, pp. 5 to 6: thresholds set per platform; {_GWINN}, the S1500+ "
+            "platform",
         ),
         Setting(
             "fold change",
             f"at least {FOLD_CHANGE:g}-fold from the vehicle's mean at one dose or "
             "more, either way",
             f"{_PREFILTER}: useFoldChange true, foldChange {FOLD_CHANGE:g}",
-            f"{_NTP}, pp. 5 to 6 (set per platform); {_FROM_ETAP}",
+            f"{_NTP}, pp. 5 to 6: set per platform; {_GWINN}: more than 1.5-fold, "
+            "where ETAP's 1.5x or greater keeps 1.5 itself",
         ),
         Setting(
             "models",
@@ -321,6 +345,7 @@ NTP = RuleSet(
             "bmrFactor 1",
             f"{_NTP}, p. 7",
         ),
+        _BOUNDS,
         Setting(
             "model choice",
             "the lowest AIC, counting the parameters not at a bound, among the "
@@ -363,9 +388,12 @@ def values_by_etap(counts: FloatArray) -> tuple[npt.NDArray[np.bool_], FloatArra
         counts: ``(n_samples, n_genes)`` counts of one cell type's samples.
 
     Returns:
-        Whether each gene is kept, and the ``(n_samples, n_kept)`` values.
+        Whether each gene is kept, and the ``(n_samples, n_kept)`` values, with no
+        column when no gene is kept.
     """
     kept = counts.mean(axis=0) >= MEAN_COUNT
+    if not kept.any():
+        return kept, np.zeros((counts.shape[0], 0))
     return kept, np.log2(cpm(counts[:, kept]) + 1.0)
 
 
@@ -398,6 +426,13 @@ def anova_premodelling_test(
     return f, p, adjust_p_values(p)
 
 
+def passes_anova_premodelling_test(adjusted_p_values: FloatArray) -> np.ndarray:
+    """An adjusted p-value below ``ANOVA_FDR``, strictly, as both documents write it
+    ("FDR < 0.05"); NaN does not pass."""
+    with np.errstate(invalid="ignore"):
+        return np.asarray(adjusted_p_values < ANOVA_FDR)
+
+
 def largest_log2_fold_changes(
     values: FloatArray, labels: npt.NDArray[np.intp], n_groups: int
 ) -> FloatArray:
@@ -408,7 +443,7 @@ def largest_log2_fold_changes(
     means = (one_hot @ values) / sizes[:, None]
     changes = means[1:] - means[0]
     largest = np.argmax(np.abs(changes), axis=0)
-    return changes[largest, np.arange(values.shape[1])]
+    return np.asarray(changes[largest, np.arange(values.shape[1])], dtype=np.float64)
 
 
 def passes_prefilter(p_values: FloatArray, log2_changes: FloatArray) -> np.ndarray:

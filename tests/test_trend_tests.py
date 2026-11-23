@@ -2,9 +2,11 @@
 by hand, exact enumeration of every relabelling of small designs, and invariants."""
 
 import itertools
+import json
 import math
 import pickle
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -354,3 +356,24 @@ def test_refusals() -> None:
         williams_trend_test(doses, values.astype(bool))
     with pytest.raises(TypeError, match="real numbers"):
         williams_trend_test(doses, np.full((6, 2), "a"))
+
+
+def test_p_values_match_bmdexpress() -> None:
+    """BMDExpress 2.30.520's Williams p-values of 100 acrylamide probes of GSE147072
+    (validation/toxicology_rule_sets.py), each from 10,000 of its permutations, within
+    z SDs plus 2 / (B + 1) of CytePool's from as many, z the two-sided 0.001 / 100
+    quantile and the SD from at least 0.45 B relabellings per side."""
+    found = json.loads(
+        (
+            Path(__file__).parent / "data" / "toxicology_rule_sets" / "williams.json"
+        ).read_text()
+    )
+    b = found["permutations"]
+    test = williams_trend_test(
+        np.array(found["doses"]), np.array(found["values"]), n_permutations=b, rng=3
+    )
+    theirs = np.array(found["bmdexpress_p_values"])
+    mean = (test.p_value + theirs) / 2
+    sd = np.sqrt(mean * (1 - mean) * 2 / (0.45 * b))
+    z = norm.isf(0.0005 / theirs.size)
+    assert np.all(np.abs(test.p_value - theirs) <= z * sd + 2 / (b + 1))

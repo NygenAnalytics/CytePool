@@ -86,6 +86,7 @@ from cytepool.stats.deseq2 import deseq2_dispersions, deseq2_wald_test, fit_dese
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.dose_curves import fit_dose_curves
 from cytepool.stats.potency import benchmark_doses
+from cytepool.stats.trend_tests import williams_trend_test
 from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
 from cytepool.stats.mixed_models import fit_mixed_model, fixed_effect_tests
@@ -382,6 +383,7 @@ def _dose_response(context: Context) -> dict[str, Any]:
         "variance": "constant",
         "bmr": BenchmarkResponse.sd(1.0),
         "flags": ["etap_2024"],
+        "selection": "bmds_2026",
         # An option of the analysis, which dose_response passes on.
         "expression_filter": {"min_count": 5},
     }
@@ -2304,9 +2306,23 @@ ENTRY_POINTS: dict[str, Entry] = {
             "rng",
             "models",
             "variance",
+            "selection",
             "direction",
         ),
         objects=("data", "design", "dose", "candidates", "analysis", "bmr"),
+    ),
+    # A rule set, which sets the curves, the BMR and the checks itself.
+    "cytepool.dose_responses.dose_response[rules]": Entry(
+        lambda c: (
+            {
+                key: value
+                for key, value in _dose_response(c).items()
+                if key not in ("models", "variance", "bmr", "flags", "selection")
+            }
+            | {"rules": "ntp_2018"}
+        ),
+        {"groups": None},
+        options=("rules",),
     ),
     # The permutation check of a gate: the cell types checked.
     "cytepool.permutation_checks.permutation_check": Entry(
@@ -2381,6 +2397,36 @@ ENTRY_POINTS: dict[str, Entry] = {
         {},
         options=("model", "bounds", "n_threads"),
         objects=("fits", "bmr"),
+    ),
+    "cytepool.stats.potency.BenchmarkDoses.accepted": Entry(
+        lambda c: {"flag_set": "ntp_2018"},
+        {},
+        options=("flag_set",),
+        instance=lambda c: benchmark_doses(
+            _curve_fits(), BenchmarkResponse.absolute(0.5)
+        ),
+    ),
+    # Williams' trend test: the doses and values of each sample, and the table's ids.
+    "cytepool.stats.trend_tests.williams_trend_test": Entry(
+        lambda c: {
+            "doses": [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0],
+            "values": np.log2(COUNTS[[0, 1, 2, 3, 0, 1, 2, 3]] + 1.0),
+            "n_permutations": 99,
+            "rng": 1,
+            "n_threads": 1,
+        },
+        {"doses": None, "values": None},
+        options=("n_permutations", "rng", "n_threads"),
+    ),
+    "cytepool.stats.trend_tests.WilliamsTrendTest.table": Entry(
+        lambda c: {"feature_ids": [f"g{j}" for j in range(8)]},
+        {"feature_ids": None},
+        instance=lambda c: williams_trend_test(
+            [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0],
+            np.log2(COUNTS[[0, 1, 2, 3, 0, 1, 2, 3]] + 1.0),
+            n_permutations=99,
+            rng=1,
+        ),
     ),
     "cytepool.stats.potency.BenchmarkDoses.table": Entry(
         lambda c: {"feature_ids": [f"g{j}" for j in range(8)], "flags": ["ntp_2018"]},
@@ -3401,6 +3447,10 @@ NO_ARRAY_INPUT = {
         ("group", "name"),
         "a cell type and a table name, looked up",
     ),
+    "cytepool.dose_responses.DoseResponseResult.rules": (
+        ("group",),
+        "a cell type, looked up",
+    ),
     "cytepool.dose_responses.DoseResponseResult.fit": (
         ("group",),
         "a cell type, looked up",
@@ -3526,6 +3576,7 @@ RECORDS = {
     "cytepool.activity.Activities",
     "cytepool.stats.dose_curves.DoseCurveFits",
     "cytepool.stats.potency.BenchmarkDoses",
+    "cytepool.stats.trend_tests.WilliamsTrendTest",
 }
 
 # Callables that modules with __all__ define but do not export.

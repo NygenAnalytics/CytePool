@@ -2277,7 +2277,9 @@ def plot_dose_response(
     With ``model``, the points are the dose-group means that the curves were fitted
     to, minus the vehicle's (:meth:`~cytepool.DoseResponseResult.curve_fits`), and
     the line is the gene's curve of the model on the same doses, without a band; a
-    cell type that supports only description is drawn too. The x axis is the dose
+    cell type that supports only description is drawn too. Under ``rules``, those
+    are the rule set's means and curves, of the cell type's log2(CPM + 1) values,
+    where the spline is drawn on the analysis's values. The x axis is the dose
     axis, labelled in doses, a label left out where it would overlap the one before
     it; with the vehicle in a group of its own, the vehicle sits one median step of
     the doses below the lowest dose, beyond a break in the axis. Up to 8 genes take

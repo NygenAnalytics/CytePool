@@ -1,8 +1,8 @@
 """Test whether each gene's mean rises or falls steadily with dose, by Williams' trend
 test as BMDExpress 2 computes it.
 
-NTP's and ETAP's workflows keep a gene for curve fitting when its mean changes
-monotonically with dose, by the two-sided Williams trend test of BMDExpress 2 (NTP
+NTP's and ETAP's workflows keep a gene for curve fitting when its mean rises or
+falls monotonically with dose, by Williams' trend test as BMDExpress 2 runs it (NTP
 2018; US EPA 2024; Phillips et al. 2019), whose p-values come from random
 relabellings of the samples' doses. :func:`williams_trend_test` computes that test
 for every gene of a samples x genes matrix of log-scale values, and
@@ -20,8 +20,8 @@ The statistic:
     = (f_top - f_0) / (s sqrt(1/n_top + 1/n_0)) and t_down = (g_0 - g_top) / (s
     sqrt(1/n_top + 1/n_0)), both at least 0, and the gene's direction is the side of
     the larger, up on a tie; a side whose fit is flat scores 0, and the other side is
-    infinite where no group has any spread within it. Williams (1971) fits the treated groups alone and
-    compares them with the vehicle's observed mean; BMDExpress 2.30.520 fits the
+    infinite where no group has any spread within it. Williams (1971) fits the
+    treated groups alone and compares them with the vehicle's observed mean; BMDExpress 2.30.520 fits the
     vehicle with them, as found by comparing its p-values with exact enumeration of
     every relabelling of small designs.
 
@@ -188,7 +188,7 @@ class WilliamsTrendTest:
 def _frozen_test(values: dict[str, Any]) -> WilliamsTrendTest:
     """A WilliamsTrendTest of read-only arrays, as williams_trend_test builds it;
     pickled results are rebuilt by it."""
-    frozen = {
+    frozen: dict[str, Any] = {
         name: read_only(value) if isinstance(value, np.ndarray) else value
         for name, value in values.items()
     }
