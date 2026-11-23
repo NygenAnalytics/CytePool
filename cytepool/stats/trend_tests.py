@@ -20,8 +20,9 @@ The statistic:
     = (f_top - f_0) / (s sqrt(1/n_top + 1/n_0)) and t_down = (g_0 - g_top) / (s
     sqrt(1/n_top + 1/n_0)), both at least 0, and the gene's direction is the side of
     the larger, up on a tie; a side whose fit is flat scores 0, and the other side is
-    infinite where no group has any spread within it. Williams (1971) fits the
-    treated groups alone and compares them with the vehicle's observed mean; BMDExpress 2.30.520 fits the
+    infinite, or very large where rounding leaves a trace of spread, when no group
+    has any spread within it. Williams (1971) fits the treated groups alone and
+    compares them with the vehicle's observed mean; BMDExpress 2.30.520 fits the
     vehicle with them, as found by comparing its p-values with exact enumeration of
     every relabelling of small designs.
 
@@ -33,8 +34,9 @@ The p-value:
     (Phipson and Smyth 2010). About half the relabellings fall on each side, so the
     smallest p-value is about 2 / B; BMDExpress also counts only the relabellings on
     the gene's side. A relabelling reaches the statistic when its own is at least the
-    gene's less a relative 1e-9, so that relabellings that keep each group's samples,
-    whose statistics differ from the gene's only by rounding, count as reaching it.
+    gene's less a relative 1e-9, so that relabellings whose statistics equal the
+    gene's mathematically, such as those that move samples between equal groups that
+    pool-adjacent-violators pools, count as reaching it whatever the rounding.
     Each gene's values are centred on their mean first, which leaves the statistics
     as they are and keeps the within-group sums of squares accurate where the spread
     is small beside the level.
@@ -111,8 +113,9 @@ class WilliamsTrendTest:
         doses: ``(K,)`` the dose of each dose group, ascending, the vehicle (0) first.
         n_samples: ``(K,)`` the samples of each dose group.
         statistic: ``(n_genes,)`` the larger of the two sides' statistics, t_up and
-            t_down; infinite where the groups' means differ and no group has any
-            spread within it, NaN where every sample of the gene has one value.
+            t_down; infinite, or very large after rounding, where the groups' means
+            differ and no group has any spread within it, NaN where every sample of
+            the gene has one value.
         direction: ``(n_genes,)`` ``"up"`` where t_up is at least t_down, otherwise
             ``"down"``; empty where the statistic is NaN.
         p_value: ``(n_genes,)`` the permutation p-value, (b + 1) / (n + 1) for b of

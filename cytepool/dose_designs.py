@@ -430,7 +430,7 @@ class DoseDesignReport:
                 )
         if self._minimums is not None:
             text = f"rules: {summary['rules_status'][row]}"
-            if json.loads(self._settings)["sex"] is None:
+            if self.settings["sex"] is None:
                 text += " for one data set, the sexes not checked"
             excluded = _excluded_levels(self._minimums, group)
             if excluded:

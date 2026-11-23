@@ -279,6 +279,19 @@ def test_seed_is_recorded_and_draws_the_same_relabellings() -> None:
     assert first.n_permutations == 25_000
 
 
+def test_relabellings_beyond_one_block_are_new() -> None:
+    """Relabellings are drawn in blocks of 10,000 from one generator: at B = 20,000
+    the second block is new, so the p-values move from those of the first block by
+    Monte Carlo error, where a block drawn again would move each by less than
+    1 / (2n + 1), n the relabellings on the gene's side."""
+    doses = np.repeat([0.0, 1.0, 3.0, 10.0], 3)
+    values = np.random.default_rng(12).normal(size=(12, 60))
+    first = williams_trend_test(doses, values, n_permutations=10_000, rng=3)
+    both = williams_trend_test(doses, values, n_permutations=20_000, rng=3)
+    moved = np.abs(both.p_value - first.p_value) > 2 / 10_001
+    assert np.mean(moved) > 0.5
+
+
 def test_result_reads_back() -> None:
     doses = np.repeat([0.0, 1.0, 3.0], 3)
     values = np.random.default_rng(2).normal(size=(9, 3))

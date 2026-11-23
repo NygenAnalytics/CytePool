@@ -215,18 +215,20 @@ from ._rule_sets import (
     ANOVA_FDR,
     BY_NAME,
     ETAP_2024,
-    ETAP_PASSING_SAMPLES,
     ETAP_VEHICLE_SAMPLES,
+    MEAN_COUNT,
     MODELS,
     N_PERMUTATIONS,
     RULE_SETS,
     WILLIAMS_P,
     RuleSet,
     anova_premodelling_test,
+    etap_dose_levels,
+    genes_kept_by_etap,
     largest_log2_fold_changes,
+    log2_cpm_by_etap,
     passes_anova_premodelling_test,
     passes_prefilter,
-    values_by_etap,
 )
 from ._sample_scores import SampleScores, contrast_table, fit_scores, sample_scores
 from .activity import Activities
@@ -258,7 +260,7 @@ from .stats.dose_curves import (
     CONSTANT,
     VARIANCES,
     DoseCurveFits,
-    _best_counts,
+    _model_counts,
     _checked_model_set,
     _constant_variance_data,
     _CurveData,
@@ -283,6 +285,7 @@ from .stats.potency import (
     BMDS_2026,
     BenchmarkDoses,
     _benchmark_record,
+    _bmds_at_changes,
     _checked_responses,
     _status_counts,
     benchmark_doses,
@@ -332,8 +335,9 @@ _LIMMA = "limma"
 CURVES = "curves"
 """The table of the curves of named models, built from the fits on demand."""
 BENCHMARK_DOSES = "benchmark_doses"
-RULE_SET = "rule_set"
 """The table of the benchmark doses of the curves, built on demand."""
+RULE_SET = "rule_set"
+"""The table of the rule set's steps of each gene, with rules."""
 # The options of the analyses that change the values a fit would use, which curves of
 # cell types that support only description use too.
 _VALUE_OPTIONS = ("expression_filter", "normalization", "prior_count")
@@ -468,7 +472,8 @@ class DoseResponseResult:
       BMR, for ETAP ``bmd_vehicle_sd`` (the BMD at 1.349 times the vehicle
       replicates' SD), ``failed_checks`` (the document's checks the BMD fails,
       joined by "; ", NTP's flag of a gene it keeps ending "(NTP keeps the
-      gene)") and ``accepted``. Under
+      gene)"; the ``flags_<set>`` column of the benchmark-dose table at the first
+      BMR, under the rule set's name) and ``accepted``. Under
       ``rules`` the tables ``"curves"`` and ``"benchmark_doses"`` hold the rule
       set's curves of the genes that pass its prefilter, without ``passes_gate``.
 
@@ -496,7 +501,8 @@ class DoseResponseResult:
     (``"analysed"``, ``"inactive: no gene passes the ANOVA pre-modelling test"``,
     ``"not modelled: ..."`` or ``"not analysed: ..."`` with the reason),
     ``n_genes_passing_anova``, ``n_genes_passing_prefilter`` and
-    ``n_genes_accepted``.
+    ``n_genes_accepted``, each NaN where its step did not run, which is not a cell
+    type without such genes.
 
     Built by :func:`dose_response` from the summary, the tables, the design check
     (``design_report``), the provenance, as ``fits``, each tested cell type's result
@@ -1456,12 +1462,16 @@ class DoseResponseResult:
         return fitted_lines("\n".join(lines))
 
     def _rule_text(self, group: str, record: Mapping[str, Any]) -> str:
-        """What a cell type's rule set found, for the printout."""
+        """What a cell type's rule set found, for the printout: ETAP's minimums, the
+        status, the genes that pass each step and the models the document chose."""
         name = self.settings["rules"]
         parts = [f"{name}: {record['status']}"]
-        if name == ETAP_2024 and record["n_samples"]:
-            parts[0] = f"{name}: minimums {self._report.rules_status(group)}"
-            parts.append(record["status"])
+        if name == ETAP_2024:
+            unmet = [minimum for minimum, _ in _unmet_minimums(self._report, group)]
+            minimums = f"minimums {self._report.rules_status(group)}" + (
+                f" ({', '.join(unmet)})" if unmet else ""
+            )
+            parts = [f"{name}: {minimums}", record["status"]]
         if record["n_genes_passing_anova"]:
             parts.append(
                 f"ANOVA pre-modelling test passed by {record['n_genes_passing_anova']:,} "
@@ -1470,8 +1480,17 @@ class DoseResponseResult:
         if record["status"] == "analysed":
             parts.append(
                 f"{record['n_genes_passing_prefilter']:,} pass Williams' trend test "
-                f"and the fold change; {record['n_genes_accepted']:,} accepted"
+                "and the fold change"
             )
+            found = self._benchmark_doses.get(group)
+            if found is not None:
+                models = self._curves[group][1].models
+                chosen = np.array(
+                    [models.index(m) if m else -1 for m in found.gene_models],
+                    dtype=np.int64,
+                )
+                parts.append(f"models chosen: {_model_counts(models, chosen)}")
+            parts.append(f"{record['n_genes_accepted']:,} accepted")
         return "; ".join(parts)
 
     def rules(self, group: str | None = None) -> Table:
@@ -1492,6 +1511,15 @@ class DoseResponseResult:
             ValueError: If dose_response ran without ``rules``.
             TypeError: If ``group`` is not a string.
             KeyError: If the cell type was not checked.
+
+        Example:
+            A table's printout shortens long text, so read each setting in full::
+
+                steps = result.rules("Hepatocyte")
+                for setting, value, bmdexpress, source, outcome in zip(
+                    *(steps[c].tolist() for c in steps.columns)
+                ):
+                    print(f"{setting}: {value} [{bmdexpress}; {source}] {outcome}")
         """
         name = self.settings.get("rules")
         if name is None:
@@ -1523,7 +1551,13 @@ class DoseResponseResult:
         if found is None:
             return ""
         fits = found[1]
-        text = f"; curves ({fits.variance} variance): best {_best_counts(fits)}"
+        # Under a rule set, the document chooses each gene's model, which the rule
+        # line gives; the curves' own best is by AICc.
+        best = "best by AICc" if self.settings.get("rules") is not None else "best"
+        text = (
+            f"; curves ({fits.variance} variance): {best} "
+            f"{_model_counts(fits.models, fits.best)}"
+        )
         turns = _turn_text(fits)
         return f"{text}; {turns}" if turns else text
 
@@ -1970,10 +2004,12 @@ def dose_response(
             "refuses them too; leave contrast_standard_errors out, for the exact default"
         )
     rule_set = _rule_set_setting(
-        rules, selection, models, variance, bmr, flags, design, scores is not None
+        rules, models, variance, bmr, flags, selection, design, scores is not None
     )
     model_set, variance = _curve_settings(models, variance, method, design)
-    responses, flag_sets = _benchmark_settings(bmr, flags, model_set)
+    responses, flag_sets = _benchmark_settings(
+        bmr, flags, selection, model_set, variance
+    )
     if isinstance(design, Design) and "expression_filter" in options:
         # The column of sample groups, if any, is checked here for every cell type,
         # also those that only describe and so run no analysis.
@@ -2112,7 +2148,7 @@ def dose_response(
                     )
         if rule_set is not None:
             # The rule sets refuse scores, so the data are a cube here.
-            table, pair, rule_doses, rule_records[group] = _cell_type_rule_set(
+            table, modelled, rule_records[group] = _cell_type_rule_set(
                 cast(Cube, source),
                 report,
                 fits[-1],
@@ -2122,8 +2158,9 @@ def dose_response(
             )
             if table is not None:
                 rule_tables[group] = table
-            if pair is not None and rule_doses is not None:
-                curves[group], doses_of[group] = pair, rule_doses
+            if modelled is not None:
+                genes, curve_fits, rule_doses = modelled
+                curves[group], doses_of[group] = (genes, curve_fits), rule_doses
     _adjust_across_groups(fits, (*splines.tests, *named))
     return _result(
         data,
@@ -2507,10 +2544,26 @@ def _curve_settings(
 
 
 def _benchmark_settings(
-    bmr: Any, flags: Any, model_set: str | None
+    bmr: Any, flags: Any, selection: Any, model_set: str | None, variance: str
 ) -> tuple[list[BenchmarkResponse] | None, tuple[str, ...] | None]:
-    """The BMRs and the sets of checks of the benchmark doses, refused before anything
-    runs when they do not suit the curves."""
+    """The BMRs, the sets of checks and the choice of model of the benchmark doses,
+    refused before anything runs when they do not suit the curves."""
+    reject_masked(selection, "selection")
+    if selection is not None:
+        checked_choice(selection, "selection", (BMDS_2026,))
+        if model_set != "epa" or bmr is None:
+            raise ValueError(
+                "selection='bmds_2026' is the model that pybmds 25.2 recommends among "
+                "BMDS's continuous models, so it needs their curves and a BMR: give "
+                "models='epa' and bmr, such as BenchmarkResponse.sd(1)"
+            )
+        if variance != CONSTANT:
+            raise ValueError(
+                "selection='bmds_2026' bins each model by BMDS's checks, which read "
+                "its likelihood of the samples (test 4 and the test of constant "
+                f"variance); the {variance!r} curves have none, so use "
+                "variance='constant'"
+            )
     if bmr is None:
         if flags is not None:
             raise ValueError(
@@ -3617,13 +3670,7 @@ def _descriptive_values(
 
     ``samples`` are the cell type's rows of the check's sample table, and
     ``defaults`` the analysis's defaults of the options that change values."""
-    used = np.asarray(samples["used"], dtype=bool)
-    sample_ids = samples["sample_id"][used].tolist()
-    position = {sample: i for i, sample in enumerate(cube.samples["sample_id"])}
-    cube_rows = np.array([position[sample] for sample in sample_ids], dtype=np.intp)
-    order = np.argsort(cube_rows, kind="stable")
-    cube_rows, sample_ids = cube_rows[order], [sample_ids[i] for i in order]
-    counts = np.asarray(cube.layer(COUNTS_LAYER, g)[cube_rows], dtype=np.float64)
+    sample_ids, doses, counts = _used_samples(cube, samples, g)
     row_of = {sample: row for row, sample in enumerate(model.samples["sample_id"])}
     design_rows = np.array([row_of[sample] for sample in sample_ids], dtype=np.intp)
     x = model.matrix[design_rows]
@@ -3646,8 +3693,26 @@ def _descriptive_values(
         values = voom_log_cpm(y, effective_library_sizes(y, None, factors))
     else:
         values = log2_cpm(y, norm_factors=factors, prior_count=settings["prior_count"])
-    doses = np.asarray(samples["dose"], dtype=np.float64)[used][order]
     return doses, np.asarray(values), np.flatnonzero(keep)
+
+
+def _used_samples(
+    cube: Cube, samples: Table, group: str | int
+) -> tuple[list[str], FloatArray, FloatArray]:
+    """The ids, doses and counts, samples x genes, of the samples of a cell type that
+    the check used, in the cube's order; ``samples`` are the cell type's rows of the
+    check's sample table."""
+    used = np.asarray(samples["used"], dtype=bool)
+    sample_ids = samples["sample_id"][used].tolist()
+    position = {sample: i for i, sample in enumerate(cube.samples["sample_id"])}
+    cube_rows = np.array([position[sample] for sample in sample_ids], dtype=np.intp)
+    order = np.argsort(cube_rows, kind="stable")
+    counts = np.asarray(cube.layer(COUNTS_LAYER, group)[cube_rows[order]])
+    return (
+        [sample_ids[i] for i in order],
+        np.asarray(samples["dose"], dtype=np.float64)[used][order],
+        np.asarray(counts, dtype=np.float64),
+    )
 
 
 # The result.
@@ -4160,43 +4225,23 @@ def _slope_unit(axis: DoseAxis) -> str:
 # of its own beside those of the multiple contrast tests (0 to 2) and of
 # permutation_check (1000).
 _WILLIAMS_STREAM = 2000
+# The curves need a spare dose group for the smallest model, the line.
+_CURVE_GROUPS = 3
 
 
 def _rule_set_setting(
     rules: Any,
-    selection: Any,
     models: Any,
     variance: Any,
     bmr: Any,
     flags: Any,
+    selection: Any,
     design: Any,
     scored: bool,
 ) -> RuleSet | None:
     """The rule set named, refused with the options it sets, with scores and with a
-    design it does not fit; ``selection`` is checked here too."""
+    design it does not fit."""
     reject_masked(rules, "rules")
-    reject_masked(selection, "selection")
-    if selection is not None:
-        checked_choice(selection, "selection", (BMDS_2026,))
-        if rules is not None:
-            raise ValueError(
-                f"rules={rules!r} chooses each gene's model as its document does; "
-                "selection is BMDS's recommendation, a choice outside both rule sets; "
-                "give one of them"
-            )
-        if models != "epa" or bmr is None:
-            raise ValueError(
-                "selection='bmds_2026' is the model that pybmds 25.2 recommends among "
-                "BMDS's continuous models, so it needs their curves and a BMR: give "
-                "models='epa' and bmr, such as BenchmarkResponse.sd(1)"
-            )
-        if variance != CONSTANT:
-            raise ValueError(
-                "selection='bmds_2026' bins each model by BMDS's checks, which read "
-                "its likelihood of the samples (test 4 and the test of constant "
-                f"variance); the {variance!r} curves have none, so use "
-                "variance='constant'"
-            )
     if rules is None:
         return None
     name = checked_choice(rules, "rules", RULE_SETS)
@@ -4211,6 +4256,7 @@ def _rule_set_setting(
         "variance": variance != CONSTANT,
         "bmr": bmr is not None,
         "flags": flags is not None,
+        "selection": selection is not None,
     }
     given = [option for option, present in set_here.items() if present]
     if given:
@@ -4221,7 +4267,7 @@ def _rule_set_setting(
             "leave them out"
         )
     if isinstance(design, Design) and (design.terms or design.random):
-        others = [*design.terms, *design.random]
+        others = [*design.terms, *(str(effect) for effect in design.random)]
         raise ValueError(
             f"rules={name!r} fits dose alone to independent animals, as BMDExpress "
             f"does, and the design has other terms, {quoted(others)}; analyse each "
@@ -4239,37 +4285,37 @@ def _cell_type_rule_set(
     n_threads: Any,
 ) -> tuple[
     Table | None,
-    tuple[Table, DoseCurveFits] | None,
-    BenchmarkDoses | None,
+    tuple[Table, DoseCurveFits, BenchmarkDoses] | None,
     dict[str, Any],
 ]:
-    """A cell type's rule set: its table of genes, its curves and benchmark doses of
-    the genes that pass the prefilter, and its record; or why it did not run."""
+    """A cell type's rule set: its table of genes; the genes that pass its prefilter
+    with their curves and benchmark doses, None without such genes; and its record,
+    whose counts are None for the steps that did not run."""
     record: dict[str, Any] = {
         "status": "",
         "n_samples": 0,
         "doses": [],
         "dose_levels_left_out": [],
         "n_genes": 0,
-        "n_genes_passing_anova": 0,
-        "n_genes_passing_williams": 0,
-        "n_genes_passing_prefilter": 0,
-        "n_genes_with_a_model": 0,
-        "n_genes_accepted": 0,
+        "n_genes_passing_anova": None,
+        "n_genes_passing_williams": None,
+        "n_genes_passing_prefilter": None,
+        "n_genes_with_a_model": None,
+        "n_genes_accepted": None,
         "seed": None,
     }
     if fit.status != INFERENTIAL or fit.result is None:
         record["status"] = f"not analysed: the cell type was {fit.status}: {fit.reason}"
-        return None, None, None, record
+        return None, None, record
     samples = report.samples.filter(group_id=fit.group)
-    used = np.asarray(samples["used"], dtype=bool)
-    ids = np.asarray(samples["sample_id"].tolist(), dtype=object)[used]
-    doses = np.asarray(samples["dose"], dtype=np.float64)[used]
+    ids, doses, counts = _used_samples(cube, samples, fit.group)
     if rule_set.name == ETAP_2024:
-        levels, per_level = np.unique(doses, return_counts=True)
-        short = levels[(levels > 0.0) & (per_level < ETAP_PASSING_SAMPLES)]
-        keep = ~np.isin(doses, short)
-        ids, doses = ids[keep], doses[keep]
+        keep, short = etap_dose_levels(doses)
+        ids, doses, counts = (
+            [i for i, k in zip(ids, keep) if k],
+            doses[keep],
+            counts[keep],
+        )
         record["dose_levels_left_out"] = short.tolist()
         vehicle = int(np.count_nonzero(doses == 0.0))
         if vehicle < ETAP_VEHICLE_SAMPLES:
@@ -4277,50 +4323,70 @@ def _cell_type_rule_set(
                 f"not modelled: {vehicle} passing vehicle sample"
                 f"{'' if vehicle == 1 else 's'}, ETAP needs {ETAP_VEHICLE_SAMPLES}"
             )
-            return None, None, None, record
+            return None, None, record
     levels = np.unique(doses)
+    if levels.size < _CURVE_GROUPS:
+        record["status"] = (
+            f"not modelled: {levels.size} dose group{'' if levels.size == 1 else 's'}, "
+            f"and the curves need {_CURVE_GROUPS}"
+        )
+        return None, None, record
     labels = np.searchsorted(levels, doses)
     record |= {"n_samples": int(doses.size), "doses": levels.tolist()}
-    position = {s: i for i, s in enumerate(cube.samples["sample_id"].tolist())}
-    rows = [position[s] for s in ids.tolist()]
-    counts = np.asarray(cube.layer(COUNTS_LAYER, fit.group)[rows], dtype=np.float64)
-    kept, values = values_by_etap(counts)
+    kept = genes_kept_by_etap(counts)
     genes = cube.features.take(np.flatnonzero(kept))
     record["n_genes"] = int(kept.sum())
-    columns = _empty_rule_columns(genes, rule_set)
-    if values.shape[1] == 0:
-        record["status"] = "not analysed: no gene has a mean count of at least 5"
-        return Table(columns), None, None, record
+    if not kept.any():
+        record["status"] = (
+            f"not analysed: no gene has a mean count of at least {MEAN_COUNT:g}"
+        )
+        return _rule_table(genes, rule_set, {}), None, record
+    empty = [i for i, total in zip(ids, counts[:, kept].sum(axis=1)) if total == 0]
+    if empty:
+        one = len(empty) == 1
+        record["status"] = (
+            f"not analysed: {'sample' if one else 'samples'} {listing(empty)} "
+            f"{'has' if one else 'have'} no counts in the {record['n_genes']:,} genes "
+            f"with a mean count of at least {MEAN_COUNT:g}; leave "
+            f"{'it' if one else 'them'} out, as ETAP's checks of sample quality would, "
+            "with min_counts"
+        )
+        return None, None, record
+    values = log2_cpm_by_etap(counts[:, kept])
     _, anova_p, adjusted = anova_premodelling_test(values, labels, levels.size)
-    columns["anova_p_value"] = anova_p
-    columns["anova_adjusted_p_value"] = adjusted
+    steps: dict[str, np.ndarray] = {
+        "anova_p_value": anova_p,
+        "anova_adjusted_p_value": adjusted,
+    }
     passing = passes_anova_premodelling_test(adjusted)
     record["n_genes_passing_anova"] = int(passing.sum())
     if not passing.any():
         record["status"] = "inactive: no gene passes the ANOVA pre-modelling test"
-        return Table(columns), None, None, record
+        return _rule_table(genes, rule_set, steps), None, record
     generator = np.random.default_rng(
         [seed, zlib.crc32(fit.group.encode("utf-8")), _WILLIAMS_STREAM]
     )
     trend = williams_trend_test(
         doses, values, n_permutations=N_PERMUTATIONS, rng=generator, n_threads=n_threads
     )
-    record["seed"] = trend.seed
     changes = largest_log2_fold_changes(values, labels, levels.size)
     prefiltered = passes_prefilter(trend.p_value, changes)
-    columns |= {
+    steps |= {
         "williams_trend_p_value": trend.p_value,
-        "direction": text_column(trend.direction.tolist()),
+        "direction": trend.direction,
         "max_log2_fold_change": changes,
         "passes_prefilter": prefiltered,
     }
-    record["n_genes_passing_williams"] = int(
-        np.count_nonzero(trend.p_value < WILLIAMS_P)
-    )
-    record["n_genes_passing_prefilter"] = int(prefiltered.sum())
-    record["status"] = "analysed"
+    record |= {
+        "status": "analysed",
+        "seed": trend.seed,
+        "n_genes_passing_williams": int(np.count_nonzero(trend.p_value < WILLIAMS_P)),
+        "n_genes_passing_prefilter": int(prefiltered.sum()),
+        "n_genes_with_a_model": 0,
+        "n_genes_accepted": 0,
+    }
     if not prefiltered.any():
-        return Table(columns), None, None, record
+        return _rule_table(genes, rule_set, steps), None, record
     chosen_genes = np.flatnonzero(prefiltered)
     picked = genes.take(chosen_genes)
     curves = fit_dose_curves(
@@ -4335,11 +4401,8 @@ def _cell_type_rule_set(
         ),
         feature_ids=read_only(np.asarray(picked["feature_id"].tolist(), dtype=object)),
     )
-    flags = found.table(flags=rule_set.name)[f"flags_{rule_set.name}"][
-        : chosen_genes.size
-    ]
     accepted = found.accepted(rule_set.name)[0]
-    first = {
+    modelled = {
         "model": found.gene_models,
         "model_choice": found.model_choice,
         "fit_p_value": found.fit_p_value,
@@ -4347,68 +4410,112 @@ def _cell_type_rule_set(
         "bmdl": found.bmdl[0],
         "bmdu": found.bmdu[0],
         "bmd_status": found.status[0],
-        "failed_checks": flags,
+        "failed_checks": np.array(
+            found.table(flags=rule_set.name)[f"flags_{rule_set.name}"][
+                : chosen_genes.size
+            ].tolist(),
+            dtype=object,
+        ),
         "accepted": accepted,
     }
     if rule_set.name == ETAP_2024:
-        first["bmd_vehicle_sd"] = found.bmd_vehicle_sd
-    for name, values_ in first.items():
-        column = columns[name].copy()
-        column[chosen_genes] = values_
-        columns[name] = column
-    record["n_genes_with_a_model"] = int(np.count_nonzero(found.gene_models != ""))
-    record["n_genes_accepted"] = int(np.count_nonzero(accepted))
+        # ETAP's wording of its BMR, a multiple of the vehicle replicates' SD, read
+        # on each gene's chosen model, without bounds.
+        modelled["bmd_vehicle_sd"] = _bmds_at_changes(
+            curves, found.gene_models, rule_set.bmr_sd * curves.within_group_sd[:, 0]
+        )
+    for name, column in modelled.items():
+        full = np.full(len(genes), _RULE_COLUMN_EMPTY[name], dtype=column.dtype)
+        full[chosen_genes] = column
+        steps[name] = full
+    record |= {
+        "n_genes_with_a_model": int(np.count_nonzero(found.gene_models != "")),
+        "n_genes_accepted": int(np.count_nonzero(accepted)),
+    }
     names = [name for name in ("feature_id", "symbol") if name in picked]
-    return Table(columns), (picked.select(names), curves), found, record
+    return (
+        _rule_table(genes, rule_set, steps),
+        (picked.select(names), curves, found),
+        record,
+    )
 
 
-def _empty_rule_columns(genes: Table, rule_set: RuleSet) -> dict[str, np.ndarray]:
-    """The rule table's columns of a cell type's genes, before its steps fill them:
-    NaN, empty text and False."""
-    n = len(genes)
-    nan = np.full(n, np.nan)
-    empty = text_column([""] * n)
-    columns: dict[str, np.ndarray] = {
+# The rule table's columns of the steps, in order, each with its value for a gene the
+# step did not reach.
+_RULE_COLUMN_EMPTY: dict[str, Any] = {
+    "anova_p_value": np.nan,
+    "anova_adjusted_p_value": np.nan,
+    "williams_trend_p_value": np.nan,
+    "direction": "",
+    "max_log2_fold_change": np.nan,
+    "passes_prefilter": False,
+    "model": "",
+    "model_choice": "",
+    "fit_p_value": np.nan,
+    "bmd": np.nan,
+    "bmdl": np.nan,
+    "bmdu": np.nan,
+    "bmd_status": "",
+    "bmd_vehicle_sd": np.nan,
+    "failed_checks": "",
+    "accepted": False,
+}
+
+
+def _rule_table(
+    genes: Table, rule_set: RuleSet, steps: Mapping[str, np.ndarray]
+) -> Table:
+    """The rule table of a cell type's genes: their ids and symbols, then each step's
+    column, from ``steps`` where the step ran and empty where it did not; ETAP's has
+    ``bmd_vehicle_sd``."""
+    columns: dict[str, Any] = {
         name: genes[name] for name in ("feature_id", "symbol") if name in genes
     }
-    columns |= {
-        "anova_p_value": nan,
-        "anova_adjusted_p_value": nan,
-        "williams_trend_p_value": nan,
-        "direction": empty,
-        "max_log2_fold_change": nan,
-        "passes_prefilter": np.zeros(n, dtype=bool),
-        "model": empty,
-        "model_choice": empty,
-        "fit_p_value": nan,
-        "bmd": nan,
-        "bmdl": nan,
-        "bmdu": nan,
-        "bmd_status": empty,
-    }
-    if rule_set.name == ETAP_2024:
-        columns["bmd_vehicle_sd"] = nan
-    columns |= {"failed_checks": empty, "accepted": np.zeros(n, dtype=bool)}
-    return columns
+    for name, empty in _RULE_COLUMN_EMPTY.items():
+        if name == "bmd_vehicle_sd" and rule_set.name != ETAP_2024:
+            continue
+        found = steps.get(name)
+        if isinstance(empty, str):
+            texts = [empty] * len(genes) if found is None else found.tolist()
+            columns[name] = text_column(texts)
+        else:
+            columns[name] = np.full(len(genes), empty) if found is None else found
+    return Table(columns)
 
 
 def _rule_set_summary(
     fits: list["_CellTypeFit"], records: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, np.ndarray]:
-    """The summary's columns of the rule set, one row per cell type checked."""
+    """The summary's columns of the rule set, one row per cell type checked, the
+    counts NaN where their step did not run."""
     entries = [records[fit.group] for fit in fits]
+
+    def counts(key: str) -> FloatArray:
+        return np.array(
+            [np.nan if entry[key] is None else entry[key] for entry in entries],
+            dtype=np.float64,
+        )
+
     return {
         "rule_set_status": text_column([entry["status"] for entry in entries]),
-        "n_genes_passing_anova": np.array(
-            [entry["n_genes_passing_anova"] for entry in entries], dtype=np.int64
-        ),
-        "n_genes_passing_prefilter": np.array(
-            [entry["n_genes_passing_prefilter"] for entry in entries], dtype=np.int64
-        ),
-        "n_genes_accepted": np.array(
-            [entry["n_genes_accepted"] for entry in entries], dtype=np.int64
-        ),
+        "n_genes_passing_anova": counts("n_genes_passing_anova"),
+        "n_genes_passing_prefilter": counts("n_genes_passing_prefilter"),
+        "n_genes_accepted": counts("n_genes_accepted"),
     }
+
+
+def _unmet_minimums(report: DoseDesignReport, group: str) -> list[tuple[str, str]]:
+    """ETAP's design minimums that a cell type, or the study, does not meet: each
+    minimum's name and what was observed."""
+    minimums = report.minimums
+    assert minimums is not None  # checked with the rule set
+    return [
+        (str(minimums["minimum"][i]), str(minimums["observed"][i]))
+        for i, (where, met) in enumerate(
+            zip(minimums["group_id"].tolist(), minimums["met"].tolist(), strict=True)
+        )
+        if (where is None or where == group) and not met
+    ]
 
 
 def _rule_outcomes(
@@ -4417,27 +4524,29 @@ def _rule_outcomes(
     """What each step of a rule set found in a cell type, by setting."""
     found: dict[str, str] = {}
     if name == ETAP_2024:
-        minimums = report.minimums
-        assert minimums is not None  # checked with the rule set
-        mine = [g is None or g == group for g in minimums["group_id"].tolist()]
-        unmet = [
-            f"{minimums['minimum'][i]} ({minimums['observed'][i]})"
-            for i in range(len(minimums))
-            if mine[i] and not minimums["met"][i]
-        ]
+        unmet = _unmet_minimums(report, group)
         status = report.rules_status(group)
-        found["design minimums"] = f"{status}: " + "; ".join(unmet) if unmet else status
-    if not record["n_samples"]:
-        found["data set"] = record["status"]
-        return found
-    left_out = record["dose_levels_left_out"]
-    found["data set"] = (
-        f"{record['n_samples']} samples in {len(record['doses'])} dose groups"
-        + (
-            f"; dose levels left out: {listing([f'{d:g}' for d in left_out])}"
-            if left_out
-            else ""
+        found["design minimums"] = (
+            f"{status}: " + "; ".join(f"{m} ({observed})" for m, observed in unmet)
+            if unmet
+            else status
         )
+    left_out = record["dose_levels_left_out"]
+    left_out_text = (
+        f"dose levels left out: {listing([f'{d:g}' for d in left_out])}"
+        if left_out
+        else ""
+    )
+    if not record["n_samples"]:
+        found["data set"] = "; ".join(t for t in (record["status"], left_out_text) if t)
+        return found
+    found["data set"] = "; ".join(
+        t
+        for t in (
+            f"{record['n_samples']} samples in {len(record['doses'])} dose groups",
+            left_out_text,
+        )
+        if t
     )
     found["values"] = f"{record['n_genes']:,} genes"
     anova = record["n_genes_passing_anova"]

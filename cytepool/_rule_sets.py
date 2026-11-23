@@ -121,29 +121,29 @@ _BOUNDS = Setting(
     "BMDS 2's programs in BMDExpress 2.30.520, observed",
 )
 
-_SHARED_NOT_APPLIED = (
-    Setting(
-        "one gene per feature",
-        "not applied: a cube's features are taken as genes; map probes to genes and "
-        "keep one feature per gene before pooling",
-        "categoryAnalysisConfigs: removePromiscuousProbes",
-        f"{_NTP}, p. 9; {_ETAP}, Sec. 3.4.5.4",
-    ),
-    Setting(
-        "models without a spare dose group",
-        "not fitted: a model of p mean parameters needs K - p >= 1 dose groups, "
-        "where BMDExpress fits it",
-        "",
-        "Ringblom et al. 2014",
-    ),
-    Setting(
-        "calibration of the prefilter",
-        "not applied: NTP sets the prefilter's thresholds for each platform on null "
-        "data sets of vehicle controls, and none exist for pseudobulk profiles; "
-        "permutation_check checks the user's design",
-        "",
-        f"{_NTP}, p. 5",
-    ),
+_ONE_GENE_PER_FEATURE = Setting(
+    "one gene per feature",
+    "not applied: a cube's features are taken as genes; map probes to genes and keep "
+    "one feature per gene before pooling",
+    "categoryAnalysisConfigs: removePromiscuousProbes",
+    f"{_NTP}, p. 9; {_ETAP}, Sec. 3.4.5.4",
+)
+
+_NO_SPARE_GROUP = Setting(
+    "models without a spare dose group",
+    "not fitted: a model of p mean parameters needs K - p >= 1 dose groups, where "
+    "BMDExpress fits it",
+    "",
+    "Ringblom et al. 2014",
+)
+
+_PREFILTER_CALIBRATION = Setting(
+    "calibration of the prefilter",
+    "not applied: NTP sets the prefilter's thresholds for each platform on null data "
+    "sets of vehicle controls, and none exist for pseudobulk profiles; "
+    "permutation_check checks the user's design",
+    "",
+    f"{_NTP}, p. 5",
 )
 
 ETAP = RuleSet(
@@ -265,7 +265,8 @@ ETAP = RuleSet(
             "",
             f"{_ETAP}, Sec. 3.4.5.2",
         ),
-        *_SHARED_NOT_APPLIED[:2],
+        _ONE_GENE_PER_FEATURE,
+        _NO_SPARE_GROUP,
     ),
 )
 
@@ -370,7 +371,7 @@ NTP = RuleSet(
             f"{_NTP}, pp. 8 to 9",
         ),
     ),
-    not_applied=_SHARED_NOT_APPLIED,
+    not_applied=(_ONE_GENE_PER_FEATURE, _NO_SPARE_GROUP, _PREFILTER_CALIBRATION),
 )
 
 BY_NAME = {NTP_2018: NTP, ETAP_2024: ETAP}
@@ -379,22 +380,37 @@ BY_NAME = {NTP_2018: NTP, ETAP_2024: ETAP}
 # The steps that run on arrays.
 
 
-def values_by_etap(counts: FloatArray) -> tuple[npt.NDArray[np.bool_], FloatArray]:
-    """The genes kept and their values, as ETAP prepares counts (Sec. 3.4.5.2): genes
-    whose mean count over the samples is at least ``MEAN_COUNT``, counts per million
-    over the genes kept, log2(CPM + 1).
+def etap_dose_levels(doses: FloatArray) -> tuple[npt.NDArray[np.bool_], FloatArray]:
+    """The samples ETAP keeps, leaving out the treated dose levels of fewer than
+    ``ETAP_PASSING_SAMPLES`` passing samples (Sec. 3.4.5.2), and the levels left out.
+
+    Args:
+        doses: The dose of each passing sample, 0 for the vehicle.
+    """
+    levels, per_level = np.unique(doses, return_counts=True)
+    short = levels[(levels > 0.0) & (per_level < ETAP_PASSING_SAMPLES)]
+    return ~np.isin(doses, short), short
+
+
+def genes_kept_by_etap(counts: FloatArray) -> npt.NDArray[np.bool_]:
+    """Whether ETAP keeps each gene (Sec. 3.4.5.2): its mean count over the samples is
+    at least ``MEAN_COUNT``.
 
     Args:
         counts: ``(n_samples, n_genes)`` counts of one cell type's samples.
-
-    Returns:
-        Whether each gene is kept, and the ``(n_samples, n_kept)`` values, with no
-        column when no gene is kept.
     """
-    kept = counts.mean(axis=0) >= MEAN_COUNT
-    if not kept.any():
-        return kept, np.zeros((counts.shape[0], 0))
-    return kept, np.log2(cpm(counts[:, kept]) + 1.0)
+    return np.asarray(counts.mean(axis=0) >= MEAN_COUNT)
+
+
+def log2_cpm_by_etap(counts: FloatArray) -> FloatArray:
+    """The values ETAP models (Sec. 3.4.5.2): counts per million over the genes given,
+    without normalization factors, then log2(CPM + 1).
+
+    Args:
+        counts: ``(n_samples, n_genes)`` counts of the genes kept, each sample with
+            some.
+    """
+    return np.log2(cpm(counts) + 1.0)
 
 
 def anova_premodelling_test(
@@ -411,10 +427,8 @@ def anova_premodelling_test(
         n_groups: K.
     """
     n = values.shape[0]
-    sizes = np.bincount(labels, minlength=n_groups).astype(np.float64)
     centred = values - values.mean(axis=0)
-    one_hot = (labels[None, :] == np.arange(n_groups)[:, None]).astype(np.float64)
-    sums = one_hot @ centred
+    sizes, sums = _group_sums(centred, labels, n_groups)
     between = (sums**2 / sizes[:, None]).sum(axis=0)
     total = (centred**2).sum(axis=0)
     within = np.maximum(total - between, 0.0)
@@ -438,9 +452,8 @@ def largest_log2_fold_changes(
 ) -> FloatArray:
     """Each gene's change from the vehicle's mean (group 0) at the dose whose change
     is largest either way, the lower dose on a tie, in the values' log2 units."""
-    sizes = np.bincount(labels, minlength=n_groups).astype(np.float64)
-    one_hot = (labels[None, :] == np.arange(n_groups)[:, None]).astype(np.float64)
-    means = (one_hot @ values) / sizes[:, None]
+    sizes, sums = _group_sums(values, labels, n_groups)
+    means = sums / sizes[:, None]
     changes = means[1:] - means[0]
     largest = np.argmax(np.abs(changes), axis=0)
     return np.asarray(changes[largest, np.arange(values.shape[1])], dtype=np.float64)
@@ -453,3 +466,13 @@ def passes_prefilter(p_values: FloatArray, log2_changes: FloatArray) -> np.ndarr
         return np.asarray(
             (p_values < WILLIAMS_P) & (np.abs(log2_changes) >= np.log2(FOLD_CHANGE))
         )
+
+
+def _group_sums(
+    values: FloatArray, labels: npt.NDArray[np.intp], n_groups: int
+) -> tuple[FloatArray, FloatArray]:
+    """The samples of each dose group and the sums of each gene's values in it,
+    ``(K,)`` and ``(K, n_genes)``."""
+    sizes = np.bincount(labels, minlength=n_groups).astype(np.float64)
+    one_hot = (labels[None, :] == np.arange(n_groups)[:, None]).astype(np.float64)
+    return sizes, one_hot @ values

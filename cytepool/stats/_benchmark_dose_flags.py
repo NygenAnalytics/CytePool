@@ -114,8 +114,14 @@ class FlagInputs:
 
 @dataclass(frozen=True)
 class _Check:
+    """A check: the text a table prints when a row fails it, which rows fail it, and
+    whether the document keeps a row that fails it, as NTP keeps a gene whose BMD
+    lies more than 10-fold below the lowest dose and BMDS keeps a model with a
+    warning among the viable ones."""
+
     text: str
     failed: Callable[[FlagInputs], BoolArray]
+    kept: bool = False
 
 
 def _above(values: FloatArray, threshold: float) -> BoolArray:
@@ -154,8 +160,10 @@ def _positive_ratio(numerator: FloatArray, denominator: FloatArray) -> FloatArra
         return np.where(ok, numerator / denominator, np.nan)
 
 
-def _bmds(level: str, text: str) -> str:
-    return f"{text} ({level})"
+def _bmds(level: str, text: str, failed: Callable[[FlagInputs], BoolArray]) -> _Check:
+    """A check of BMDS's recommendation; a model that fails only warnings stays
+    viable."""
+    return _Check(f"{text} ({level})", failed, kept=level == "warning")
 
 
 def _bmds_checks() -> tuple[_Check, ...]:
@@ -169,65 +177,78 @@ def _bmds_checks() -> tuple[_Check, ...]:
 
     unusable, questionable, warning = "unusable", "questionable", "warning"
     return (
-        _Check(_bmds(unusable, "BMD not computed"), lambda i: ~np.isfinite(i.bmd)),
-        _Check(_bmds(unusable, "BMDL not computed"), _bmdl_missing),
-        _Check(
-            _bmds(questionable, "fit p-value < 0.1"),
+        _bmds(unusable, "BMD not computed", lambda i: ~np.isfinite(i.bmd)),
+        _bmds(unusable, "BMDL not computed", _bmdl_missing),
+        _bmds(
+            questionable,
+            "fit p-value < 0.1",
             lambda i: np.isfinite(i.fit_p_value) & (i.fit_p_value < 0.1),
         ),
-        _Check(
-            _bmds(questionable, "|scaled residual near the BMD| > 2"),
+        _bmds(
+            questionable,
+            "|scaled residual near the BMD| > 2",
             lambda i: _above(np.abs(i.residual_near_bmd), 2.0),
         ),
-        _Check(
-            _bmds(questionable, "lowest dose / BMD > 10"),
+        _bmds(
+            questionable,
+            "lowest dose / BMD > 10",
             lambda i: _above(lowest_over(i.bmd, i), 10.0),
         ),
-        _Check(
-            _bmds(questionable, "lowest dose / BMDL > 10"),
+        _bmds(
+            questionable,
+            "lowest dose / BMDL > 10",
             lambda i: _above(lowest_over(i.bmdl, i), 10.0),
         ),
-        _Check(
-            _bmds(questionable, "BMD / BMDL > 20"),
+        _bmds(
+            questionable,
+            "BMD / BMDL > 20",
             lambda i: _above(_positive_ratio(i.bmd, i.bmdl), 20.0),
         ),
-        _Check(
-            _bmds(questionable, "constant variance test p-value < 0.05"),
+        _bmds(
+            questionable,
+            "constant variance test p-value < 0.05",
             lambda i: (
                 np.isfinite(i.constant_variance_p_value)
                 & (i.constant_variance_p_value < 0.05)
             ),
         ),
-        _Check(
-            _bmds(warning, "BMD / highest dose > 1"),
+        _bmds(
+            warning,
+            "BMD / highest dose > 1",
             lambda i: _above(
                 _positive_ratio(i.bmd, np.full_like(i.bmd, i.top_dose)), 1.0
             ),
         ),
-        _Check(
-            _bmds(warning, "BMDL / highest dose > 1"),
+        _bmds(
+            warning,
+            "BMDL / highest dose > 1",
             lambda i: _above(
                 _positive_ratio(i.bmdl, np.full_like(i.bmdl, i.top_dose)), 1.0
             ),
         ),
-        _Check(
-            _bmds(warning, "lowest dose / BMD > 3"),
+        _bmds(
+            warning,
+            "lowest dose / BMD > 3",
             lambda i: _above(lowest_over(i.bmd, i), 3.0),
         ),
-        _Check(
-            _bmds(warning, "lowest dose / BMDL > 3"),
+        _bmds(
+            warning,
+            "lowest dose / BMDL > 3",
             lambda i: _above(lowest_over(i.bmdl, i), 3.0),
         ),
-        _Check(
-            _bmds(warning, "BMD / BMDL > 3"),
+        _bmds(
+            warning,
+            "BMD / BMDL > 3",
             lambda i: _above(_positive_ratio(i.bmd, i.bmdl), 3.0),
         ),
-        _Check(
-            _bmds(warning, "curve's vehicle SD / observed vehicle SD > 1.5"),
+        _bmds(
+            warning,
+            "curve's vehicle SD / observed vehicle SD > 1.5",
             lambda i: _above(i.vehicle_sd_ratio, 1.5),
         ),
-        _Check(
-            _bmds(warning, "|scaled residual at the vehicle| > 2"),
+        _bmds(
+            warning,
+            "|scaled residual at the vehicle| > 2",
             lambda i: _above(np.abs(i.residual_at_vehicle), 2.0),
         ),
     )
@@ -260,7 +281,11 @@ KEPT = "(NTP keeps the gene)"
 _CHECKS: dict[str, tuple[_Check, ...]] = {
     "bmds_2026": _bmds_checks(),
     "ntp_2018": (
-        _Check(f"BMD more than 10-fold below the lowest dose {KEPT}", _ten_fold_below),
+        _Check(
+            f"BMD more than 10-fold below the lowest dose {KEPT}",
+            _ten_fold_below,
+            kept=True,
+        ),
         _Check(
             "BMD, BMDL or BMDU not computed, or beyond the search",
             lambda i: (
@@ -318,6 +343,17 @@ def failed_checks(flag_set: str, inputs: FlagInputs) -> list[str]:
     return ["; ".join(texts) for texts in failures]
 
 
+def kept_rows(flag_set: str, inputs: FlagInputs) -> BoolArray:
+    """Whether each row fails none of a set's checks but those whose document keeps
+    the row: a gene that NTP flags and keeps, a model that BMDS keeps viable with
+    warnings."""
+    failed = np.zeros(inputs.bmd.size, dtype=bool)
+    for check in _CHECKS[flag_set]:
+        if not check.kept:
+            failed |= check.failed(inputs)
+    return ~failed
+
+
 def accepted_rows(flag_set: str, inputs: FlagInputs) -> BoolArray:
     """Whether each row passes a document's acceptance, ``"ntp_2018"`` or
     ``"etap_2024"``: a fit p-value that is a number and no failed check but those
@@ -329,11 +365,4 @@ def accepted_rows(flag_set: str, inputs: FlagInputs) -> BoolArray:
             "computed, BMDU / BMDL; ETAP: BMD / BMDL), and these BMDs have none, "
             "as for a cell type that supports only description"
         )
-    kept = np.array(
-        [
-            all(text.endswith(KEPT) for text in row.split("; ")) if row else True
-            for row in failed_checks(flag_set, inputs)
-        ],
-        dtype=bool,
-    )
-    return np.asarray(kept & np.isfinite(inputs.fit_p_value))
+    return np.asarray(kept_rows(flag_set, inputs) & np.isfinite(inputs.fit_p_value))

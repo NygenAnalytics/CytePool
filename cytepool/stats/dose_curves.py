@@ -349,7 +349,7 @@ class DoseCurveFits:
                 "  not fitted (no spare dose group): "
                 + ", ".join(self.models_not_fitted)
             )
-        lines.append("  best: " + _best_counts(self))
+        lines.append("  best: " + _model_counts(self.models, self.best))
         turns = _turn_text(self)
         if turns:
             lines.append("  " + turns)
@@ -367,12 +367,13 @@ def _frozen_fits(values: dict[str, Any]) -> DoseCurveFits:
     return DoseCurveFits(**frozen)
 
 
-def _best_counts(fits: DoseCurveFits) -> str:
-    """The genes whose best model each model is, most first, for printouts."""
-    counts = np.bincount(fits.best[fits.best >= 0], minlength=len(fits.models))
-    order = sorted(range(len(fits.models)), key=lambda m: (-counts[m], m))
-    parts = [f"{fits.models[m]} {counts[m]:,}" for m in order if counts[m]]
-    none = int(np.count_nonzero(fits.best < 0))
+def _model_counts(models: tuple[str, ...], chosen: np.ndarray) -> str:
+    """The genes of each model, most first, for printouts: ``chosen`` holds each
+    gene's position in ``models``, -1 for none."""
+    counts = np.bincount(chosen[chosen >= 0], minlength=len(models))
+    order = sorted(range(len(models)), key=lambda m: (-counts[m], m))
+    parts = [f"{models[m]} {counts[m]:,}" for m in order if counts[m]]
+    none = int(np.count_nonzero(chosen < 0))
     if none:
         parts.append(f"none {none:,}")
     return ", ".join(parts) or "none"

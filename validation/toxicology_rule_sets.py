@@ -38,11 +38,14 @@ spread that float32 storage gives scipy's (relative, set before the comparison) 
 p-values from permutations: within z SDs plus 2 / (B + 1), z the two-sided 0.001 / n
 quantile of the n genes compared, so that a row fails by chance with probability 0.001;
 identical for gene sets, verdicts, choices on BMDExpress's own fits and acceptance;
-close for maxima, BMDExpress's at most 1e-4 above CytePool's, and for BMDs where both
-programs choose the same model and reach the same maximum, within 10 sqrt(2 max(d,
-5e-7)) standard errors, (BMDU - BMDL) / 3.29, d the gap of the log-likelihoods, where
-a BMD that the likelihood does not pin down is checked on BMDExpress's printed curve;
-information for agreement on CytePool's own fits, beside FastBMD's 76%. On datasets
+close for fold changes, CytePool's on BMDExpress's values and its rule tables' on its
+own, within 1e-5 in log2, for maxima, BMDExpress's at most 1e-4 above CytePool's, and
+for BMDs where both programs choose the same model and reach the same maximum, within
+10 sqrt(2 max(d, 5e-7)) standard errors, d the gap of the log-likelihoods: (BMDU -
+BMDL) / 3.29, from the BMDL or BMDU over 1.645 where BMDS 2's other bound lies beyond
+CytePool's search, or the BMD where both do; a BMD that the likelihood does not pin
+down is checked on BMDExpress's printed curve; information for agreement on CytePool's
+own fits, beside FastBMD's 76%. On datasets
 simulated without responsive genes by ``simulate_dose_series``, the share of cell
 types that the ANOVA pre-modelling test passes (information), and on a vehicle-only
 design, that the Williams plus 1.5-fold prefilter alone passes far more (control).
@@ -688,6 +691,9 @@ EDGE_ROWS = [
     (1.0, 0.1, np.nextafter(4.0, 0.0), 0.5),
     (0.03, 0.01, 0.05, 0.5),
     (np.nextafter(0.03, 0.0), 0.01, 0.05, 0.5),
+    # Flagged 10-fold below the lowest dose and BMDU / BMDL at 40: NTP's flag keeps no
+    # gene that fails another criterion.
+    (0.015625, 0.0009765625, 0.0390625, 0.5),
     (1.0, 0.0, 2.0, 0.5),
     (1.0, 0.5, math.inf, 0.5),
     (1.0, math.nan, 2.0, 0.5),
@@ -1117,9 +1123,11 @@ def compare_williams(
 ) -> None:
     from scipy.optimize import isotonic_regression
 
+    from cytepool._rule_sets import largest_log2_fold_changes
+
     means_gap = stat_gap = 0.0
     p_rows = []
-    fold, fold_verdicts, prefilter = 0.0, [0, 0], [0, 0]
+    fold, table_fold, fold_verdicts, prefilter = 0.0, 0.0, [0, 0], [0, 0]
     for chemical in chemicals:
         probes, kept = values[chemical.key]
         y = stored(kept)
@@ -1162,24 +1170,35 @@ def compare_williams(
         williams = by_probe(theirs["williams"], f"{chemical.key}_williams")
         p_b = np.array([number(williams[p]["Unadjusted P-Value"]) for p in probes])
         p_rows.append((test.p_value, p_b))
-        changes = group_means[:, 1:] - group_means[:, :1]
-        largest = changes[np.arange(len(probes)), np.argmax(np.abs(changes), axis=1)]
         fc_b = np.array([number(williams[p]["Max Fold Change"]) for p in probes])
         log2_b = np.sign(fc_b) * np.log2(np.abs(fc_b))
+        # CytePool's change on BMDExpress's values, and its rule tables' changes and
+        # calls on its own values, where the rule set ran Williams' test.
+        largest = largest_log2_fold_changes(y, labels, levels.size)
         fold = max(fold, float(np.max(np.abs(largest - log2_b))))
-        near = np.abs(np.abs(largest) - np.log2(1.5)) < 1e-5
-        fold_verdicts[0] += int(
-            np.sum(
-                (np.abs(largest) >= np.log2(1.5))[~near]
-                == (np.abs(log2_b) >= np.log2(1.5))[~near]
-            )
-        )
-        fold_verdicts[1] += int(np.sum(~near))
         kept_b = by_probe(theirs["williams"], f"{chemical.key}_prefilter")
         theirs_pass = np.array([p in kept_b for p in probes])
-        mine = (test.p_value < 0.05) & (np.abs(largest) >= np.log2(1.5))
-        prefilter[0] += int(np.sum(mine == theirs_pass))
-        prefilter[1] += len(probes)
+        for rule in RULES:
+            table = ours.results[chemical.key, rule].table("bulk", "rule_set")
+            if np.isnan(table["max_log2_fold_change"]).all():
+                continue
+            if table["feature_id"].tolist() != probes:
+                raise ValueError(
+                    "the rule table's genes are not those of ETAP's values"
+                )
+            changes = np.asarray(table["max_log2_fold_change"])
+            table_fold = max(table_fold, float(np.max(np.abs(changes - log2_b))))
+            near = np.abs(np.abs(changes) - np.log2(1.5)) < 1e-5
+            fold_verdicts[0] += int(
+                np.sum(
+                    (np.abs(changes) >= np.log2(1.5))[~near]
+                    == (np.abs(log2_b) >= np.log2(1.5))[~near]
+                )
+            )
+            fold_verdicts[1] += int(np.sum(~near))
+            mine = np.asarray(table["passes_prefilter"], dtype=bool)
+            prefilter[0] += int(np.sum(mine == theirs_pass))
+            prefilter[1] += len(probes)
     rows.bounded(
         "isotonic means against scipy's isotonic_regression (BMDExpress's values)",
         "scipy 1.18.1",
@@ -1241,18 +1260,24 @@ def compare_williams(
         "the direction of Williams' test on the small designs", "enumeration", *sides
     )
     rows.bounded(
-        "largest change from the vehicle, log2, against BMDExpress's fold change (float32)",
+        "largest change from the vehicle, log2, largest_log2_fold_changes on BMDExpress's values (float32), against BMDExpress's fold change",
         "BMDExpress 2.30.520",
         fold,
         1e-5,
     )
+    rows.bounded(
+        "the rule tables' max_log2_fold_change, on CytePool's values from the counts, against BMDExpress's fold change, where the rule set ran Williams' test",
+        "BMDExpress 2.30.520",
+        table_fold,
+        1e-5,
+    )
     rows.identical(
-        "fold-change verdicts, at least 1.5-fold (none within 1e-5 of it left out)",
+        "fold-change verdicts of the rule tables, at least 1.5-fold (none within 1e-5 of it left out)",
         "BMDExpress 2.30.520",
         *fold_verdicts,
     )
     rows.information(
-        "prefilter calls, Williams p < 0.05 and 1.5-fold (each program's own permutations)",
+        "prefilter calls of the rule tables, Williams p < 0.05 and 1.5-fold (each program's own permutations)",
         "BMDExpress 2.30.520",
         f"{prefilter[0]:,} of {prefilter[1]:,} agree ({prefilter[0] / prefilter[1]:.2%})",
     )
@@ -1330,54 +1355,28 @@ def model_fits_agree(fits: Any, i: int, row: dict[str, str], n: int) -> dict[str
     return out
 
 
-def compare_fits_and_choices(
+def their_numbers(table: dict[str, dict[str, str]], ids: list[str], field_: str) -> Any:
+    """A number of every model of BMDExpress's table, genes x models."""
+    return np.array(
+        [[number(table[p][f"{NAMES[m]} {field_}"]) for m in NAMES] for p in ids]
+    )
+
+
+def compare_fits(
     chemicals: list[Chemical], ours: Ours, theirs: dict[str, Any], rows: Rows
 ) -> None:
-    from cytepool.stats.potency import _bmds2_counted, _first_with_bounds
+    """Each model's maximum against BMDExpress's, once per subset, and the parameters
+    BMDS 2 counts in its AIC where the maxima agree."""
+    from cytepool.stats.potency import _bmds2_counted
 
     doses_of = {c.key: c.doses for c in chemicals} | {"pushed": PUSHED_DOSES}
     shortfall, capped, n_fits = 0.0, [], 0
     counts = [0, 0]
-    on_their_fits, same, wide_bmdls = [0, 0], {rule: [0, 0] for rule in RULES}, [0, 0]
-    bmd_gap, bound_gap, n_bmds, floored = 0.0, 0.0, 0, 0
-    # Bounds compared; at the ends of CytePool's search where BMDS 2's lie beyond; within
-    # 5e-3; at those ends where BMDS 2's lie within the search.
-    bounds_seen = [0, 0, 0, 0]
-    bmd_relative: list[float] = []
-    ridges: list[float] = []
-    largest_gap: tuple[float, str] = (0.0, "")
-    for (key, rule), (ids, fits, found) in ours.subset.items():
+    for (key, rule), (ids, fits, _) in ours.subset.items():
         n = doses_of[key].size
         table = by_probe(theirs["bmd"], f"{key}_{rule}")
-        counted = _bmds2_counted(fits)
-        lowest = float(np.float32(doses_of[key][doses_of[key] > 0][0]))
-        their_aic = np.array(
-            [[number(table[p][f"{NAMES[m]} AIC"]) for m in NAMES] for p in ids]
-        )
-        their_bmd = np.array(
-            [[number(table[p][f"{NAMES[m]} BMD"]) for m in NAMES] for p in ids]
-        )
-        their_bmdl = np.array(
-            [[number(table[p][f"{NAMES[m]} BMDL"]) for m in NAMES] for p in ids]
-        )
-        their_bmdu = np.array(
-            [[number(table[p][f"{NAMES[m]} BMDU"]) for m in NAMES] for p in ids]
-        )
-        k = np.array([number(table[p]["Hill Parameter k"]) for p in ids])
-        open_ = np.isfinite(their_aic) & np.isfinite(their_bmd)
-        if rule == "etap_2024":
-            open_[:, list(NAMES).index("hill")] &= ~(k < lowest / 3)
-        chosen = _first_with_bounds(
-            their_aic,
-            open_,
-            lambda g, m: ~np.isnan(their_bmdl[g, m]) & ~np.isnan(their_bmdu[g, m]),
-        )
-        best = [table[p]["Best Model"] for p in ids]
-        rebuilt = [NAMES[list(NAMES)[c]] if c >= 0 else "" for c in chosen]
-        on_their_fits[0] += sum(a == b for a, b in zip(rebuilt, best))
-        on_their_fits[1] += len(ids)
         if rule != "etap_2024":
-            # Each fit's maximum, once per subset (the fits do not depend on the BMR).
+            # The fits do not depend on the BMR.
             for i, p in enumerate(ids):
                 for name, label in NAMES.items():
                     m = fits.models.index(name)
@@ -1398,10 +1397,10 @@ def compare_fits_and_choices(
                             capped.append(gap)
                         continue
                     shortfall = max(shortfall, gap)
+        counted = _bmds2_counted(fits)
         for i, p in enumerate(ids):
             agree = model_fits_agree(fits, i, table[p], n)
             for name, label in NAMES.items():
-                m = fits.models.index(name)
                 if not agree[name]:
                     continue
                 # BMDS 2's AIC penalty, (AIC + 2 LL) / 2, from printed values.
@@ -1415,97 +1414,8 @@ def compare_fits_and_choices(
                     )
                     - 1
                 )
-                counts[0] += int(theirs_count == counted[i, m])
+                counts[0] += int(theirs_count == counted[i, fits.models.index(name)])
                 counts[1] += 1
-            theirs_model = {v: k for k, v in NAMES.items()}.get(
-                table[p]["Best Model"], ""
-            )
-            same[rule][0] += int(found.gene_models[i] == theirs_model)
-            same[rule][1] += 1
-            if found.gene_models[i] == theirs_model and agree.get(theirs_model, False):
-                b = number(table[p]["Best BMD"])
-                if found.status[0, i] == "below a hundredth of the lowest dose":
-                    floored += 1
-                elif math.isfinite(b) and math.isfinite(found.bmd[0, i]):
-                    # A log-likelihood difference d at the maximum moves a parameter by
-                    # about sqrt(2 d) of its standard errors; the BMD's standard error
-                    # is about (BMDU - BMDL) / 3.29, from its two-sided 90% interval.
-                    m = fits.models.index(theirs_model)
-                    shift = n / 2 * math.log(2 * math.pi)
-                    d = abs(
-                        fits.log_likelihood[i, m]
-                        - (
-                            number(table[p][f"{NAMES[theirs_model]} fitLogLikelihood"])
-                            - shift
-                        )
-                    )
-                    width = number(table[p]["Best BMDU"]) - number(
-                        table[p]["Best BMDL"]
-                    )
-                    allowed = 10 * math.sqrt(2 * max(d, 5e-7)) * width / 3.29
-                    gap = abs(found.bmd[0, i] - b) / allowed
-                    ridge = False
-                    if gap > 1.0:
-                        # Where the likelihood is flat along the BMD, as for a step
-                        # between two doses, curves of one maximum cross the BMR at
-                        # different doses: BMDExpress's own printed curve then reaches
-                        # CytePool's maximum and gives its printed BMD.
-                        subset_doses, data = ours.subset_data[key]
-                        ll, crossing = their_curve_at_maximum(
-                            theirs_model,
-                            table[p],
-                            subset_doses,
-                            data[:, i],
-                            BMR_SD[rule],
-                        )
-                        ridge = (
-                            abs(ll - fits.log_likelihood[i, m]) < FIT_TOLERANCE
-                            and abs(crossing - b) <= 1e-4 * b
-                        )
-                    if ridge:
-                        ridges.append(found.bmd[0, i] / b)
-                    else:
-                        n_bmds += 1
-                        bmd_gap = max(bmd_gap, gap)
-                        bmd_relative.append(abs(found.bmd[0, i] - b) / b)
-                        largest_gap = max(
-                            largest_gap, (gap, f"{key} {rule} {p} {theirs_model}")
-                        )
-                    lowest_dose = float(doses_of[key][doses_of[key] > 0][0])
-                    top_dose = float(doses_of[key].max())
-                    for ours_bound, label in (
-                        (found.bmdl[0, i], "Best BMDL"),
-                        (found.bmdu[0, i], "Best BMDU"),
-                    ):
-                        theirs_bound = number(table[p][label])
-                        if not (math.isfinite(theirs_bound) and theirs_bound > 0):
-                            continue
-                        # CytePool's search ends at a hundredth of the lowest dose and
-                        # 50 times the top dose, where BMDS 2 goes on.
-                        beyond = (
-                            ours_bound == 0.0 and theirs_bound < lowest_dose / 100
-                        ) or (ours_bound == math.inf and theirs_bound > 50 * top_dose)
-                        gap = abs(ours_bound - theirs_bound) / theirs_bound
-                        bounds_seen[0] += 1
-                        if beyond:
-                            bounds_seen[1] += 1
-                        elif gap <= 5e-3:
-                            bounds_seen[2] += 1
-                        elif ours_bound in (0.0, math.inf):
-                            bounds_seen[3] += 1
-                        else:
-                            bound_gap = max(
-                                bound_gap,
-                                ours_bound / theirs_bound,
-                                theirs_bound / ours_bound,
-                            )
-            # The genes whose qualifying models' BMDLs span more than 3-fold: both rule
-            # sets keep the model of lowest AIC, as BMDExpress does.
-            qualifying = open_[i] & ~np.isnan(their_bmdl[i]) & (their_bmdl[i] > 0)
-            spread = their_bmdl[i][qualifying]
-            if spread.size > 1 and spread.max() / spread.min() > 3:
-                wide_bmdls[0] += int(rebuilt[i] == best[i])
-                wide_bmdls[1] += 1
     rows.bounded(
         f"each model's maximum against BMDExpress's, {n_fits:,} fits but those with c at CytePool's limit: BMDExpress's above CytePool's by at most",
         "BMDExpress 2.30.520",
@@ -1522,6 +1432,49 @@ def compare_fits_and_choices(
         "BMDExpress 2.30.520",
         f"{counts[0]:,} of {counts[1]:,} identical",
     )
+
+
+def compare_choices(
+    chemicals: list[Chemical], ours: Ours, theirs: dict[str, Any], rows: Rows
+) -> None:
+    """The documents' choice on BMDExpress's own fits, on genes whose qualifying BMDLs
+    span more than 3-fold, and on CytePool's own fits."""
+    from cytepool.stats.potency import _first_with_bounds
+
+    doses_of = {c.key: c.doses for c in chemicals} | {"pushed": PUSHED_DOSES}
+    on_their_fits, wide_bmdls = [0, 0], [0, 0]
+    same = {rule: [0, 0] for rule in RULES}
+    for (key, rule), (ids, _, found) in ours.subset.items():
+        table = by_probe(theirs["bmd"], f"{key}_{rule}")
+        lowest = float(np.float32(doses_of[key][doses_of[key] > 0][0]))
+        their_aic = their_numbers(table, ids, "AIC")
+        their_bmd = their_numbers(table, ids, "BMD")
+        their_bmdl = their_numbers(table, ids, "BMDL")
+        their_bmdu = their_numbers(table, ids, "BMDU")
+        k = np.array([number(table[p]["Hill Parameter k"]) for p in ids])
+        open_ = np.isfinite(their_aic) & np.isfinite(their_bmd)
+        if rule == "etap_2024":
+            open_[:, list(NAMES).index("hill")] &= ~(k < lowest / 3)
+        chosen = _first_with_bounds(
+            their_aic,
+            open_,
+            lambda g, m: ~np.isnan(their_bmdl[g, m]) & ~np.isnan(their_bmdu[g, m]),
+        )
+        best = [table[p]["Best Model"] for p in ids]
+        rebuilt = [NAMES[list(NAMES)[c]] if c >= 0 else "" for c in chosen]
+        on_their_fits[0] += sum(a == b for a, b in zip(rebuilt, best))
+        on_their_fits[1] += len(ids)
+        theirs_models = {v: k for k, v in NAMES.items()}
+        for i in range(len(ids)):
+            same[rule][0] += int(found.gene_models[i] == theirs_models.get(best[i], ""))
+            same[rule][1] += 1
+            # Both rule sets keep the model of lowest AIC, as BMDExpress does, where
+            # the qualifying models' BMDLs span more than 3-fold.
+            qualifying = open_[i] & ~np.isnan(their_bmdl[i]) & (their_bmdl[i] > 0)
+            spread = their_bmdl[i][qualifying]
+            if spread.size > 1 and spread.max() / spread.min() > 3:
+                wide_bmdls[0] += int(rebuilt[i] == best[i])
+                wide_bmdls[1] += 1
     rows.identical(
         "chosen model, CytePool's rule on BMDExpress's own fits, AICs and bounds",
         "BMDExpress 2.30.520",
@@ -1539,8 +1492,128 @@ def compare_fits_and_choices(
             "BMDExpress 2.30.520",
             f"{found_same:,} of {total:,} ({found_same / total:.1%})",
         )
+
+
+def bmd_standard_error(
+    bmd: float, bmdl: float, bmdu: float, lowest: float, top: float
+) -> float:
+    """The standard error of a BMD from BMDS 2's one-sided 95% bounds: (BMDU - BMDL) /
+    3.29 from the two-sided 90% interval, or, where one bound lies beyond CytePool's
+    search, which BMDS 2 caps far beyond the doses (BMDUs of 10^4 to 10^8 times the
+    top dose), the distance to the other over 1.645; where neither lies within, the
+    BMD itself, far below the width of an interval that spans the search."""
+    low = math.isfinite(bmdl) and bmdl >= lowest / 100
+    high = math.isfinite(bmdu) and bmdu <= 50 * top
+    if low and high:
+        return (bmdu - bmdl) / 3.29
+    if low:
+        return (bmd - bmdl) / 1.645
+    if high:
+        return (bmdu - bmd) / 1.645
+    return bmd
+
+
+def compare_bmds(
+    chemicals: list[Chemical], ours: Ours, theirs: dict[str, Any], rows: Rows
+) -> None:
+    """BMDs and their bounds where both programs chose one model and reach its
+    maximum."""
+    doses_of = {c.key: c.doses for c in chemicals} | {"pushed": PUSHED_DOSES}
+    bmd_gap, bound_gap, n_bmds, floored = 0.0, 0.0, 0, 0
+    allowed_relative: list[float] = []
+    # Bounds compared; at the ends of CytePool's search where BMDS 2's lie beyond; within
+    # 5e-3; at those ends where BMDS 2's lie within the search.
+    bounds_seen = [0, 0, 0, 0]
+    bmd_relative: list[float] = []
+    ridges: list[float] = []
+    largest_gap: tuple[float, str] = (0.0, "")
+    for (key, rule), (ids, fits, found) in ours.subset.items():
+        n = doses_of[key].size
+        lowest_dose = float(doses_of[key][doses_of[key] > 0][0])
+        top_dose = float(doses_of[key].max())
+        table = by_probe(theirs["bmd"], f"{key}_{rule}")
+        theirs_models = {v: k for k, v in NAMES.items()}
+        for i, p in enumerate(ids):
+            theirs_model = theirs_models.get(table[p]["Best Model"], "")
+            agree = model_fits_agree(fits, i, table[p], n)
+            if found.gene_models[i] != theirs_model or not agree.get(
+                theirs_model, False
+            ):
+                continue
+            b = number(table[p]["Best BMD"])
+            if found.status[0, i] == "below a hundredth of the lowest dose":
+                floored += 1
+                continue
+            if not (math.isfinite(b) and math.isfinite(found.bmd[0, i])):
+                continue
+            # A log-likelihood difference d at the maximum moves a parameter by about
+            # sqrt(2 d) of its standard errors; the BMD's standard error comes from
+            # BMDS 2's bounds.
+            m = fits.models.index(theirs_model)
+            shift = n / 2 * math.log(2 * math.pi)
+            d = abs(
+                fits.log_likelihood[i, m]
+                - (number(table[p][f"{NAMES[theirs_model]} fitLogLikelihood"]) - shift)
+            )
+            se = bmd_standard_error(
+                b,
+                number(table[p]["Best BMDL"]),
+                number(table[p]["Best BMDU"]),
+                lowest_dose,
+                top_dose,
+            )
+            allowed = 10 * math.sqrt(2 * max(d, 5e-7)) * se
+            allowed_relative.append(allowed / b)
+            gap = abs(found.bmd[0, i] - b) / allowed
+            ridge = False
+            if gap > 1.0:
+                # Where the likelihood is flat along the BMD, as for a step
+                # between two doses, curves of one maximum cross the BMR at
+                # different doses: BMDExpress's own printed curve then reaches
+                # CytePool's maximum and gives its printed BMD.
+                subset_doses, data = ours.subset_data[key]
+                ll, crossing = their_curve_at_maximum(
+                    theirs_model, table[p], subset_doses, data[:, i], BMR_SD[rule]
+                )
+                ridge = (
+                    abs(ll - fits.log_likelihood[i, m]) < FIT_TOLERANCE
+                    and abs(crossing - b) <= 1e-4 * b
+                )
+            if ridge:
+                ridges.append(found.bmd[0, i] / b)
+            else:
+                n_bmds += 1
+                bmd_gap = max(bmd_gap, gap)
+                bmd_relative.append(abs(found.bmd[0, i] - b) / b)
+                largest_gap = max(
+                    largest_gap, (gap, f"{key} {rule} {p} {theirs_model}")
+                )
+            for ours_bound, label in (
+                (found.bmdl[0, i], "Best BMDL"),
+                (found.bmdu[0, i], "Best BMDU"),
+            ):
+                theirs_bound = number(table[p][label])
+                if not (math.isfinite(theirs_bound) and theirs_bound > 0):
+                    continue
+                # CytePool's search ends at a hundredth of the lowest dose and 50
+                # times the top dose, where BMDS 2 goes on.
+                beyond = (ours_bound == 0.0 and theirs_bound < lowest_dose / 100) or (
+                    ours_bound == math.inf and theirs_bound > 50 * top_dose
+                )
+                relative = abs(ours_bound - theirs_bound) / theirs_bound
+                bounds_seen[0] += 1
+                if beyond:
+                    bounds_seen[1] += 1
+                elif relative <= 5e-3:
+                    bounds_seen[2] += 1
+                elif ours_bound in (0.0, math.inf):
+                    bounds_seen[3] += 1
+                else:
+                    bound_gap = max(
+                        bound_gap, ours_bound / theirs_bound, theirs_bound / ours_bound
+                    )
     rows.bounded(
-        f"BMD where the models and their maxima agree ({n_bmds:,} genes): the largest gap over 10 sqrt(2 max(d, 5e-7)) (BMDU - BMDL) / 3.29, d the log-likelihood difference ({largest_gap[1]}); median relative gap {np.median(bmd_relative):.1e}",
+        f"BMD where the models and their maxima agree ({n_bmds:,} genes): the largest gap over 10 sqrt(2 max(d, 5e-7)) times the BMD's standard error, d the log-likelihood difference, the standard error (BMDU - BMDL) / 3.29, the distance to the one of BMDS 2's bounds within CytePool's search over 1.645, or the BMD where neither lies within ({largest_gap[1]}); the allowed gap above 1% of the BMD for {sum(a > 0.01 for a in allowed_relative)} genes, at most {max(allowed_relative, default=0.0):.0%}; median relative gap {np.median(bmd_relative):.1e}",
         "BMDExpress 2.30.520",
         bmd_gap,
         1.0,
@@ -2260,7 +2333,9 @@ def main() -> int:
     rows = Rows()
     compare_anova(chemicals, values, ours, theirs, rows)
     compare_williams(chemicals, values, ours, theirs, rows)
-    compare_fits_and_choices(chemicals, ours, theirs, rows)
+    compare_fits(chemicals, ours, theirs, rows)
+    compare_choices(chemicals, ours, theirs, rows)
+    compare_bmds(chemicals, ours, theirs, rows)
     compare_acceptance(chemicals, ours, theirs, r, rows)
     compare_recommendation(sets, ours, pybmds, rows)
     compare_minimums(chemicals, ours, rows)

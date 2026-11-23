@@ -31,7 +31,7 @@ References:
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import numpy.typing as npt
@@ -89,7 +89,6 @@ WIDTH_MAX = 10.0  # of a bell's width, times the span of the doses
 # as BMDS 2's programs, which have no such bound, would.
 BMDS2_LOCATION_MAX = 1000.0  # times the top dose
 BMDS2_RATE_MAX = 100.0  # divided by the lowest positive dose
-WIDE_SEARCH = ("bmdexpress",)
 
 # The sizes of the grids of nonlinear parameters.
 GRID_SIZES = {
@@ -125,39 +124,31 @@ class Model:
 _GAUSS_TEXT = "z = (x - e) / b, Phi the standard normal distribution function"
 _LOG_GAUSS_TEXT = "z = (ln x - ln e) / b, and d at dose 0"
 
-SETS: dict[str, tuple[Model, ...]] = {
-    "epa": (
-        Model("linear", LINE, ("g", "b1"), "g + b1 x"),
-        Model("polynomial_2", POLYNOMIAL, ("g", "b1", "b2"), "g + b1 x + b2 x^2"),
-        Model("power", POWER, ("g", "v", "n"), "g + v x^n"),
-        Model("hill", HILL, ("g", "v", "k", "n"), "g + v x^n / (k^n + x^n)"),
-        Model("exponential_2", EXP2, ("a", "b"), "a exp(b x)"),
-        Model("exponential_3", EXP3, ("a", "b", "d"), "a exp(sign(b) (|b| x)^d)"),
-        Model("exponential_4", EXP4, ("a", "b", "c"), "a (c - (c - 1) exp(-b x))"),
-        Model(
-            "exponential_5",
-            EXP5,
-            ("a", "b", "c", "d"),
-            "a (c - (c - 1) exp(-(b x)^d))",
-        ),
+_EPA = (
+    Model("linear", LINE, ("g", "b1"), "g + b1 x"),
+    Model("polynomial_2", POLYNOMIAL, ("g", "b1", "b2"), "g + b1 x + b2 x^2"),
+    Model("power", POWER, ("g", "v", "n"), "g + v x^n"),
+    Model("hill", HILL, ("g", "v", "k", "n"), "g + v x^n / (k^n + x^n)"),
+    Model("exponential_2", EXP2, ("a", "b"), "a exp(b x)"),
+    Model("exponential_3", EXP3, ("a", "b", "d"), "a exp(sign(b) (|b| x)^d)"),
+    Model("exponential_4", EXP4, ("a", "b", "c"), "a (c - (c - 1) exp(-b x))"),
+    Model(
+        "exponential_5",
+        EXP5,
+        ("a", "b", "c", "d"),
+        "a (c - (c - 1) exp(-(b x)^d))",
     ),
+)
+
+SETS: dict[str, tuple[Model, ...]] = {
+    "epa": _EPA,
     "ll4": (
         Model("ll4", LOG_LOGISTIC, ("b", "c", "d", "e"), "c + (d - c) / (1 + (x/e)^b)"),
     ),
-    "bmdexpress": (
-        Model("linear", LINE, ("g", "b1"), "g + b1 x"),
-        Model("polynomial_2", QUADRATIC, ("g", "b1", "b2"), "g + b1 x + b2 x^2"),
-        Model("power", POWER, ("g", "v", "n"), "g + v x^n"),
-        Model("hill", HILL, ("g", "v", "k", "n"), "g + v x^n / (k^n + x^n)"),
-        Model("exponential_2", EXP2, ("a", "b"), "a exp(b x)"),
-        Model("exponential_3", EXP3, ("a", "b", "d"), "a exp(sign(b) (|b| x)^d)"),
-        Model("exponential_4", EXP4, ("a", "b", "c"), "a (c - (c - 1) exp(-b x))"),
-        Model(
-            "exponential_5",
-            EXP5,
-            ("a", "b", "c", "d"),
-            "a (c - (c - 1) exp(-(b x)^d))",
-        ),
+    # The models of "epa" as BMDS 2's programs fit them, with an unrestricted
+    # quadratic; bounds() and grid() give the set its wider search.
+    "bmdexpress": tuple(
+        replace(m, kind=QUADRATIC) if m.kind == POLYNOMIAL else m for m in _EPA
     ),
     "dromics": (
         Model("linear", LINE, ("d", "b"), "d + b x"),
@@ -211,8 +202,8 @@ SET_PARAMETERS: dict[str, tuple[str, ...]] = {
     "epa": ("g", "v", "k", "n", "b1", "b2", "a", "b", "c", "d"),
     "ll4": ("b", "c", "d", "e"),
     "dromics": ("b", "c", "d", "e", "f"),
-    "bmdexpress": ("g", "v", "k", "n", "b1", "b2", "a", "b", "c", "d"),
 }
+SET_PARAMETERS["bmdexpress"] = SET_PARAMETERS["epa"]
 """The parameter columns of each set's table, in order."""
 
 POSITIVE_MEANS = (EXP2, EXP3, EXP4, EXP5)
@@ -285,7 +276,7 @@ def bounds(
     top = scale.top
     rate = RATE_MAX / top
     location = LOCATION_MAX * top
-    wide = model_set in WIDE_SEARCH
+    wide = model_set == "bmdexpress"
     exponents = (EXPONENT_MIN, EXPONENT_MAX)
     if kind == LINE:
         pairs = [(-inf, inf), (-inf, inf)]
@@ -358,7 +349,7 @@ def grid(kind: int, scale: DoseScale, model_set: str) -> tuple[FloatArray, int]:
     theta, and the size of its second axis: every grid is the product of one or two
     axes, the second varying fastest, so that each point's neighbours are known.
     Linear and polynomial models have none."""
-    sizes = WIDE_GRID_SIZES if model_set in WIDE_SEARCH else GRID_SIZES
+    sizes = WIDE_GRID_SIZES if model_set == "bmdexpress" else GRID_SIZES
     top = scale.top
     lower, upper = bounds(kind, scale, model_set)
     location_max = upper[2] if kind == HILL else LOCATION_MAX * top

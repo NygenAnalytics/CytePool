@@ -24,6 +24,7 @@ from cytepool import (
     GeneSets,
     PathwayScores,
     dose_response,
+    dream_voom,
     from_bulk,
     simulate_dose_series,
 )
@@ -31,10 +32,12 @@ from cytepool._rule_sets import (
     ETAP,
     NTP,
     anova_premodelling_test,
+    etap_dose_levels,
+    genes_kept_by_etap,
     largest_log2_fold_changes,
+    log2_cpm_by_etap,
     passes_anova_premodelling_test,
     passes_prefilter,
-    values_by_etap,
 )
 from cytepool.stats._benchmark_dose_flags import (
     FlagInputs,
@@ -43,8 +46,11 @@ from cytepool.stats._benchmark_dose_flags import (
 )
 from cytepool.stats.dose_curves import fit_dose_curves
 from cytepool.stats.potency import (
+    _bmds2_counted,
+    _bmds_at_changes,
     _first_with_bounds,
     _flagged_hill,
+    _lowest,
     _per_model,
     _pybmds_counted,
     _recommended,
@@ -63,18 +69,26 @@ def test_values_follow_etap() -> None:
     counts[:, 1] = [5] * 10  # mean exactly 5: kept
     counts[:, 2] = [5] * 9 + [4]  # mean 4.9: removed
     counts[:, 3] = 0.0  # removed
-    kept, values = values_by_etap(counts)
+    kept = genes_kept_by_etap(counts)
     assert kept.tolist() == [True, True, False, False, True, True]
     remaining = counts[:, kept]
     expected = np.log2(remaining * 1_000_000 / remaining.sum(axis=1, keepdims=True) + 1)
-    np.testing.assert_allclose(values, expected, rtol=1e-14)
+    np.testing.assert_allclose(log2_cpm_by_etap(remaining), expected, rtol=1e-14)
+
+
+def test_etap_leaves_out_treated_levels_of_fewer_than_two_samples() -> None:
+    """ETAP Sec. 3.4.5.2: a dose level needs 2 passing samples; the vehicle stays,
+    whatever its count, for the rule of 3 vehicle samples to judge."""
+    doses = np.array([0.0, 0.0, 0.1, 1.0, 1.0, 10.0, 10.0, 10.0, 30.0])
+    keep, short = etap_dose_levels(doses)
+    assert short.tolist() == [0.1, 30.0]
+    assert doses[keep].tolist() == [0.0, 0.0, 1.0, 1.0, 10.0, 10.0, 10.0]
 
 
 def test_a_cell_type_of_few_counts_is_not_analysed() -> None:
     """When no gene has a mean count of 5, ETAP's values have no gene, and the rule
     set says so in the cell type's status and outcomes."""
-    kept, values = values_by_etap(np.full((6, 4), 4.0))
-    assert not kept.any() and values.shape == (6, 0)
+    assert not genes_kept_by_etap(np.full((6, 4), 4.99)).any()
     levels = np.array([0.0, 0.1, 1.0, 10.0])
     doses = np.repeat(levels, 3)
     counts = np.random.default_rng(4).poisson(3.0, (doses.size, 30))
@@ -143,6 +157,13 @@ def test_largest_change_is_signed_at_the_dose_of_largest_size() -> None:
     np.testing.assert_allclose(
         largest_log2_fold_changes(values, labels, 4), [2.0, -1.0], atol=1e-14
     )
+    # Groups of 3, 4 and 2 samples, as DE-71's vehicle of 3 and ETAP's exclusions
+    # give: means 1, 2 and 4 by hand, so the largest change is +3.
+    labels = np.repeat(np.arange(3), (3, 4, 2))
+    values = np.array([0.0, 0.0, 3.0, 2.0, 2.0, 2.0, 2.0, 5.0, 3.0])[:, None]
+    np.testing.assert_allclose(
+        largest_log2_fold_changes(values, labels, 3), [3.0], atol=1e-14
+    )
 
 
 def test_prefilter_thresholds() -> None:
@@ -204,20 +225,44 @@ def etap(series):
     )
 
 
-def test_the_rule_table_is_its_steps_run_through_public_functions(series, etap) -> None:
+@pytest.fixture(scope="module")
+def unequal(series):
+    """The series with one vehicle sample and one at 0.3 ug/kg short of cells in the
+    first cell type, so that its dose groups hold 3 and 4 samples, as DE-71's do."""
     cube, _ = series
-    group = etap.groups[0]
-    table = etap.table(group, "rule_set")
-    samples = etap.design_report.samples.filter(group_id=group)
+    doses = np.asarray(cube.samples["dose"], dtype=float)
+    cells = np.array(cube.n_cells, copy=True)
+    cells[np.flatnonzero(doses == 0.0)[0], 0] = 5
+    cells[np.flatnonzero(doses == 0.3)[0], 0] = 5
+    return with_cells(cube, cells)
+
+
+@pytest.mark.parametrize("rules, multiple", [("ntp_2018", 1.0), ("etap_2024", 1.349)])
+def test_the_rule_table_is_its_steps_run_through_public_functions(
+    unequal, rules: str, multiple: float
+) -> None:
+    """Each column of the rule table, against its step run by the test through public
+    functions on the cell type's counts: ETAP's values, scipy's ANOVA and
+    Benjamini-Hochberg, Williams' test from the recorded seed, the largest change on
+    unequal groups, the curves, the document's choice, BMDs, checks and acceptance at
+    the document's BMR, and ETAP's vehicle reading."""
+    result = dose_response(
+        unequal, Design(unequal.samples, "~ 1"), dose=AXIS, rules=rules, rng=5
+    )
+    group = result.groups[0]
+    table = result.table(group, "rule_set")
+    samples = result.design_report.samples.filter(group_id=group)
     used = np.asarray(samples["used"], dtype=bool)
     ids = np.asarray(samples["sample_id"].tolist(), dtype=object)[used]
     doses = np.asarray(samples["dose"], dtype=float)[used]
-    rows = [cube.samples["sample_id"].tolist().index(s) for s in ids]
-    counts = np.asarray(cube.layer("counts", group)[rows], dtype=float)
+    sizes = dict(zip(*(a.tolist() for a in np.unique(doses, return_counts=True))))
+    assert sizes[0.0] == sizes[0.3] == 3 and sizes[1.0] == 4
+    rows = [unequal.samples["sample_id"].tolist().index(s) for s in ids]
+    counts = np.asarray(unequal.layer("counts", group)[rows], dtype=float)
     keep = counts.mean(axis=0) >= 5
+    assert table["feature_id"].tolist() == unequal.features["feature_id"][keep].tolist()
     remaining = counts[:, keep]
     values = np.log2(remaining * 1e6 / remaining.sum(axis=1, keepdims=True) + 1)
-    assert table["feature_id"].tolist() == cube.features["feature_id"][keep].tolist()
     levels = np.unique(doses)
     anova = f_oneway(*[values[doses == level] for level in levels], axis=0)
     np.testing.assert_allclose(table["anova_p_value"], anova.pvalue, rtol=1e-10)
@@ -228,29 +273,52 @@ def test_the_rule_table_is_its_steps_run_through_public_functions(series, etap) 
     )
     # The cell type's permutations, from the seed recorded and the stream documented.
     generator = np.random.default_rng(
-        [etap.settings["seed"], zlib.crc32(group.encode("utf-8")), 2000]
+        [result.settings["seed"], zlib.crc32(group.encode("utf-8")), 2000]
     )
     trend = williams_trend_test(doses, values, rng=generator)
     np.testing.assert_array_equal(table["williams_trend_p_value"], trend.p_value)
+    assert table["direction"].tolist() == trend.direction.tolist()
     means = np.array([values[doses == level].mean(axis=0) for level in levels])
     changes = means[1:] - means[0]
     largest = changes[np.argmax(np.abs(changes), axis=0), np.arange(changes.shape[1])]
     np.testing.assert_allclose(table["max_log2_fold_change"], largest, atol=1e-12)
-    passing = (trend.p_value < 0.05) & (np.abs(largest) >= np.log2(1.5))
+    passing = (trend.p_value < 0.05) & (np.abs(largest) >= math.log2(1.5))
     np.testing.assert_array_equal(table["passes_prefilter"], passing)
     fits = fit_dose_curves(doses, values[:, passing], models="bmdexpress")
-    np.testing.assert_array_equal(etap.curve_fits(group).parameters, fits.parameters)
-    found = benchmark_doses(fits, BenchmarkResponse.sd(1.349), model="etap_2024")
+    np.testing.assert_array_equal(result.curve_fits(group).parameters, fits.parameters)
+    found = benchmark_doses(fits, BenchmarkResponse.sd(multiple), model=rules)
     picked = table.filter(table["passes_prefilter"])
     assert picked["model"].tolist() == found.gene_models.tolist()
+    assert picked["model_choice"].tolist() == found.model_choice.tolist()
+    assert picked["bmd_status"].tolist() == found.status[0].tolist()
     for column in ("bmd", "bmdl", "bmdu"):
         np.testing.assert_array_equal(picked[column], getattr(found, column)[0])
     np.testing.assert_array_equal(picked["fit_p_value"], found.fit_p_value)
-    np.testing.assert_array_equal(picked["bmd_vehicle_sd"], found.bmd_vehicle_sd)
-    np.testing.assert_array_equal(picked["accepted"], found.accepted("etap_2024")[0])
+    flags = found.table(flags=rules)[f"flags_{rules}"][: len(picked)].tolist()
+    assert picked["failed_checks"].tolist() == flags
+    np.testing.assert_array_equal(picked["accepted"], found.accepted(rules)[0])
     others = table.filter(~table["passes_prefilter"])
     assert set(others["model"].tolist()) <= {""} and not others["accepted"].any()
     assert np.isnan(others["bmd"]).all()
+    if rules == "ntp_2018":
+        assert "bmd_vehicle_sd" not in table.columns
+        return
+    # ETAP's wording of its BMR: the BMD at 1.349 times the vehicle replicates' sample
+    # SD, here at an absolute BMR of that size on each gene's model fitted alone.
+    vehicle_sd = values[doses == 0.0][:, passing].std(axis=0, ddof=1)
+    modelled = np.flatnonzero(np.asarray(picked["model"]) != "")
+    assert modelled.size >= 5
+    for i in modelled[:5]:
+        alone = fit_dose_curves(doses, values[:, passing][:, [i]], models="bmdexpress")
+        reading = benchmark_doses(
+            alone,
+            BenchmarkResponse.absolute(1.349 * vehicle_sd[i]),
+            model=str(picked["model"][i]),
+            bounds=False,
+        )
+        np.testing.assert_allclose(
+            picked["bmd_vehicle_sd"][i], reading.bmd[0, 0], rtol=1e-9
+        )
 
 
 def test_rules_refuse_what_they_set_and_designs_they_do_not_fit(series) -> None:
@@ -261,6 +329,7 @@ def test_rules_refuse_what_they_set_and_designs_they_do_not_fit(series) -> None:
         ("variance", "weighted"),
         ("bmr", BenchmarkResponse.sd(1)),
         ("flags", "etap_2024"),
+        ("selection", "bmds_2026"),
     ):
         with pytest.raises(ValueError, match=f"'{option}' cannot be given with it"):
             dose_response(cube, design, dose=AXIS, rules="etap_2024", **{option: value})
@@ -272,8 +341,15 @@ def test_rules_refuse_what_they_set_and_designs_they_do_not_fit(series) -> None:
     with_sex = cube.samples.with_columns({"sex": sexes})
     with pytest.raises(ValueError, match="fits dose alone to independent animals"):
         dose_response(cube, Design(with_sex, "~ sex"), dose=AXIS, rules="ntp_2018")
-    with pytest.raises(ValueError, match="selection is BMDS's recommendation"):
-        dose_response(cube, design, dose=AXIS, rules="ntp_2018", selection="bmds_2026")
+    donors = cube.samples.with_columns({"donor": np.arange(len(cube.samples)) % 3})
+    with pytest.raises(ValueError, match=r"other terms, '\(1 \| donor\)'; analyse"):
+        dose_response(
+            cube,
+            Design(donors, "~ 1", random="(1 | donor)"),
+            dose=AXIS,
+            rules="etap_2024",
+            analysis=dream_voom,
+        )
     with pytest.raises(ValueError, match="give models='epa' and bmr"):
         dose_response(cube, design, dose=AXIS, selection="bmds_2026")
     with pytest.raises(ValueError, match="use variance='constant'"):
@@ -366,7 +442,16 @@ def test_rules_and_their_outcomes_read_back(series, etap) -> None:
     assert summary["n_genes_accepted"][row] == accepted == counts["n_genes_accepted"]
     text = " ".join(repr(etap).split())
     assert "rules: etap_2024 (US EPA 2024), curves bmdexpress" in text
+    assert "etap_2024: minimums deviation (dose_spacing" in text
     assert f"{accepted} accepted" in text
+    # The printout gives the models the document chose, apart from the curves' own
+    # best by AICc.
+    assert "curves (constant variance): best by AICc " in text
+    chosen = text.split("models chosen: ")[1].split(";")[0]
+    models = [m for m in table["model"].tolist() if m]
+    assert sorted(chosen.split(", ")) == sorted(
+        f"{m} {models.count(m):,}" for m in set(models)
+    )
     copy = pickle.loads(pickle.dumps(etap))
     assert copy.table(group, "rule_set").equals(table)
     assert copy.rules(group).equals(outcomes)
@@ -451,6 +536,12 @@ def test_a_cell_type_without_signal_is_inactive() -> None:
     assert not table["passes_prefilter"].any() and not table["accepted"].any()
     status = "inactive: no gene passes the ANOVA pre-modelling test"
     assert result.summary["rule_set_status"].tolist() == [status]
+    # The ANOVA test ran and passed no gene; the steps after it did not run.
+    summary = result.summary
+    assert summary["n_genes_passing_anova"].tolist() == [0]
+    assert np.isnan(summary["n_genes_passing_prefilter"][0])
+    assert np.isnan(summary["n_genes_accepted"][0])
+    assert f"ntp_2018: {status}" in " ".join(repr(result).split())
     with pytest.raises(KeyError, match=f"no curves in '{group}': {status}"):
         result.curve_fits(group)
     outcomes = result.rules(group)
@@ -540,10 +631,90 @@ def test_etap_leaves_out_short_dose_levels_and_needs_three_vehicles(series) -> N
     )
     status = "not modelled: 2 passing vehicle samples, ETAP needs 3"
     assert short.summary["rule_set_status"].tolist() == [status]
+    for column in ("n_genes_passing_anova", "n_genes_passing_prefilter"):
+        assert np.isnan(short.summary[column][0])
+    assert np.isnan(short.summary["n_genes_accepted"][0])
+    printed = " ".join(repr(short).split())
+    assert "etap_2024: minimums deviation (" in printed and status in printed
     found = dict(zip(*(short.rules(group)[c].tolist() for c in ("setting", "outcome"))))
-    assert found["data set"] == status
+    assert found["data set"] == f"{status}; dose levels left out: 0.03"
     with pytest.raises(KeyError, match=f"etap_2024 did not run in '{group}': {status}"):
         short.table(group, "rule_set")
+
+
+def test_fewer_than_three_dose_groups_are_not_modelled(series) -> None:
+    """The curves need a spare dose group for a line, so a cell type left with 2 dose
+    groups is not modelled, whether ETAP's exclusions leave them or the design has
+    them, and the other cell types run."""
+    cube, _ = series
+    group = cube.groups["group_id"][0]
+    doses = np.asarray(cube.samples["dose"], dtype=float)
+    cells = np.array(cube.n_cells, copy=True)
+    for level in LADDER[1:-1]:
+        cells[np.flatnonzero(doses == level)[:3], 0] = 5
+    result = dose_response(
+        with_cells(cube, cells),
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        rules="etap_2024",
+        rng=5,
+    )
+    status = "not modelled: 2 dose groups, and the curves need 3"
+    assert result.summary["rule_set_status"].tolist() == [status, "analysed"]
+    assert np.isnan(result.summary["n_genes_passing_anova"][0])
+    found = dict(
+        zip(*(result.rules(group)[c].tolist() for c in ("setting", "outcome")))
+    )
+    left_out = "0.03, 0.1, 0.3, 1, 3, 10 and 30"
+    assert found["data set"] == f"{status}; dose levels left out: {left_out}"
+    with pytest.raises(KeyError, match=f"etap_2024 did not run in '{group}'"):
+        result.table(group, "rule_set")
+    # A vehicle and one dose, 4 samples each: the moderated tests run, the rule sets
+    # do not model it.
+    two = np.repeat([0.0, 10.0], 4)
+    counts = np.random.default_rng(4).poisson(200.0, (two.size, 40))
+    counts[two > 0, :10] *= 4
+    pair = from_bulk(
+        counts, samples={"sample_id": [f"s{i}" for i in range(8)], "dose": two}
+    )
+    for rules in ("ntp_2018", "etap_2024"):
+        found = dose_response(
+            pair, Design(pair.samples, "~ 1"), dose=AXIS, rules=rules, rng=1
+        )
+        assert found.summary["rule_set_status"].tolist() == [status]
+        assert len(found.table(found.groups[0], "dose_groups")) == 40
+
+
+def test_a_sample_without_counts_in_the_kept_genes_is_named() -> None:
+    """A passing sample whose counts lie in genes of mean count below 5 has no library
+    size over the genes the rule set keeps; the cell type is not analysed, and the
+    status names the sample and the remedy."""
+    doses = np.repeat([0.0, 0.1, 1.0, 10.0], 3)
+    rng = np.random.default_rng(4)
+    counts = rng.poisson(40.0, (doses.size, 30))
+    counts[:, 25:] = rng.poisson(1.0, (doses.size, 5))
+    counts[0, :25] = 0
+    counts[0, 25:] = [3, 2, 4, 1, 2]
+    cube = from_bulk(
+        counts, samples={"sample_id": [f"s{i}" for i in range(12)], "dose": doses}
+    )
+    status = (
+        "not analysed: sample s0 has no counts in the 25 genes with a mean count of "
+        "at least 5; leave it out, as ETAP's checks of sample quality would, with "
+        "min_counts"
+    )
+    for rules in ("ntp_2018", "etap_2024"):
+        result = dose_response(
+            cube,
+            Design(cube.samples, "~ 1"),
+            dose=AXIS,
+            rules=rules,
+            rng=1,
+            expression_filter={"min_count": 1, "min_total_count": 1},
+        )
+        assert result.summary["rule_set_status"].tolist() == [status]
+        with pytest.raises(KeyError, match="sample s0 has no counts"):
+            result.table(result.groups[0], "rule_set")
 
 
 # The documents' choices of model, on real fits with one quantity set by hand.
@@ -608,8 +779,11 @@ def test_etap_leaves_out_a_hill_fit_whose_k_is_below_a_third_of_the_lowest_dose(
     flags = []
     for value in (0.1 / 3, np.nextafter(0.1 / 3, 0.0), np.nan):
         parameters[0, hill, k] = value
-        flags.append(bool(_flagged_hill(replace(fits, parameters=parameters))[0, hill]))
+        moved = replace(fits, parameters=parameters)
+        flags.append(bool(_flagged_hill(moved, ETAP.hill_k_fraction)[0, hill]))
     assert flags == [False, True, False]
+    # NTP has no such rule.
+    assert not _flagged_hill(replace(fits, parameters=parameters), None).any()
 
 
 def test_a_model_without_bounds_or_a_bmd_gives_way_to_the_next() -> None:
@@ -730,7 +904,8 @@ def curve_values_of(fits, m: int, doses: np.ndarray) -> np.ndarray:
 
 def test_the_vehicle_reading_of_etap_is_a_line_s_closed_form() -> None:
     """For a straight line, the BMD at 1.349 times the vehicle replicates' sample SD
-    is that size over the slope."""
+    is that size over the slope; a size of 0, a vehicle without spread, or NaN, a
+    vehicle of one sample, gives no BMD."""
     line = exact_line(0.05)
     fits = fit_dose_curves(HALF_LOG, line, models="bmdexpress")
     found = benchmark_doses(fits, BenchmarkResponse.sd(1.349), model="etap_2024")
@@ -739,20 +914,12 @@ def test_the_vehicle_reading_of_etap_is_a_line_s_closed_form() -> None:
         0, fits.models.index("linear"), fits.parameter_names.index("b1")
     ]
     sd = np.std(line[HALF_LOG == 0.0, 0], ddof=1)
-    assert found.bmd_vehicle_sd[0] == pytest.approx(1.349 * sd / abs(slope), rel=1e-6)
-    ntp = benchmark_doses(fits, BenchmarkResponse.sd(1.0), model="ntp_2018")
-    assert np.isnan(ntp.bmd_vehicle_sd).all()
-    # No vehicle reading of an absolute BMR, nor of a vehicle without spread.
-    absolute = benchmark_doses(fits, BenchmarkResponse.absolute(0.3), model="etap_2024")
-    assert np.isnan(absolute.bmd_vehicle_sd).all()
-    still = line.copy()
-    still[HALF_LOG == 0.0, 0] = 8.0
-    flat = benchmark_doses(
-        fit_dose_curves(HALF_LOG, still, models="bmdexpress"),
-        BenchmarkResponse.sd(1.349),
-        model="etap_2024",
-    )
-    assert np.isnan(flat.bmd_vehicle_sd).all() and np.isfinite(flat.bmd[0]).all()
+    changes = 1.349 * fits.within_group_sd[:, 0]
+    reading = _bmds_at_changes(fits, found.gene_models, changes)
+    assert reading[0] == pytest.approx(1.349 * sd / abs(slope), rel=1e-6)
+    for size in (0.0, np.nan):
+        assert np.isnan(_bmds_at_changes(fits, found.gene_models, np.array([size])))
+    assert np.isnan(_bmds_at_changes(fits, np.array([""], dtype=object), changes))
     # The table carries the choice and its test 4 under a document's choice only;
     # the 1 SD row added after 1.349 SD keeps the gene's model and its p-value.
     table = found.table()
@@ -786,6 +953,112 @@ def test_the_documents_choices_refuse_what_they_cannot_read() -> None:
         benchmark_doses(replace(fits, variance="weighted"), bmr, model="etap_2024")
     with pytest.raises(ValueError, match="keeps a model only where its BMD has bounds"):
         benchmark_doses(fits, bmr, model="ntp_2018", bounds=False)
+    # Fits without replicates are refused before the choice runs any search.
+    once = fit_dose_curves(
+        np.unique(HALF_LOG), exact_line(0.05)[::4], models="bmdexpress"
+    )
+    with pytest.raises(ValueError, match="bounds need replicates"):
+        benchmark_doses(once, bmr, model="ntp_2018")
+
+
+def test_a_gene_without_a_qualifying_model_has_the_status_no_model_chosen() -> None:
+    """Where a document's choice finds no model with a BMD and bounds, the gene has no
+    model, the reason says so, its BMDs have the status "no model chosen" at every BMR,
+    and it is not accepted; BMDS's recommendation without a viable model alike."""
+    fits = fit_dose_curves(HALF_LOG, exact_line(0.05), models="bmdexpress")
+    none = replace(fits, log_likelihood=np.full(fits.log_likelihood.shape, np.nan))
+    found = benchmark_doses(none, BenchmarkResponse.sd(1.349), model="etap_2024")
+    assert found.gene_models.tolist() == [""]
+    assert found.model_choice.tolist() == ["no model with a BMD and bounds"]
+    assert found.status[:, 0].tolist() == ["no model chosen"] * 2
+    assert np.isnan(found.fit_p_value[0]) and not found.accepted("etap_2024").any()
+    epa = fit_dose_curves(HALF_LOG, exact_line(0.05), models="epa")
+    nothing = replace(epa, log_likelihood=np.full(epa.log_likelihood.shape, np.nan))
+    found = benchmark_doses(nothing, BenchmarkResponse.sd(1.0), model="bmds_2026")
+    assert found.model_choice.tolist() == ["no viable model"]
+    assert found.status[0, 0] == "no model chosen"
+
+
+def test_bmds_test_4_counts_the_parameters_pybmds_leaves_out() -> None:
+    """Under model='bmds_2026' the fit p-value is test 4 on K minus the parameters
+    that pybmds counts: gene 29 of the pybmds fixture gets a quadratic with b1 at its
+    bound of 0, so 2 of its 3 mean parameters count (BMDS 2's count would give 3),
+    from the samples' sums of squares about the curve and the dose-group means."""
+    found = json.loads((DATA / "pybmds.json").read_text())
+    doses, values = np.array(found["doses"]), np.array(found["values"])
+    fits = fit_dose_curves(doses, values, models="epa")
+    result = benchmark_doses(fits, BenchmarkResponse.sd(1.0), model="bmds_2026")
+    g = 29
+    assert result.gene_models[g] == "polynomial_2"
+    m = fits.models.index("polynomial_2")
+    g0, b1, b2 = (
+        fits.parameters[g, m, fits.parameter_names.index(q)] for q in ("g", "b1", "b2")
+    )
+    assert b1 == 0.0
+    levels = np.unique(doses)
+    y = values[:, g]
+    within = sum(((y[doses == d] - y[doses == d].mean()) ** 2).sum() for d in levels)
+    about = sum(
+        ((y[doses == d] - (g0 + b1 * d + b2 * d * d)) ** 2).sum() for d in levels
+    )
+    expected = chi2.sf(y.size * np.log(about / within), levels.size - 2)
+    assert result.fit_p_value[g] == pytest.approx(expected, rel=1e-6)
+
+
+def test_parameters_at_bmds_2s_bounds_are_not_counted() -> None:
+    """BMDS 2 bounds Hill's and power's n and exponential 3 and 5's d to [1, 18] and
+    k, a, b and c below at 0: at 18 a parameter is not counted, as at 1; pybmds
+    leaves c unbounded above, so c at CytePool's limit of 1,000 counts."""
+    fits = fit_dose_curves(HALF_LOG, exact_line(0.05), models="bmdexpress")
+    parameters = fits.parameters.copy()
+    names = fits.parameter_names
+    power, hill = fits.models.index("power"), fits.models.index("hill")
+    exp5 = fits.models.index("exponential_5")
+    parameters[0, power, names.index("n")] = 18.0
+    parameters[0, hill, names.index("n")] = 18.0
+    parameters[0, hill, names.index("k")] = 1.0
+    for letter, value in (("d", 18.0), ("c", 2.0), ("b", 0.5), ("a", 8.0)):
+        parameters[0, exp5, names.index(letter)] = value
+    counted = _bmds2_counted(replace(fits, parameters=parameters))
+    assert (counted[0, power], counted[0, hill], counted[0, exp5]) == (2, 3, 3)
+    epa = fit_dose_curves(HALF_LOG, exact_line(0.05), models="epa")
+    exp4 = epa.models.index("exponential_4")
+    parameters = epa.parameters.copy()
+    parameters[0, exp4, epa.parameter_names.index("c")] = 1000.0
+    at_bounds = epa.parameters_at_bounds.copy()
+    at_bounds[0, exp4] = "c"
+    moved = replace(epa, parameters=parameters, parameters_at_bounds=at_bounds)
+    assert _pybmds_counted(moved)[0, exp4] == 3
+    parameters[0, exp4, epa.parameter_names.index("c")] = 0.0
+    assert _pybmds_counted(replace(moved, parameters=parameters))[0, exp4] == 2
+
+
+def test_aic_ties_within_1e_8_go_to_the_first_model() -> None:
+    """AICs within 1e-8 tie and go to the first model; beyond, the lower wins."""
+    every = np.ones((2, 2), dtype=bool)
+    aic = np.array([[1.0, 1.0 - 5e-9], [1.0, 1.0 - 2e-8]])
+    assert _lowest(aic, every).tolist() == [0, 1]
+
+
+def test_the_documents_choose_among_the_models_with_a_spare_dose_group() -> None:
+    """On 4 dose groups Hill and exponential 5 have no spare group and are not
+    fitted; each document chooses among the others."""
+    doses = np.repeat([0.0, 0.3, 3.0, 30.0], 4)
+    rng = np.random.default_rng(8)
+    values = np.column_stack(
+        [8.0 + s * doses / 30 + rng.normal(0.0, 0.1, doses.size) for s in (1, 2, -1)]
+    )
+    for model_set, rule, multiple in (
+        ("bmdexpress", "ntp_2018", 1.0),
+        ("bmdexpress", "etap_2024", 1.349),
+        ("epa", "bmds_2026", 1.0),
+    ):
+        fits = fit_dose_curves(doses, values, models=model_set)
+        assert {"hill", "exponential_5"} <= set(fits.models_not_fitted)
+        found = benchmark_doses(fits, BenchmarkResponse.sd(multiple), model=rule)
+        chosen = found.gene_models != ""
+        assert chosen.any() and set(found.gene_models[chosen]) <= set(fits.models)
+        assert np.isfinite(found.bmd[0, chosen]).all()
 
 
 def test_bmds_recommends_by_aic_within_3_fold_and_by_bmdl_beyond() -> None:
@@ -818,6 +1091,27 @@ def test_bmds_recommends_by_aic_within_3_fold_and_by_bmdl_beyond() -> None:
     assert _recommended(tie, near, every, n_parameters)[0].tolist() == [0]
     assert _recommended(tie, near, every, np.array([5.0, 3.0, 4.0]))[0].tolist() == [2]
     assert _recommended(tie, near, every, np.full(3, 3.0))[0].tolist() == [0]
+    # pybmds's ratio reads the BMDLs above 0: 2.5 / 1 is within 3-fold, so the lowest
+    # AIC wins, not the model whose BMDL is 0.
+    chosen, why = _recommended(
+        np.array([[7.0, 5.0, 6.0]]), np.array([[0.0, 1.0, 2.5]]), every, n_parameters
+    )
+    assert chosen.tolist() == [1] and why.tolist() == [
+        "lowest AIC of the viable models, BMDLs within 3-fold"
+    ]
+    # The choice does not depend on the dose unit: BMDLs a billion times smaller or
+    # larger tie only where they tie in proportion.
+    for unit in (1e-9, 1e9):
+        assert _recommended(aic, bmdl * unit, viable, n_parameters)[0].tolist() == [
+            1,
+            0,
+            1,
+            -1,
+        ]
+    same = np.array([[2.0, 2.0 * (1 + 5e-9), 9.0]]) * 1e-9
+    assert _recommended(np.array([[1.0, 2.0, 3.0]]), same, every, n_parameters)[
+        0
+    ].tolist() == [1]
 
 
 def test_acceptance_at_each_threshold() -> None:
@@ -825,7 +1119,7 @@ def test_acceptance_at_each_threshold() -> None:
     documents state them: below the highest dose, fit p-value above 0.1, BMDU / BMDL
     below 40 (NTP) and BMD / BMDL below 20 (ETAP); NTP's 10-fold flag is kept."""
     line = gene_values(6, 0.05 * HALF_LOG)
-    fits = fit_dose_curves(HALF_LOG, np.repeat(line, 10, axis=1), models="bmdexpress")
+    fits = fit_dose_curves(HALF_LOG, np.repeat(line, 11, axis=1), models="bmdexpress")
     found = benchmark_doses(fits, BenchmarkResponse.sd(1.349), model="etap_2024")
     top, lowest = 30.0, 0.1
     rows = {
@@ -836,6 +1130,9 @@ def test_acceptance_at_each_threshold() -> None:
         "BMDU/BMDL 40": (1.0, 0.1, 4.0, 0.5),
         "a tenth of the lowest": (lowest / 10, lowest / 20, lowest / 5, 0.5),
         "below a tenth": (0.9 * lowest / 10, lowest / 20, lowest / 5, 0.5),
+        # NTP keeps a BMD 10-fold below the lowest dose, but not one whose BMDU /
+        # BMDL is also 40.
+        "below a tenth, BMDU/BMDL 40": (0.009, 0.0005, 0.02, 0.5),
         "BMDL 0": (1.0, 0.0, 2.0, 0.5),
         "BMDU infinite": (1.0, 0.5, np.inf, 0.5),
         "no fit p-value": (1.0, 0.5, 2.0, np.nan),
@@ -858,6 +1155,7 @@ def test_acceptance_at_each_threshold() -> None:
         "BMDU/BMDL 40": False,
         "a tenth of the lowest": True,
         "below a tenth": True,
+        "below a tenth, BMDU/BMDL 40": False,
         "BMDL 0": False,
         "BMDU infinite": False,
         "no fit p-value": False,
@@ -870,6 +1168,7 @@ def test_acceptance_at_each_threshold() -> None:
         "BMDU/BMDL 40": True,
         "a tenth of the lowest": True,
         "below a tenth": True,
+        "below a tenth, BMDU/BMDL 40": True,
         "BMDL 0": False,
         "BMDU infinite": True,
         "no fit p-value": False,
@@ -954,6 +1253,33 @@ def test_the_bmdexpress_set_reaches_bmdexpress_s_maxima() -> None:
             gap = theirs - fits.log_likelihood[:, m]
             capped = fits.parameters[:, m, c] == 1000.0
             assert np.all((gap <= 1e-4) | np.isnan(theirs) | capped), (key, model)
+
+
+# DE-71's probe LOC680097_9132 (GSE147072), ETAP's values as BMDExpress stores them, as
+# float32, at DE-71's doses (mg/kg).
+DE71_DOSES = np.repeat([0.0, 0.38, 0.75, 1.5, 3.0, 15.0, 50.0, 100.0, 200.0, 500.0], 4)[
+    1:
+]
+LOC680097_9132 = [
+    *(6.7880044, 5.6386924, 6.4601483, 6.982906, 6.646931, 6.830073, 7.810434),
+    *(7.3645606, 6.814201, 7.4421306, 8.32781, 6.556266, 6.6345015, 6.4353004),
+    *(6.9080873, 7.2824154, 6.4373584, 7.6180177, 7.571323, 6.2508497, 7.214995),
+    *(7.0050073, 7.2100067, 6.9500732, 6.295127, 7.0644913, 7.5593243, 6.490918),
+    *(6.647322, 6.969531, 7.211174, 8.3677, 7.419652, 6.3850207, 7.281277),
+    *(7.5054116, 7.73277, 7.5447297, 7.6620526),
+]
+
+
+def test_the_bmdexpress_grid_reaches_a_step_at_the_largest_exponent() -> None:
+    """BMDS 2 fits exponential 5 to LOC680097_9132 as a step with d at 18, of
+    log-likelihood 5.69486 with BMDS's constant: the grid of 128 rates of
+    "bmdexpress" reaches it, where one of 64 stopped 0.10 below."""
+    values = np.array(LOC680097_9132, dtype=np.float32).astype(np.float64)
+    fits = fit_dose_curves(DE71_DOSES, values[:, None], models="bmdexpress")
+    m = fits.models.index("exponential_5")
+    theirs = 5.69486 - DE71_DOSES.size / 2 * math.log(2 * math.pi)
+    assert fits.log_likelihood[0, m] == pytest.approx(theirs, abs=1e-4)
+    assert fits.parameters[0, m, fits.parameter_names.index("d")] == 18.0
 
 
 @pytest.mark.parametrize("rule", ["ntp_2018", "etap_2024"])
