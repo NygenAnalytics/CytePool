@@ -1874,10 +1874,13 @@ def dose_response(
             the curves of ``"bmdexpress"``, the document's BMR and model choice,
             BMDS's test 4 and the document's acceptance; ETAP's design minimums
             leave out a dose level of fewer than 2 passing samples and do not model
-            a cell type of fewer than 3 passing vehicle samples. The moderated tests
-            and the gate run beside it, unchanged. :meth:`DoseResponseResult.rules`
-            gives each setting with its source; None (default) for none. A rule set
-            reads a cube's counts, so it does not run on scores.
+            a cell type of fewer than 3 passing vehicle samples. A cell type left
+            with fewer than 3 dose groups is not modelled, since a line needs a
+            spare one, and one with a sample that has no counts in the genes kept
+            is not analysed. The moderated tests and the gate run beside it,
+            unchanged. :meth:`DoseResponseResult.rules` gives each setting with its
+            source; None (default) for none. A rule set reads a cube's counts, so it
+            does not run on scores.
         analysis: :func:`~cytepool.limma_voom` (by default),
             :func:`~cytepool.limma_trend` or :func:`~cytepool.dream_voom`; a design
             with random intercepts needs ``dream_voom``. Left at its default for

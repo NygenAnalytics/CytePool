@@ -572,6 +572,10 @@ def test_a_cell_type_where_no_gene_passes_the_prefilter_has_no_curves() -> None:
     assert not table["passes_prefilter"].any()
     assert result.summary["rule_set_status"].tolist() == ["analysed"]
     assert result.summary["n_genes_passing_prefilter"].tolist() == [0]
+    assert result.summary["n_genes_accepted"].tolist() == [0]
+    printed = " ".join(repr(result).split())
+    assert "pass Williams' trend test and the fold change; 0 accepted" in printed
+    assert "models chosen" not in printed
     with pytest.raises(KeyError, match="no gene passes the prefilter of ntp_2018"):
         result.curve_fits(group)
 
