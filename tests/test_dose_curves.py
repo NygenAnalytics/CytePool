@@ -163,12 +163,12 @@ def test_noise_free_curves_are_recovered(model_set: str, model: str) -> None:
     assert np.max(np.abs(noisy - curve)) < 0.01
 
 
-@pytest.mark.parametrize("kind", range(16))
+@pytest.mark.parametrize("kind", range(17))
 def test_gradients_are_the_means_derivatives(kind: int) -> None:
     """The analytic gradient of every kind against central differences of its mean,
     at interior points and at the limits that IEEE arithmetic leaves undefined."""
     scale = models.DoseScale.of(HALF_LOG)
-    lower, upper = models.bounds(kind, scale)
+    lower, upper = models.bounds(kind, scale, "epa")
     rng = np.random.default_rng(kind)
     points = []
     for _ in range(4):
@@ -274,6 +274,42 @@ def test_linear_and_polynomial_are_least_squares() -> None:
         parameters_of(fits, "polynomial_2")[1], expected, rtol=1e-9, atol=1e-12
     )
     assert fits.parameters_at_bounds[1, m] in ("b1", "b2")
+
+
+def test_the_bmdexpress_quadratic_is_unrestricted_least_squares() -> None:
+    """BMDS 2's polynomial of degree 2, as BMDExpress fits it, leaves the signs of b1
+    and b2 free: on a curve that rises and then falls it is the least-squares
+    quadratic, with no parameter at a bound, and turns where b1 + 2 b2 x is 0."""
+    rng = np.random.default_rng(1)
+    doses = np.repeat(HALF_LOG, [3, 2, 3, 3, 1, 3, 3, 2, 3])
+    turning = 5.0 + 0.3 * doses - 0.01 * doses**2 + rng.normal(0, 0.1, doses.size)
+    fits = fit_dose_curves(doses, turning[:, None], models="bmdexpress")
+    x = np.column_stack([np.ones(doses.size), doses, doses**2])
+    free, *_ = np.linalg.lstsq(x, turning, rcond=None)
+    assert free[1] > 0 and free[2] < 0
+    m = fits.models.index("polynomial_2")
+    assert_allclose(parameters_of(fits, "polynomial_2")[0], free, rtol=1e-9)
+    assert fits.parameters_at_bounds[0, m] == ""
+    assert fits.turn_dose[0, m] == pytest.approx(-free[1] / (2 * free[2]), rel=1e-9)
+
+
+def test_the_bmdexpress_hill_reaches_a_line_as_k_grows_past_the_doses() -> None:
+    """BMDS 2's Hill bounds k only from below, so on a line it reaches the line's
+    maximum likelihood as k grows past the doses: within 1e-4 at CytePool's search
+    limit of 1,000 times the top dose, where k held at 5 times the top dose, the
+    bound of "epa", stays about 0.5 below."""
+    doses = np.repeat(HALF_LOG, 4)
+    deviations = np.tile([0.1, -0.1, 0.05, -0.05], HALF_LOG.size)
+    line = 8.0 + 0.2 * doses + deviations
+    fits = fit_dose_curves(doses, line[:, None], models="bmdexpress")
+    x = np.column_stack([np.ones(doses.size), doses])
+    coefficients, *_ = np.linalg.lstsq(x, line, rcond=None)
+    rss = np.sum((line - x @ coefficients) ** 2)
+    best = -0.5 * doses.size * (np.log(2 * np.pi * rss / doses.size) + 1.0)
+    hill = fits.models.index("hill")
+    assert 0.0 <= best - fits.log_likelihood[0, hill] < 1e-4
+    k = fits.parameters[0, hill, fits.parameter_names.index("k")]
+    assert k == pytest.approx(1000.0 * HALF_LOG[-1], rel=1e-12)
 
 
 def test_aicc_and_akaike_weights_by_hand() -> None:
@@ -835,7 +871,7 @@ def test_the_refinement_stops_at_its_limit() -> None:
 
     scale = models.DoseScale.of(HALF_LOG)
     kind = models.HILL
-    lower, upper = models.bounds(kind, scale)
+    lower, upper = models.bounds(kind, scale, "epa")
     means = documented("hill", [6.0, 2.0, 0.8, 2.2], HALF_LOG)
     root = np.diag(np.sqrt(np.full(HALF_LOG.size, 3.0)))
     z = root @ means
@@ -951,10 +987,14 @@ def test_arguments_are_refused_with_a_fix() -> None:
     with pytest.raises(ValueError, match=r"did you mean 'epa'\?"):
         fit_dose_curves(doses, values, models="EPA")
     # A model's name, or a list of names, is pointed to the sets that hold it.
-    with pytest.raises(ValueError, match="'hill' is in 'epa': pass the set"):
+    with pytest.raises(
+        ValueError, match="'hill' is in 'epa' and 'bmdexpress': pass the set"
+    ):
         fit_dose_curves(doses, values, models="hill")
     with pytest.raises(
-        TypeError, match="'hill' is in 'epa', 'linear' is in 'epa' and 'dromics'"
+        TypeError,
+        match="'hill' is in 'epa' and 'bmdexpress', 'linear' is in 'epa', "
+        "'bmdexpress' and 'dromics'",
     ):
         fit_dose_curves(doses, values, models=["hill", "linear"])  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="models names a set"):

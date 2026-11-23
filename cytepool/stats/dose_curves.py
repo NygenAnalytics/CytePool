@@ -115,6 +115,7 @@ from cytepool.stats._dose_curve_models import (
     LINE,
     POLYNOMIAL,
     POSITIVE_MEANS,
+    QUADRATIC,
     SET_PARAMETERS,
     SETS,
     TURNING,
@@ -145,7 +146,7 @@ __all__ = ["DoseCurveFits", "fit_dose_curves"]
 FloatArray = npt.NDArray[np.float64]
 
 MODEL_SETS = tuple(SETS)
-"""The model sets, ``"epa"``, ``"ll4"`` and ``"dromics"``."""
+"""The model sets, ``"epa"``, ``"bmdexpress"``, ``"ll4"`` and ``"dromics"``."""
 VARIANCES = ("constant", "weighted", "moderated")
 """How the curves weigh the dose-group means: as samples of constant variance, or
 by the covariance of the means of a moderated fit with its residual or moderated
@@ -170,13 +171,14 @@ class DoseCurveFits:
     gives each model's mean and bounds and explains how to read the fits.
 
     Attributes:
-        model_set: ``"epa"``, ``"ll4"`` or ``"dromics"``.
+        model_set: ``"epa"``, ``"bmdexpress"``, ``"ll4"`` or ``"dromics"``.
         models: The set's models fitted, in set order.
         models_not_fitted: The set's other models, each with the reason: a model of
             p parameters needs a spare dose group, K - p of at least 1.
         parameter_names: The set's parameter letters, the last axis of
-            ``parameters``: BMDS's for ``"epa"``, where Hill's k is the EC50, the
-            dose of half the change v; DRomics' for the others, where the
+            ``parameters``: BMDS's for ``"epa"`` and ``"bmdexpress"``, where Hill's k
+            is the EC50, the dose of half the change v; DRomics' for the others,
+            where the
             log-logistic curve ``ll4`` has b > 0 its slope, d its level at dose 0, c
             its level at high doses and e its EC50, the dose of half the change.
             drc's ``LL.4`` estimates (b, c, d, e) with b < 0 are (-b, d, c, e).
@@ -432,9 +434,10 @@ def _checked_model_set(models: Any) -> str:
                 homes.append(f"{name!r} is in {quoted(holding)}")
     message = (
         "models names a set of models, 'epa' (linear, polynomial_2, power, hill and "
-        "exponential_2 to exponential_5), 'll4' (the log-logistic curve) or "
-        "'dromics' (linear, exponential, ll4 and the Gauss-probit curves), got "
-        f"{models!r}"
+        "exponential_2 to exponential_5), 'll4' (the log-logistic curve), "
+        "'bmdexpress' (the models of 'epa' with the bounds of BMDS 2's programs, as "
+        "BMDExpress fits them) or 'dromics' (linear, exponential, ll4 and the "
+        f"Gauss-probit curves), got {models!r}"
     )
     if homes:
         message += "; " + ", ".join(homes) + ": pass the set"
@@ -477,8 +480,11 @@ def fit_dose_curves(
             four-parameter log-logistic curve: b > 0 its slope, d its level at dose
             0, c its level at high doses and e its EC50, the dose of half the
             change; drc's ``LL.4`` estimates (b, c, d, e) with b < 0 are (-b, d, c,
-            e)) or ``"dromics"`` (DRomics' linear, exponential and log-logistic
-            curves and its Gauss-probit forms).
+            e)), ``"bmdexpress"`` (the models of ``"epa"`` with the bounds of BMDS
+            2's programs, as BMDExpress fits them: an unrestricted quadratic, and
+            Hill's k and exponential 4 and 5's rate bounded only from below) or
+            ``"dromics"`` (DRomics' linear, exponential and log-logistic curves and
+            its Gauss-probit forms).
         n_threads: The most threads to use; None keeps numba's setting.
 
     Returns:
@@ -778,14 +784,14 @@ def _fit_set(data: _CurveData, model_set: str) -> _SetFits:
         kind = model.kind
         reasons[:, m] = _not_fitted_reasons(data, model)
         active = np.ascontiguousarray(reasons[:, m] == "")
-        lower, upper = bounds(kind, scale)
+        lower, upper = bounds(kind, scale, model_set)
         q = n_linear(kind)
-        if kind in (LINE, POLYNOMIAL):
+        if kind in (LINE, POLYNOMIAL, QUADRATIC):
             points, inner = np.zeros((0, 1)), 1
             bases = np.zeros((0, n_groups, q))
             usable = np.zeros(0, dtype=bool)
         else:
-            points, inner = grid(kind, scale)
+            points, inner = grid(kind, scale, model_set)
             bases, usable = grid_bases(kind, q, points, data.doses)
             if shared:
                 bases = whiten_bases(bases, root[0])

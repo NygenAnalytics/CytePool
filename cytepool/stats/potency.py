@@ -867,8 +867,8 @@ def _search_model(
     nonlinear = [j for j in range(p) if not is_linear(kind, j)]
     index = np.array(nonlinear if p > q else [], dtype=np.int64)
     if index.size:
-        points, inner = grid(kind, scale)
-        lower, upper = bounds(kind, scale)
+        points, inner = grid(kind, scale, fits.model_set)
+        lower, upper = bounds(kind, scale, fits.model_set)
         lower, upper = lower[index], upper[index]
         phi_fit = theta[:, index]
     else:
