@@ -143,8 +143,8 @@ class BenchmarkDoses:
         model: ``"best"``, each gene's model of lowest AICc, or the name of the model
             every gene's BMD was computed from.
         gene_models: ``(n_genes,)`` the model of each gene's BMD, empty where none;
-            :attr:`DoseCurveFits.models <cytepool.stats.dose_curves.DoseCurveFits.models>`
-            names the models fitted.
+            the ``models`` of :class:`~cytepool.stats.dose_curves.DoseCurveFits`
+            name the models fitted.
         variance: How the curves weighed the dose-group means: ``"constant"``,
             ``"weighted"`` or ``"moderated"``.
         bounds: Whether bounds were computed; a cell type that supports only
