@@ -729,7 +729,7 @@ def grid_profile_deviance(
     the model's nonlinear parameters finds, with its linear ones by least squares
     under the constraint that the change at the dose is s R. The grid's profile is
     never below the true one. Hill: g + v x^n / (k^n + x^n), v fixed by the
-    constraint, on a grid of k and n; exponential 4: a (c - (c - 1) exp(-b x)), whose
+    constraint, on a grid of k and n refined by Nelder-Mead; exponential 4: a (c - (c - 1) exp(-b x)), whose
     change at b0 fixes a (c - 1), with c in [0, 1000], or a for c on a face, on a grid
     of rates refined by Brent's method."""
     from scipy.optimize import minimize_scalar
@@ -737,14 +737,38 @@ def grid_profile_deviance(
     out = np.empty(doses.size)
     with np.errstate(all="ignore"):
         if model == "hill":
+            from scipy.optimize import minimize
+
             k = np.geomspace(1e-9, 150.0, 400)[:, None, None]
             n = np.linspace(1.0, 18.0, 120)[None, :, None]
             shape = np.where(x > 0, x**n / (k**n + x**n), 0.0)
+
+            def hill_rss(p: np.ndarray, b0: float) -> float:
+                location, exponent = math.exp(p[0]), p[1]
+                curve = np.where(
+                    x > 0, x**exponent / (location**exponent + x**exponent), 0.0
+                )
+                v = s * change / (b0**exponent / (location**exponent + b0**exponent))
+                level = np.mean(y - v * curve)
+                found = float(np.sum((y - level - v * curve) ** 2))
+                return found if math.isfinite(found) else math.inf
+
             for j, b0 in enumerate(doses):
                 v = s * change / (b0**n / (k**n + b0**n))
                 g = np.mean(y - v * shape, axis=-1, keepdims=True)
                 rss = np.sum((y - g - v * shape) ** 2, axis=-1)
-                out[j] = x.size * math.log(np.nanmin(rss) / fit_rss)
+                i, m = np.unravel_index(int(np.nanargmin(rss)), rss.shape)
+                # The grid's best point refined by Nelder-Mead within the bounds.
+                refined = minimize(
+                    hill_rss,
+                    [math.log(k[i, 0, 0]), n[0, m, 0]],
+                    args=(float(b0),),
+                    method="Nelder-Mead",
+                    bounds=[(math.log(1e-12), math.log(150.0)), (1.0, 18.0)],
+                    options={"xatol": 1e-10, "fatol": 1e-14, "maxiter": 4000},
+                )
+                best = min(float(np.nanmin(rss)), float(refined.fun))
+                out[j] = x.size * math.log(best / fit_rss)
             return out
 
         def rss_at(rate: np.ndarray, b0: float) -> np.ndarray:
@@ -1622,9 +1646,13 @@ def test_bounds_need_the_fit_to_be_the_maximum_at_every_dose(
     line_data: tuple[np.ndarray, np.ndarray],
 ) -> None:
     # A line whose slope is 15% off the fit's, with the intercept of least squares at
-    # that slope: at its own BMD the profile is that line, but near the fit's BMD it
-    # finds the fit, of larger likelihood, at a dose of the search. No bounds are
-    # measured from it, for any BMR of the gene; the other gene keeps its bounds.
+    # that slope: at its own BMD, for an absolute BMR, the profile is that line, so the
+    # check at the BMD finds nothing, but near the fit's BMD the scan finds the fit, of
+    # larger likelihood. That BMR alone gives the line no bounds, read before the 1 SD
+    # comparison that benchmark_doses adds, whose own checks could remove them too;
+    # the other gene keeps its bounds.
+    from cytepool.stats import potency
+
     x, values = line_data
     fits = fit_dose_curves(x, values[:, :2], models="epa")
     m = fits.models.index("linear")
@@ -1633,17 +1661,18 @@ def test_bounds_need_the_fit_to_be_the_maximum_at_every_dose(
     slope = 1.15 * moved[0, m, names.index("b1")]
     moved[0, m, names.index("b1")] = slope
     moved[0, m, names.index("g")] = values[:, 0].mean() - slope * x.mean()
-    bmrs = [BenchmarkResponse.absolute(0.3), BenchmarkResponse.sd(1.349)]
-    found = benchmark_doses(
-        dataclasses.replace(fits, parameters=moved), bmrs, model="linear"
-    )
-    assert np.isfinite(found.bmd[:, 0]).all()
-    assert np.isnan(found.bmdl[:, 0]).all() and np.isnan(found.bmdu[:, 0]).all()
-    assert np.isfinite(found.bmdl[:, 1]).all()
-    gaps = profile_minus_fit_at_the_bmd(
-        dataclasses.replace(fits, parameters=moved), bmrs[0], "linear"
-    )
+    moved_fits = dataclasses.replace(fits, parameters=moved)
+    bmr = BenchmarkResponse.absolute(0.3)
+    gaps = profile_minus_fit_at_the_bmd(moved_fits, bmr, "linear")
     assert abs(gaps[0]) <= 1e-12
+    chosen = potency._chosen_models(moved_fits, "linear")
+    genes = potency._GeneFits.of(moved_fits, chosen)
+    alone = potency._for_response(moved_fits, genes, bmr, True)
+    assert np.isfinite(alone["bmd"]).all()
+    assert np.isnan(alone["bmdl"][0]) and np.isnan(alone["bmdu"][0])
+    assert np.isfinite(alone["bmdl"][1]) and np.isfinite(alone["bmdu"][1])
+    found = benchmark_doses(moved_fits, bmr, model="linear")
+    assert np.isnan(found.bmdl[:, 0]).all() and np.isfinite(found.bmdl[:, 1]).all()
 
 
 def test_a_fit_that_is_not_the_maximum_loses_its_bounds_at_every_bmr() -> None:
@@ -1693,3 +1722,95 @@ def test_a_fit_that_is_not_the_maximum_loses_its_bounds_at_every_bmr() -> None:
         model="linear",
     )
     assert np.isfinite(untouched.bmdl[:, 0]).all()
+
+
+def test_a_steep_rise_below_the_lowest_dose() -> None:
+    # A Hill rise of 1.4 with its EC50 at a third of the lowest dose, found by
+    # simulation: the profile's refinement meets steps that move no parameter, at a
+    # bound, and still no curve of a grid's profile lies within the threshold beyond
+    # the bounds.
+    x = replicated(HALF_LOG, 3)
+    rng = np.random.default_rng(1)
+    n = 40
+    v = rng.uniform(0.1, 1.5, n) * rng.choice([-1, 1], n)
+    k = 10 ** rng.uniform(-2.5, 1.5, n)
+    slope = rng.uniform(0.5, 6, n)
+    means = 5 + v * x[:, None] ** slope / (k**slope + x[:, None] ** slope)
+    values = means + rng.normal(0, rng.uniform(0.05, 0.4, n), means.shape)
+    y = values[:, 1]
+    fits = fit_dose_curves(x, y[:, None], models="epa")
+    change = 0.3
+    result = benchmark_doses(
+        fits,
+        [BenchmarkResponse.absolute(change), BenchmarkResponse.sd(1.349)],
+        model="hill",
+    )
+    assert (result.status[:, 0] == "below the lowest dose").all()
+    assert np.all(result.bmdl[:, 0] <= result.bmd[:, 0])
+    assert np.all(result.bmd[:, 0] <= result.bmdu[:, 0])
+    bmd, low, high = (
+        float(result.bmd[0, 0]),
+        float(result.bmdl[0, 0]),
+        float(result.bmdu[0, 0]),
+    )
+    assert 0.0 <= low <= bmd <= high < math.inf
+    fitted = (fits.means[0] - documented_residuals(fits, 0, "hill"))[
+        np.searchsorted(HALF_LOG, x)
+    ]
+    fit_rss = float(np.sum((y - fitted) ** 2))
+    s = 1.0 if result.direction[0, 0] == "up" else -1.0
+    scan = np.geomspace(0.01 / 100, 50 * 30.0, 1 + 40 * 7)
+    beyond = scan[(scan < low) | (scan > high)]
+    edges = [low * (1 - 1e-7)] if low > 0 else []
+    doses = np.concatenate([beyond, edges, [high * (1 + 1e-7)], [bmd]])
+    deviance = grid_profile_deviance(x, y, "hill", fit_rss, change, s, doses)
+    assert np.all(deviance[:-1] > CHI_SQUARE_90)
+    assert deviance[-1] <= CHI_SQUARE_90
+
+
+def test_a_curve_that_is_the_optimum_at_another_dose_gets_no_bounds() -> None:
+    # Exponential 2, a e^(b x): the curve of least squares among those that change by
+    # 0.3 at 1.5 times the fit's BMD, found here by a scalar search over b, is the
+    # profile's optimum at its own BMD, so the check at the BMD finds nothing; near
+    # the fit's BMD the scan finds the fit, of larger likelihood, and the bounds are
+    # not computed. That BMR is read alone, before the 1 SD comparison that
+    # benchmark_doses adds, whose own checks could remove the bounds too.
+    from scipy.optimize import minimize_scalar
+
+    from cytepool.stats import potency
+
+    x = replicated(HALF_LOG, 3)
+    y = noisy(5.0 * np.exp(0.03 * x), 0.15, 71)[:, 0]
+    fits = fit_dose_curves(x, y[:, None], models="epa")
+    change = 0.3
+    found = benchmark_doses(
+        fits, BenchmarkResponse.absolute(change), model="exponential_2"
+    )
+    assert np.isfinite(found.bmdl[0, 0])
+    elsewhere = 1.5 * float(found.bmd[0, 0])
+    s = 1.0 if found.direction[0, 0] == "up" else -1.0
+
+    def squares(rate: float) -> float:
+        level = s * change / np.expm1(rate * elsewhere)
+        return float(np.sum((y - level * np.exp(rate * x)) ** 2))
+
+    rate = minimize_scalar(
+        squares, bounds=(1e-4, 1.0), method="bounded", options={"xatol": 1e-14}
+    ).x
+    m = fits.models.index("exponential_2")
+    moved = np.array(fits.parameters)
+    names = fits.parameter_names
+    moved[0, m, names.index("a")] = s * change / np.expm1(rate * elsewhere)
+    moved[0, m, names.index("b")] = rate
+    moved_fits = dataclasses.replace(fits, parameters=moved)
+    bmr = BenchmarkResponse.absolute(change)
+    gaps = profile_minus_fit_at_the_bmd(moved_fits, bmr, "exponential_2")
+    assert abs(gaps[0]) <= 1e-12
+    chosen = potency._chosen_models(moved_fits, "exponential_2")
+    alone = potency._for_response(
+        moved_fits, potency._GeneFits.of(moved_fits, chosen), bmr, True
+    )
+    assert float(alone["bmd"][0]) == pytest.approx(elsewhere, rel=1e-9)
+    assert np.isnan(alone["bmdl"][0]) and np.isnan(alone["bmdu"][0])
+    other = benchmark_doses(moved_fits, bmr, model="exponential_2")
+    assert np.isnan(other.bmdl[:, 0]).all() and np.isnan(other.bmdu[:, 0]).all()
