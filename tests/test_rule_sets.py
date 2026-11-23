@@ -1517,9 +1517,10 @@ def test_the_chapter_s_rule_set_examples_run() -> None:
     """The chapter's examples of ETAP's rule set and BMDS's recommended model, on the
     chapter's series, and the numbers its text states."""
     text = " ".join(CHAPTER.read_text().split())
+    # The series, the rule set and BMDS's model; the EC50 example follows them.
     series, rules_block, bmds_block = re.findall(
         r"```python\n(.*?)```", CHAPTER.read_text(), re.S
-    )
+    )[:3]
     namespace: dict = {}
     # The series and its axis, without the chapter's first analysis.
     exec(series[: series.index("bmr = [")], namespace)  # noqa: S102

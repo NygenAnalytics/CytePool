@@ -1709,8 +1709,8 @@ def ec50s(
     over the fit's range of EC50s, open (0 or infinity) where the region reaches the
     range's ends. Two positive doses beyond each bend of the curve, where it has
     covered 17.6% and 82.4% of its change, make an EC50 reportable (Sebaugh 2011).
-    The intervals take about 7 ms of computing per gene, shared among the threads:
-    35 s for 10,000 genes on 2 threads in the benchmark; they do not depend on the
+    The intervals take about 5 ms of computing per gene, shared among the threads:
+    23 s for 10,000 genes on 2 threads in the benchmark; they do not depend on the
     threads. They need replicates within dose groups: the variance then comes from
     the replicates as well as from the curve's residuals, where Prism, given one
     value per dose, reads the residuals alone.

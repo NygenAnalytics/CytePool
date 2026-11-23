@@ -488,9 +488,9 @@ class DoseResponseResult:
       each gene's EC50 with its two-sided 95% profile-likelihood interval, Hill slope
       and plateaus, read from the Hill curve of the set, built from :meth:`ec50s`
       when asked for; for cell types that support only description, without
-      intervals or ``passes_gate``. Each call computes the EC50s again, at about 7 ms of computing
-      per gene, shared among the threads: 35 s for 10,000 genes on 2 threads in the
-      benchmark.
+      intervals or ``passes_gate``. Each call computes the EC50s again, at about 5 ms
+      of computing per gene, shared among the threads: 23 s for 10,000 genes on 2
+      threads in the benchmark.
     - ``"rule_set"``, with ``rules``: one row per gene the rule set kept in the cell
       type (mean count of at least 5), with ``feature_id``, ``symbol`` (when the cube
       has one), ``anova_p_value``, ``anova_adjusted_p_value``,
@@ -1312,7 +1312,7 @@ class DoseResponseResult:
         only description. Their printout counts the EC50s by where they lie, the
         genes with two doses beyond each bend, the limits and the open intervals,
         and says why an interval was not computed. Each call computes them again,
-        at about 7 ms of computing per gene, shared among the threads.
+        at about 5 ms of computing per gene, shared among the threads.
 
         Args:
             group: A cell type with curves; it may be left out when one cell type
