@@ -49,6 +49,11 @@ _DOSE_CURVES = (
     "cell type"
 )
 
+_BENCHMARK_DOSES = (
+    "parts of the public benchmark_doses and BenchmarkDoses of "
+    "cytepool.stats.potency, which dose_response runs on the curves of each cell type"
+)
+
 # (module, name): why other modules of the package import it from that module.
 SHARED_FROM_THEIR_MODULE = {
     ("cytepool.cube.cube", "_digest_of_read_group"): _DIGESTS,
@@ -111,6 +116,9 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.dose_curves", "_no_model_fits"): _DOSE_CURVES,
     ("cytepool.stats.dose_curves", "_turn_text"): _DOSE_CURVES,
     ("cytepool.stats.dose_curves", "_unchecked_turns"): _DOSE_CURVES,
+    ("cytepool.stats.potency", "_checked_responses"): _BENCHMARK_DOSES,
+    ("cytepool.stats.potency", "_status_counts"): _BENCHMARK_DOSES,
+    ("cytepool.stats.potency", "_threshold_name"): _BENCHMARK_DOSES,
     ("cytepool.stats.smoothing", "_smoothing_spline_fit"): (
         "R's smooth.spline, built from the B-splines of the public "
         "natural_spline_basis next to them, with which multiple_testing smooths "

@@ -30,6 +30,7 @@ from scipy.stats import t as student_t
 
 import cytepool
 from cytepool import (
+    BenchmarkResponse,
     CandidateShapes,
     Cube,
     Design,
@@ -1360,9 +1361,11 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
 def test_the_result_refuses_fields_of_the_wrong_type() -> None:
     result = fixture_result("trend")
     # The fields of a result, as pickling passes them to the constructor: five
-    # positional, then the curves, the cube and the design by keyword.
+    # positional, then the curves, the benchmark doses, the cube and the design by
+    # keyword.
     good = result.__reduce__()[1]
-    assert good[5] == {} and good[6] is result.cube and good[7] is result.design
+    assert good[5] == {} and good[6] == {}
+    assert good[7] is result.cube and good[8] is result.design
     for position, bad, message in (
         (0, {}, "summary must be a Table"),
         (1, [], "tables must be a mapping"),
@@ -3930,3 +3933,344 @@ def test_the_curves_example_runs() -> None:
         "27 have a turning best fit, and the 14 that keep their turn are all true bells"
         in named
     )
+
+
+# Benchmark doses of the curves.
+
+BMRS = (BenchmarkResponse.sd(1.349), BenchmarkResponse.absolute(0.5))
+FLAGS = ("etap_2024", "ntp_2018")
+
+
+@functools.cache
+def benchmark_result(variance: str) -> DoseResponseResult:
+    cube = fixture_cube()
+    return dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        variance=variance,
+        bmr=list(BMRS),
+        flags=list(FLAGS),
+    )
+
+
+@functools.cache
+def small_benchmark_result(variance: str = "constant") -> DoseResponseResult:
+    """The fixture series' first 24 genes, with symbols, and their benchmark doses."""
+    base = fixture_cube()
+    ids = base.features["feature_id"].tolist()[:24]
+    cube = Cube(
+        {
+            "counts": np.stack(
+                [base.layer("counts", g)[:, :24] for g in range(base.n_groups)]
+            )
+        },
+        samples=base.samples,
+        groups=base.groups,
+        features={"feature_id": ids, "symbol": [f"Gene{i}" for i in range(len(ids))]},
+        n_cells=base.n_cells,
+    )
+    return dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        variance=variance,
+        bmr=list(BMRS),
+        flags=list(FLAGS),
+        expression_filter=False,
+    )
+
+
+@pytest.mark.parametrize("variance", ["constant", "weighted", "moderated"])
+def test_benchmark_doses_are_those_of_each_cell_type_s_curves(variance: str) -> None:
+    """dose_response's benchmark doses are benchmark_doses of each cell type's
+    curves, which the BMRs leave unchanged, as they leave the tests' tables."""
+    from cytepool.stats.potency import benchmark_doses
+
+    result = benchmark_result(variance)
+    plain = curves_result(variance)
+    for group in result.groups:
+        fits = result.curve_fits(group)
+        assert_array_equal(fits.parameters, plain.curve_fits(group).parameters)
+        expected = benchmark_doses(fits, list(BMRS))
+        found = result.benchmark_doses(group)
+        assert found.bounds and found.variance == variance
+        for name in ("bmr_change", "bmd", "bmdl", "bmdu", "status", "direction"):
+            assert_array_equal(getattr(found, name), getattr(expected, name))
+        genes = plain.table(group, "curves")["feature_id"][:: len(fits.models)]
+        table = result.table(group, "benchmark_doses")
+        # Beside each BMD, the gate's call of its gene, read from the gate's table.
+        gate = result.table(group, "gate")
+        calls = dict(zip(gate["feature_id"].tolist(), gate["passes_gate"].tolist()))
+        assert table.columns[:2] == ("feature_id", "passes_gate")
+        assert table["passes_gate"].tolist() == [
+            calls[gene] for gene in genes.tolist()
+        ] * len(found.benchmark_responses)
+        assert 0 < np.count_nonzero(table["passes_gate"]) < len(table)
+        rest = table.select([c for c in table.columns if c != "passes_gate"])
+        assert rest.equals(expected.table(feature_ids=genes, flags=list(FLAGS)))
+        assert table.columns[-2:] == ("flags_etap_2024", "flags_ntp_2018")
+        assert table["bmr"].tolist()[:: len(genes)] == [
+            "1.349 SD",
+            "change of 0.5",
+            "1 SD",
+        ]
+        assert result.table(group, "curves").equals(plain.table(group, "curves"))
+    assert result.tables.keys() == plain.tables.keys()
+    for key, table in plain.tables.items():
+        assert result.tables[key].equals(table), key
+
+
+@pytest.mark.parametrize("variance", ["weighted", "moderated"])
+def test_plug_in_bounds_of_a_straight_line_are_fieller_s(variance: str) -> None:
+    """Where the curves weigh a first stage's variance s^2 on df degrees of freedom,
+    an absolute BMR R of a straight line has Fieller's t-based bounds: with the
+    slope's generalised least squares estimate b1 and its standard error se, the
+    BMDL is R / (|b1| + t se) and the BMDU R / (|b1| - t se), t the 0.95 quantile of
+    Student's t on df degrees of freedom; written here from the fits' means and
+    covariance."""
+    from scipy.stats import t as student_t
+
+    from cytepool.stats.potency import benchmark_doses
+
+    change = 0.3
+    for group in curves_result(variance).groups:
+        fits = curves_result(variance).curve_fits(group)
+        found = benchmark_doses(
+            fits, BenchmarkResponse.absolute(change), model="linear"
+        )
+        lowest, top = fits.doses[1], fits.doses[-1]
+        design = np.column_stack([np.ones(fits.doses.size), fits.doses])
+        checked = 0
+        for g in range(fits.means.shape[0]):
+            weights = np.linalg.inv(fits.covariance[g])
+            information = design.T @ weights @ design
+            slope = np.linalg.solve(information, design.T @ weights @ fits.means[g])[1]
+            error = math.sqrt(
+                fits.covariance_scale[g] * np.linalg.inv(information)[1, 1]
+            )
+            t = student_t.ppf(0.95, fits.df[g])
+            bmd = change / abs(slope)
+            if not lowest / 100 <= bmd <= 50 * top:
+                continue
+            low = change / (abs(slope) + t * error)
+            high = (
+                change / (abs(slope) - t * error)
+                if abs(slope) > t * error
+                else math.inf
+            )
+            assert found.bmd[0, g] == pytest.approx(bmd, rel=1e-10)
+            assert found.bmdl[0, g] == pytest.approx(
+                low if low >= lowest / 100 else 0.0, rel=1e-8
+            )
+            assert found.bmdu[0, g] == pytest.approx(
+                high if high <= 50 * top else math.inf, rel=1e-8
+            )
+            checked += 1
+        assert checked > 20
+        assert np.all(found.threshold[0][np.isfinite(found.bmd[0])] > 2.7055)
+
+
+def test_benchmark_doses_do_not_depend_on_the_axis_offset() -> None:
+    """The curves are functions of dose, not of the axis's position, so the offset of
+    a vehicle on the axis changes no benchmark dose."""
+    cube = fixture_cube()
+    tables = []
+    for offset in (0.0005, 0.002):
+        axis = DoseAxis(
+            "dose",
+            unit="ug/kg",
+            metric="administered",
+            vehicle="on_axis",
+            offset=offset,
+        )
+        result = dose_response(
+            cube,
+            Design(cube.samples, "~ 1"),
+            dose=axis,
+            models="epa",
+            bmr=BenchmarkResponse.sd(1.0),
+            groups="full",
+        )
+        tables.append(result.table("full", "benchmark_doses"))
+    assert tables[0].equals(tables[1])
+
+
+def test_descriptive_cell_types_get_benchmark_doses_without_bounds() -> None:
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
+        replicates=[3, 1, 1, 1, 1, 1],
+        cell_types=1,
+        n_genes=120,
+        rng=33,
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        bmr=BenchmarkResponse.sd(1.0),
+        flags="etap_2024",
+    )
+    group = result.groups[0]
+    found = result.benchmark_doses(group)
+    assert not found.bounds
+    assert np.isfinite(found.bmd).any()
+    assert np.isnan(found.bmdl).all() and np.isnan(found.bmdu).all()
+    table = result.table(group, "benchmark_doses")
+    # Without bounds and lack-of-fit p-values, ETAP's checks of them are not made.
+    flagged = set("; ".join(table["flags_etap_2024"]).split("; ")) - {""}
+    assert flagged <= {"BMD or BMDL not computed", "BMD not below the highest dose"}
+    assert (
+        "BMD or BMDL not computed"
+        not in table["flags_etap_2024"][np.isfinite(np.asarray(table["bmd"]))]
+    )
+    # A cell type that supports only description runs no gate.
+    assert "passes_gate" not in table.columns
+    entry = result.provenance["groups"][0]["benchmark_doses"]
+    assert entry["bounds"] == "none: the cell type supports only description"
+    assert "(no bounds)" in repr(result)
+
+
+def test_benchmark_dose_arguments_are_refused_with_a_fix() -> None:
+    cube = fixture_cube()
+    design = Design(cube.samples, "~ 1")
+    bmr = BenchmarkResponse.sd(1.0)
+    with pytest.raises(ValueError, match="models is None, so no curves are fitted"):
+        dose_response(cube, design, dose=AXIS, bmr=bmr)
+    with pytest.raises(ValueError, match="bmr is None, so no benchmark doses"):
+        dose_response(cube, design, dose=AXIS, models="epa", flags="ntp_2018")
+    with pytest.raises(ValueError, match="unknown set of checks 'ntp'.*ntp_2018"):
+        dose_response(cube, design, dose=AXIS, models="epa", bmr=bmr, flags="ntp")
+    with pytest.raises(TypeError, match="bmr must be a BenchmarkResponse"):
+        dose_response(cube, design, dose=AXIS, models="epa", bmr=1.349)
+    with pytest.raises(ValueError, match="bmr repeats '1 SD'"):
+        dose_response(cube, design, dose=AXIS, models="epa", bmr=[bmr, bmr])
+    with pytest.raises(TypeError, match="flags must name sets of checks as text"):
+        dose_response(cube, design, dose=AXIS, models="epa", bmr=bmr, flags=[1])
+    with pytest.raises(TypeError, match="masked"):
+        dose_response(
+            cube,
+            design,
+            dose=AXIS,
+            models="epa",
+            bmr=bmr,
+            flags=np.ma.masked_array(["ntp_2018"], mask=[True]),
+        )
+
+
+def test_benchmark_doses_read_back_and_say_why_they_are_missing() -> None:
+    result = small_benchmark_result()
+    again = pickle.loads(pickle.dumps(result))
+    for group in result.groups:
+        table = result.table(group, "benchmark_doses")
+        assert again.table(group, "benchmark_doses").equals(table)
+        with pytest.raises(ValueError, match="read-only"):
+            again.benchmark_doses(group).bmd[0, 0] = 1.0
+        # The genes' symbols, then the gate's calls, follow their ids in every BMR's
+        # rows.
+        assert table.columns[:4] == ("feature_id", "symbol", "passes_gate", "bmr")
+        assert table["symbol"].tolist() == [
+            f"Gene{int(gene.removeprefix('gene_')) - 1}"
+            for gene in table["feature_id"].tolist()
+        ]
+    assert again.settings["bmr"] == [bmr.to_dict() for bmr in BMRS]
+    assert again.settings["flags"] == list(FLAGS)
+    with pytest.raises(
+        KeyError, match="no table 'benchmark_dose'.*did you mean 'benchmark_doses'"
+    ):
+        result.table(result.groups[0], "benchmark_dose")
+    record = result.provenance
+    assert record["benchmark_doses"]["scan_doses_per_decade"] == 8
+    entry = record["groups"][0]["benchmark_doses"]
+    assert [BenchmarkResponse(**bmr).label for bmr in entry["bmrs"]] == [
+        "1.349 SD",
+        "change of 0.5",
+        "1 SD",
+    ]
+    assert entry["thresholds"] == {
+        "1.349 SD": "chi-square(1) at 0.90",
+        "change of 0.5": "chi-square(1) at 0.90",
+        "1 SD": "chi-square(1) at 0.90",
+    }
+    assert entry["doses_searched"] == [pytest.approx(0.001), pytest.approx(500.0)]
+    assert entry["bounds"] == "one-sided 95% profile-likelihood bounds"
+    text = " ".join(repr(result).split())
+    assert (
+        "benchmark doses at 1.349 SD, change of 0.5; flags: etap_2024, ntp_2018" in text
+    )
+    assert "BMDs at 1.349 SD: " in text and "BMDs at 1 SD: " in text
+    with pytest.raises(TypeError, match="benchmark_doses must be a mapping"):
+        DoseResponseResult(
+            result.summary,
+            dict(result.tables),
+            {},
+            result.design_report,
+            result.provenance,
+            benchmark_doses=[result.benchmark_doses("full")],  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError, match=r"benchmark_doses\['a'\] must be"):
+        DoseResponseResult(
+            result.summary,
+            dict(result.tables),
+            {},
+            result.design_report,
+            result.provenance,
+            benchmark_doses={"a": result.curve_fits("full")},  # type: ignore[dict-item]
+        )
+    plain = curves_result("constant")
+    assert plain.settings["bmr"] is None and plain.settings["flags"] is None
+    assert plain.provenance["benchmark_doses"] is None
+    assert all(e["benchmark_doses"] is None for e in plain.provenance["groups"])
+    assert "BMDs at" not in repr(plain) and "benchmark doses" not in repr(plain)
+    with pytest.raises(KeyError, match="ran without bmr"):
+        plain.benchmark_doses("full")
+    with pytest.raises(KeyError, match="ran without bmr"):
+        plain.table("full", "benchmark_doses")
+    with pytest.raises(KeyError, match="'benchmark_doses' is a table, not a cell"):
+        result.benchmark_doses("benchmark_doses")
+
+
+def test_a_cell_type_without_curves_has_no_benchmark_doses() -> None:
+    cube = fixture_cube()
+    keep = np.isin(np.asarray(cube.samples["dose"], dtype=float), [0.0, 1.0])
+    two = Cube(
+        {"counts": np.asarray(cube.layer("counts"))[:, keep]},
+        samples=cube.samples.filter(keep),
+        groups=cube.groups,
+        features=cube.features,
+        n_cells=np.asarray(cube.n_cells)[keep],
+    )
+    result = dose_response(
+        two,
+        Design(two.samples, "~ 1"),
+        dose=AXIS,
+        models="epa",
+        bmr=BenchmarkResponse.sd(1.0),
+    )
+    for group in result.groups:
+        with pytest.raises(KeyError, match="spare dose group"):
+            result.benchmark_doses(group)
+        with pytest.raises(KeyError, match="spare dose group"):
+            result.table(group, "benchmark_doses")
+    assert all(e["benchmark_doses"] is None for e in result.provenance["groups"])
+
+
+def test_the_record_names_the_threshold_of_each_bmr() -> None:
+    """Under weighted means, an absolute BMR's bounds read F(1, df) and an SD-based
+    BMR's chi-square(1), as the record says."""
+    result = small_benchmark_result("weighted")
+    for entry in result.provenance["groups"]:
+        assert entry["benchmark_doses"]["thresholds"] == {
+            "1.349 SD": "chi-square(1) at 0.90",
+            "change of 0.5": (
+                "F(1, df) at 0.90, df the degrees of freedom of each gene's variance"
+            ),
+            "1 SD": "chi-square(1) at 0.90",
+        }
+        found = result.benchmark_doses(entry["group_id"])
+        reached = np.isfinite(found.bmd[1]) & np.isfinite(found.bmdl[1])
+        assert np.all(found.threshold[1][reached] > 2.7055)
+        assert np.allclose(found.threshold[0][np.isfinite(found.bmd[0])], 2.705543454)
