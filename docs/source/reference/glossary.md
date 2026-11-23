@@ -14,6 +14,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Aliased column.** A column of a design matrix that is a combination of the columns before it, so that its coefficient cannot be estimated apart from theirs. [Designs that cannot answer the question](../statistics/linear_models.md#estimable-contrasts)
 
+**ANOVA pre-modelling test.** NTP's and ETAP's first test of a data set: a one-way ANOVA of each gene's dose groups, adjusted across genes by Benjamini-Hochberg; when no gene's adjusted p-value is below 0.05, the data set is inactive and goes no further. [NTP's and ETAP's rule sets](../statistics/potency.md#rule-sets)
+
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
 
 **Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from its level at dose 0 by a stated change, the benchmark response (BMR), such as 1 SD of a vehicle replicate or a fold change of 1.1. [Benchmark doses](../statistics/potency.md#benchmark-doses)
@@ -23,6 +25,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
 
 **BMDL and BMDU.** The lower and upper bounds of a benchmark dose, each one-sided 95%, so that BMDL to BMDU is a two-sided 90% interval. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
+
+**BMDS's recommended model.** The model that BMDS proposes for a dose response: among the models with no questionable or unusable failure of its checks, the lowest AIC when their BMDLs lie within 3-fold of each other, the lowest BMDL otherwise. [BMDS's recommended model](../statistics/potency.md#bmds-recommended-model)
 
 **Candidate shapes.** The guesses of a dose response that the MCP step of MCP-Mod tests, each a curve of the change from the vehicle along dose in a model family such as Emax or the beta model's umbrella shape. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
 
@@ -76,7 +80,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Fingerprint.** A SHA-256 digest of what an analysis reads of a cube, its tables, cell numbers, normalization and layers, which names the cube however it was made. [What a cube records](../statistics/cubes.md#what-a-cube-records)
 
-**Gate.** The test that decides which genes of a dose series count as responding: one test of any response at a stated false discovery rate, run after a filter of the genes that does not read the doses, with any fold change inside its null hypothesis. It takes the place of BMDExpress's prefilter, the step that picks the genes that go on to curves: BMDExpress's default prefilter takes an unadjusted Williams p-value and cuts the estimated fold change, where the gate adjusts its p-values and puts any fold change inside the test. The ANOVA gate of the National Toxicology Program tests the data set as a whole. [Which genes count as responding](../statistics/dose_response.md#dose-response-gate)
+**Gate.** The test that decides which genes of a dose series count as responding: one test of any response at a stated false discovery rate, run after a filter of the genes that does not read the doses, with any fold change inside its null hypothesis. It takes the place of BMDExpress's prefilter, the step that picks the genes that go on to curves: BMDExpress's default prefilter takes an unadjusted Williams p-value and cuts the estimated fold change, where the gate adjusts its p-values and puts any fold change inside the test. NTP's and ETAP's ANOVA pre-modelling test tests the data set as a whole. [Which genes count as responding](../statistics/dose_response.md#dose-response-gate)
 
 **Gene set.** A named list of genes that share a function or a response, such as a pathway or a signature, often read from a GMT file of a collection such as MSigDB. [Gene-set collections](../statistics/gene_set_tests.md#gene-set-collections)
 
@@ -182,7 +186,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Rotation test.** A test that compares a statistic with its values under random rotations of a linear model's residual space, which leave the distribution of the data, the correlation between genes included, unchanged under the null hypothesis. [The effects of each gene](../statistics/gene_set_tests.md#gene-effects)
 
-**Rule set.** A named set of published rules that an analysis applies as one option, such as `rules="etap_2024"`, the design minimums of EPA's Transcriptomic Assessment Products. [ETAP's design minimums](../statistics/dose_response.md#dose-rule-minimums)
+**Rule set.** A named set of published rules that an analysis applies as one option, such as `rules="etap_2024"`: the design minimums of EPA's Transcriptomic Assessment Products in a design check, and their workflow from counts to accepted benchmark doses in a dose response. [ETAP's design minimums](../statistics/dose_response.md#dose-rule-minimums), [NTP's and ETAP's rule sets](../statistics/potency.md#rule-sets)
 
 **Sample.** The unit of replication, such as a donor or a donor under one condition, whose cells are pooled into one profile per group.
 
@@ -202,6 +206,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **SumRank.** A test of replication that ranks the genes within each study and sums every gene's ranks across the studies, so that a gene must rank high in study after study. [SumRank](../statistics/replication.md#sum-of-ranks)
 
+**Test 4.** BMDS's likelihood ratio test of a fitted curve against a free mean for each dose group, the fit p-value that BMDS and BMDExpress report; the lack-of-fit test in its likelihood form. [NTP's and ETAP's rule sets](../statistics/potency.md#rule-sets)
+
 **TREAT.** A test that a fold change exceeds a threshold, rather than that it is not zero. [Testing against a fold-change threshold](../statistics/empirical_bayes.md#treat-test)
 
 **Umbrella shape.** A dose response that rises to a peak and falls, or falls to a trough and rises, which the beta model of the candidate shapes describes. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
@@ -211,5 +217,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Variance fraction.** The share of a gene's variance that one variable of the design explains, from a mixed model fitted by maximum likelihood, which variancePartition's help page reports gives unbiased fractions where REML can show substantial bias. [Variance partitioning](../statistics/mixed_models.md#variance-fractions)
 
 **Vehicle.** The samples given the solvent or carrier of a treatment without the substance, dose 0 of a dose series, against which the doses are compared. [Dose axes and the vehicle](../statistics/dose_response.md#dose-axes)
+
+**Williams' trend test.** A test of whether a gene's mean rises or falls steadily with dose: isotonic regression fits the dose groups' means in each order, and the larger change from the vehicle's fitted mean to the top dose's, over its standard error, is referred to its distribution over relabellings of the samples. [Williams' trend test as BMDExpress runs it](../statistics/dose_response.md#williams-trend-test)
 
 **Williams-type contrasts.** Contrasts of the vehicle with the mean of the highest one, two or more doses, weighted by their group sizes, for a response that grows in dose order; unlike Williams' trend test, they need no fit of means that change in dose order. [Dunnett's and Williams-type contrasts](../statistics/multiple_testing.md#dunnett-and-williams-contrasts)

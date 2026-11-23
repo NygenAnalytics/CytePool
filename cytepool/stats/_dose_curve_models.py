@@ -31,7 +31,7 @@ References:
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import numpy.typing as npt
@@ -47,9 +47,11 @@ EXP2, EXP3, EXP4, EXP5 = 4, 5, 6, 7
 LOG_LOGISTIC, DROMICS_EXPONENTIAL = 8, 9
 GAUSS_PROBIT, GAUSS_PROBIT_MONOTONE, GAUSS_PROBIT_SYMMETRIC = 10, 11, 12
 LOG_GAUSS_PROBIT, LOG_GAUSS_PROBIT_MONOTONE, LOG_GAUSS_PROBIT_SYMMETRIC = 13, 14, 15
+QUADRATIC = 16  # the polynomial of degree 2 without restriction, as BMDS 2 fits it
 _GAUSS = (GAUSS_PROBIT, GAUSS_PROBIT_MONOTONE, GAUSS_PROBIT_SYMMETRIC)
 _LOG_GAUSS = (LOG_GAUSS_PROBIT, LOG_GAUSS_PROBIT_MONOTONE, LOG_GAUSS_PROBIT_SYMMETRIC)
 TURNING = (
+    QUADRATIC,
     GAUSS_PROBIT,
     GAUSS_PROBIT_SYMMETRIC,
     LOG_GAUSS_PROBIT,
@@ -80,6 +82,14 @@ LOCATION_GRID_MIN = 0.01  # of the grids of locations, times the lowest positive
 WIDTH_MIN = 1.0 / 3.0  # of a bell's width, times the largest gap between doses
 WIDTH_MAX = 10.0  # of a bell's width, times the span of the doses
 
+# The search limits of the "bmdexpress" set, for the parameters that BMDS 2's programs
+# bound only from below: Hill's k and the rates of exponential 4 and 5. BMDS 2 reached k
+# of 262 times the top dose and rates of 619 / top on genes built to push them, so
+# these lie beyond its fits; the rule sets' AIC counts a parameter at them as free,
+# as BMDS 2's programs, which have no such bound, would.
+BMDS2_LOCATION_MAX = 1000.0  # times the top dose
+BMDS2_RATE_MAX = 100.0  # divided by the lowest positive dose
+
 # The sizes of the grids of nonlinear parameters.
 GRID_SIZES = {
     "locations": 48,
@@ -89,6 +99,11 @@ GRID_SIZES = {
     "slopes": 24,
     "widths": 24,
 }
+# The wider searches of "bmdexpress" span 2 to 5 more decades of k and of the rates;
+# their grids are denser in proportion, so that a start lies near every basin (a
+# grid of 64 rates missed exponential 5's step at d = 18 on a DE-71 probe of
+# GSE147072, which 128 found).
+WIDE_GRID_SIZES = GRID_SIZES | {"locations": 96, "rates": 128}
 
 
 @dataclass(frozen=True)
@@ -109,24 +124,31 @@ class Model:
 _GAUSS_TEXT = "z = (x - e) / b, Phi the standard normal distribution function"
 _LOG_GAUSS_TEXT = "z = (ln x - ln e) / b, and d at dose 0"
 
-SETS: dict[str, tuple[Model, ...]] = {
-    "epa": (
-        Model("linear", LINE, ("g", "b1"), "g + b1 x"),
-        Model("polynomial_2", POLYNOMIAL, ("g", "b1", "b2"), "g + b1 x + b2 x^2"),
-        Model("power", POWER, ("g", "v", "n"), "g + v x^n"),
-        Model("hill", HILL, ("g", "v", "k", "n"), "g + v x^n / (k^n + x^n)"),
-        Model("exponential_2", EXP2, ("a", "b"), "a exp(b x)"),
-        Model("exponential_3", EXP3, ("a", "b", "d"), "a exp(sign(b) (|b| x)^d)"),
-        Model("exponential_4", EXP4, ("a", "b", "c"), "a (c - (c - 1) exp(-b x))"),
-        Model(
-            "exponential_5",
-            EXP5,
-            ("a", "b", "c", "d"),
-            "a (c - (c - 1) exp(-(b x)^d))",
-        ),
+_EPA = (
+    Model("linear", LINE, ("g", "b1"), "g + b1 x"),
+    Model("polynomial_2", POLYNOMIAL, ("g", "b1", "b2"), "g + b1 x + b2 x^2"),
+    Model("power", POWER, ("g", "v", "n"), "g + v x^n"),
+    Model("hill", HILL, ("g", "v", "k", "n"), "g + v x^n / (k^n + x^n)"),
+    Model("exponential_2", EXP2, ("a", "b"), "a exp(b x)"),
+    Model("exponential_3", EXP3, ("a", "b", "d"), "a exp(sign(b) (|b| x)^d)"),
+    Model("exponential_4", EXP4, ("a", "b", "c"), "a (c - (c - 1) exp(-b x))"),
+    Model(
+        "exponential_5",
+        EXP5,
+        ("a", "b", "c", "d"),
+        "a (c - (c - 1) exp(-(b x)^d))",
     ),
+)
+
+SETS: dict[str, tuple[Model, ...]] = {
+    "epa": _EPA,
     "ll4": (
         Model("ll4", LOG_LOGISTIC, ("b", "c", "d", "e"), "c + (d - c) / (1 + (x/e)^b)"),
+    ),
+    # The models of "epa" as BMDS 2's programs fit them, with an unrestricted
+    # quadratic; bounds() and grid() give the set its wider search.
+    "bmdexpress": tuple(
+        replace(m, kind=QUADRATIC) if m.kind == POLYNOMIAL else m for m in _EPA
     ),
     "dromics": (
         Model("linear", LINE, ("d", "b"), "d + b x"),
@@ -182,6 +204,7 @@ SET_PARAMETERS: dict[str, tuple[str, ...]] = {
     "dromics": ("b", "c", "d", "e", "f"),
 }
 """The parameter columns of each set's table, in order."""
+SET_PARAMETERS["bmdexpress"] = SET_PARAMETERS["epa"]
 
 POSITIVE_MEANS = (EXP2, EXP3, EXP4, EXP5)
 """The kinds whose means are positive, not fitted where a dose-group mean is not."""
@@ -196,7 +219,7 @@ def n_linear(kind: int) -> int:
     """The linear parameters q of a kind that the grid solves exactly."""
     if kind in (EXP2, EXP3):
         return 1
-    if kind in (GAUSS_PROBIT, LOG_GAUSS_PROBIT, POLYNOMIAL):
+    if kind in (GAUSS_PROBIT, LOG_GAUSS_PROBIT, POLYNOMIAL, QUADRATIC):
         return 3
     return 2
 
@@ -243,29 +266,36 @@ class DoseScale:
         )
 
 
-def bounds(kind: int, scale: DoseScale) -> tuple[FloatArray, FloatArray]:
-    """The lower and upper bounds of a kind's internal parameters."""
+def bounds(
+    kind: int, scale: DoseScale, model_set: str
+) -> tuple[FloatArray, FloatArray]:
+    """The lower and upper bounds of a kind's internal parameters in a set: BMDS's
+    bounds, and for the set of BMDS 2's programs, ``"bmdexpress"``, its wider search
+    limits for Hill's k and the rates of exponential 4 and 5."""
     inf = math.inf
     top = scale.top
     rate = RATE_MAX / top
     location = LOCATION_MAX * top
+    wide = model_set == "bmdexpress"
     exponents = (EXPONENT_MIN, EXPONENT_MAX)
     if kind == LINE:
         pairs = [(-inf, inf), (-inf, inf)]
-    elif kind == POLYNOMIAL:
+    elif kind in (POLYNOMIAL, QUADRATIC):
         pairs = [(-inf, inf), (-inf, inf), (-inf, inf)]
     elif kind == POWER:
         pairs = [(-inf, inf), (-inf, inf), exponents]
     elif kind == HILL:
-        pairs = [(-inf, inf), (-inf, inf), (0.0, location), exponents]
+        k_max = BMDS2_LOCATION_MAX * top if wide else location
+        pairs = [(-inf, inf), (-inf, inf), (0.0, k_max), exponents]
     elif kind == EXP2:
         pairs = [(0.0, inf), (-rate, rate)]
     elif kind == EXP3:
         pairs = [(0.0, inf), (-rate, rate), exponents]
-    elif kind == EXP4:
-        pairs = [(0.0, inf), (0.0, rate), (0.0, C_MAX)]
-    elif kind == EXP5:
-        pairs = [(0.0, inf), (0.0, rate), (0.0, C_MAX), exponents]
+    elif kind in (EXP4, EXP5):
+        b_max = BMDS2_RATE_MAX / scale.lowest if wide else rate
+        pairs = [(0.0, inf), (0.0, b_max), (0.0, C_MAX)]
+        if kind == EXP5:
+            pairs.append(exponents)
     elif kind == LOG_LOGISTIC:
         low = LOCATION_GRID_MIN * scale.lowest
         pairs = [
@@ -314,19 +344,21 @@ def _log_points(low: float, high: float, n: int) -> FloatArray:
     return points
 
 
-def grid(kind: int, scale: DoseScale) -> tuple[FloatArray, int]:
+def grid(kind: int, scale: DoseScale, model_set: str) -> tuple[FloatArray, int]:
     """The grid of a kind's nonlinear parameters, one row per point, in the order of
     theta, and the size of its second axis: every grid is the product of one or two
     axes, the second varying fastest, so that each point's neighbours are known.
     Linear and polynomial models have none."""
-    sizes = GRID_SIZES
+    sizes = WIDE_GRID_SIZES if model_set == "bmdexpress" else GRID_SIZES
     top = scale.top
-    lower, upper = bounds(kind, scale)
+    lower, upper = bounds(kind, scale, model_set)
+    location_max = upper[2] if kind == HILL else LOCATION_MAX * top
     locations = _log_points(
-        LOCATION_GRID_MIN * scale.lowest, LOCATION_MAX * top, sizes["locations"]
+        LOCATION_GRID_MIN * scale.lowest, location_max, sizes["locations"]
     )
     exponents = _log_points(EXPONENT_MIN, EXPONENT_MAX, sizes["exponents"])
-    rates = _log_points(RATE_MIN / top, RATE_MAX / top, sizes["rates"])
+    rate_max = upper[1] if kind in (EXP4, EXP5) else RATE_MAX / top
+    rates = _log_points(RATE_MIN / top, rate_max, sizes["rates"])
     if kind == POWER:
         points = _log_points(EXPONENT_MIN, EXPONENT_MAX, sizes["power_exponents"])
         return points[:, None], 1
@@ -398,6 +430,13 @@ def turn_doses(kind: int, theta: FloatArray, top: float) -> FloatArray:
     """
     out = np.full(theta.shape[:-1], np.nan)
     if kind not in TURNING:
+        return out
+    if kind == QUADRATIC:
+        # The slope b1 + 2 b2 x changes sign at x* = -b1 / (2 b2).
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x = -theta[..., 1] / (2.0 * theta[..., 2])
+        turns = (theta[..., 2] != 0.0) & np.isfinite(x) & (x > 0.0) & (x < top)
+        out[turns] = x[turns]
         return out
     b, e = (
         theta[..., 0],
@@ -544,7 +583,7 @@ def basis_row(kind: int, phi0: float, phi1: float, x: float, out: FloatArray) ->
     (phi0, phi1), in the order in which ``assemble`` reads them."""
     if kind == LINE:
         out[0], out[1] = 1.0, x
-    elif kind == POLYNOMIAL:
+    elif kind == POLYNOMIAL or kind == QUADRATIC:
         out[0], out[1], out[2] = 1.0, x, x * x
     elif kind == POWER:
         out[0], out[1] = 1.0, _power_log(x, phi0)[0]
@@ -587,7 +626,7 @@ def assemble(
     """The internal parameters theta of a grid point and its linear parameters."""
     if kind == LINE:
         theta[0], theta[1] = alpha[0], alpha[1]
-    elif kind == POLYNOMIAL:
+    elif kind == POLYNOMIAL or kind == QUADRATIC:
         theta[0], theta[1], theta[2] = alpha[0], alpha[1], alpha[2]
     elif kind == POWER:
         theta[0], theta[1], theta[2] = alpha[0], alpha[1], phi0
@@ -655,7 +694,7 @@ def nonlinear_of(kind: int, theta: FloatArray) -> tuple[float, float]:
         return theta[2], 0.0
     if kind == GAUSS_PROBIT_SYMMETRIC or kind == LOG_GAUSS_PROBIT_SYMMETRIC:
         return theta[0], theta[2]
-    if kind == LINE or kind == POLYNOMIAL:
+    if kind == LINE or kind == POLYNOMIAL or kind == QUADRATIC:
         return 0.0, 0.0
     return theta[0], theta[3]  # log-logistic and the other Gauss-probit kinds
 
@@ -665,7 +704,7 @@ def mean_value(kind: int, theta: FloatArray, x: float) -> float:
     """The mean of a kind at dose x."""
     if kind == LINE:
         return float(theta[0] + theta[1] * x)
-    if kind == POLYNOMIAL:
+    if kind == POLYNOMIAL or kind == QUADRATIC:
         return float(theta[0] + (theta[1] + theta[2] * x) * x)
     if kind == POWER:
         return float(theta[0] + theta[1] * _power_log(x, theta[2])[0])
@@ -707,7 +746,7 @@ def mean_gradient(kind: int, theta: FloatArray, x: float, out: FloatArray) -> No
     """The derivatives of a kind's mean at dose x in its internal parameters."""
     if kind == LINE:
         out[0], out[1] = 1.0, x
-    elif kind == POLYNOMIAL:
+    elif kind == POLYNOMIAL or kind == QUADRATIC:
         out[0], out[1], out[2] = 1.0, x, x * x
     elif kind == POWER:
         value, log_term = _power_log(x, theta[2])

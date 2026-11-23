@@ -109,7 +109,7 @@ SHARED_FROM_THEIR_MODULE = {
         "the knots of the public natural_spline_basis, placed as R's ns() places them"
     ),
     ("cytepool.stats.dose_curves", "_CurveData"): _DOSE_CURVES,
-    ("cytepool.stats.dose_curves", "_best_counts"): _DOSE_CURVES,
+    ("cytepool.stats.dose_curves", "_model_counts"): _DOSE_CURVES,
     ("cytepool.stats.dose_curves", "_checked_model_set"): _DOSE_CURVES,
     ("cytepool.stats.dose_curves", "_constant_variance_data"): _DOSE_CURVES,
     ("cytepool.stats.dose_curves", "_fit_means"): _DOSE_CURVES,
@@ -119,6 +119,7 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.potency", "_checked_responses"): _BENCHMARK_DOSES,
     ("cytepool.stats.potency", "_status_counts"): _BENCHMARK_DOSES,
     ("cytepool.stats.potency", "_benchmark_record"): _BENCHMARK_DOSES,
+    ("cytepool.stats.potency", "_bmds_at_changes"): _BENCHMARK_DOSES,
     ("cytepool.stats.smoothing", "_smoothing_spline_fit"): (
         "R's smooth.spline, built from the B-splines of the public "
         "natural_spline_basis next to them, with which multiple_testing smooths "

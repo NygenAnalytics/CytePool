@@ -4,7 +4,7 @@
 
 "activity.py" = "d9bf973658c0"
 "anndata_conversion.py" = "3f4b53bf6a0a"
-"benchmark_doses.py" = "c9358f146160"
+"benchmark_doses.py" = "f55270b52728"
 "combined_p_values_and_replication.py" = "22d61d58f5fc"
 "composition_tests.py" = "f490f4150d23"
 "cube.py" = "2140b06ef23c"
@@ -49,5 +49,6 @@
 "simulate_dose_series.py" = "abcb78a320f2"
 "smoothing.py" = "98502d9df51d"
 "sumrank.py" = "cc8d28697697"
+"toxicology_rule_sets.py" = "a5aa477bfcd7"
 "variance_partitioning.py" = "2205e3c7bbf4"
 "voom.py" = "958d15381825"

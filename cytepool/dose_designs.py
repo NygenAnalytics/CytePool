@@ -58,6 +58,10 @@ ETAP's design minimums:
     least four animals of each sex in each dose group (Sec. 3.4.2); and, per cell
     type and sex, at least two passing samples at each dose level and three passing
     vehicle samples (Sec. 3.4.5.2), passing being the cell type's filter of samples.
+    Without a column of each sample's sex, the design's samples are checked as one
+    data set of one sex, as ETAP analyses each sex apart and as
+    ``dose_response(rules="etap_2024")`` checks each call, and the sexes are not
+    checked.
     A step counts as half a log10 within 0.05 of 0.5, and as a full log10 within
     0.05 of 1. ETAP excludes a dose level with fewer than two passing samples and
     goes on, so such a level is listed without changing the rules' status; any other
@@ -106,6 +110,16 @@ from ._linear_algebra import column_space
 from ._masked_arrays import reject_masked
 from ._messages import close_matches, fitted_lines, listing, quoted
 from ._options import checked_choice
+from ._rule_sets import (
+    ETAP_2024,
+    ETAP_ANIMALS,
+    ETAP_DOSES,
+    ETAP_LOWEST_STEP,
+    ETAP_PASSING_SAMPLES,
+    ETAP_STEP,
+    ETAP_STEP_TOLERANCE,
+    ETAP_VEHICLE_SAMPLES,
+)
 from ._sample_scores import SampleScores, design_rows, sample_scores
 from .activity import Activities
 from .cube import Cube
@@ -125,19 +139,9 @@ FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.intp]
 
 INFERENTIAL, DESCRIPTIVE, REFUSED = "inferential", "descriptive", "refused"
-RULE_SETS = ("etap_2024",)
+RULE_SETS = (ETAP_2024,)
+"""The rule sets with design minimums; NTP 2018 states none."""
 MET, DEVIATION = "met", "deviation"
-
-# US EPA (2024): a vehicle and at least 8 doses, spaced by half a log10 down from the
-# highest, the lowest a full log10 below the second lowest (Sec. 3.4.1.3); 4 animals
-# of each sex per dose group (Sec. 3.4.2); 2 passing samples at each dose level and
-# 3 passing vehicle samples (Sec. 3.4.5.2). A step's log10 is read to one decimal
-# place, the precision of "half-log10".
-ETAP_DOSES = 8
-ETAP_STEP, ETAP_LOWEST_STEP, ETAP_STEP_TOLERANCE = 0.5, 1.0, 0.05
-ETAP_ANIMALS = 4
-ETAP_PASSING_SAMPLES = 2
-ETAP_VEHICLE_SAMPLES = 3
 # What ETAP does when a minimum is unmet.
 DESIGN_DEVIATION = "deviation from the design"
 LEVEL_EXCLUDED = "dose level excluded"
@@ -176,8 +180,9 @@ class DoseDesignReport:
       sample was left out, empty when used.
     - ``minimums``: with a rule set, one row per minimum, met or not, and None
       without: ``group_id``, None for a minimum of the design; ``sex``, None for a
-      minimum of the doses; ``minimum``, ``"dose_levels"``, ``"dose_spacing"``,
-      ``"sexes"``, ``"animals_per_sex_and_dose"``, ``"passing_samples_per_dose"`` or
+      minimum of the doses and for every row of one data set checked without sexes;
+      ``minimum``, ``"dose_levels"``, ``"dose_spacing"``, ``"sexes"`` (only with
+      sexes), ``"animals_per_sex_and_dose"``, ``"passing_samples_per_dose"`` or
       ``"passing_vehicle_samples"``; ``section``, of the rule set's document;
       ``required`` and ``observed``, as text; ``met``; and ``when_unmet``, what the
       rule set does when the minimum is unmet.
@@ -342,8 +347,7 @@ class DoseDesignReport:
         """
         if "rules_status" not in self._summary:
             raise ValueError(
-                "no rule set was checked; pass rules='etap_2024' and sex to "
-                "check_dose_design"
+                "no rule set was checked; pass rules='etap_2024' to check_dose_design"
             )
         return str(self._summary["rules_status"][self._row(group)])
 
@@ -426,6 +430,8 @@ class DoseDesignReport:
                 )
         if self._minimums is not None:
             text = f"rules: {summary['rules_status'][row]}"
+            if self.settings["sex"] is None:
+                text += " for one data set, the sexes not checked"
             excluded = _excluded_levels(self._minimums, group)
             if excluded:
                 text += f", ETAP excludes {excluded}"
@@ -485,7 +491,10 @@ def check_dose_design(
         rules: ``"etap_2024"`` to list the design minimums of EPA's Transcriptomic
             Assessment Products, each met or not, or None.
         sex: With ``rules``, and only then: the column of the design's samples that
-            holds each sample's sex; a study of one sex has a single value there.
+            holds each sample's sex, to check the minimums of each sex and the sexes
+            of a study; a study of one sex has a single value there. Without it, the
+            design's samples are checked as one data set of one sex, and the sexes
+            are not checked.
         min_cells: The fewest cells a sample needs in a cell type, as in
             :func:`~cytepool.limma_voom`. Ignored when the cube does not record cell
             numbers.
@@ -510,11 +519,10 @@ def check_dose_design(
             axis's columns; if the dose, ``batch`` or ``sex``
             column is missing or holds a missing value; if a dose is not finite or is
             negative, or two doses differ by less than 1e-8 of the dose; if
-            ``rules`` names no rule set, ``rules`` is given without ``sex`` or
-            ``sex`` without ``rules``; or if an option is out of range. For scores,
-            if the activities are of contrasts, no design sample is among the
-            scores' samples, the design has random effects, or ``groups``,
-            ``min_cells`` or ``min_counts`` is given.
+            ``rules`` names no rule set or ``sex`` is given without ``rules``; or if
+            an option is out of range. For scores, if the activities are of
+            contrasts, no design sample is among the scores' samples, the design has
+            random effects, or ``groups``, ``min_cells`` or ``min_counts`` is given.
         KeyError: If a group is not in the cube.
     """
     inputs = _checked_inputs(
@@ -522,7 +530,7 @@ def check_dose_design(
     )
     checks = [_check_cell_type(inputs, k) for k in range(len(inputs.group_ids))]
     minimums = None
-    if inputs.sexes is not None:  # sex comes with rules
+    if rules is not None:
         used = {check.group_id: check.used for check in checks}
         minimums = _etap_2024_minimums(inputs.doses, inputs.sexes, used, dose.unit)
     settings = {
@@ -606,12 +614,6 @@ def _checked_inputs(
         random_intercepts(design)
     if rules is not None:
         checked_choice(rules, "rules", RULE_SETS)
-        if sex is None:
-            raise ValueError(
-                f"rules={rules!r} counts the animals of each sex, so it needs sex, the "
-                "column of each sample's sex; a study of one sex has a single value "
-                "there"
-            )
     elif sex is not None:
         raise ValueError(
             "sex is read by a rule set's minimums; give rules='etap_2024' with it, or "
@@ -1212,7 +1214,7 @@ class _Minimum(NamedTuple):
 
 def _etap_2024_minimums(
     doses: FloatArray,
-    sexes: list[str],
+    sexes: list[str] | None,
     used_by_group: Mapping[str, np.ndarray],
     unit: str,
 ) -> Table:
@@ -1220,7 +1222,8 @@ def _etap_2024_minimums(
 
     Args:
         doses: The dose of each design sample.
-        sexes: The sex of each design sample, as a label.
+        sexes: The sex of each design sample, as a label; None for one data set of
+            one sex, whose rows have no sex and whose sexes are not checked.
         used_by_group: For each cell type, whether each design sample passes there.
         unit: The doses' unit, for the text of the rows.
     """
@@ -1268,12 +1271,23 @@ def _excluded_levels(minimums: Table, group_id: str) -> str:
     return f"doses short of {ETAP_PASSING_SAMPLES} passing samples ({'; '.join(short)})"
 
 
+def _by_sex(
+    sexes: list[str] | None, n: int
+) -> list[tuple[str | None, npt.NDArray[np.bool_]]]:
+    """Each sex with its samples, or one data set of every sample without sexes."""
+    if sexes is None:
+        return [(None, np.ones(n, dtype=bool))]
+    sex_of = np.array(sexes, dtype=object)
+    return [(sex, sex_of == sex) for sex in sorted(set(sexes))]
+
+
 def _etap_design_minimums(
-    doses: FloatArray, sexes: list[str], unit: str
+    doses: FloatArray, sexes: list[str] | None, unit: str
 ) -> list[_Minimum]:
     """The minimums of Sec. 3.4.1.3 and 3.4.2 that the doses and sexes of the design's
     samples show: the dose levels, their spacing, the sexes and the animals of each
-    sex in each dose group."""
+    sex in each dose group; without sexes, the animals in each dose group of one data
+    set, and no row of the sexes."""
     levels = np.unique(doses)
     positive = levels[levels > 0.0]
     vehicle = bool(levels[0] == 0.0)
@@ -1318,22 +1332,22 @@ def _etap_design_minimums(
             DESIGN_DEVIATION,
         )
     )
-    distinct = sorted(set(sexes))
-    rows.append(
-        _Minimum(
-            None,
-            None,
-            "sexes",
-            "3.4.2",
-            "male and female",
-            f"{len(distinct)} ({', '.join(distinct)})",
-            len(distinct) >= 2,
-            DESIGN_DEVIATION,
+    if sexes is not None:
+        distinct = sorted(set(sexes))
+        rows.append(
+            _Minimum(
+                None,
+                None,
+                "sexes",
+                "3.4.2",
+                "male and female",
+                f"{len(distinct)} ({', '.join(distinct)})",
+                len(distinct) >= 2,
+                DESIGN_DEVIATION,
+            )
         )
-    )
-    sex_of = np.array(sexes, dtype=object)
-    for sex in distinct:
-        counts = [int(np.sum((doses == level) & (sex_of == sex))) for level in levels]
+    for sex, of_sex in _by_sex(sexes, doses.size):
+        counts = [int(np.sum((doses == level) & of_sex)) for level in levels]
         rows.append(
             _Minimum(
                 None,
@@ -1350,16 +1364,20 @@ def _etap_design_minimums(
 
 
 def _etap_cell_type_minimums(
-    group_id: str, doses: FloatArray, sexes: list[str], used: np.ndarray, unit: str
+    group_id: str,
+    doses: FloatArray,
+    sexes: list[str] | None,
+    used: np.ndarray,
+    unit: str,
 ) -> list[_Minimum]:
-    """The minimums of Sec. 3.4.5.2 in one cell type, for each sex: passing samples
-    at each dose level and passing vehicle samples."""
+    """The minimums of Sec. 3.4.5.2 in one cell type, for each sex, or for one data
+    set without sexes: passing samples at each dose level and passing vehicle
+    samples."""
     levels = np.unique(doses)
     positive = levels[levels > 0.0]
-    sex_of = np.array(sexes, dtype=object)
     rows = []
-    for sex in sorted(set(sexes)):
-        passing = used & (sex_of == sex)
+    for sex, of_sex in _by_sex(sexes, doses.size):
+        passing = used & of_sex
         counts = [int(np.sum(passing & (doses == level))) for level in positive]
         rows.append(
             _Minimum(

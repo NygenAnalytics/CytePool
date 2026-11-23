@@ -59,6 +59,7 @@ from cytepool.stats._dose_curve_models import (
     LINE,
     NON_NEGATIVE,
     POLYNOMIAL,
+    QUADRATIC,
     SAME_SIGN,
     SETS,
     assemble,
@@ -635,7 +636,7 @@ def fit_gene(
     whiten(root, ybar.reshape((k, 1)), z.reshape((k, 1)))
     alpha = np.zeros(q)
     whitened = np.zeros((k, q))
-    if kind == LINE or kind == POLYNOMIAL:
+    if kind == LINE or kind == POLYNOMIAL or kind == QUADRATIC:
         columns, row = np.zeros((k, q)), np.zeros(q)
         value = _resolve_linear(
             kind, constraint, q, theta, x, z, root, columns, whitened, alpha, row

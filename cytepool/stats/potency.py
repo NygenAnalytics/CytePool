@@ -41,7 +41,7 @@ References:
     Statistical Society, Series B 16, 175-185. doi:10.1111/j.2517-6161.1954.tb00159.x
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -53,11 +53,14 @@ from cytepool._jit import by_chunks, thread_limit
 from cytepool._masked_arrays import read_only
 from cytepool._messages import close_matches, listing
 from cytepool._options import checked_flag
+from cytepool._rule_sets import BY_NAME, ETAP_2024, MODELS, NTP_2018
 from cytepool.benchmark_responses import ABSOLUTE, BenchmarkResponse
 from cytepool.stats._benchmark_dose_flags import (
     FlagInputs,
+    accepted_rows,
     checked_flag_sets,
     failed_checks,
+    kept_rows,
 )
 from cytepool.stats._benchmark_dose_search import (
     A0,
@@ -72,6 +75,7 @@ from cytepool.stats._benchmark_dose_search import (
     N_EFF,
     NEVER_CROSSED,
     OBJECTIVE_FIT,
+    PIECE,
     S2,
     THRESHOLD,
     VALUE,
@@ -82,6 +86,9 @@ from cytepool.stats._benchmark_dose_search import (
     search_range,
 )
 from cytepool.stats._dose_curve_models import (
+    C_MAX,
+    EXPONENT_MAX,
+    EXPONENT_MIN,
     SET_PARAMETERS,
     SETS,
     DoseScale,
@@ -99,7 +106,7 @@ from cytepool.stats._dose_curve_models import (
 from cytepool.stats._dose_curve_search import grid_bases, whitening_roots
 from cytepool.stats._result_tables import feature_id_column
 from cytepool.stats.distributions import chi2_ppf, chi2_sf, f_ppf
-from cytepool.stats.dose_curves import DoseCurveFits
+from cytepool.stats.dose_curves import TIE, DoseCurveFits
 from cytepool.table import Table
 
 __all__ = ["BenchmarkDoses", "benchmark_doses"]
@@ -116,8 +123,9 @@ FLOORED = "below a hundredth of the lowest dose"
 ABOVE = "above the top dose"
 NOT_REACHED = "not reached"
 NO_CURVE = "no curve"
+NO_MODEL = "no model chosen"
 UNDEFINED = "BMR undefined"
-STATUSES = (WITHIN, BELOW, FLOORED, ABOVE, NOT_REACHED, NO_CURVE, UNDEFINED)
+STATUSES = (WITHIN, BELOW, FLOORED, ABOVE, NOT_REACHED, NO_CURVE, NO_MODEL, UNDEFINED)
 """The statuses of a BMD, in the order the repr counts them."""
 
 # A curve's SD at most this share of the largest dose-group mean is rounding alone:
@@ -139,9 +147,11 @@ class BenchmarkDoses:
     Attributes:
         benchmark_responses: The BMRs, as given, then the 1 SD comparison that US EPA
             2012 asks to present beside any other BMR, unless given.
-        model_set: The set of the curves: ``"epa"``, ``"ll4"`` or ``"dromics"``.
-        model: ``"best"``, each gene's model of lowest AICc, or the name of the model
-            every gene's BMD was computed from.
+        model_set: The set of the curves: ``"epa"``, ``"bmdexpress"``, ``"ll4"`` or
+            ``"dromics"``.
+        model: ``"best"``, each gene's model of lowest AICc; a document's choice,
+            ``"ntp_2018"``, ``"etap_2024"`` or ``"bmds_2026"``; or the name of the
+            model every gene's BMD was computed from.
         gene_models: ``(n_genes,)`` the model of each gene's BMD, empty where none;
             the ``models`` of :class:`~cytepool.stats.dose_curves.DoseCurveFits`
             name the models fitted.
@@ -155,30 +165,38 @@ class BenchmarkDoses:
             SD-based BMR.
         bmd: The BMD; NaN where not reached, without a curve or with the BMR
             undefined (``status``).
-        bmdl: The lower bound; 0 where the likelihood's region reaches the search's
-            lowest dose; NaN without bounds, without a BMD, where the values have no
-            spread about the curve, or, for every BMR of the gene, where the profile
-            found a likelihood above the fit's, at a BMD or at a dose of the search,
-            so that the fit was not its maximum.
-        bmdu: The upper bound; infinity where the likelihood's region reaches the
-            search's highest dose; NaN as for ``bmdl``.
+        bmdl: The lower bound, the lowest dose of the likelihood's region, or under
+            NTP's and ETAP's choices of the piece of it that holds the BMD, as BMDS 2
+            bounds a BMD; 0 where that reaches the search's lowest dose; NaN without
+            bounds, without a BMD, where the values have no spread about the curve,
+            or, for every BMR of the gene, where the profile found a likelihood above
+            the fit's, at a BMD or at a dose of the search, so that the fit was not
+            its maximum.
+        bmdu: The upper bound, the highest dose of the same region or piece;
+            infinity where that reaches the search's highest dose; NaN as for
+            ``bmdl``.
         direction: ``"up"`` or ``"down"``, the direction of the change at the BMD;
             empty without a BMD.
         status: Where the BMD lies: ``"within the doses"``, ``"below the lowest
             dose"``, ``"below a hundredth of the lowest dose"`` (the BMD is given as
             that dose), ``"above the top dose"``, ``"not reached"`` (no crossing up
             to 50 times the top dose), ``"no curve"`` (no model to read: none fitted,
-            or none with a finite AICc) or ``"BMR undefined"`` (an SD of 0, values
-            without spread about the curve, or no vehicle to scale the SD to).
+            or none with a finite AICc), ``"no model chosen"`` (a document's choice
+            found no model whose BMD it keeps) or ``"BMR undefined"`` (an SD of 0,
+            values without spread about the curve, or no vehicle to scale the SD to).
         threshold: The deviance the bounds read: chi-square(1) at 0.90, or F(1, df)
             at 0.90 for an absolute BMR whose curves weigh a first stage's variance;
             NaN without bounds.
         fit_p_value: ``(n_genes,)`` the p-value of BMDS's test 4, the likelihood ratio
             test of each gene's model against a mean per dose group, (df + K) log(1 +
             (K - p) F / df) on a chi-square of K - p degrees of freedom, F the curves'
-            F-test of lack of fit: the fit p-value that BMDS, BMDExpress, NTP and ETAP
-            read. Every parameter counts in p, as in the curves' AIC, where BMDS's
-            default leaves out those at a bound. NaN without replicates.
+            F-test of lack of fit. Outside a document's choice every parameter counts
+            in p, as in the curves' AIC, so that where a parameter is at a bound the
+            p-value differs from the fit p-value of BMDS 2 and pybmds, which leave
+            such parameters out; under a document's choice, p counts the mean
+            parameters as that document's program does: those not at a bound of BMDS
+            2's programs for NTP and ETAP, those pybmds does not flag as bounded for
+            BMDS. NaN without replicates.
         scaled_residual_near_bmd: The scaled residual of the dose group nearest the
             BMD on the dose scale, the lower dose on a tie (BMDS's residual of
             interest).
@@ -191,6 +209,8 @@ class BenchmarkDoses:
             likelihood ratio test of one variance against a variance per dose group
             (BMDS's test 2), on K - 1 degrees of freedom; NaN otherwise, and where a
             group has fewer than two samples or no spread.
+        model_choice: ``(n_genes,)`` under a document's choice, why each gene's
+            model was chosen, such as ``"lowest AIC"``; empty otherwise.
         feature_ids: ``(n_genes,)`` the genes' ids that :meth:`table` writes, from
             :meth:`DoseResponseResult.benchmark_doses
             <cytepool.DoseResponseResult.benchmark_doses>`; None from
@@ -217,13 +237,46 @@ class BenchmarkDoses:
     scaled_residual_at_vehicle: FloatArray
     vehicle_sd_ratio: FloatArray
     constant_variance_p_value: FloatArray
+    model_choice: np.ndarray
     feature_ids: np.ndarray | None = None
+
+    def accepted(self, flag_set: str) -> npt.NDArray[np.bool_]:
+        """Whether each BMD passes a document's acceptance: a BMD whose fit p-value
+        is a number and that fails none of the document's checks but those it keeps
+        aside, such as NTP's flag of a BMD more than 10-fold below the lowest dose
+        (https://docs.nygen.io/CytePool/statistics/potency#rule-sets). The checks
+        skip what a row lacks, and acceptance asks for all a criterion reads.
+
+        Args:
+            flag_set: ``"ntp_2018"`` or ``"etap_2024"``; BMDS's bins and EFSA's
+                indicators accept no gene and are refused.
+
+        Returns:
+            ``(n_bmrs, n_genes)``, rows the BMRs in order.
+
+        Raises:
+            ValueError: If ``flag_set`` is not ``"ntp_2018"`` or ``"etap_2024"``,
+                or the BMDs have no bounds, which both documents' criteria read.
+            TypeError: If ``flag_set`` is not text.
+        """
+        if not isinstance(flag_set, str):
+            raise TypeError(f"flag_set must be text, got {type(flag_set).__name__}")
+        if flag_set not in (NTP_2018, ETAP_2024):
+            raise ValueError(
+                "accepted reads a document's acceptance of a gene's BMD, which "
+                f"'ntp_2018' and 'etap_2024' state; got {flag_set!r}"
+                f"{close_matches(flag_set, (NTP_2018, ETAP_2024))}; BMDS's bins "
+                "('bmds_2026') and EFSA's indicators ('efsa_2022') accept no gene"
+            )
+        kept = accepted_rows(flag_set, self._flag_inputs())
+        return read_only(kept.reshape(self.bmd.shape))
 
     def table(self, *, feature_ids: Any = None, flags: Any = None) -> Table:
         """Return the benchmark doses as a table, one row per BMR and gene.
 
         The BMRs in order, each with every gene in order: ``feature_id``, ``bmr`` (the
-        BMR's label), ``model``, ``direction``, ``bmr_change``, ``bmd``, ``bmdl``,
+        BMR's label), ``model``, under a document's choice ``model_choice`` and
+        ``fit_p_value``, then ``direction``, ``bmr_change``, ``bmd``, ``bmdl``,
         ``bmdu``, ``bmd_status``, then ``flags_<set>`` for each set of ``flags``: the
         checks the row fails, joined by "; ", empty when none
         (https://docs.nygen.io/CytePool/statistics/potency#benchmark-dose-flags).
@@ -251,6 +304,11 @@ class BenchmarkDoses:
             "feature_id": ids[genes],
             "bmr": text_column(labels.tolist()),
             "model": text_column(self.gene_models[genes].tolist()),
+        }
+        if self.model in DOCUMENTS:
+            columns["model_choice"] = text_column(self.model_choice[genes].tolist())
+            columns["fit_p_value"] = self.fit_p_value[genes]
+        columns |= {
             "direction": text_column(self.direction.ravel().tolist()),
             "bmr_change": self.bmr_change.ravel(),
             "bmd": self.bmd.ravel(),
@@ -387,8 +445,20 @@ def benchmark_doses(
             :meth:`DoseResponseResult.curve_fits <cytepool.DoseResponseResult.curve_fits>`.
         bmr: A :class:`~cytepool.BenchmarkResponse`, or a list of them with distinct
             labels.
-        model: ``"best"`` (default), each gene's model of lowest AICc, or the name of
-            a model of the fits' set, for every gene it was fitted to.
+        model: ``"best"`` (default), each gene's model of lowest AICc; the name of
+            a model of the fits' set, for every gene it was fitted to; or a
+            document's choice: ``"ntp_2018"`` or ``"etap_2024"`` on the set
+            ``"bmdexpress"``, the lowest AIC as BMDS 2 counts it among the models
+            whose BMD has both bounds, ETAP's leaving out a Hill fit whose k is below
+            a third of the lowest dose; ``"bmds_2026"`` on the set ``"epa"``, BMDS's
+            recommended model as pybmds 25.2 chooses it among linear, polynomial 2,
+            power, Hill, exponential 3 and 5, which ``dose_response`` makes with
+            ``selection="bmds_2026"``, and with ``rules`` the documents' choices.
+            Under NTP's and ETAP's choices the bounds end at the piece of the
+            likelihood's region that holds the BMD, as BMDS 2's do. A document's
+            choice reads the first BMR, keeps that model for the other BMRs, needs
+            constant variance and bounds, and computes the bounds of the models it
+            passes over, so it costs more.
         bounds: False gives BMDs without bounds, as for curves of dose groups
             without replicates.
         n_threads: The most threads to use; None keeps numba's setting.
@@ -403,23 +473,45 @@ def benchmark_doses(
             ``BenchmarkResponse`` or a list of them, ``model`` not a str or ``bounds``
             not True or False.
         ValueError: If ``bmr`` is empty or repeats a label, ``model`` names no model
-            of the set or one not fitted, or bounds are asked for curves without
-            replicates.
+            of the set or one not fitted, or a document's choice for fits of another
+            set, of variance other than constant or without bounds, or bounds are
+            asked for curves without replicates.
     """
     if not isinstance(fits, DoseCurveFits):
         raise TypeError(f"fits must be a DoseCurveFits, got {type(fits).__name__}")
     responses = _with_comparison(_checked_responses(bmr))
     with_bounds = checked_flag(bounds, "bounds")
-    chosen = _chosen_models(fits, model)
+    document = _checked_document(fits, model, with_bounds)
+    if document is None:
+        chosen = _chosen_models(fits, model)
     if with_bounds and not np.all(fits.df > 0):
         raise ValueError(
             "bounds need replicates within dose groups: these fits have no degrees "
             "of freedom for the variance (df 0), as for a cell type that supports "
             "only description; pass bounds=False for BMDs without bounds"
         )
+    why = np.full(fits.means.shape[0], "", dtype=object)
+    if document is not None:
+        # The AIC and test 4 count the mean parameters as the document's program
+        # does.
+        counted = (
+            _pybmds_counted(fits) if document == BMDS_2026 else _bmds2_counted(fits)
+        )
+        aic = -2.0 * fits.log_likelihood + 2.0 * (counted + 1.0)
+        test_4 = _test_4_p_values(fits, counted)
+        with thread_limit(n_threads):
+            if document == BMDS_2026:
+                chosen, why = _bmds_choice(fits, responses[0], aic, test_4)
+            else:
+                chosen, why = _bmdexpress_choice(fits, responses[0], document, aic)
     genes = _GeneFits.of(fits, chosen)
     with thread_limit(n_threads):
-        rows = [_for_response(fits, genes, bmr_, with_bounds) for bmr_ in responses]
+        # BMDS 2, which NTP and ETAP run, bounds a BMD by the piece of the region
+        # that holds it.
+        piece = document in (NTP_2018, ETAP_2024)
+        rows = [
+            _for_response(fits, genes, bmr_, with_bounds, piece) for bmr_ in responses
+        ]
     stacked = {key: np.stack([row[key] for row in rows]) for key in rows[0]}
     # A fit that is not the profile's maximum at one BMR is not the maximum of the
     # likelihood: no bounds are measured from it at any BMR.
@@ -429,6 +521,13 @@ def benchmark_doses(
     stacked["bmdu"][:, unbounded] = np.nan
     near = np.stack([_residuals_near(fits, genes, row["bmd"]) for row in rows])
     names = np.array([fits.models[m] if m >= 0 else "" for m in chosen], dtype=object)
+    fit_p = genes.fit_p_value
+    if document is not None:
+        picked = chosen >= 0
+        fit_p = np.full(chosen.size, np.nan)
+        fit_p[picked] = test_4[np.flatnonzero(picked), chosen[picked]]
+        fitted = (fits.not_fitted_reason != "").sum(axis=1) < len(fits.models)
+        stacked["status"][:, ~picked & fitted] = NO_MODEL
     return BenchmarkDoses(
         benchmark_responses=tuple(responses),
         model_set=fits.model_set,
@@ -445,7 +544,7 @@ def benchmark_doses(
         direction=read_only(stacked["direction"]),
         status=read_only(stacked["status"]),
         threshold=read_only(stacked["threshold"]),
-        fit_p_value=read_only(genes.fit_p_value),
+        fit_p_value=read_only(fit_p),
         scaled_residual_near_bmd=read_only(near),
         scaled_residual_at_vehicle=read_only(
             genes.scaled_residuals[:, 0]
@@ -454,6 +553,7 @@ def benchmark_doses(
         ),
         vehicle_sd_ratio=read_only(_vehicle_sd_ratio(fits, genes)),
         constant_variance_p_value=read_only(_constant_variance_test(fits)),
+        model_choice=read_only(why),
     )
 
 
@@ -742,58 +842,41 @@ def _spread(variance: FloatArray, genes: _GeneFits) -> np.ndarray:
 
 
 def _for_response(
-    fits: DoseCurveFits, genes: _GeneFits, bmr: BenchmarkResponse, with_bounds: bool
+    fits: DoseCurveFits,
+    genes: _GeneFits,
+    bmr: BenchmarkResponse,
+    with_bounds: bool,
+    piece: bool = False,
 ) -> dict[str, np.ndarray]:
+    """Each gene's BMD at one BMR, with its bounds when asked: the ends of the
+    profile's region, or with ``piece`` of the piece of it that holds the BMD."""
     n_genes = fits.means.shape[0]
     likelihood = _likelihood(fits, genes, bmr)
     scale = DoseScale.of(fits.doses)
-    low, high = search_range(scale.lowest, scale.top)
-    scan = scan_doses(scale.lowest, scale.top)
-    bmd = np.full(n_genes, np.nan)
-    bmdl = np.full(n_genes, np.nan)
-    bmdu = np.full(n_genes, np.nan)
-    direction = np.zeros(n_genes)
-    how = np.full(n_genes, -1, dtype=np.int64)
     sizes = likelihood.sizes
     defined = np.isfinite(sizes) & (sizes > 0.0)
-    for kind in np.unique(genes.kinds[genes.kinds >= 0]):
-        rows = np.flatnonzero((genes.kinds == kind) & defined)
-        if rows.size == 0:
-            continue
-        kind = int(kind)
-        theta = np.ascontiguousarray(np.stack([genes.theta[g] for g in rows]))
-        turns = np.ascontiguousarray(turn_doses(kind, theta, high))
-        found = np.full(rows.size, np.nan)
-        signs = np.zeros(rows.size)
-        codes = np.zeros(rows.size, dtype=np.int64)
-        first_crossings(
-            kind,
-            theta,
-            np.ascontiguousarray(sizes[rows]),
-            turns,
-            low,
-            high,
-            found,
-            signs,
-            codes,
-        )
-        bmd[rows], direction[rows], how[rows] = found, signs, codes
-        if with_bounds:
-            # Values without spread about the curve leave the likelihood without a
-            # variance to bound with.
-            reached = (codes != NEVER_CROSSED) & likelihood.spread[rows]
-            lower_, upper_ = _bounds_of_kind(
+    bmd, direction, how = _crossings(fits, genes, sizes)
+    bmdl = np.full(n_genes, np.nan)
+    bmdu = np.full(n_genes, np.nan)
+    if with_bounds:
+        scan = scan_doses(scale.lowest, scale.top)
+        # Values without spread about the curve leave the likelihood without a
+        # variance to bound with.
+        reached = (how >= 0) & (how != NEVER_CROSSED) & likelihood.spread
+        for kind in np.unique(genes.kinds[reached]):
+            rows = np.flatnonzero(reached & (genes.kinds == kind))
+            bmdl[rows], bmdu[rows] = _bounds_of_kind(
                 fits,
                 genes,
                 likelihood,
-                kind,
-                rows[reached],
-                theta[reached],
-                found[reached],
-                signs[reached],
+                int(kind),
+                rows,
+                _thetas(genes, rows),
+                bmd[rows],
+                direction[rows],
                 scan,
+                piece,
             )
-            bmdl[rows[reached]], bmdu[rows[reached]] = lower_, upper_
     status = _statuses(genes.chosen, defined, how, bmd, scale)
     thresholds = np.where(with_bounds & np.isfinite(bmd), likelihood.thresholds, np.nan)
     return {
@@ -810,6 +893,62 @@ def _for_response(
     }
 
 
+def _crossings(
+    fits: DoseCurveFits, genes: _GeneFits, sizes: FloatArray
+) -> tuple[FloatArray, FloatArray, np.ndarray]:
+    """Each gene's BMD at a change of its own size: the first dose in the search at
+    which its model's change reaches the size, the change's sign there and how the
+    search found it (``CROSSED``, ``CROSSED_BELOW_RANGE`` or ``NEVER_CROSSED``); NaN,
+    0 and -1 without a model or for a size that is not a number above 0."""
+    scale = DoseScale.of(fits.doses)
+    low, high = search_range(scale.lowest, scale.top)
+    n_genes = genes.chosen.size
+    bmd = np.full(n_genes, np.nan)
+    direction = np.zeros(n_genes)
+    how = np.full(n_genes, -1, dtype=np.int64)
+    defined = np.isfinite(sizes) & (sizes > 0.0)
+    for kind in np.unique(genes.kinds[genes.kinds >= 0]):
+        rows = np.flatnonzero((genes.kinds == kind) & defined)
+        if rows.size == 0:
+            continue
+        theta = _thetas(genes, rows)
+        found = np.full(rows.size, np.nan)
+        signs = np.zeros(rows.size)
+        codes = np.zeros(rows.size, dtype=np.int64)
+        first_crossings(
+            int(kind),
+            theta,
+            np.ascontiguousarray(sizes[rows]),
+            np.ascontiguousarray(turn_doses(int(kind), theta, high)),
+            low,
+            high,
+            found,
+            signs,
+            codes,
+        )
+        bmd[rows], direction[rows], how[rows] = found, signs, codes
+    return bmd, direction, how
+
+
+def _thetas(genes: _GeneFits, rows: np.ndarray) -> FloatArray:
+    """The internal parameters of the genes at ``rows``, one row each."""
+    return np.ascontiguousarray(np.stack([genes.theta[g] for g in rows]))
+
+
+def _bmds_at_changes(
+    fits: DoseCurveFits, gene_models: np.ndarray, changes: FloatArray
+) -> FloatArray:
+    """The BMD of each gene's model, named in ``gene_models`` (empty for none), at a
+    change of the gene's own size, without bounds: the first dose in the search at
+    which the change reaches it; NaN where it is not reached or the size is not a
+    number above 0."""
+    chosen = np.array(
+        [fits.models.index(name) if name else -1 for name in gene_models],
+        dtype=np.int64,
+    )
+    return _crossings(fits, _GeneFits.of(fits, chosen), changes)[0]
+
+
 def _bounds_of_kind(
     fits: DoseCurveFits,
     genes: _GeneFits,
@@ -820,6 +959,7 @@ def _bounds_of_kind(
     bmd: FloatArray,
     signs: FloatArray,
     scan: FloatArray,
+    piece: bool,
 ) -> tuple[FloatArray, FloatArray]:
     """The BMDL and BMDU of the genes of one kind of model."""
     if rows.size == 0:
@@ -842,7 +982,7 @@ def _bounds_of_kind(
             fits.doses,
             np.ascontiguousarray(fits.means[rows]),
             np.ascontiguousarray(roots),
-            _gene_numbers(likelihood, rows, signs, bmd),
+            _gene_numbers(likelihood, rows, signs, bmd, piece),
             phi_fit,
             found,
         ),
@@ -867,8 +1007,8 @@ def _search_model(
     nonlinear = [j for j in range(p) if not is_linear(kind, j)]
     index = np.array(nonlinear if p > q else [], dtype=np.int64)
     if index.size:
-        points, inner = grid(kind, scale)
-        lower, upper = bounds(kind, scale)
+        points, inner = grid(kind, scale, fits.model_set)
+        lower, upper = bounds(kind, scale, fits.model_set)
         lower, upper = lower[index], upper[index]
         phi_fit = theta[:, index]
     else:
@@ -905,11 +1045,16 @@ def _grid_changes(
 
 
 def _gene_numbers(
-    likelihood: _Likelihood, rows: np.ndarray, signs: FloatArray, bmd: FloatArray
+    likelihood: _Likelihood,
+    rows: np.ndarray,
+    signs: FloatArray,
+    bmd: FloatArray,
+    piece: bool = False,
 ) -> FloatArray:
     """Each gene's numbers, as the search reads them: the columns ``FORM`` to
-    ``THRESHOLD``."""
-    numbers = np.empty((rows.size, 9))
+    ``PIECE``, with ``piece`` for bounds that end at the piece of the likelihood's
+    region that holds the BMD."""
+    numbers = np.empty((rows.size, PIECE + 1))
     numbers[:, FORM] = likelihood.forms[rows]
     numbers[:, VALUE] = likelihood.values[rows]
     numbers[:, DIRECTION] = signs
@@ -919,6 +1064,7 @@ def _gene_numbers(
     numbers[:, BMD] = bmd
     numbers[:, OBJECTIVE_FIT] = likelihood.objective_fit[rows]
     numbers[:, THRESHOLD] = likelihood.thresholds[rows]
+    numbers[:, PIECE] = 1.0 if piece else 0.0
     return numbers
 
 
@@ -992,3 +1138,323 @@ def _constant_variance_test(fits: DoseCurveFits) -> FloatArray:
         chi2_sf(np.maximum(statistic, 0.0), n_groups - 1.0), dtype=np.float64
     )
     return np.where(ok, p, np.nan)
+
+
+# ---------------------------------------------------------------------------------------
+# The documents' choices of each gene's model
+# ---------------------------------------------------------------------------------------
+
+BMDS_2026 = "bmds_2026"
+DOCUMENTS = {NTP_2018: MODELS, ETAP_2024: MODELS, BMDS_2026: "epa"}
+"""Each document's choice of model, with the set of the program it runs: BMDS 2's
+programs in BMDExpress 2 for NTP 2018 and ETAP, pybmds 25.2 for BMDS's
+recommendation."""
+BMDS_MODELS = (
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5",
+)
+"""The continuous models that BMDS fits and recommends among."""
+CLOSE_BMDLS = 3.0
+"""BMDS recommends the lowest AIC when the viable models' BMDLs lie within this
+factor of each other, and the lowest BMDL otherwise."""
+# Why each gene has its model.
+LOWEST_AIC = "lowest AIC"
+HILL_LEFT_OUT = "lowest AIC, Hill left out: k below a third of the lowest dose"
+LATER_AIC = "lowest AIC of the models with a BMD and bounds"
+NO_CHOICE = "no model with a BMD and bounds"
+VIABLE_AIC = "lowest AIC of the viable models, BMDLs within 3-fold"
+VIABLE_BMDL = "lowest BMDL of the viable models, BMDLs more than 3-fold apart"
+NO_VIABLE = "no viable model"
+# Beyond the search's highest dose, the change of every model of these sets has
+# reached its limit at this multiple of it: a model whose change reaches the BMR
+# there crosses it beyond the search, as BMDS 2 reports such BMDs.
+_FAR = 1e6
+
+
+def _bmds2_counted(fits: DoseCurveFits) -> FloatArray:
+    """The mean parameters of each fit that BMDS 2's programs count, in the AIC and
+    the degrees of freedom of test 4: those not at a bound that the programs have
+    (Hill's and power's n, and exponential 3 and 5's d, at 1 or 18; Hill's k, the
+    exponentials' a, b and c at 0). CytePool's own search limits, such as Hill's k at
+    1,000 times the top dose in ``"bmdexpress"``, are not bounds of the programs."""
+    names = SET_PARAMETERS[fits.model_set]
+    out = np.full(fits.aic.shape, np.nan)
+    for m, name in enumerate(fits.models):
+        model = model_of(fits.model_set, name)
+        at = np.zeros(fits.aic.shape[0])
+        for parameter in model.parameters:
+            value = fits.parameters[:, m, names.index(parameter)]
+            if parameter in ("n", "d"):
+                at += (value == EXPONENT_MIN) | (value == EXPONENT_MAX)
+            elif parameter in ("k", "a", "b", "c"):
+                at += value == 0.0
+        out[:, m] = model.n_parameters - at
+    return out
+
+
+def _pybmds_counted(fits: DoseCurveFits) -> FloatArray:
+    """The mean parameters of each fit that pybmds counts in its AIC and the degrees
+    of freedom of its test 4: those not at a bound of the fits' set, which mirror
+    pybmds's bounds in ``"epa"``, but for c at 1,000, a limit of CytePool's own:
+    pybmds leaves c unbounded above, so c there counts."""
+    sizes = np.array([model_of(fits.model_set, m).n_parameters for m in fits.models])
+    bounded = np.vectorize(lambda text: len(text.split(", ")) if text else 0)(
+        fits.parameters_at_bounds
+    )
+    c = fits.parameters[:, :, SET_PARAMETERS[fits.model_set].index("c")]
+    with np.errstate(invalid="ignore"):
+        at_limit = c >= C_MAX
+    return np.asarray(sizes[None, :] - bounded + at_limit, dtype=np.float64)
+
+
+def _test_4_p_values(fits: DoseCurveFits, counted: FloatArray) -> FloatArray:
+    """BMDS's test 4 of every fit, ``(n_genes, n_models)``, on K minus ``counted``
+    degrees of freedom, as the documents' programs count a fit's parameters; NaN
+    where they are none, where the groups have no spread and without a fit."""
+    n_groups = fits.doses.size
+    found = np.full(counted.shape, np.nan)
+    for m in range(len(fits.models)):
+        fitted = np.isfinite(fits.log_likelihood[:, m])
+        if fitted.any():
+            q_min = _GeneFits.of(fits, np.where(fitted, m, -1)).q_min
+            found[:, m] = np.where(
+                fitted, _test_4(fits, q_min, n_groups - counted[:, m]), np.nan
+            )
+    return found
+
+
+def _lowest(
+    aic: FloatArray, open_: np.ndarray, order: FloatArray | None = None
+) -> np.ndarray:
+    """Each row's model of lowest AIC among the open ones, a tie within ``TIE``
+    going to the lowest ``order`` (fewer parameters) and then to the first in set
+    order; -1 where none is open."""
+    values = np.where(open_, aic, np.inf)
+    lowest = values.min(axis=1)
+    tied = open_ & (values <= lowest[:, None] + TIE)
+    if order is not None:
+        rank = np.where(tied, order, np.inf)
+        tied &= rank == rank.min(axis=1, keepdims=True)
+    return np.where(open_.any(axis=1), np.argmax(tied, axis=1), -1)
+
+
+def _per_model(
+    fits: DoseCurveFits,
+    bmr: BenchmarkResponse,
+    m: int,
+    with_bounds: bool,
+    rows: np.ndarray | None = None,
+    piece: bool = False,
+) -> tuple[_GeneFits, dict[str, np.ndarray]]:
+    """Model m's BMDs of every gene it was fitted to, or of ``rows`` only, with
+    bounds when asked, those of the piece that holds the BMD with ``piece``."""
+    chosen = np.where(fits.not_fitted_reason[:, m] == "", m, -1).astype(np.int64)
+    if rows is not None:
+        keep = np.zeros(chosen.size, dtype=bool)
+        keep[rows] = True
+        chosen = np.where(keep, chosen, -1)
+    genes = _GeneFits.of(fits, chosen)
+    return genes, _for_response(fits, genes, bmr, with_bounds, piece)
+
+
+def _reaches_beyond(
+    fits: DoseCurveFits, genes: _GeneFits, row: dict[str, np.ndarray]
+) -> np.ndarray:
+    """Whether each gene's change, not reached within the search, reaches the BMR's
+    size beyond it."""
+    scale = DoseScale.of(fits.doses)
+    far = _FAR * search_range(scale.lowest, scale.top)[1]
+    out = np.zeros(genes.chosen.size, dtype=bool)
+    for g in np.flatnonzero((row["status"] == NOT_REACHED) & (genes.chosen >= 0)):
+        values = mean_values(
+            int(genes.kinds[g]), genes.theta[g][None, :], np.array([0.0, far])
+        )
+        out[g] = abs(values[0, 1] - values[0, 0]) >= row["size"][g]
+    return out
+
+
+def _bmdexpress_choice(
+    fits: DoseCurveFits, bmr: BenchmarkResponse, document: str, aic: FloatArray
+) -> tuple[np.ndarray, np.ndarray]:
+    """NTP's and ETAP's choice as BMDExpress 2 makes it: the lowest AIC as BMDS 2
+    counts it (``aic``), among the models whose BMD is reached (within the search or
+    beyond it) and whose BMDL and BMDU are numbers, 0 and infinity included; ETAP
+    leaves out a Hill fit whose k is below a third of the lowest dose. Bounds are
+    computed for each gene's best remaining model, round by round."""
+    n_genes, n_models = fits.aic.shape
+    fitted = (fits.not_fitted_reason == "") & np.isfinite(aic)
+    reached = np.zeros((n_genes, n_models), dtype=bool)
+    for m in range(n_models):
+        genes, row = _per_model(fits, bmr, m, False)
+        reached[:, m] = np.isfinite(row["bmd"]) | _reaches_beyond(fits, genes, row)
+    flagged = _flagged_hill(fits, BY_NAME[document].hill_k_fraction)
+    open_ = fitted & reached & ~flagged
+
+    def with_bounds(rows: np.ndarray, models: np.ndarray) -> np.ndarray:
+        ok = np.zeros(rows.size, dtype=bool)
+        for m in np.unique(models):
+            mine = models == m
+            _, row = _per_model(fits, bmr, int(m), True, rows[mine], piece=True)
+            bmdl, bmdu = row["bmdl"][rows[mine]], row["bmdu"][rows[mine]]
+            beyond = row["status"][rows[mine]] == NOT_REACHED
+            ok[mine] = beyond | (~np.isnan(bmdl) & ~np.isnan(bmdu))
+        return ok
+
+    chosen = _first_with_bounds(aic, open_, with_bounds)
+    first = _lowest(aic, fitted)
+    without_hill = _lowest(aic, fitted & ~flagged)
+    why = np.full(n_genes, NO_CHOICE, dtype=object)
+    picked = chosen >= 0
+    why[picked] = LATER_AIC
+    why[picked & (chosen == without_hill) & (without_hill != first)] = HILL_LEFT_OUT
+    why[picked & (chosen == first)] = LOWEST_AIC
+    return chosen, why
+
+
+def _check_inputs(
+    fits: DoseCurveFits,
+    genes: _GeneFits,
+    row: dict[str, np.ndarray],
+    fit_p_value: FloatArray,
+    with_bounds: bool,
+) -> FlagInputs:
+    """What the documents' checks read of one model's BMDs, with ``fit_p_value`` as
+    its fit test."""
+    return FlagInputs(
+        bmd=row["bmd"],
+        bmdl=row["bmdl"],
+        bmdu=row["bmdu"],
+        bounds=with_bounds,
+        lowest_dose=float(fits.doses[fits.doses > 0.0][0]),
+        top_dose=float(fits.doses[-1]),
+        fit_p_value=fit_p_value,
+        residual_near_bmd=_residuals_near(fits, genes, row["bmd"]),
+        residual_at_vehicle=genes.scaled_residuals[:, 0],
+        vehicle_sd_ratio=_vehicle_sd_ratio(fits, genes),
+        constant_variance_p_value=_constant_variance_test(fits),
+    )
+
+
+def _bmds_choice(
+    fits: DoseCurveFits, bmr: BenchmarkResponse, aic: FloatArray, test_4: FloatArray
+) -> tuple[np.ndarray, np.ndarray]:
+    """BMDS's recommended model as pybmds 25.2 makes it: each of its six continuous
+    models binned by the default checks with pybmds's test 4 as the fit test
+    (``test_4``, whose degrees of freedom leave out the parameters at a bound, as its
+    AIC, ``aic``, does), bounds computed only for the models that the checks without
+    bounds leave viable; among the viable, the lowest AIC when their BMDLs lie within
+    3-fold of each other, the lowest BMDL otherwise; ties to the fewest parameters,
+    then the set's order."""
+    n_genes, n_models = fits.aic.shape
+    positions = [fits.models.index(m) for m in BMDS_MODELS if m in fits.models]
+    sizes = np.array([model_of(fits.model_set, m).n_parameters for m in fits.models])
+    viable = np.zeros((n_genes, n_models), dtype=bool)
+    bmdl = np.full((n_genes, n_models), np.nan)
+    for m in positions:
+        genes, row = _per_model(fits, bmr, m, False)
+        inputs = _check_inputs(fits, genes, row, test_4[:, m], False)
+        # A model without a likelihood has no results, which pybmds counts unusable.
+        fitted = (genes.chosen >= 0) & np.isfinite(aic[:, m])
+        keep = fitted & kept_rows(BMDS_2026, inputs)
+        if keep.any():
+            genes, row = _per_model(fits, bmr, m, True, np.flatnonzero(keep))
+            inputs = _check_inputs(fits, genes, row, test_4[:, m], True)
+            keep &= kept_rows(BMDS_2026, inputs)
+            bmdl[:, m] = np.where(keep, row["bmdl"], np.nan)
+        viable[:, m] = keep
+    return _recommended(aic, bmdl, viable, sizes + 1.0)
+
+
+def _recommended(
+    aic: FloatArray, bmdl: FloatArray, viable: np.ndarray, n_parameters: FloatArray
+) -> tuple[np.ndarray, np.ndarray]:
+    """BMDS's recommendation among each gene's viable models: the lowest AIC when the
+    largest of their BMDLs above 0 is at most 3 times the smallest, the lowest BMDL
+    otherwise; a tie to the fewest parameters (``n_parameters``, the variance's
+    included), then the first in set order. -1 and the reason where none is
+    viable."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        positive = np.where(viable & (bmdl > 0.0), bmdl, np.nan)
+        ratio = np.nanmax(positive, axis=1, initial=-np.inf) / np.nanmin(
+            positive, axis=1, initial=np.inf
+        )
+    by_aic = ratio <= CLOSE_BMDLS
+    # BMDLs are compared on the log scale, so that a tie within TIE is relative, the
+    # same in any dose unit.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values = np.where(by_aic[:, None], aic, np.log(bmdl))
+    order = np.broadcast_to(n_parameters, viable.shape).astype(np.float64)
+    chosen = _lowest(values, viable, order)
+    why = np.full(viable.shape[0], NO_VIABLE, dtype=object)
+    why[(chosen >= 0) & by_aic] = VIABLE_AIC
+    why[(chosen >= 0) & ~by_aic] = VIABLE_BMDL
+    return chosen, why
+
+
+def _checked_document(fits: DoseCurveFits, model: Any, with_bounds: bool) -> str | None:
+    """The document whose choice ``model`` names, checked against the fits; None for
+    ``"best"`` and the models' names."""
+    if not isinstance(model, str) or model not in DOCUMENTS:
+        return None
+    needed = DOCUMENTS[model]
+    if fits.model_set != needed:
+        program = (
+            "pybmds 25.2" if model == BMDS_2026 else "BMDS 2's programs in BMDExpress 2"
+        )
+        raise ValueError(
+            f"model={model!r} is the choice that {program} makes among the models of "
+            f"the set {needed!r}, and these fits are of {fits.model_set!r}; fit the "
+            f"curves with models={needed!r}"
+        )
+    if fits.variance != "constant":
+        raise ValueError(
+            f"model={model!r} reads each model's likelihood of the samples, its test 4 "
+            f"and AIC, which the {fits.variance} fits do not have; fit the curves under "
+            "constant variance"
+        )
+    if not with_bounds:
+        raise ValueError(
+            f"model={model!r} keeps a model only where its BMD has bounds; leave bounds "
+            "at True, which needs replicates within dose groups"
+        )
+    return model
+
+
+def _flagged_hill(fits: DoseCurveFits, fraction: float | None) -> np.ndarray:
+    """Where a Hill fit's k lies below ``fraction`` of the lowest positive dose, which
+    BMDExpress flags (``kParameterValue`` 3 for a third) and ETAP leaves out of its
+    choice; nowhere for None, a document without the rule."""
+    flagged = np.zeros(fits.aic.shape, dtype=bool)
+    if fraction is not None and "hill" in fits.models:
+        m = fits.models.index("hill")
+        k = fits.parameters[:, m, SET_PARAMETERS[fits.model_set].index("k")]
+        lowest = float(fits.doses[fits.doses > 0.0][0])
+        with np.errstate(invalid="ignore"):
+            flagged[:, m] = k < fraction * lowest
+    return flagged
+
+
+def _first_with_bounds(
+    aic: FloatArray,
+    open_: np.ndarray,
+    with_bounds: Callable[[np.ndarray, np.ndarray], np.ndarray],
+) -> np.ndarray:
+    """Each gene's model of lowest AIC among the open ones whose bounds are numbers:
+    ``with_bounds(genes, models)`` says so for each gene's best remaining model, round
+    by round, and a model without them leaves the race; -1 where none is left."""
+    remaining = open_.copy()
+    chosen = np.full(aic.shape[0], -1, dtype=np.int64)
+    undecided = remaining.any(axis=1)
+    while undecided.any():
+        rows = np.flatnonzero(undecided)
+        best = _lowest(aic[rows], remaining[rows])
+        ok = with_bounds(rows, best)
+        chosen[rows[ok]] = best[ok]
+        undecided[rows[ok]] = False
+        remaining[rows[~ok], best[~ok]] = False
+        undecided[rows] &= remaining[rows].any(axis=1)
+    return chosen

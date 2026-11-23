@@ -1194,7 +1194,7 @@ def test_the_chapter_example_runs() -> None:
     """The chapter's example, on the series of the dose chapter, and the numbers its
     text states."""
     text = CHAPTER.read_text()
-    (block,) = re.findall(r"```python\n(.*?)```", text, re.S)
+    block = re.findall(r"```python\n(.*?)```", text, re.S)[0]
     namespace: dict = {}
     exec(block, namespace)  # noqa: S102
     result = namespace["result"]
