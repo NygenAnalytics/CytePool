@@ -254,13 +254,13 @@ def _bound_ratio(inputs: FlagInputs, upper: bool) -> FloatArray:
     return _ratio(inputs.bmdu if upper else inputs.bmd, inputs.bmdl)
 
 
+# NTP flags a BMD more than 10-fold below the lowest dose and keeps the gene.
+KEPT = "(NTP keeps the gene)"
+
 _CHECKS: dict[str, tuple[_Check, ...]] = {
     "bmds_2026": _bmds_checks(),
     "ntp_2018": (
-        _Check(
-            "BMD more than 10-fold below the lowest dose (NTP keeps the gene)",
-            _ten_fold_below,
-        ),
+        _Check(f"BMD more than 10-fold below the lowest dose {KEPT}", _ten_fold_below),
         _Check(
             "BMD, BMDL or BMDU not computed, or beyond the search",
             lambda i: (
@@ -316,3 +316,24 @@ def failed_checks(flag_set: str, inputs: FlagInputs) -> list[str]:
         for row in np.flatnonzero(check.failed(inputs)):
             failures[row].append(check.text)
     return ["; ".join(texts) for texts in failures]
+
+
+def accepted_rows(flag_set: str, inputs: FlagInputs) -> BoolArray:
+    """Whether each row passes a document's acceptance, ``"ntp_2018"`` or
+    ``"etap_2024"``: a fit p-value that is a number and no failed check but those
+    the document keeps aside. The checks skip what a row lacks; acceptance asks for
+    all that a criterion reads, so rows without bounds are refused."""
+    if not inputs.bounds:
+        raise ValueError(
+            f"{flag_set!r} accepts a BMD by its bounds (NTP: BMDL and BMDU "
+            "computed, BMDU / BMDL; ETAP: BMD / BMDL), and these BMDs have none, "
+            "as for a cell type that supports only description"
+        )
+    kept = np.array(
+        [
+            all(text.endswith(KEPT) for text in row.split("; ")) if row else True
+            for row in failed_checks(flag_set, inputs)
+        ],
+        dtype=bool,
+    )
+    return np.asarray(kept & np.isfinite(inputs.fit_p_value))

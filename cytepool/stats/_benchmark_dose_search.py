@@ -31,7 +31,7 @@ A model's fixed description travels as one tuple, ``model``: its kind, the
 constraint of its linear parameters, their number q, the positions of its nonlinear
 parameters in theta, their bounds and the gap that keeps the sign of DRomics'
 exponential rate. Each gene's numbers travel as one row of the columns ``FORM`` to
-``THRESHOLD``.
+``PIECE``.
 
 Every gene's search is the same sequence of operations whatever the threads, so
 results do not depend on them.
@@ -80,8 +80,9 @@ CHANGE_PROFILED_VARIANCE, CHANGE_GIVEN_VARIANCE, CHANGE_IN_SD = 0, 1, 2
 
 # The columns of each gene's numbers: how the likelihood is profiled, the BMR's value
 # in the search (R, or v), the direction s, the likelihood's constants A0, N and s^2,
-# the BMD, the objective at the fit and the threshold.
-FORM, VALUE, DIRECTION, A0, N_EFF, S2, BMD, OBJECTIVE_FIT, THRESHOLD = range(9)
+# the BMD, the objective at the fit, the threshold, and 1 to bound the BMD by the piece
+# of the region that holds it, 0 for the region's far ends.
+FORM, VALUE, DIRECTION, A0, N_EFF, S2, BMD, OBJECTIVE_FIT, THRESHOLD, PIECE = range(10)
 
 # The range of doses searched: from the lowest positive dose / 100 (DRomics' minBMD)
 # to 50 times the top dose, scanned at 8 doses per decade for the bounds.
@@ -1059,9 +1060,10 @@ def gene_bounds(
     phi_fit: FloatArray,
 ) -> tuple[float, float]:
     """The BMDL and BMDU of one gene: the lowest and highest doses of the scan's
-    range [scan[0], scan[-1]] whose profile deviance is within the threshold; 0 when
-    the region reaches the lowest dose of the scan, infinity when it reaches the
-    highest. NaN when the profile at the BMD or at a dose of the scan lies below the
+    range [scan[0], scan[-1]] whose profile deviance is within the threshold, or,
+    where the gene's numbers ask for the piece (``PIECE``), the ends of the piece of
+    that region that holds the BMD, as BMDS 2 bounds a BMD; 0 when the region reaches
+    the lowest dose of the scan, infinity when it reaches the highest. NaN when the profile at the BMD or at a dose of the scan lies below the
     fit's objective by more than ``ABOVE_FIT``, so that the fit was not the maximum.
 
     ``bases`` are the linear columns at the doses ``x`` of every grid point, ``change``
@@ -1075,6 +1077,7 @@ def gene_bounds(
     n_points = bases.shape[0]
     n_scan = scan.size
     bmd, objective_fit, threshold = row[BMD], row[OBJECTIVE_FIT], row[THRESHOLD]
+    piece = row[PIECE] != 0.0
     z = np.zeros(k)
     whiten(root, ybar.reshape((k, 1)), z.reshape((k, 1)))
     space = workspace(k)
@@ -1195,22 +1198,35 @@ def gene_bounds(
             previous = j
     bounds = np.full(2, math.nan)
     for side in range(2):
-        # The region's farthest dose of the scan on this side, and the dose beyond it.
+        # The region's farthest dose of the scan on this side, or with piece the last
+        # dose inside it before the first outside, and the dose beyond it.
         inside = -1
-        if side == 0:
+        if side == 0 and piece:
+            for j in range(below, -1, -1):
+                if deviance[j] > threshold:
+                    break
+                inside = j
+        elif side == 0:
             for j in range(0, below + 1):
                 if deviance[j] <= threshold:
                     inside = j
                     break
-            if inside == 0:
-                bounds[0] = 0.0
-                continue
-            outside = inside - 1 if inside > 0 else below
+        elif piece:
+            for j in range(below + 1, n_scan):
+                if deviance[j] > threshold:
+                    break
+                inside = j
         else:
             for j in range(n_scan - 1, below, -1):
                 if deviance[j] <= threshold:
                     inside = j
                     break
+        if side == 0:
+            if inside == 0:
+                bounds[0] = 0.0
+                continue
+            outside = inside - 1 if inside > 0 else below
+        else:
             if inside == n_scan - 1:
                 bounds[1] = math.inf
                 continue
