@@ -19,6 +19,7 @@ Each script prints the tolerance of every check; some checks are stricter than t
 - Python 3.13 or newer with numpy and numba. Some scripts also need scipy, mpmath, statsmodels or zarr; each script lists what it imports at the top.
 - R 4.4 or newer with the Bioconductor and CRAN packages a script names. Set `RSCRIPT` to the `Rscript` executable when it is not on `PATH`.
 - `interferon_stimulated_pbmcs.py` runs on published data: on its first run it downloads 77 MB from GEO (series GSE96583) into a cache directory outside the repository, and it checks the SHA-256 of every file before reading it. Its docstring says where the files go and how to choose another directory.
+- `toxicology_rule_sets.py` runs on published data too, downloading 5.8 MB from GEO (series GSE147072) into a cache directory outside the repository and checking each file's SHA-256, and runs BMDExpress 2.30.520 (`BMDEXPRESS`), which downloads its list of platforms from its GitHub site when it starts.
 - `activity.py` needs a connection too: CytePool's loaders download CollecTRI (4.3 MB) and progeny (10.6 MB) once into `~/.cache/cytepool/networks`, checking their SHA-256, and decoupler's loaders and the checks of the published digests read Zenodo, Bioconductor and OmniPath.
 
 Run a script from the repository root, against the working tree:

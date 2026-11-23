@@ -177,7 +177,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### pybmds
 
-The set of checks `"bmds_2026"` in `cytepool/stats/_benchmark_dose_flags.py` reproduces the default rules of the model recommendation for continuous models of pybmds 25.2, the Python package of EPA's Benchmark Dose Software, as its wheel's `pybmds/recommender/default.json` and `pybmds/recommender/checks.py` define them: which checks are enabled, their thresholds, bins and strict inequalities, and a BMDL of 0 counted as not estimated. No code is copied. pybmds is distributed under the MIT License:
+The set of checks `"bmds_2026"` in `cytepool/stats/_benchmark_dose_flags.py` reproduces the default rules of the model recommendation for continuous models of pybmds 25.2, the Python package of EPA's Benchmark Dose Software, as its wheel's `pybmds/recommender/default.json` and `pybmds/recommender/checks.py` define them: which checks are enabled, their thresholds, bins and strict inequalities, and a BMDL of 0 counted as not estimated. No code is copied. The choice `"bmds_2026"` of `benchmark_doses` in `cytepool/stats/potency.py` reproduces the rule of pybmds 25.2's `pybmds/recommender/recommender.py` among the models its checks leave viable: the lowest AIC when their BMDLs lie within 3-fold, the lowest BMDL otherwise, ties to the fewest parameters and then the list's order, with the AIC and test 4 leaving out parameters at a bound. No code is copied. pybmds is distributed under the MIT License:
 
 ```
 MIT License
@@ -203,7 +203,7 @@ DEALINGS IN THE SOFTWARE.
 
 ## Test, validation and documentation data
 
-The files under `tests/data/` are written by the scripts in `validation/`. Except for the two GEO series below, their inputs are generated with fixed random seeds. Reference values in those files come from the packages each script names.
+The files under `tests/data/` are written by the scripts in `validation/`. Except for the three GEO series below, their inputs are generated with fixed random seeds. Reference values in those files come from the packages each script names.
 
 The pages of the documentation (`docs/source/`) read the datasets that `docs/datasets.py` prepares in a cache outside the repository: three simulated with fixed random seeds by that script, and the two below, GEO series GSE96583 and the MSigDB Hallmark interferon-alpha response set. No file of these datasets is in the repository; the script records the source, licence, citation and checksum of each. Two guides also download the networks CollecTRI and PROGENy, as their sections below say.
 
@@ -220,6 +220,14 @@ Terms, from NCBI's GEO disclaimer (https://www.ncbi.nlm.nih.gov/geo/info/disclai
 `validation/dose_design.py` downloads `GSE208161_Pt04_Pt11_Pt19_Pt21_integrated_metadata.csv.gz` (1,679,182 bytes, SHA-256 dd36521e006f18416d9c5a0db5741dd374966128bcd9b98510fd0a9c585af4fe), the per-cell metadata of a phase 1 trial, from the Gene Expression Omnibus (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE208161) into a cache outside the repository, and `tests/data/dose_design/gse208161.npz` holds the cells and summed RNA counts of each participant, day and Seurat cluster derived from it, with each participant's dose from GEO's sample records.
 
 Sonigra A, Nel HJ, Wehr P, Ramnoruth N, Patel S, van Schie KA, Bladen MW, Mehdi AM, Tesiram J, Talekar M, Rossjohn J, Reid HH, Stuurman FE, Roberts H, Vecchio P, Gourley I, Rigby M, Becart S, Toes REM, Scherer HU, Lê Cao KA, Campbell K, Thomas R (2022). Randomized phase I trial of antigen-specific tolerizing immunotherapy with peptide/calcitriol liposomes in ACPA+ rheumatoid arthritis. JCI Insight 7, e160964. doi:10.1172/jci.insight.160964
+
+Terms, from NCBI's GEO disclaimer (https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html): "NCBI places no restrictions on the use or distribution of the GEO data. However, some submitters may claim patent, copyright, or other intellectual property rights in all or a portion of the data they have submitted. NCBI is not in a position to assess the validity of such claims, and therefore cannot provide comment or unrestricted permission concerning the use, copying, or distribution of the information contained in GEO."
+
+### GEO series GSE147072 (Gwinn et al. 2020)
+
+`validation/toxicology_rule_sets.py` downloads `GSE147072_SRA_20_Chemical_matrix.txt.gz` (5,728,043 bytes, SHA-256 9da191f15dd7f56e88345c0a1ccbc3dfb7a9c0fe6396d0d5b955f82b24def594), the TempO-Seq counts of the rat S1500+ probes in the liver and kidney of male Sprague Dawley rats dosed with 20 test articles for 5 days, and `GSE147072_series_matrix.txt.gz` (60,807 bytes, SHA-256 26f1d85c1fa9ed92c2a64c5f28b5f47d565ccc573112fc571269c24cf4b5b50f), its sample records, from the Gene Expression Omnibus (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE147072) into a cache outside the repository; it reads the liver samples of DE-71, acrylamide and milk thistle extract. `tests/data/toxicology_rule_sets/` holds values derived from them, log2(CPM + 1) of 100 acrylamide probes (`williams.json`) and of 20 prefiltered probes of each of the three test articles (`bmdexpress.json`), with each sample's dose from GEO's sample records and BMDExpress 2.30.520's results on them.
+
+Gwinn WM, Auerbach SS, Parham F, Stout MD, Waidyanatha S, Mutlu E, Collins B, Paules RS, Merrick BA, Ferguson S, Ramaiahgari S, Bucher JR, Sparrow B, Toy H, Gorospe J, Machesky N, Shah RR, Balik-Meisner MR, Mav D, Phadke DP, Roberts G, DeVito MJ (2020). Evaluation of 5-day in vivo rat liver and kidney with high-throughput transcriptomics for estimating benchmark doses of apical outcomes. Toxicological Sciences 176, 343-354. doi:10.1093/toxsci/kfaa081
 
 Terms, from NCBI's GEO disclaimer (https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html): "NCBI places no restrictions on the use or distribution of the GEO data. However, some submitters may claim patent, copyright, or other intellectual property rights in all or a portion of the data they have submitted. NCBI is not in a position to assess the validity of such claims, and therefore cannot provide comment or unrestricted permission concerning the use, copying, or distribution of the information contained in GEO."
 
