@@ -203,8 +203,8 @@ SET_PARAMETERS: dict[str, tuple[str, ...]] = {
     "ll4": ("b", "c", "d", "e"),
     "dromics": ("b", "c", "d", "e", "f"),
 }
-SET_PARAMETERS["bmdexpress"] = SET_PARAMETERS["epa"]
 """The parameter columns of each set's table, in order."""
+SET_PARAMETERS["bmdexpress"] = SET_PARAMETERS["epa"]
 
 POSITIVE_MEANS = (EXP2, EXP3, EXP4, EXP5)
 """The kinds whose means are positive, not fitted where a dose-group mean is not."""

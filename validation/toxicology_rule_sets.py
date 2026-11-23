@@ -32,23 +32,23 @@ settings, and nothing CytePool computed:
 - R 4.4 (``RSCRIPT``) codes both documents' acceptance from their text, on edge rows.
 
 Tiers: exact (1e-10) for the ANOVA against scipy on the same float64 values, the
-isotonic means and statistics; close for BMDExpress's ANOVA, within ten times the
-spread that float32 storage gives scipy's (relative, set before the comparison) plus
-1e-15 absolute, BMDExpress's p being 1 - F(x) in double precision; calibrated for
-p-values from permutations: within z SDs plus 2 / (B + 1), z the two-sided 0.001 / n
-quantile of the n genes compared, so that a row fails by chance with probability 0.001;
-identical for gene sets, verdicts, choices on BMDExpress's own fits and acceptance;
-close for fold changes, CytePool's on BMDExpress's values and its rule tables' on its
-own, within 1e-5 in log2, for maxima, BMDExpress's at most 1e-4 above CytePool's, and
-for BMDs where both programs choose the same model and reach the same maximum, within
-10 sqrt(2 max(d, 5e-7)) standard errors, d the gap of the log-likelihoods: (BMDU -
-BMDL) / 3.29, from the BMDL or BMDU over 1.645 where BMDS 2's other bound lies beyond
-CytePool's search, or the BMD where both do; a BMD that the likelihood does not pin
-down is checked on BMDExpress's printed curve; information for agreement on CytePool's
-own fits, beside FastBMD's 76%. On datasets
-simulated without responsive genes by ``simulate_dose_series``, the share of cell
-types that the ANOVA pre-modelling test passes (information), and on a vehicle-only
-design, that the Williams plus 1.5-fold prefilter alone passes far more (control).
+isotonic means and statistics; close for BMDExpress's ANOVA, within ten times the spread
+that float32 storage gives scipy's (relative, set before the comparison) plus 1e-15
+absolute, BMDExpress's p being 1 - F(x) in double precision; calibrated for p-values
+from permutations: within z SDs plus 2 / (B + 1), z the two-sided 0.001 / n quantile of
+the n genes compared, so that a row fails by chance with probability 0.001; identical
+for gene sets, verdicts, choices on BMDExpress's own fits and acceptance; close for fold
+changes, CytePool's on BMDExpress's values and its rule tables' on its own, within 1e-5
+in log2, for maxima, BMDExpress's at most 1e-4 above CytePool's, and for BMDs where both
+programs choose the same model and reach the same maximum, within 10 sqrt(2 max(d,
+5e-7)) standard errors, d the gap of the log-likelihoods: (BMDU - BMDL) / 3.29, from the
+BMDL or BMDU over 1.645 where BMDS 2's other bound lies beyond CytePool's search, or the
+BMD where both do; a BMD that the likelihood does not pin down is checked on
+BMDExpress's printed curve; information for agreement on CytePool's own fits, beside
+FastBMD's 76%. On datasets simulated without responsive genes by
+``simulate_dose_series``, the share of cell types that the ANOVA pre-modelling test
+passes (information), and on a vehicle-only design, that the Williams plus 1.5-fold
+prefilter alone passes far more (control).
 
 Requirements:
     Python 3.13 with numpy, numba and scipy, run from the repository root, and access to

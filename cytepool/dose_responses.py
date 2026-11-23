@@ -23,10 +23,9 @@ cube that supports tests, in one call, or the scores of one cell type's samples
    axis; ``linear_trend``, the slope of a straight line along the axis; and
    ``dose_groups``, whether any dose group differs from the vehicle, the one-way
    analysis of variance of the dose groups with moderated variances: the moderated
-   counterpart of the ANOVA pre-modelling test of NTP's genomic dose-response
-   approach, which at least one gene must pass for a data set to be analysed further
-   (NTP 2018). When
-   named, three multiple contrast tests refer the largest of several correlated
+   counterpart of the ANOVA pre-modelling test of NTP's genomic dose-response approach,
+   which at least one gene must pass for a data set to be analysed further (NTP 2018).
+   When named, three multiple contrast tests refer the largest of several correlated
    moderated t-statistics to the multivariate t distribution: ``dunnett``, each dose
    against the vehicle (Dunnett 1955); ``williams``, the Williams-type test of the
    vehicle against the pooled top doses (Bretz 2006); and ``mcp``, the MCP step, the
@@ -463,19 +462,19 @@ class DoseResponseResult:
       of ``flags``, built from :meth:`benchmark_doses` when asked for; for cell types
       that support only description, without bounds or ``passes_gate``.
     - ``"rule_set"``, with ``rules``: one row per gene the rule set kept in the cell
-      type (mean count of at least 5), with ``feature_id``, ``symbol`` (when the
-      cube has one), ``anova_p_value``, ``anova_adjusted_p_value``, ``williams_trend_p_value``,
-      ``direction`` (``"up"`` or ``"down"``), ``max_log2_fold_change`` (signed, at
-      the dose whose change from the vehicle is largest), ``passes_prefilter``,
-      ``model`` and ``model_choice`` (why it was chosen), ``fit_p_value`` (BMDS's
-      test 4), ``bmd``, ``bmdl``, ``bmdu`` and ``bmd_status`` at the document's
-      BMR, for ETAP ``bmd_vehicle_sd`` (the BMD at 1.349 times the vehicle
-      replicates' SD), ``failed_checks`` (the document's checks the BMD fails,
-      joined by "; ", NTP's flag of a gene it keeps ending "(NTP keeps the
-      gene)"; the ``flags_<set>`` column of the benchmark-dose table at the first
-      BMR, under the rule set's name) and ``accepted``. Under
-      ``rules`` the tables ``"curves"`` and ``"benchmark_doses"`` hold the rule
-      set's curves of the genes that pass its prefilter, without ``passes_gate``.
+      type (mean count of at least 5), with ``feature_id``, ``symbol`` (when the cube
+      has one), ``anova_p_value``, ``anova_adjusted_p_value``,
+      ``williams_trend_p_value``, ``direction`` (``"up"`` or ``"down"``),
+      ``max_log2_fold_change`` (signed, at the dose whose change from the vehicle is
+      largest), ``passes_prefilter``, ``model`` and ``model_choice`` (why it was
+      chosen), ``fit_p_value`` (BMDS's test 4), ``bmd``, ``bmdl``, ``bmdu`` and
+      ``bmd_status`` at the document's BMR, for ETAP ``bmd_vehicle_sd`` (the BMD at
+      1.349 times the vehicle replicates' SD), ``failed_checks`` (the document's checks
+      the BMD fails, joined by "; ", NTP's flag of a gene it keeps ending "(NTP keeps
+      the gene)"; the ``flags_<set>`` column of the benchmark-dose table at the first
+      BMR, under the rule set's name) and ``accepted``. Under ``rules`` the tables
+      ``"curves"`` and ``"benchmark_doses"`` hold the rule set's curves of the genes
+      that pass its prefilter, without ``passes_gate``.
 
     The tables of pathway scores or activities have one row per gene set or source,
     in the scores' order, with the columns :func:`~cytepool.limma` gives scores:
@@ -1721,11 +1720,11 @@ def dose_response(
     prefilter, the step that picks the genes that go on to curves: BMDExpress's
     default prefilter takes an unadjusted Williams p-value and cuts the estimated
     fold change, where the gate adjusts its p-values and puts any fold change inside
-    the test. It is not the ANOVA pre-modelling test of NTP's and ETAP's rule sets,
-    a test of the data set that at least one gene must pass before the set is
-    analysed further. With 2
-    replicates per dose, a cell type of 1,000 null genes had a gene pass the default
-    gate at 5% FDR in 10% to 16% of simulated series, against 7% with 3 replicates
+    the test. It is not the ANOVA pre-modelling test of NTP's and ETAP's rule sets, a
+    test of the data set that at least one gene must pass before the set is analysed
+    further. With 2 replicates per dose, a cell type of 1,000 null genes had a gene
+    pass the default gate at 5% FDR in 10% to 16% of simulated series, against 7%
+    with 3 replicates
     (https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-gate):
     :func:`~cytepool.permutation_check` runs the gate again with the doses permuted
     and tests whether the true doses pass more genes.

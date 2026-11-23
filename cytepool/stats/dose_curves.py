@@ -175,13 +175,12 @@ class DoseCurveFits:
         models: The set's models fitted, in set order.
         models_not_fitted: The set's other models, each with the reason: a model of
             p parameters needs a spare dose group, K - p of at least 1.
-        parameter_names: The set's parameter letters, the last axis of
-            ``parameters``: BMDS's for ``"epa"`` and ``"bmdexpress"``, where Hill's k
-            is the EC50, the dose of half the change v; DRomics' for the others,
-            where the
-            log-logistic curve ``ll4`` has b > 0 its slope, d its level at dose 0, c
-            its level at high doses and e its EC50, the dose of half the change.
-            drc's ``LL.4`` estimates (b, c, d, e) with b < 0 are (-b, d, c, e).
+        parameter_names: The set's parameter letters, the last axis of ``parameters``:
+            BMDS's for ``"epa"`` and ``"bmdexpress"``, where Hill's k is the EC50, the
+            dose of half the change v; DRomics' for the others, where the log-logistic
+            curve ``ll4`` has b > 0 its slope, d its level at dose 0, c its level at
+            high doses and e its EC50, the dose of half the change. drc's ``LL.4``
+            estimates (b, c, d, e) with b < 0 are (-b, d, c, e).
         variance: How the means were weighed: ``"constant"``, ``"weighted"`` or
             ``"moderated"``.
         doses: ``(K,)`` the dose of each dose group, ascending.

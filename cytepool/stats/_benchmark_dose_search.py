@@ -1059,12 +1059,13 @@ def gene_bounds(
     row: FloatArray,
     phi_fit: FloatArray,
 ) -> tuple[float, float]:
-    """The BMDL and BMDU of one gene: the lowest and highest doses of the scan's
-    range [scan[0], scan[-1]] whose profile deviance is within the threshold, or,
-    where the gene's numbers ask for the piece (``PIECE``), the ends of the piece of
-    that region that holds the BMD, as BMDS 2 bounds a BMD; 0 when the region reaches
-    the lowest dose of the scan, infinity when it reaches the highest. NaN when the profile at the BMD or at a dose of the scan lies below the
-    fit's objective by more than ``ABOVE_FIT``, so that the fit was not the maximum.
+    """The BMDL and BMDU of one gene: the lowest and highest doses of the scan's range
+    [scan[0], scan[-1]] whose profile deviance is within the threshold, or, where the
+    gene's numbers ask for the piece (``PIECE``), the ends of the piece of that region
+    that holds the BMD, as BMDS 2 bounds a BMD; 0 when the region reaches the lowest
+    dose of the scan, infinity when it reaches the highest. NaN when the profile at the
+    BMD or at a dose of the scan lies below the fit's objective by more than
+    ``ABOVE_FIT``, so that the fit was not the maximum.
 
     ``bases`` are the linear columns at the doses ``x`` of every grid point, ``change``
     those at each dose of the scan minus at dose 0, ``(n_points, n_scan, q)``; for
