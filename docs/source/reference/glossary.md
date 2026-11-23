@@ -16,9 +16,13 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
 
-**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from the vehicle by a stated change, the benchmark response (BMR), such as one SD of the vehicle or a fold change of 1.1. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
+**Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from its level at dose 0 by a stated change, the benchmark response (BMR), such as 1 SD of a vehicle replicate or a fold change of 1.1. [Benchmark doses](../statistics/potency.md#benchmark-doses)
+
+**Benchmark response (BMR).** The change from a dose-response curve's level at dose 0 that defines a benchmark dose: a multiple of the SD of a vehicle replicate, such as 1 or 1.349 SD, or an absolute change, such as a 1.5-fold change of expression. [Benchmark doses](../statistics/potency.md#benchmark-doses)
 
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
+
+**BMDL and BMDU.** The lower and upper bounds of a benchmark dose, each one-sided 95%, so that BMDL to BMDU is a two-sided 90% interval. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
 
 **Candidate shapes.** The guesses of a dose response that the MCP step of MCP-Mod tests, each a curve of the change from the vehicle along dose in a model family such as Emax or the beta model's umbrella shape. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
 
@@ -153,6 +157,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Principal components.** The directions along which the samples' values vary most, from the singular value decomposition of the centred values of their most variable genes, on which DESeq2's PCA plot places the samples. [Samples at a glance](../statistics/normalization_and_filtering.md#samples-at-a-glance)
 
 **Prior degrees of freedom.** How much the value that all genes share counts in empirical Bayes moderation, as a number of degrees of freedom added to each gene's own. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
+
+**Profile likelihood.** The largest log-likelihood of a model with one quantity held at a value, such as a curve's change at a dose; the values whose profile lies within a chi-square quantile of the maximum form a confidence interval. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
 
 **Proportion of true nulls (π₀).** The share of a family's tests without an effect, estimated from the p-values above a threshold, since those of tests without an effect are uniform. [The proportion of true nulls](../statistics/multiple_testing.md#proportion-of-true-nulls)
 
