@@ -177,7 +177,8 @@ class BenchmarkDoses:
             test of each gene's model against a mean per dose group, (df + K) log(1 +
             (K - p) F / df) on a chi-square of K - p degrees of freedom, F the curves'
             F-test of lack of fit: the fit p-value that BMDS, BMDExpress, NTP and ETAP
-            read; NaN without replicates.
+            read. Every parameter counts in p, as in the curves' AIC, where BMDS's
+            default leaves out those at a bound. NaN without replicates.
         scaled_residual_near_bmd: The scaled residual of the dose group nearest the
             BMD on the dose scale, the lower dose on a tie (BMDS's residual of
             interest).

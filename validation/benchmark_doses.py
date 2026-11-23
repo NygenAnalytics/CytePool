@@ -29,9 +29,12 @@ nothing that CytePool computed from them, except where a row says "given":
   variance, at 1 SD and at a change of 0.5, with NLopt's fallback optimizer, since
   the wheel lacks NLopt's Luksan algorithms. BMDs given pybmds's parameters and SD are
   close (1e-5; pybmds stops its search within about 5e-7 of the root); test 2 against
-  mpmath is exact (1e-10); test 4, the fit p-value that the checks read, where pybmds
-  reaches CytePool's maximum, is close (1e-6 relative to p max(1, |log p|)); the
-  checks of ``bmds_2026`` on pybmds's own numbers equal its recommender's default
+  mpmath is exact (1e-10); test 4, the fit p-value that the checks read, of the fits
+  where pybmds reaches CytePool's maximum, against mpmath's likelihood ratio of
+  pybmds's fit to the exact maximum of a mean per dose group, every parameter
+  counted, is close (1e-6 relative to p max(1, |log p|)), and pybmds's own test 4,
+  which leaves out of K - p the parameters at a bound, is a deliberate difference;
+  the checks of ``bmds_2026`` on pybmds's own numbers equal its recommender's default
   rules (identical); BMDLs and BMDUs where pybmds reaches
   CytePool's maximum agree within 5e-3, pybmds's root precision, and where they do
   not, the documented profile at pybmds's bound decides: a curve of the documented
@@ -858,12 +861,28 @@ def constant_variance_test(task: dict[str, Any]) -> dict[str, Any]:
         * (mp.log(2 * mp.pi * squares_of(values) / len(values)) + 1)
         for values in groups.values()
     )
+    # ... and of a mean per dose group with one variance, at S_w / n.
+    a1 = -n / mp.mpf(2) * (mp.log(2 * mp.pi * total / n) + 1)
     return {
         "key": task["key"],
         "statistic": float(statistic),
         "p_value": float(p_value),
         "a2_log_likelihood": float(a2),
+        "a1_log_likelihood": float(a1),
     }
+
+
+def fit_test(task: dict[str, Any], a1: Any) -> dict[str, Any]:
+    """Test 4 of a fit at 50 digits: twice its log-likelihood's distance from the
+    maximum of a mean per dose group with one variance, on a chi-square of K - p
+    degrees of freedom, every mean parameter counted."""
+    import mpmath as mp
+
+    mp.mp.dps = 50
+    statistic = max(2 * (a1 - mp.mpf(task["log_likelihood"])), mp.mpf(0))
+    half_df = mp.mpf(task["df"]) / 2
+    p_value = mp.gammainc(half_df, statistic / 2, mp.inf, regularized=True)
+    return {"key": task["key"], "p_value": float(p_value)}
 
 
 def squares_of(values: list[Any]) -> Any:
@@ -878,13 +897,26 @@ def mpmath_main(directory: Path) -> None:
     import mpmath as mp
 
     tasks = json.loads((directory / "mpmath_inputs.json").read_text())
+    test2 = [constant_variance_test(t) for t in tasks["test2"]]
+    a1 = {r["key"]: mp.mpf(r["a1_log_likelihood"]) for r in test2}
     out = {
         "versions": {"mpmath": mp.__version__},
         "results": [line_bounds(t) for t in tasks["lines"]],
-        "test2": [constant_variance_test(t) for t in tasks["test2"]],
+        "test2": test2,
+        "test4": [fit_test(t, a1[t["gene"]]) for t in tasks["test4"]],
     }
     (directory / "mpmath.json").write_text(json.dumps(out))
 
+
+# The mean parameters of each of BMDS's models, as their documented means count them.
+MEAN_PARAMETERS = {
+    "linear": 2,
+    "polynomial_2": 3,
+    "power": 3,
+    "hill": 4,
+    "exponential_3": 3,
+    "exponential_5": 4,
+}
 
 PYBMDS_CLASSES = {
     "linear": "Linear",
@@ -1403,10 +1435,17 @@ NOT_COMPLETED = "Did not successfully execute."
 
 
 def compare_pybmds(
-    rows: Rows, found: list[Series], reference: dict[str, Any], test2: dict[str, Any]
+    rows: Rows,
+    found: list[Series],
+    reference: dict[str, Any],
+    test2: dict[str, Any],
+    test4: dict[str, Any],
 ) -> dict:
-    """BMDs at pybmds's parameters; test 2 against mpmath's, with pybmds's own; the
-    recommender's checks; bounds where pybmds reaches CytePool's maximum."""
+    """BMDs at pybmds's parameters; test 2 against mpmath's, with pybmds's own; test 4
+    of the fits where pybmds reaches CytePool's maximum against mpmath's, from
+    pybmds's log-likelihood and the exact maximum of a mean per dose group, with
+    pybmds's own; the recommender's checks; bounds where pybmds reaches CytePool's
+    maximum."""
     from cytepool.benchmark_responses import BenchmarkResponse
     from cytepool.stats._benchmark_dose_flags import FlagInputs, failed_checks
     from cytepool.stats.dose_curves import fit_dose_curves
@@ -1414,9 +1453,11 @@ def compare_pybmds(
 
     by_name = {series.name: series for series in found}
     exact_test2 = {r["key"]: r for r in test2}
+    exact_test4 = {r["key"]: r["p_value"] for r in test4}
     bmd_differences, bound_differences, checks = [], [], []
     test2_differences, a2_shortfalls, p_ratios = [], [], []
     test4_differences: list[float] = []
+    test4_pybmds: list[float] = []
     beyond, shortfalls, not_completed = 0, 0, 0
     negative: list[str] = []
     one_only: list[str] = []
@@ -1536,13 +1577,15 @@ def compare_pybmds(
                 else BenchmarkResponse.absolute(0.5)
             )
             mine_model = benchmark_doses(one, bmr, model=model)
-            if form == "sd" and math.isfinite(pybmds_value(row["test4_p"])):
-                # Test 4 of the same maximum, which the flags read as the fit p-value.
+            exact = exact_test4.get(f"{name}/{g}/{model}")
+            if form == "sd" and exact is not None:
+                # Test 4 of the same maximum, which the flags read as the fit p-value,
+                # and pybmds's own, which leaves out parameters at a bound.
                 test4_differences.append(
-                    p_distance(
-                        float(mine_model.fit_p_value[0]), pybmds_value(row["test4_p"])
-                    )
+                    p_distance(float(mine_model.fit_p_value[0]), exact)
                 )
+                if math.isfinite(pybmds_value(row["test4_p"])):
+                    test4_pybmds.append(p_distance(pybmds_value(row["test4_p"]), exact))
             for name_ in ("bmdl", "bmdu"):
                 ours_bound = float(getattr(mine_model, name_)[0, 0])
                 ref_bound = pybmds_value(row[name_])
@@ -1614,11 +1657,23 @@ def compare_pybmds(
     rows.add(
         f"Test 4, the fit p-value, of the fits where pybmds reaches CytePool's maximum "
         f"({len(test4_differences)} fits)",
-        "pybmds 25.2 test 4",
+        "mpmath 1.3.0: pybmds 25.2's log-likelihood against the exact maximum of a "
+        "mean per dose group, every parameter counted, 50 digits",
         f"largest difference relative to p max(1, |log p|) "
         f"{max(test4_differences, default=0.0):.1e}",
         f"close ({CLOSE:g})",
-        max(test4_differences, default=0.0) <= CLOSE,
+        bool(test4_differences) and max(test4_differences) <= CLOSE,
+    )
+    moved = sum(d > CLOSE for d in test4_pybmds)
+    rows.add(
+        f"pybmds's own test 4, with its default count of parameters ({len(test4_pybmds)} "
+        "fits)",
+        "pybmds 25.2, against mpmath 1.3.0",
+        f"{moved} differ by more than {CLOSE:g}: BMDS leaves out of K - p the "
+        f"parameters at a bound; {len(test4_pybmds) - moved} the same",
+        "n/a",
+        None,
+        deliberate=True,
     )
     rows.add(
         f"bmds_2026's checks on pybmds's own numbers ({len(checks)} completed fits)",
@@ -2429,18 +2484,35 @@ def main() -> int:
             for task in tasks
         }.values()
     )
+    test4_inputs = [
+        {
+            "key": f"{task['key'].rsplit('/', 1)[0]}/{row['model']}",
+            "gene": task["key"].rsplit("/", 1)[0],
+            "log_likelihood": pybmds_value(row["log_likelihood"]),
+            "df": len(set(task["doses"])) - MEAN_PARAMETERS[row["model"]],
+        }
+        for task, case in zip(tasks, pybmds["results"], strict=True)
+        if task["key"].endswith("/sd")
+        for row in case["rows"]
+        if math.isfinite(pybmds_value(row["log_likelihood"]))
+        and not any(
+            NOT_COMPLETED in message
+            for messages in row["notes"].values()
+            for message in messages
+        )
+    ]
     mpmath = run_python(
         "--mpmath",
         sys.executable,
         {
             "mpmath_inputs.json": json.dumps(
-                {"lines": line_inputs, "test2": test2_inputs}
+                {"lines": line_inputs, "test2": test2_inputs, "test4": test4_inputs}
             )
         },
         "mpmath.json",
     )
     print("mpmath: " + ", ".join(f"{k} {v}" for k, v in mpmath["versions"].items()))
-    pybmds_parts = compare_pybmds(rows, found, pybmds, mpmath["test2"])
+    pybmds_parts = compare_pybmds(rows, found, pybmds, mpmath["test2"], mpmath["test4"])
 
     # scipy.
     cases = profile_cases(found, plugin)

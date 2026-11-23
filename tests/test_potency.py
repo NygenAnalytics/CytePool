@@ -1560,13 +1560,15 @@ def test_nested_models_have_nested_regions(
     # a curve of the smaller one, both have the same maximum, and every curve of the
     # smaller model is one of the larger: the larger model's region of doses within
     # the threshold holds the smaller one's. A profile that misses a better curve of
-    # the larger model, as where a parameter is pressed against its bound, breaks it.
+    # the larger model breaks it, as where a parameter creeps towards its bound and
+    # is pressed against it: two noisy saturating curves, found by simulation, whose
+    # exponential 3 at a change of 0.3 had a BMDL of 8.85 against exponential 2's
+    # 8.44, and a BMDU short of it.
     x = replicated(HALF_LOG, 3)
-    rng = np.random.default_rng(61)
-    slopes = rng.uniform(0.005, 0.05, 30) * rng.choice([-1.0, 1.0], 30)
-    values = np.column_stack(
-        [mixed[1], 5.0 + slopes * x[:, None] + rng.normal(0.0, 0.25, (x.size, 30))]
-    )
+    rng = np.random.default_rng(5)
+    curve = 5.0 + x / (1.0 + x)
+    found = [curve + rng.normal(0.0, sd, x.size) for sd in (0.1, 0.3)]
+    values = np.column_stack([*found, mixed[1]])
     fits = fit_dose_curves(x, values, models="epa")
     names = fits.parameter_names
     checked = 0
@@ -1584,7 +1586,8 @@ def test_nested_models_have_nested_regions(
                 assert large.bmdl[0, g] <= nested.bmdl[0, g] * (1 + 1e-8), (big, g)
                 assert large.bmdu[0, g] >= nested.bmdu[0, g] * (1 - 1e-8), (big, g)
                 checked += 1
-    assert checked >= 40
+    # The two saturating curves have exponential 3 at d = 1 at both BMRs.
+    assert on.sum() >= 1 and checked >= 8
 
 
 def test_the_fit_p_value_is_bmds_test_4(mixed: tuple[np.ndarray, np.ndarray]) -> None:
@@ -1641,3 +1644,52 @@ def test_bounds_need_the_fit_to_be_the_maximum_at_every_dose(
         dataclasses.replace(fits, parameters=moved), bmrs[0], "linear"
     )
     assert abs(gaps[0]) <= 1e-12
+
+
+def test_a_fit_that_is_not_the_maximum_loses_its_bounds_at_every_bmr() -> None:
+    # Means of a weighted fit that miss a line by much more than their variance, on
+    # 2 degrees of freedom, and the line's intercept moved by 3e-4: the weighted sum
+    # of squares rises by 12 x 9e-8, which an absolute BMR's likelihood, Q / s^2,
+    # sees as 1.1e-4 at its BMD, beyond the 1e-6 of rounding, and which an SD-based
+    # BMR's, holding s^2 on 2 degrees of freedom beside Q near 20, sees as 4e-7. Alone,
+    # the SD-based BMRs get bounds; beside the absolute one, whose profile found a
+    # curve above the fit's, none of the gene's BMRs does.
+    from cytepool.stats.dose_curves import _CurveData, _fit_means
+
+    levels = np.array([0.0, 0.1, 0.3, 1.0, 3.0, 10.0])
+    n_samples = np.full(levels.size, 2.0)
+    zigzag = 1.3 * np.array([1.0, -1.0, 1.0, -1.0, 1.0, -1.0])
+    data = _CurveData(
+        "weighted",
+        levels,
+        n_samples,
+        (5.0 + 0.3 * levels + zigzag)[None, :],
+        np.diag(1.0 / n_samples)[None],
+        np.array([0.01]),
+        np.array([2.0]),
+        None,
+    )
+    fits = _fit_means(data, "epa")
+    m = fits.models.index("linear")
+    moved = np.array(fits.parameters)
+    moved[0, m, fits.parameter_names.index("g")] += 3e-4
+    moved_fits = dataclasses.replace(fits, parameters=moved)
+    sd_only = benchmark_doses(moved_fits, BenchmarkResponse.sd(1.349), model="linear")
+    assert (
+        np.isfinite(sd_only.bmd[:, 0]).all() and np.isfinite(sd_only.bmdl[:, 0]).all()
+    )
+    both = benchmark_doses(
+        moved_fits,
+        [BenchmarkResponse.absolute(0.5), BenchmarkResponse.sd(1.349)],
+        model="linear",
+    )
+    assert np.isfinite(both.bmd[:, 0]).all()
+    assert np.isnan(both.bmdl[:, 0]).all() and np.isnan(both.bmdu[:, 0]).all()
+    assert "bounds not computed for 3 BMDs" in " ".join(repr(both).split())
+    # The fit itself keeps its bounds at every BMR.
+    untouched = benchmark_doses(
+        fits,
+        [BenchmarkResponse.absolute(0.5), BenchmarkResponse.sd(1.349)],
+        model="linear",
+    )
+    assert np.isfinite(untouched.bmdl[:, 0]).all()
