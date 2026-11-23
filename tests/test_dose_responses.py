@@ -4197,9 +4197,15 @@ def test_benchmark_doses_read_back_and_say_why_they_are_missing() -> None:
     }
     assert entry["doses_searched"] == [pytest.approx(0.001), pytest.approx(500.0)]
     assert entry["bounds"] == "one-sided 95% profile-likelihood bounds"
+    # Every BMD of this cell type has its bounds, BMDs that are not reached aside.
+    found = result.benchmark_doses("full")
+    assert np.isnan(found.bmd).sum() > 0
+    assert entry["n_bounds_not_computed"] == 0
+    assert record["benchmark_doses"]["optima_carried_to_the_next_scan_dose"] == 2
     text = " ".join(repr(result).split())
     assert (
-        "benchmark doses at 1.349 SD, change of 0.5; flags: etap_2024, ntp_2018" in text
+        "benchmark doses at 1.349 SD, a change of 0.5; flags: etap_2024, ntp_2018"
+        in text
     )
     assert "BMDs at 1.349 SD: " in text and "BMDs at 1 SD: " in text
     with pytest.raises(TypeError, match="benchmark_doses must be a mapping"):
@@ -4231,6 +4237,56 @@ def test_benchmark_doses_read_back_and_say_why_they_are_missing() -> None:
         plain.table("full", "benchmark_doses")
     with pytest.raises(KeyError, match="'benchmark_doses' is a table, not a cell"):
         result.benchmark_doses("benchmark_doses")
+
+
+def test_the_benchmark_doses_of_a_cell_type_carry_its_genes_ids() -> None:
+    # A cube from a bulk matrix, whose features are numbered feature_0, ..., and
+    # whose expression filter drops low genes: the BenchmarkDoses that dose_response
+    # keeps label its rows with the ids of the genes it fitted, whatever the checks.
+    from cytepool import from_bulk
+
+    rng = np.random.default_rng(5)
+    doses = np.repeat([0.0, 0.1, 1.0, 10.0], 3)
+    n_genes = 40
+    level = rng.uniform(5.0, 400.0, n_genes)
+    level[::3] = 0.2  # low genes that the filter drops
+    rises = (doses[:, None] > 0.5) * (np.arange(n_genes) % 2 == 0)
+    counts = rng.poisson(level[None, :] * (1.0 + 0.8 * rises))
+    samples = Table(
+        {
+            "sample_id": np.array([f"s{i}" for i in range(doses.size)], dtype=object),
+            "dose": doses,
+        }
+    )
+    cube = from_bulk(counts, samples=samples)
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=DoseAxis("dose", unit="mg/kg", metric="administered"),
+        models="epa",
+        bmr=BenchmarkResponse.sd(1.349),
+        flags="etap_2024",
+    )
+    (group,) = result.groups
+    table = result.table(group, "benchmark_doses")
+    kept = result.curve_fits(group).means.shape[0]
+    assert 0 < kept < n_genes
+    found = result.benchmark_doses(group)
+    other = found.table(flags="ntp_2018")
+    assert other["feature_id"].tolist() == table["feature_id"].tolist()
+    np.testing.assert_array_equal(other["bmd"], table["bmd"])
+    # The ids are those of the genes fitted, which the filter thinned.
+    curves = result.table(group, "curves")
+    fitted = list(dict.fromkeys(curves["feature_id"].tolist()))
+    assert table["feature_id"].tolist()[:kept] == fitted
+    assert "feature_0" not in fitted
+    assert found.feature_ids.tolist() == fitted
+    # benchmark_doses on the fits alone numbers them instead.
+    from cytepool.stats.potency import benchmark_doses as compute
+
+    plain = compute(result.curve_fits(group), BenchmarkResponse.sd(1.349))
+    assert plain.feature_ids is None
+    assert plain.table()["feature_id"].tolist()[:2] == ["feature_0", "feature_1"]
 
 
 def test_a_cell_type_without_curves_has_no_benchmark_doses() -> None:

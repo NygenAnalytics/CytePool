@@ -2,14 +2,15 @@
 dose.
 
 A benchmark dose (BMD) is the dose at which a fitted curve departs from its level at
-dose 0 by a stated change, the benchmark response (BMR) (Crump 1984). Documents state
-the BMR of a gene in two ways. One is a multiple of the standard deviation (SD) of a
-vehicle replicate: 1 SD in BMDS and NTP 2018, which US EPA 2012 asks to present beside
-any other BMR, and 1.349 SD in EPA's Transcriptomic Assessment Products (US EPA 2024,
-after Thomas et al. 2007), since a gene's adverse direction is unknown. The other is a
-change in the values' units, such as a 1.5-fold change of expression, log2(1.5) on
-log2 values, which compares cell types: the SD of a pseudobulk profile shrinks as its
-cells add up, so the same SD multiple is a smaller change where cells are many.
+dose 0 by a stated change, the benchmark response (BMR) (Crump 1984). Regulatory
+guidance states the BMR of a gene in two ways. One is a multiple of the standard
+deviation (SD) of a vehicle replicate: 1 SD in BMDS and NTP 2018, which US EPA 2012
+asks to present beside any other BMR, and 1.349 SD in EPA's Transcriptomic
+Assessment Products (US EPA 2024, after Thomas et al. 2007), since a gene's adverse
+direction is unknown. The other is a change in the values' units, such as a 1.5-fold
+change of expression, log2(1.5) on log2 values, which compares cell types: the SD of
+a pseudobulk profile shrinks as its cells add up, so the same SD multiple is a
+smaller change where cells are many.
 :class:`BenchmarkResponse` holds the BMR as a logged value; how BMDs and their bounds
 are computed is in
 https://docs.nygen.io/CytePool/statistics/potency#benchmark-doses.
@@ -34,7 +35,7 @@ References:
 from dataclasses import dataclass
 from typing import Any
 
-from ._options import checked_choice, positive_finite_number
+from ._options import checked_choice, positive_finite_number, real_number
 
 __all__ = ["BenchmarkResponse"]
 
@@ -83,13 +84,19 @@ class BenchmarkResponse:
         """A change of ``multiple`` times the SD of a vehicle replicate.
 
         The SD is the one of the fitted curve's likelihood, as BMDS estimates it
-        with the curve: under constant variance the curve's maximum-likelihood SD,
-        and where the curves weigh the dose-group means of a moderated fit, the
-        fit's residual or moderated SD scaled to one vehicle replicate. The bounds
-        of the BMD treat the SD as estimated, so it enters their likelihood
+        with the curve. Under constant variance it is the curve's maximum-likelihood
+        SD, sqrt((S_w + Q) / n), with S_w the within-group sum of squares, Q the
+        curve's sum of squares about the dose-group means and n the samples. Where
+        the curves weigh the dose-group means of a moderated fit, whose variance s^2
+        has df degrees of freedom, the likelihood holds s^2 with the curve, and the
+        SD is its maximum-likelihood value, sqrt((df s^2 + Q) / (df + K)) at K dose
+        groups, scaled to one vehicle replicate by sqrt(n_0 C_00), with C_00 the
+        unscaled variance of the vehicle's mean over its n_0 samples. The bounds of
+        the BMD treat the SD as estimated, so it enters their likelihood
         (https://docs.nygen.io/CytePool/statistics/potency#benchmark-dose-bounds).
-        The documents' multiples are 1 (BMDS's default, NTP 2018) and 1.349 (US EPA
-        2024, after Thomas et al. 2007).
+        The multiples of regulatory guidance are 1 (BMDS's default, NTP 2018) and
+        1.349 (EPA's transcriptomic assessment products, US EPA 2024, after Thomas
+        et al. 2007).
 
         Args:
             multiple: The multiple of the SD, finite and above 0.
@@ -98,7 +105,7 @@ class BenchmarkResponse:
             TypeError: If ``multiple`` is not a real number.
             ValueError: If ``multiple`` is not finite and above 0.
         """
-        return cls(SD, multiple)
+        return cls(SD, _size(multiple, "multiple"))
 
     @classmethod
     def absolute(cls, change: float) -> "BenchmarkResponse":
@@ -110,13 +117,14 @@ class BenchmarkResponse:
         with their cells per profile.
 
         Args:
-            change: The change, finite and above 0.
+            change: The size of the change, finite and above 0: the BMD is the
+                first dose at which the curve rises or falls by it.
 
         Raises:
             TypeError: If ``change`` is not a real number.
             ValueError: If ``change`` is not finite and above 0.
         """
-        return cls(ABSOLUTE, change)
+        return cls(ABSOLUTE, _size(change, "change"))
 
     @property
     def label(self) -> str:
@@ -131,3 +139,15 @@ class BenchmarkResponse:
         ``BenchmarkResponse(**bmr.to_dict())`` rebuilds it.
         """
         return {"kind": self.kind, "value": self.value}
+
+
+def _size(value: Any, name: str) -> float:
+    """A BMR's multiple or change: a finite real number above 0. A negative one asks
+    for a fall, which every BMR reads already."""
+    number = real_number(value, name)
+    if number < 0.0:
+        raise ValueError(
+            f"{name} must be above 0, got {number}: give the size of the change; the "
+            "BMD is read in either direction, up or down"
+        )
+    return positive_finite_number(number, name)

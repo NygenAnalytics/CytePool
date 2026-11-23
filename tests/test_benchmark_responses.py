@@ -53,20 +53,43 @@ def test_numpy_numbers_are_kept_as_floats() -> None:
     assert BenchmarkResponse.sd(np.int64(2)).value == 2.0
 
 
-@pytest.mark.parametrize("value", [0.0, -1.0, math.inf, -math.inf, math.nan])
+@pytest.mark.parametrize("value", [0.0, math.inf, math.nan])
 def test_values_must_be_finite_and_positive(value: float) -> None:
-    with pytest.raises(ValueError, match="value must be positive and finite"):
+    # Each constructor names its own argument; the class names its field.
+    with pytest.raises(ValueError, match="multiple must be positive and finite"):
         BenchmarkResponse.sd(value)
-    with pytest.raises(ValueError, match="value must be positive and finite"):
+    with pytest.raises(ValueError, match="change must be positive and finite"):
         BenchmarkResponse.absolute(value)
+    with pytest.raises(ValueError, match="value must be positive and finite"):
+        BenchmarkResponse("sd", value)
+
+
+@pytest.mark.parametrize("value", [-1.0, -0.5, -math.inf])
+def test_a_negative_size_says_that_either_direction_is_read(value: float) -> None:
+    # A fall is asked for with the size of the change: every BMR reads both
+    # directions.
+    for constructor, name in (
+        (BenchmarkResponse.sd, "multiple"),
+        (BenchmarkResponse.absolute, "change"),
+    ):
+        with pytest.raises(
+            ValueError,
+            match=rf"^{name} must be above 0, got {value}: give the size of the change; "
+            "the BMD is read in either direction, up or down$",
+        ):
+            constructor(value)
 
 
 @pytest.mark.parametrize(
     "value", [True, "1", None, [1.0], np.array([1.0]), np.ma.masked_array(1.0)]
 )
 def test_values_must_be_real_numbers(value: object) -> None:
-    with pytest.raises(TypeError, match="value must be a real number"):
+    with pytest.raises(TypeError, match="multiple must be a real number"):
         BenchmarkResponse.sd(value)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="change must be a real number"):
+        BenchmarkResponse.absolute(value)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="value must be a real number"):
+        BenchmarkResponse("absolute", value)  # type: ignore[arg-type]
 
 
 def test_kinds_are_checked() -> None:

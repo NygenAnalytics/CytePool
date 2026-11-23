@@ -6,7 +6,7 @@ myst:
 
 # Benchmark responses
 
-A benchmark response is the change from a curve's level at dose 0 that defines a benchmark dose; [Benchmark doses](../statistics/potency/#benchmark-doses) explains the two kinds and the documents behind them.
+A benchmark response is the change from a curve's level at dose 0 that defines a benchmark dose; [Benchmark doses](../statistics/potency/#benchmark-doses) explains the two kinds and the regulatory guidance behind them.
 
 ```{eval-rst}
 .. automodule:: cytepool.benchmark_responses

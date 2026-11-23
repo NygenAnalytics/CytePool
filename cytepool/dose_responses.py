@@ -88,8 +88,8 @@ Tests in one direction:
 Benchmark doses:
     With ``bmr`` as well, each gene's best curve gives its benchmark dose at each
     benchmark response, and at 1 SD beside them, with one-sided 95% profile-likelihood
-    bounds in cell types that support tests and without bounds in those that support
-    only description (:mod:`cytepool.stats.potency`).
+    bounds given the chosen model in cell types that support tests and without bounds
+    in those that support only description (:mod:`cytepool.stats.potency`).
 
 Adjustment for multiple testing:
     ``adjusted_p_value`` adjusts the p-values of one cell type and test by
@@ -231,7 +231,7 @@ from .dose_designs import DESCRIPTIVE, INFERENTIAL, DoseDesignReport, check_dose
 from .normalization import library_sizes, log2_cpm, tmm_factors
 from .pathway_scores import PathwayScores
 from .stats._benchmark_dose_flags import checked_flag_sets
-from .stats._benchmark_dose_search import search_range, search_settings
+from .stats._benchmark_dose_search import search_settings
 from .stats._dose_curve_models import curve_values, model_of
 from .stats._dose_curve_search import fitter_settings
 from .stats.distributions import t_ppf
@@ -260,11 +260,10 @@ from .stats.multiple_contrasts import (
 )
 from .stats.multiple_testing import adjust_p_values
 from .stats.potency import (
-    BOUNDS,
     BenchmarkDoses,
+    _benchmark_record,
     _checked_responses,
     _status_counts,
-    _threshold_name,
     benchmark_doses,
 )
 from .stats.smoothing import NaturalSplineBasis
@@ -807,9 +806,7 @@ class DoseResponseResult:
         if name == BENCHMARK_DOSES:
             genes, _ = self._curve_pair(group)
             doses = self.benchmark_doses(group)
-            table = doses.table(
-                feature_ids=genes[genes.columns[0]], flags=self.settings["flags"]
-            )
+            table = doses.table(flags=self.settings["flags"])
             rows = np.tile(np.arange(len(genes)), len(doses.benchmark_responses))
             return _with_gene_columns(
                 table, genes, rows, self._tables.get((group, GATE))
@@ -1151,11 +1148,14 @@ class DoseResponseResult:
         return self._curve_pair(self._group(group))[1]
 
     def benchmark_doses(self, group: str | None = None) -> BenchmarkDoses:
-        """Return the benchmark doses of a cell type's curves, with their bounds and
-        what the documents' checks read.
+        """Return the benchmark doses of a cell type's curves, with their bounds, the
+        statistics that the checks of BMDS, NTP, ETAP and EFSA read, and the genes'
+        ids.
 
         Their table with other sets of checks needs no new bounds:
-        ``result.benchmark_doses(group).table(flags="ntp_2018")``.
+        ``result.benchmark_doses(group).table(flags="ntp_2018")``, whose rows carry the
+        genes' ids, as the table ``"benchmark_doses"`` does, without ``symbol`` and
+        ``passes_gate``.
 
         Args:
             group: A cell type with curves; it may be left out when one cell type
@@ -1326,7 +1326,7 @@ class DoseResponseResult:
                 f"  curves: {settings['models']}, {settings['variance']} variance"
             )
         if settings.get("bmr") is not None:
-            labels = [BenchmarkResponse(**bmr).label for bmr in settings["bmr"]]
+            labels = [_bmr_text(BenchmarkResponse(**bmr)) for bmr in settings["bmr"]]
             text = "  benchmark doses at " + ", ".join(labels)
             if settings["flags"]:
                 text += "; flags: " + ", ".join(settings["flags"])
@@ -1385,7 +1385,7 @@ class DoseResponseResult:
         if found is None:
             return ""
         parts = [
-            f"BMDs at {bmr.label}: {_status_counts(found.status[i])}"
+            f"BMDs at {_bmr_text(bmr)}: {_status_counts(found.status[i])}"
             for i, bmr in enumerate(found.benchmark_responses)
         ]
         bounds = "" if found.bounds else " (no bounds)"
@@ -1396,6 +1396,11 @@ class DoseResponseResult:
         as the gate calls them."""
         adjusted = self._tables[(group, test)]["adjusted_p_value"]
         return int(np.count_nonzero(adjusted <= _FDR))
+
+
+def _bmr_text(bmr: BenchmarkResponse) -> str:
+    """A BMR as printouts write it after "at": "1.349 SD", "a change of 0.584963"."""
+    return bmr.label if bmr.kind == "sd" else f"a {bmr.label}"
 
 
 def _with_gene_columns(
@@ -1548,8 +1553,9 @@ def dose_response(
     explains the models, the variance modes and how to read the curves. With ``bmr``
     as well, each gene's best curve gives its benchmark dose (BMD), the dose at which
     the curve departs from its level at dose 0 by the benchmark response (BMR), with
-    one-sided 95% profile-likelihood bounds, BMDL and BMDU, in cell types that
-    support tests (:func:`~cytepool.stats.potency.benchmark_doses`), in the table
+    one-sided 95% profile-likelihood bounds given each gene's chosen model, BMDL and
+    BMDU, in cell types that support tests
+    (:func:`~cytepool.stats.potency.benchmark_doses`), in the table
     ``"benchmark_doses"`` and in :meth:`DoseResponseResult.benchmark_doses`;
     https://docs.nygen.io/CytePool/statistics/potency#benchmark-doses explains them.
 
@@ -1659,10 +1665,11 @@ def dose_response(
             ``BenchmarkResponse.sd(1.349)`` or ``BenchmarkResponse.absolute(0.5)``,
             or a list of them, for the BMDs of each gene's best curve, with the 1 SD
             BMD beside them; None (default) for none. Needs ``models``.
-        flags: The documents' sets of checks whose failures the table
-            ``"benchmark_doses"`` lists: ``"bmds_2026"``, ``"ntp_2018"``,
-            ``"etap_2024"`` or ``"efsa_2022"``, or a list of them; None (default)
-            for none. Needs ``bmr``.
+        flags: The checks of regulatory guidance whose failures the table
+            ``"benchmark_doses"`` lists: those of BMDS (``"bmds_2026"``), NTP 2018
+            (``"ntp_2018"``), EPA's ETAP 2024 (``"etap_2024"``) or EFSA 2022
+            (``"efsa_2022"``), a set's name or a list of names; None (default) for
+            none. Needs ``bmr``.
         analysis: :func:`~cytepool.limma_voom` (by default),
             :func:`~cytepool.limma_trend` or :func:`~cytepool.dream_voom`; a design
             with random intercepts needs ``dream_voom``. Left at its default for
@@ -1898,11 +1905,17 @@ def dose_response(
             if found is not None:
                 curves[group] = found
                 if responses is not None:
-                    doses_of[group] = benchmark_doses(
-                        found[1],
-                        responses,
-                        bounds=status == INFERENTIAL,
-                        n_threads=options.get("n_threads"),
+                    genes = found[0]
+                    doses_of[group] = replace(
+                        benchmark_doses(
+                            found[1],
+                            responses,
+                            bounds=status == INFERENTIAL,
+                            n_threads=options.get("n_threads"),
+                        ),
+                        feature_ids=read_only(
+                            np.asarray(genes[genes.columns[0]].tolist(), dtype=object)
+                        ),
                     )
     _adjust_across_groups(fits, (*splines.tests, *named))
     return _result(
@@ -2293,9 +2306,9 @@ def _benchmark_settings(
     if bmr is None:
         if flags is not None:
             raise ValueError(
-                "flags name the documents' checks of benchmark doses, and bmr is None, "
-                "so no benchmark doses are computed; give bmr, such as "
-                "BenchmarkResponse.sd(1), or leave flags out"
+                "flags name the checks of BMDS, NTP, ETAP or EFSA of benchmark doses, "
+                "and bmr is None, so no benchmark doses are computed; give bmr, such "
+                "as BenchmarkResponse.sd(1), or leave flags out"
             )
         return None, None
     responses = _checked_responses(bmr)
@@ -3568,26 +3581,6 @@ def _restore_result(
         cube=cube,
         design=design,
     )
-
-
-def _benchmark_record(found: BenchmarkDoses | None) -> dict[str, Any] | None:
-    """The record of a cell type's benchmark doses; None without them."""
-    if found is None:
-        return None
-    low, high = search_range(found.lowest_dose, found.top_dose)
-    missing = found.bounds & np.isfinite(found.bmd) & np.isnan(found.bmdl)
-    return {
-        "bmrs": [bmr.to_dict() for bmr in found.benchmark_responses],
-        "bounds": (
-            BOUNDS if found.bounds else "none: the cell type supports only description"
-        ),
-        "thresholds": {
-            bmr.label: _threshold_name(found.variance, bmr)
-            for bmr in found.benchmark_responses
-        },
-        "doses_searched": [low, high],
-        "n_bounds_not_computed": int(np.count_nonzero(missing)),
-    }
 
 
 def _without_tables(

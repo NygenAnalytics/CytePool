@@ -118,7 +118,7 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.stats.dose_curves", "_unchecked_turns"): _DOSE_CURVES,
     ("cytepool.stats.potency", "_checked_responses"): _BENCHMARK_DOSES,
     ("cytepool.stats.potency", "_status_counts"): _BENCHMARK_DOSES,
-    ("cytepool.stats.potency", "_threshold_name"): _BENCHMARK_DOSES,
+    ("cytepool.stats.potency", "_benchmark_record"): _BENCHMARK_DOSES,
     ("cytepool.stats.smoothing", "_smoothing_spline_fit"): (
         "R's smooth.spline, built from the B-splines of the public "
         "natural_spline_basis next to them, with which multiple_testing smooths "

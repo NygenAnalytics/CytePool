@@ -1,6 +1,6 @@
-"""The documents' checks of benchmark doses, at each threshold's edge.
+"""The checks of BMDS, NTP, ETAP and EFSA of benchmark doses, at each threshold's edge.
 
-The inequalities are written here from the documents: pybmds 25.2's default rules of
+The inequalities are written here from their sources: pybmds 25.2's default rules of
 BMDS's model recommendation (its ``default.json`` and ``checks.py``, MIT), NTP 2018 pp.
 8 to 9, US EPA 2024 Sec. 3.4.5.3 and EFSA 2022 Sec. 2.6.5."""
 
@@ -22,7 +22,7 @@ def inputs(**rows: list[float]) -> FlagInputs:
         "bmd": 1.0,
         "bmdl": 0.5,
         "bmdu": 2.0,
-        "lack_of_fit_p_value": 0.5,
+        "fit_p_value": 0.5,
         "residual_near_bmd": 0.5,
         "residual_at_vehicle": 0.5,
         "vehicle_sd_ratio": 1.0,
@@ -64,13 +64,13 @@ def test_ntp_bmdu_over_bmdl_is_at_least_40() -> None:
 def test_fit_p_values_at_the_edge() -> None:
     # NTP and ETAP accept p > 0.1; BMDS flags p < 0.1.
     p = [0.0999, 0.1, 0.1001]
-    assert flags_of("ntp_2018", lack_of_fit_p_value=p) == [
+    assert flags_of("ntp_2018", fit_p_value=p) == [
         "fit p-value <= 0.1",
         "fit p-value <= 0.1",
         "",
     ]
-    assert flags_of("etap_2024", lack_of_fit_p_value=p)[1] == "fit p-value <= 0.1"
-    assert flags_of("bmds_2026", lack_of_fit_p_value=p) == [
+    assert flags_of("etap_2024", fit_p_value=p)[1] == "fit p-value <= 0.1"
+    assert flags_of("bmds_2026", fit_p_value=p) == [
         "fit p-value < 0.1 (questionable)",
         "",
         "",
@@ -124,6 +124,37 @@ def test_bmds_ratio_and_residual_thresholds() -> None:
     assert got[2] == "BMD / BMDL > 20 (questionable); BMD / BMDL > 3 (warning)"
 
 
+def test_bmds_edges_are_strict() -> None:
+    # pybmds's default rules fail a ratio strictly above its threshold: BMD / BMDL
+    # > 20 (questionable) and > 3 (warning), BMDL / highest dose > 1 (warning),
+    # lowest dose / BMDL > 10 (questionable) and > 3 (warning).
+    got = flags_of("bmds_2026", bmd=[20.0, 20.0001], bmdl=[1.0, 1.0], bmdu=[40.0, 40.0])
+    assert got == [
+        "BMD / BMDL > 3 (warning)",
+        "BMD / BMDL > 20 (questionable); BMD / BMDL > 3 (warning)",
+    ]
+    got = flags_of(
+        "bmds_2026",
+        bmd=[2 * TOP, 2 * TOP],
+        bmdl=[TOP, TOP * (1 + 1e-12)],
+        bmdu=[4 * TOP, 4 * TOP],
+    )
+    assert got == [
+        "BMD / highest dose > 1 (warning)",
+        "BMD / highest dose > 1 (warning); BMDL / highest dose > 1 (warning)",
+    ]
+    # A BMD at the lowest dose and BMDLs at exactly a third and a tenth of it.
+    bmdl = [LOWEST / 3, LOWEST / 3.0001, LOWEST / 10, LOWEST / 10.0001]
+    got = flags_of("bmds_2026", bmd=[LOWEST] * 4, bmdl=bmdl, bmdu=[1.0] * 4)
+    assert got == [
+        "",
+        "lowest dose / BMDL > 3 (warning); BMD / BMDL > 3 (warning)",
+        "lowest dose / BMDL > 3 (warning); BMD / BMDL > 3 (warning)",
+        "lowest dose / BMDL > 10 (questionable); lowest dose / BMDL > 3 (warning); "
+        "BMD / BMDL > 3 (warning)",
+    ]
+
+
 def test_missing_values() -> None:
     nan = math.nan
     rows = {"bmd": [nan, 1.0, 1.0, 1.0], "bmdl": [nan, nan, 0.0, 0.5]}
@@ -137,10 +168,10 @@ def test_missing_values() -> None:
     ]
     # a BMDL of 0 or a BMDU of infinity widens BMDU / BMDL beyond any threshold
     assert flags_of("ntp_2018", **rows) == [
-        "BMD, BMDL or BMDU not computed",
-        "BMD, BMDL or BMDU not computed",
-        "BMD, BMDL or BMDU not computed; BMDU / BMDL >= 40",
-        "BMD, BMDL or BMDU not computed; BMDU / BMDL >= 40",
+        "BMD, BMDL or BMDU not computed, or beyond the search",
+        "BMD, BMDL or BMDU not computed, or beyond the search",
+        "BMD, BMDL or BMDU not computed, or beyond the search; BMDU / BMDL >= 40",
+        "BMD, BMDL or BMDU not computed, or beyond the search; BMDU / BMDL >= 40",
     ]
     assert flags_of("etap_2024", **rows) == [
         "BMD or BMDL not computed",
@@ -160,7 +191,7 @@ def test_checks_whose_inputs_a_row_lacks_are_not_made() -> None:
     nan = math.nan
     got = flags_of(
         "bmds_2026",
-        lack_of_fit_p_value=[nan],
+        fit_p_value=[nan],
         residual_at_vehicle=[nan],
         vehicle_sd_ratio=[nan],
         constant_variance_p_value=[nan],
@@ -173,7 +204,7 @@ def test_checks_whose_inputs_a_row_lacks_are_not_made() -> None:
         bounds=False,
         lowest_dose=LOWEST,
         top_dose=TOP,
-        lack_of_fit_p_value=np.array([nan]),
+        fit_p_value=np.array([nan]),
         residual_near_bmd=np.array([0.0]),
         residual_at_vehicle=np.array([0.0]),
         vehicle_sd_ratio=np.array([nan]),
@@ -192,3 +223,20 @@ def test_rows_are_independent(flag_set: str) -> None:
         flag_set, bmd=[0.001, 1.0, 50.0], bmdl=[0.001 / 30, 1 / 30, 50 / 30]
     )
     assert [s[0] for s in single] == joint
+
+
+def test_a_mistyped_set_gets_a_suggestion() -> None:
+    from cytepool.stats._benchmark_dose_flags import checked_flag_sets
+
+    # A set's name without its year, or in capitals, starts a set's name.
+    with pytest.raises(
+        ValueError,
+        match=r"unknown set of checks 'ntp'; .*\(did you mean 'ntp_2018'\?\)$",
+    ):
+        checked_flag_sets("ntp")
+    with pytest.raises(ValueError, match=r"\(did you mean 'etap_2024'\?\)$"):
+        checked_flag_sets(["ETAP_2024"])
+    # Otherwise, close spellings.
+    with pytest.raises(ValueError, match=r"\(did you mean 'efsa_2022'"):
+        checked_flag_sets("efsa_2021")
+    assert checked_flag_sets(["etap_2024", "ntp_2018"]) == ("etap_2024", "ntp_2018")

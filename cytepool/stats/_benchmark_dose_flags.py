@@ -1,9 +1,10 @@
-"""The checks that documents make of a benchmark dose, as named sets.
+"""The checks that regulatory guidance makes of a benchmark dose, as named sets.
 
 Each set lists its checks with the text a table prints when a check fails. A check
-reads the BMD, its bounds and statistics of the fit; a row that lacks what a check
-reads, such as the bounds of a cell type that supports only description, does not get
-that check. The sets, their sources and how documents use a failed check are in
+reads the BMD, its bounds and statistics of the fit, among them the fit p-value of
+BMDS's test 4; a row that lacks what a check reads, such as the bounds of a cell type
+that supports only description, does not get that check. The sets, their sources and
+how each document uses a failed check are in
 https://docs.nygen.io/CytePool/statistics/potency#benchmark-dose-flags.
 
 - ``"bmds_2026"``: the default rules of BMDS's model recommendation for continuous
@@ -72,11 +73,20 @@ def checked_flag_sets(flags: Any) -> tuple[str, ...]:
         if name not in FLAG_SETS:
             raise ValueError(
                 f"unknown set of checks {name!r}; the sets are {listing(FLAG_SETS)}"
-                f"{close_matches(name, FLAG_SETS)}"
+                f"{_suggestion(name)}"
             )
     if len(set(names)) != len(names):
         raise ValueError(f"flags names a set more than once: {names}")
     return tuple(names)
+
+
+def _suggestion(name: str) -> str:
+    """A hint for a mistyped set: the sets whose name starts with the given one,
+    whatever its case, or else close spellings."""
+    starting = [s for s in FLAG_SETS if s.startswith(name.lower())]
+    if not starting:
+        return close_matches(name, FLAG_SETS)
+    return " (did you mean " + " or ".join(repr(s) for s in starting) + "?)"
 
 
 @dataclass(frozen=True)
@@ -84,8 +94,8 @@ class FlagInputs:
     """What the checks read, one value per row: the BMD and its bounds (NaN where not
     computed; a BMDL of 0 where the likelihood's region reaches the lowest dose
     searched, a BMDU of infinity where it reaches the highest), whether bounds were
-    computed, the lowest positive and the highest dose, the fit's lack-of-fit p-value,
-    the scaled residuals of the dose group nearest the BMD and of the vehicle, the
+    computed, the lowest positive and the highest dose, the fit p-value (BMDS's test
+    4), the scaled residuals of the dose group nearest the BMD and of the vehicle, the
     curve's SD of a vehicle replicate over the vehicle's sample SD, and the p-value
     of the test of constant variance across dose groups (NaN where not made)."""
 
@@ -95,7 +105,7 @@ class FlagInputs:
     bounds: bool
     lowest_dose: float
     top_dose: float
-    lack_of_fit_p_value: FloatArray
+    fit_p_value: FloatArray
     residual_near_bmd: FloatArray
     residual_at_vehicle: FloatArray
     vehicle_sd_ratio: FloatArray
@@ -108,14 +118,10 @@ class _Check:
     failed: Callable[[FlagInputs], BoolArray]
 
 
-def _finite(values: FloatArray) -> BoolArray:
-    return np.isfinite(values)
-
-
 def _above(values: FloatArray, threshold: float) -> BoolArray:
     """values > threshold where finite; False elsewhere."""
     with np.errstate(invalid="ignore"):
-        return np.asarray(_finite(values) & (values > threshold))
+        return np.asarray(np.isfinite(values) & (values > threshold))
 
 
 def _at_least(values: FloatArray, threshold: float) -> BoolArray:
@@ -136,13 +142,13 @@ def _ratio(numerator: FloatArray, denominator: FloatArray) -> FloatArray:
 def _bmdl_missing(inputs: FlagInputs) -> BoolArray:
     """No usable BMDL: not computed, or 0 because the region reaches the search's
     end (pybmds counts a BMDL of 0 as not estimated)."""
-    return np.asarray(inputs.bounds & ~(_finite(inputs.bmdl) & (inputs.bmdl > 0.0)))
+    return np.asarray(inputs.bounds & ~(np.isfinite(inputs.bmdl) & (inputs.bmdl > 0.0)))
 
 
 def _positive_ratio(numerator: FloatArray, denominator: FloatArray) -> FloatArray:
     """numerator / denominator where both are finite and above 0, NaN elsewhere, as
     pybmds computes its ratios."""
-    ok = _finite(numerator) & _finite(denominator) & (numerator > 0.0)
+    ok = np.isfinite(numerator) & np.isfinite(denominator) & (numerator > 0.0)
     ok &= denominator > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(ok, numerator / denominator, np.nan)
@@ -156,16 +162,18 @@ def _bmds_checks() -> tuple[_Check, ...]:
     def lowest_over(values: FloatArray, inputs: FlagInputs) -> FloatArray:
         with np.errstate(divide="ignore"):
             return np.where(
-                _finite(values) & (values > 0.0), inputs.lowest_dose / values, np.nan
+                np.isfinite(values) & (values > 0.0),
+                inputs.lowest_dose / values,
+                np.nan,
             )
 
     unusable, questionable, warning = "unusable", "questionable", "warning"
     return (
-        _Check(_bmds(unusable, "BMD not computed"), lambda i: ~_finite(i.bmd)),
+        _Check(_bmds(unusable, "BMD not computed"), lambda i: ~np.isfinite(i.bmd)),
         _Check(_bmds(unusable, "BMDL not computed"), _bmdl_missing),
         _Check(
             _bmds(questionable, "fit p-value < 0.1"),
-            lambda i: _finite(i.lack_of_fit_p_value) & (i.lack_of_fit_p_value < 0.1),
+            lambda i: np.isfinite(i.fit_p_value) & (i.fit_p_value < 0.1),
         ),
         _Check(
             _bmds(questionable, "|scaled residual near the BMD| > 2"),
@@ -186,7 +194,7 @@ def _bmds_checks() -> tuple[_Check, ...]:
         _Check(
             _bmds(questionable, "constant variance test p-value < 0.05"),
             lambda i: (
-                _finite(i.constant_variance_p_value)
+                np.isfinite(i.constant_variance_p_value)
                 & (i.constant_variance_p_value < 0.05)
             ),
         ),
@@ -226,36 +234,41 @@ def _bmds_checks() -> tuple[_Check, ...]:
 
 
 def _not_below_top(inputs: FlagInputs) -> BoolArray:
-    return np.asarray(_finite(inputs.bmd) & (inputs.bmd >= inputs.top_dose))
+    return np.asarray(np.isfinite(inputs.bmd) & (inputs.bmd >= inputs.top_dose))
 
 
 def _fit_p_at_most(inputs: FlagInputs) -> BoolArray:
-    p = inputs.lack_of_fit_p_value
-    return np.asarray(_finite(p) & (p <= 0.1))
+    p = inputs.fit_p_value
+    return np.asarray(np.isfinite(p) & (p <= 0.1))
 
 
 def _ten_fold_below(inputs: FlagInputs) -> BoolArray:
-    return np.asarray(_finite(inputs.bmd) & (inputs.bmd < inputs.lowest_dose / 10.0))
+    return np.asarray(
+        np.isfinite(inputs.bmd) & (inputs.bmd < inputs.lowest_dose / 10.0)
+    )
 
 
 def _bound_ratio(inputs: FlagInputs, upper: bool) -> FloatArray:
     """BMD / BMDL, or BMDU / BMDL; infinite where the BMDL is 0 or the BMDU
-    infinite; NaN without bounds."""
-    numerator = inputs.bmdu if upper else inputs.bmd
-    if not inputs.bounds:
-        return np.full(inputs.bmd.shape, np.nan)
-    return _ratio(numerator, inputs.bmdl)
+    infinite; NaN without bounds, whose BMDL is NaN."""
+    return _ratio(inputs.bmdu if upper else inputs.bmd, inputs.bmdl)
 
 
 _CHECKS: dict[str, tuple[_Check, ...]] = {
     "bmds_2026": _bmds_checks(),
     "ntp_2018": (
-        _Check("BMD more than 10-fold below the lowest dose (kept)", _ten_fold_below),
         _Check(
-            "BMD, BMDL or BMDU not computed",
+            "BMD more than 10-fold below the lowest dose (NTP keeps the gene)",
+            _ten_fold_below,
+        ),
+        _Check(
+            "BMD, BMDL or BMDU not computed, or beyond the search",
             lambda i: (
-                ~_finite(i.bmd)
-                | (i.bounds & ~(_finite(i.bmdl) & (i.bmdl > 0.0) & _finite(i.bmdu)))
+                ~np.isfinite(i.bmd)
+                | (
+                    i.bounds
+                    & ~(np.isfinite(i.bmdl) & (i.bmdl > 0.0) & np.isfinite(i.bmdu))
+                )
             ),
         ),
         _Check("BMD not below the highest dose", _not_below_top),
@@ -267,7 +280,7 @@ _CHECKS: dict[str, tuple[_Check, ...]] = {
     "etap_2024": (
         _Check(
             "BMD or BMDL not computed",
-            lambda i: ~_finite(i.bmd) | (i.bounds & np.isnan(i.bmdl)),
+            lambda i: ~np.isfinite(i.bmd) | (i.bounds & np.isnan(i.bmdl)),
         ),
         _Check("BMD not below the highest dose", _not_below_top),
         _Check("fit p-value <= 0.1", _fit_p_at_most),
