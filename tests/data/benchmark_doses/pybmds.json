@@ -1,0 +1,2383 @@
+{
+ "results": [
+  {
+   "key": "half_log/cell_type_1/0/sd",
+   "rows": [
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 108.74977111816406,
+     "bmdl": 23.238399377272014,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.286147154816702,
+     "is_increasing": false,
+     "log_likelihood": -4.527615352741279,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.2208806052536164,
+     "roi_control": 1.0369444005793087,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.4474780256221682,
+     "values": [
+      11.585848210834225,
+      -0.0026312443918612128,
+      0.08188019420969361
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 108.92967224121094,
+     "bmdl": 23.238244766568368,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.28614351455990517,
+     "is_increasing": false,
+     "log_likelihood": -4.527615634892424,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.22022049981810277,
+     "roi_control": 1.0370898882510526,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.4474779654161003,
+     "values": [
+      11.585826354887708,
+      -0.002626865294738435,
+      0.0,
+      0.08187811092469467
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 108.74972745931102,
+     "bmdl": 23.239034348008634,
+     "bmdu": 54643.245425891386,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.2861471555301064,
+     "is_increasing": false,
+     "log_likelihood": -4.527615352741271,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.22088065100628404,
+     "roi_control": 1.0369443690957385,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.4474780256221703,
+     "values": [
+      11.585848215608435,
+      -0.002631244805989689,
+      1.0,
+      0.08188019461797089
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.27560683458371993,
+     "is_increasing": false,
+     "log_likelihood": -3.514281858066464,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.5904863768229953,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.44116583711331125,
+     "values": [
+      11.66319964195993,
+      -0.16261891201969525,
+      0.17273119422853986,
+      17.999380107974076,
+      0.07595912726925795
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 109.47315216064453,
+     "bmdl": 23.127991822790637,
+     "bmdu": 5482.326412356841,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.28614448172085644,
+     "is_increasing": false,
+     "log_likelihood": -4.527363346830608,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.22178232216426128,
+     "roi_control": 1.0366988741402776,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.44753180104264434,
+     "values": [
+      11.585890373504682,
+      0.00022843754155996726,
+      1.0000000000000013,
+      -2.5025168297620235
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.27955889071565204,
+     "is_increasing": false,
+     "log_likelihood": -3.8986981004352264,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.6982086785631438,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.3507914506599368,
+     "values": [
+      11.644465571143783,
+      3.3333333333333335,
+      0.9880514305742368,
+      17.99999633981106,
+      -2.5490846166925385
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/0/absolute",
+   "rows": [
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 190.02416610717773,
+     "bmdl": 39.863774971417556,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.286147154816702,
+     "is_increasing": false,
+     "log_likelihood": -4.527615352741279,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.2208806052536164,
+     "roi_control": 1.0369444005793087,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.4474780256221682,
+     "values": [
+      11.585848210834225,
+      -0.0026312443918612128,
+      0.08188019420969361
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 190.34093856811523,
+     "bmdl": 36.39220851524405,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.28614351455990517,
+     "is_increasing": false,
+     "log_likelihood": -4.527615634892424,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.22022049981810277,
+     "roi_control": 1.0370898882510526,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.4474779654161003,
+     "values": [
+      11.585826354887708,
+      -0.002626865294738435,
+      0.0,
+      0.08187811092469467
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 190.02412807117548,
+     "bmdl": 30.741589217062465,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.2861471555301064,
+     "is_increasing": false,
+     "log_likelihood": -4.527615352741271,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.22088065100628404,
+     "roi_control": 1.0369443690957385,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.4474780256221703,
+     "values": [
+      11.585848215608435,
+      -0.002631244805989689,
+      1.0,
+      0.08188019461797089
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.27560683458371993,
+     "is_increasing": false,
+     "log_likelihood": -3.514281858066464,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.5904863768229953,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.44116583711331125,
+     "values": [
+      11.66319964195993,
+      -0.16261891201969525,
+      0.17273119422853986,
+      17.999380107974076,
+      0.07595912726925795
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": 193.11561584472656,
+     "bmdl": 40.565182183011636,
+     "bmdu": 1648.1520135296314,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.28614448172085644,
+     "is_increasing": false,
+     "log_likelihood": -4.527363346830608,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.22178232216426128,
+     "roi_control": 1.0366988741402776,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.44753180104264434,
+     "values": [
+      11.585890373504682,
+      0.00022843754155996726,
+      1.0000000000000013,
+      -2.5025168297620235
+     ]
+    },
+    {
+     "a2_log_likelihood": 6.769217326809487,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.4346107175129864,
+     "est_sd_control": 0.27955889071565204,
+     "is_increasing": false,
+     "log_likelihood": -3.8986981004352264,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.6982086785631438,
+     "test2_p": 0.04579150120977793,
+     "test4_p": 0.3507914506599368,
+     "values": [
+      11.644465571143783,
+      3.3333333333333335,
+      0.9880514305742368,
+      17.99999633981106,
+      -2.5490846166925385
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/1/sd",
+   "rows": [
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": 189.0761375427246,
+     "bmdl": 25.586989295299656,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.4584455549133383,
+     "is_increasing": false,
+     "log_likelihood": -17.253669688276425,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [],
+      "2": []
+     },
+     "roi": -0.22903101670301276,
+     "roi_control": 0.6675028392993365,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.7302044208475725,
+     "values": [
+      9.709373019464559,
+      0.00242466111741374,
+      0.21017232681979872
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.459012609914219,
+     "is_increasing": false,
+     "log_likelihood": -17.286804001712103,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.62150093435927,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.8107023908859429,
+     "values": [
+      9.721345499448299,
+      -3.7987439764743156e-18,
+      -1.6349644956924414e-18,
+      0.21069257606026295
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -189.0761393025886,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.4584455551247938,
+     "is_increasing": false,
+     "log_likelihood": -17.253669688276414,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.6675028144748146,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.7302044208475749,
+     "values": [
+      9.709373025953713,
+      0.0024246610747172014,
+      1.0,
+      0.21017232701368035
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.44704345003060986,
+     "is_increasing": false,
+     "log_likelihood": -16.57365419266651,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.9989637573929937,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.8011526761722159,
+     "values": [
+      9.628216915742064,
+      0.20953922238738526,
+      0.5476173600636062,
+      17.999999999920135,
+      0.19984784621527035
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": 1076.8559074401855,
+     "bmdl": 29.95011524140383,
+     "bmdu": 22643.97363564441,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.45900850961433914,
+     "is_increasing": false,
+     "log_likelihood": -17.28680399955577,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "BMD/BMDL ratio > 20.0"
+      ],
+      "2": []
+     },
+     "roi": 0.0005532781478129182,
+     "roi_control": 0.6215066324944446,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.6110340374407022,
+     "values": [
+      9.721345460677885,
+      0.0006857486027363151,
+      9.989901703915713,
+      -1.557373059257309
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.45900850710088303,
+     "is_increasing": false,
+     "log_likelihood": -17.286803999555772,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.621506636312081,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.6110340374407012,
+     "values": [
+      9.721345460568074,
+      0.000850467572386307,
+      0.9999999991344355,
+      4.021783590928591,
+      -1.5573730702089845
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/1/absolute",
+   "rows": [
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": 206.21440887451172,
+     "bmdl": 37.159722671025875,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.4584455549133383,
+     "is_increasing": false,
+     "log_likelihood": -17.253669688276425,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [],
+      "2": []
+     },
+     "roi": -0.22903101670301276,
+     "roi_control": 0.6675028392993365,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.7302044208475725,
+     "values": [
+      9.709373019464559,
+      0.00242466111741374,
+      0.21017232681979872
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.459012609914219,
+     "is_increasing": false,
+     "log_likelihood": -17.286804001712103,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.62150093435927,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.8107023908859429,
+     "values": [
+      9.721345499448299,
+      -3.7987439764743156e-18,
+      -1.6349644956924414e-18,
+      0.21069257606026295
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -206.2143881525038,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.4584455551247938,
+     "is_increasing": false,
+     "log_likelihood": -17.253669688276414,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.6675028144748146,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.7302044208475749,
+     "values": [
+      9.709373025953713,
+      0.0024246610747172014,
+      1.0,
+      0.21017232701368035
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.44704345003060986,
+     "is_increasing": false,
+     "log_likelihood": -16.57365419266651,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.9989637573929937,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.8011526761722159,
+     "values": [
+      9.628216915742064,
+      0.20953922238738526,
+      0.5476173600636062,
+      17.999999999920135,
+      0.19984784621527035
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": 1086.3552474975586,
+     "bmdl": 1061.6649364536336,
+     "bmdu": 1288.7106411069485,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.45900850961433914,
+     "is_increasing": false,
+     "log_likelihood": -17.28680399955577,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0"
+      ],
+      "1": [],
+      "2": []
+     },
+     "roi": 0.0005532781478129182,
+     "roi_control": 0.6215066324944446,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.722246068642308,
+     "values": [
+      9.721345460677885,
+      0.0006857486027363151,
+      9.989901703915713,
+      -1.557373059257309
+     ]
+    },
+    {
+     "a2_log_likelihood": -10.780002171281748,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.418711024061424,
+     "est_sd_control": 0.45900850710088303,
+     "is_increasing": false,
+     "log_likelihood": -17.286803999555772,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.621506636312081,
+     "test2_p": 0.38381596163154463,
+     "test4_p": 0.6110340374407012,
+     "values": [
+      9.721345460568074,
+      0.000850467572386307,
+      0.9999999991344355,
+      4.021783590928591,
+      -1.5573730702089845
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/2/sd",
+   "rows": [
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": 119.71558570861816,
+     "bmdl": 23.70900110734853,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.5807625858867064,
+     "is_increasing": false,
+     "log_likelihood": -23.639183025145776,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1",
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": -0.31926715942639194,
+     "roi_control": 0.47213364900503263,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.09002760920825614,
+     "values": [
+      9.488976663552197,
+      0.004851185879443209,
+      0.337285181165814
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.582549223091927,
+     "is_increasing": false,
+     "log_likelihood": -23.721683277283198,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.39946445204048553,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.13019895074526766,
+     "values": [
+      9.512930841172135,
+      -8.668920090148603e-17,
+      -1.0036863363166837e-18,
+      0.3393635973250077
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.5825172532103501,
+     "is_increasing": false,
+     "log_likelihood": -23.720632814520584,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.4048885919150162,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.05171490557434544,
+     "values": [
+      9.511113986715117,
+      1.0257023687070244e-17,
+      10.291988177740096,
+      0.33932635028773117
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.5692771420525611,
+     "is_increasing": false,
+     "log_likelihood": -23.099867077596976,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.8420523910045622,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.04650371332630909,
+     "values": [
+      9.37052539247356,
+      0.2797243983162965,
+      0.2791797156960731,
+      1.77221701178039,
+      0.32407646446353183
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": 419.0988349914551,
+     "bmdl": 30.03673167864332,
+     "bmdu": 19628.782692086636,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.582539860550606,
+     "is_increasing": false,
+     "log_likelihood": -23.721683270303895,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1",
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.04320201046700917,
+     "roi_control": 0.3994711371437848,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.0852321544885919,
+     "values": [
+      9.512930752065797,
+      0.001948718425187572,
+      13.639010861055038,
+      -1.0807153315074403
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": 491.8796110153198,
+     "bmdl": 30.00895722742775,
+     "bmdu": 19830.144861303732,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.582539860550606,
+     "is_increasing": false,
+     "log_likelihood": -23.721683270303895,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1",
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.04320201046700917,
+     "roi_control": 0.3994711371437848,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.0285282758356612,
+     "values": [
+      9.512930752065797,
+      0.001948718425187572,
+      0.8574233991898198,
+      13.639010861055038,
+      -1.0807153315074403
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/2/absolute",
+   "rows": [
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": 103.06757926940918,
+     "bmdl": 32.75615562005146,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.5807625858867064,
+     "is_increasing": false,
+     "log_likelihood": -23.639183025145776,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1",
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": -0.31926715942639194,
+     "roi_control": 0.47213364900503263,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.09002760920825614,
+     "values": [
+      9.488976663552197,
+      0.004851185879443209,
+      0.337285181165814
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.582549223091927,
+     "is_increasing": false,
+     "log_likelihood": -23.721683277283198,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.39946445204048553,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.13019895074526766,
+     "values": [
+      9.512930841172135,
+      -8.668920090148603e-17,
+      -1.0036863363166837e-18,
+      0.3393635973250077
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.5825172532103501,
+     "is_increasing": false,
+     "log_likelihood": -23.720632814520584,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.4048885919150162,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.05171490557434544,
+     "values": [
+      9.511113986715117,
+      1.0257023687070244e-17,
+      10.291988177740096,
+      0.33932635028773117
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.5692771420525611,
+     "is_increasing": false,
+     "log_likelihood": -23.099867077596976,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.8420523910045622,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.04650371332630909,
+     "values": [
+      9.37052539247356,
+      0.2797243983162965,
+      0.2791797156960731,
+      1.77221701178039,
+      0.32407646446353183
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": 414.291729927063,
+     "bmdl": 31.923714024990456,
+     "bmdu": 803.2098279514423,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.582539860550606,
+     "is_increasing": false,
+     "log_likelihood": -23.721683270303895,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1",
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.04320201046700917,
+     "roi_control": 0.3994711371437848,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.0852321544885919,
+     "values": [
+      9.512930752065797,
+      0.001948718425187572,
+      13.639010861055038,
+      -1.0807153315074403
+     ]
+    },
+    {
+     "a2_log_likelihood": -3.642486598841457,
+     "bmd": 484.7487545013428,
+     "bmdl": 29.797437413823264,
+     "bmdu": 574.7812143237516,
+     "calc_sd_control": 0.21690044817649193,
+     "est_sd_control": 0.582539860550606,
+     "is_increasing": false,
+     "log_likelihood": -23.721683270303895,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1",
+       "Constant variance test failed (Test 2 p-value < 0.05)"
+      ],
+      "2": []
+     },
+     "roi": 0.04320201046700917,
+     "roi_control": 0.3994711371437848,
+     "test2_p": 0.0005440421042436361,
+     "test4_p": 0.0285282758356612,
+     "values": [
+      9.512930752065797,
+      0.001948718425187572,
+      0.8574233991898198,
+      13.639010861055038,
+      -1.0807153315074403
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/3/sd",
+   "rows": [
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 95.04535675048828,
+     "bmdl": 22.53417561773665,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983287702759707,
+     "is_increasing": true,
+     "log_likelihood": 2.590626726642853,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.1010427422589878,
+     "roi_control": 0.047163536927595257,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.00785811283654736,
+     "values": [
+      12.639276485917689,
+      0.0023129251028736384,
+      0.048326493822230615
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 95.33557891845703,
+     "bmdl": 22.534094917231446,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983303463655796,
+     "is_increasing": true,
+     "log_likelihood": 2.590625510775017,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.09965277297696834,
+     "roi_control": 0.046889631340745676,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.0078581055141409,
+     "values": [
+      12.639311245904349,
+      0.002305886215764726,
+      0.0,
+      0.04832656311751809
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 95.04540711251049,
+     "bmdl": 29.49574298606744,
+     "bmdu": 41669.94364809184,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983287776622204,
+     "is_increasing": true,
+     "log_likelihood": 2.590626726642874,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.10104270555181286,
+     "roi_control": 0.047163497890336005,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.00785811283654747,
+     "values": [
+      12.639276490852208,
+      0.002312924784529501,
+      1.0,
+      0.04832649414697872
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.2189725316223728,
+     "is_increasing": true,
+     "log_likelihood": 2.6965020673857665,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.08009811280281982,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.0020102604149497827,
+     "values": [
+      12.63513619713766,
+      0.0700257676095614,
+      5.730955714030647,
+      17.99998141020885,
+      0.047948969605111046
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 94.54370498657227,
+     "bmdl": 22.599427744383643,
+     "bmdu": 3713.9599543423146,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983360567226617,
+     "is_increasing": true,
+     "log_likelihood": 2.5905374556682492,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.1008275235634606,
+     "roi_control": 0.04704958520944621,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.01429587918360764,
+     "values": [
+      12.639290928941822,
+      0.0001823849536282805,
+      1.0,
+      -3.0297687133017748
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21897250485074457,
+     "is_increasing": true,
+     "log_likelihood": 2.696505698285517,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.08009826225337176,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.0020102666706676153,
+     "values": [
+      12.635136179481593,
+      0.11812226710720497,
+      1.0055420540887876,
+      17.99999725292655,
+      -3.0376182113485237
+     ]
+    }
+   ]
+  },
+  {
+   "key": "half_log/cell_type_1/3/absolute",
+   "rows": [
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 216.1764907836914,
+     "bmdl": 50.36446884730426,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983287702759707,
+     "is_increasing": true,
+     "log_likelihood": 2.590626726642853,
+     "model": "linear",
+     "names": [
+      "g",
+      "b1",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.1010427422589878,
+     "roi_control": 0.047163536927595257,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.00785811283654736,
+     "values": [
+      12.639276485917689,
+      0.0023129251028736384,
+      0.048326493822230615
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 216.83635711669922,
+     "bmdl": 39.703871160443086,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983303463655796,
+     "is_increasing": true,
+     "log_likelihood": 2.590625510775017,
+     "model": "polynomial_2",
+     "names": [
+      "g",
+      "b1",
+      "b2",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.09965277297696834,
+     "roi_control": 0.046889631340745676,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.0078581055141409,
+     "values": [
+      12.639311245904349,
+      0.002305886215764726,
+      0.0,
+      0.04832656311751809
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 216.17650662241954,
+     "bmdl": 30.964107881946404,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983287776622204,
+     "is_increasing": true,
+     "log_likelihood": 2.590626726642874,
+     "model": "power",
+     "names": [
+      "g",
+      "v",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.10104270555181286,
+     "roi_control": 0.047163497890336005,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.00785811283654747,
+     "values": [
+      12.639276490852208,
+      0.002312924784529501,
+      1.0,
+      0.04832649414697872
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.2189725316223728,
+     "is_increasing": true,
+     "log_likelihood": 2.6965020673857665,
+     "model": "hill",
+     "names": [
+      "g",
+      "v",
+      "k",
+      "n",
+      "alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.08009811280281982,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.0020102604149497827,
+     "values": [
+      12.63513619713766,
+      0.0700257676095614,
+      5.730955714030647,
+      17.99998141020885,
+      0.047948969605111046
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": 212.7191162109375,
+     "bmdl": 50.816489157329286,
+     "bmdu": 1413.183792444229,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21983360567226617,
+     "is_increasing": true,
+     "log_likelihood": 2.5905374556682492,
+     "model": "exponential_3",
+     "names": [
+      "a",
+      "b",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [
+       "BMD/highest dose ratio > 1.0",
+       "BMDL/highest dose ratio > 1.0",
+       "Control stdev. fit > 1.5",
+       "BMD/BMDL ratio > 3.0"
+      ],
+      "1": [
+       "Goodness of fit p-value < 0.1"
+      ],
+      "2": []
+     },
+     "roi": -0.1008275235634606,
+     "roi_control": 0.04704958520944621,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.00785757523114583,
+     "values": [
+      12.639290928941822,
+      0.0001823849536282805,
+      1.0,
+      -3.0297687133017748
+     ]
+    },
+    {
+     "a2_log_likelihood": 18.51299606010669,
+     "bmd": -9999.0,
+     "bmdl": -9999.0,
+     "bmdu": -9999.0,
+     "calc_sd_control": 0.09401831306561409,
+     "est_sd_control": 0.21897250485074457,
+     "is_increasing": true,
+     "log_likelihood": 2.696505698285517,
+     "model": "exponential_5",
+     "names": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "log-alpha"
+     ],
+     "notes": {
+      "0": [],
+      "1": [],
+      "2": [
+       "Did not successfully execute."
+      ]
+     },
+     "roi": -9999.0,
+     "roi_control": 0.08009826225337176,
+     "test2_p": 0.12120436312294025,
+     "test4_p": 0.0020102666706676153,
+     "values": [
+      12.635136179481593,
+      0.11812226710720497,
+      1.0055420540887876,
+      17.99999725292655,
+      -3.0376182113485237
+     ]
+    }
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "sd",
+   "gene": 0,
+   "key": "half_log/cell_type_1/0/sd",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 1.0,
+   "values": [
+    11.429335893709819,
+    12.25013802034585,
+    11.592002564959103,
+    11.46654848565789,
+    11.20633271600919,
+    11.660073320349825,
+    11.990804548499385,
+    11.15546512508643,
+    11.81657401837001,
+    12.137609734925165,
+    11.508055356929823,
+    11.745472558713619,
+    11.384244496595436,
+    11.053548287633925,
+    11.620615519180165,
+    11.193530400977064,
+    11.961079205379482,
+    11.636356743094876,
+    11.803180267836943,
+    11.60343749070263,
+    11.234137919530545,
+    11.45314938908305,
+    11.418674108007481,
+    11.516532240335925,
+    11.640445747904481,
+    11.503154969702289,
+    11.486605076774794
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "absolute",
+   "gene": 0,
+   "key": "half_log/cell_type_1/0/absolute",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 0.5,
+   "values": [
+    11.429335893709819,
+    12.25013802034585,
+    11.592002564959103,
+    11.46654848565789,
+    11.20633271600919,
+    11.660073320349825,
+    11.990804548499385,
+    11.15546512508643,
+    11.81657401837001,
+    12.137609734925165,
+    11.508055356929823,
+    11.745472558713619,
+    11.384244496595436,
+    11.053548287633925,
+    11.620615519180165,
+    11.193530400977064,
+    11.961079205379482,
+    11.636356743094876,
+    11.803180267836943,
+    11.60343749070263,
+    11.234137919530545,
+    11.45314938908305,
+    11.418674108007481,
+    11.516532240335925,
+    11.640445747904481,
+    11.503154969702289,
+    11.486605076774794
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "sd",
+   "gene": 1,
+   "key": "half_log/cell_type_1/1/sd",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 1.0,
+   "values": [
+    9.764756224925295,
+    10.352017634365062,
+    9.541376491889135,
+    9.522257918244177,
+    10.395094359464357,
+    9.455382900746836,
+    10.071081137843299,
+    8.782006729558985,
+    9.544977599032793,
+    9.85299479850586,
+    8.630737876704652,
+    9.714884238880197,
+    9.50075850532186,
+    9.618611230917375,
+    9.676324951766453,
+    9.985422205646865,
+    9.340137407552758,
+    10.277275649790047,
+    9.814862072884578,
+    9.324901991328648,
+    10.602782513324938,
+    10.1937627602644,
+    10.060717703935904,
+    9.288726322813112,
+    9.656213063762799,
+    10.195487567940097,
+    9.312775620876565
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "absolute",
+   "gene": 1,
+   "key": "half_log/cell_type_1/1/absolute",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 0.5,
+   "values": [
+    9.764756224925295,
+    10.352017634365062,
+    9.541376491889135,
+    9.522257918244177,
+    10.395094359464357,
+    9.455382900746836,
+    10.071081137843299,
+    8.782006729558985,
+    9.544977599032793,
+    9.85299479850586,
+    8.630737876704652,
+    9.714884238880197,
+    9.50075850532186,
+    9.618611230917375,
+    9.676324951766453,
+    9.985422205646865,
+    9.340137407552758,
+    10.277275649790047,
+    9.814862072884578,
+    9.324901991328648,
+    10.602782513324938,
+    10.1937627602644,
+    10.060717703935904,
+    9.288726322813112,
+    9.656213063762799,
+    10.195487567940097,
+    9.312775620876565
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "sd",
+   "gene": 2,
+   "key": "half_log/cell_type_1/2/sd",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 1.0,
+   "values": [
+    9.764756224925295,
+    9.780111286469353,
+    9.39698658255396,
+    9.232751301049193,
+    10.339599246872654,
+    9.52409565083085,
+    9.493536108684626,
+    6.9075376116428435,
+    9.273675577215398,
+    9.507859312457171,
+    9.835096375210838,
+    9.714884238880197,
+    9.166339466251301,
+    9.618611230917375,
+    9.489911827535572,
+    9.88232871268276,
+    9.340137407552758,
+    9.841176534983374,
+    9.905059881856156,
+    9.324901991328648,
+    9.453919127410455,
+    9.793224830680671,
+    9.595054131587093,
+    10.085192928727981,
+    9.77650729748051,
+    9.122731225504783,
+    9.68314407082168
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "absolute",
+   "gene": 2,
+   "key": "half_log/cell_type_1/2/absolute",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 0.5,
+   "values": [
+    9.764756224925295,
+    9.780111286469353,
+    9.39698658255396,
+    9.232751301049193,
+    10.339599246872654,
+    9.52409565083085,
+    9.493536108684626,
+    6.9075376116428435,
+    9.273675577215398,
+    9.507859312457171,
+    9.835096375210838,
+    9.714884238880197,
+    9.166339466251301,
+    9.618611230917375,
+    9.489911827535572,
+    9.88232871268276,
+    9.340137407552758,
+    9.841176534983374,
+    9.905059881856156,
+    9.324901991328648,
+    9.453919127410455,
+    9.793224830680671,
+    9.595054131587093,
+    10.085192928727981,
+    9.77650729748051,
+    9.122731225504783,
+    9.68314407082168
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "sd",
+   "gene": 3,
+   "key": "half_log/cell_type_1/3/sd",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 1.0,
+   "values": [
+    12.640619924913189,
+    12.553651495534712,
+    12.741516106378455,
+    12.390753135115686,
+    12.05087819737521,
+    12.519895662301565,
+    12.763489928458212,
+    13.110477670313118,
+    12.989341769581149,
+    12.802231684823973,
+    12.732884763712104,
+    12.533968453519908,
+    12.519294456759287,
+    12.690272216044821,
+    12.445712023625036,
+    12.627287097602498,
+    13.0134197112607,
+    12.44952196314248,
+    12.52600167968288,
+    12.905404843859104,
+    12.331236607635626,
+    12.633184418170202,
+    12.642913770365684,
+    12.86734729666044,
+    12.694893531926859,
+    12.652767515722346,
+    12.739858461816002
+   ]
+  },
+  {
+   "doses": [
+    0.0,
+    0.0,
+    0.0,
+    0.01,
+    0.01,
+    0.01,
+    0.03,
+    0.03,
+    0.03,
+    0.1,
+    0.1,
+    0.1,
+    0.3,
+    0.3,
+    0.3,
+    1.0,
+    1.0,
+    1.0,
+    3.0,
+    3.0,
+    3.0,
+    10.0,
+    10.0,
+    10.0,
+    30.0,
+    30.0,
+    30.0
+   ],
+   "form": "absolute",
+   "gene": 3,
+   "key": "half_log/cell_type_1/3/absolute",
+   "models": [
+    "linear",
+    "polynomial_2",
+    "power",
+    "hill",
+    "exponential_3",
+    "exponential_5"
+   ],
+   "series": "half_log/cell_type_1",
+   "value": 0.5,
+   "values": [
+    12.640619924913189,
+    12.553651495534712,
+    12.741516106378455,
+    12.390753135115686,
+    12.05087819737521,
+    12.519895662301565,
+    12.763489928458212,
+    13.110477670313118,
+    12.989341769581149,
+    12.802231684823973,
+    12.732884763712104,
+    12.533968453519908,
+    12.519294456759287,
+    12.690272216044821,
+    12.445712023625036,
+    12.627287097602498,
+    13.0134197112607,
+    12.44952196314248,
+    12.52600167968288,
+    12.905404843859104,
+    12.331236607635626,
+    12.633184418170202,
+    12.642913770365684,
+    12.86734729666044,
+    12.694893531926859,
+    12.652767515722346,
+    12.739858461816002
+   ]
+  }
+ ]
+}

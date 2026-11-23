@@ -1,0 +1,4162 @@
+{
+ "doses": [
+  0.0,
+  0.0,
+  0.0,
+  0.01,
+  0.01,
+  0.01,
+  0.03,
+  0.03,
+  0.03,
+  0.1,
+  0.1,
+  0.1,
+  0.3,
+  0.3,
+  0.3,
+  1.0,
+  1.0,
+  1.0,
+  3.0,
+  3.0,
+  3.0,
+  10.0,
+  10.0,
+  10.0,
+  30.0,
+  30.0,
+  30.0
+ ],
+ "minBMD": 0.0001,
+ "rows": [
+  {
+   "bmd": 0.00213967272856846,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g53",
+   "model": "ll4",
+   "parameters": [
+    1.08000254168166,
+    16.4604877783492,
+    14.3952250087634,
+    0.0181689928825619,
+    null
+   ],
+   "size": 0.186456471924512,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": 0.0392963864130457,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g53",
+   "model": "ll4",
+   "parameters": [
+    1.08000254168166,
+    16.4604877783492,
+    14.3952250087634,
+    0.0181689928825619,
+    null
+   ],
+   "size": 1.4395225008763401,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.746566154765638,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g101",
+   "model": "log_gauss_probit_monotone",
+   "parameters": [
+    0.831819159669625,
+    8.76754878093016,
+    10.9730256626768,
+    1.87294671245663,
+    0
+   ],
+   "size": 0.296454413984498,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 1.86334610991257,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g101",
+   "model": "log_gauss_probit_monotone",
+   "parameters": [
+    0.831819159669625,
+    8.76754878093016,
+    10.9730256626768,
+    1.87294671245663,
+    0
+   ],
+   "size": 1.09730256626768,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 1.03762755515319,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g40",
+   "model": "ll4",
+   "parameters": [
+    4.35212578477598,
+    14.6528223033016,
+    16.6145964575151,
+    1.63469412525076,
+    null
+   ],
+   "size": 0.238392974494561,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 2.42179730386573,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g40",
+   "model": "ll4",
+   "parameters": [
+    4.35212578477598,
+    14.6528223033016,
+    16.6145964575151,
+    1.63469412525076,
+    null
+   ],
+   "size": 1.6614596457515098,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.0923293753922213,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g125",
+   "model": "ll4",
+   "parameters": [
+    3.53443975162783,
+    15.7867646172998,
+    13.5399385626977,
+    0.165924423401463,
+    null
+   ],
+   "size": 0.251351963884156,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.186671219861014,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g125",
+   "model": "ll4",
+   "parameters": [
+    3.53443975162783,
+    15.7867646172998,
+    13.5399385626977,
+    0.165924423401463,
+    null
+   ],
+   "size": 1.35399385626977,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.232600700766628,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g25",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.19416864262903,
+    15.5146598322623,
+    13.8134444695803,
+    2.49892176921993,
+    1.0910092489826
+   ],
+   "size": 0.1909521385589,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 1.22520208727003,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g25",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.19416864262903,
+    15.5146598322623,
+    13.8134444695803,
+    2.49892176921993,
+    1.0910092489826
+   ],
+   "size": 1.38134444695803,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.774074475494379,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g20",
+   "model": "ll4",
+   "parameters": [
+    3.76545179191367,
+    11.0053827168696,
+    12.7093211499852,
+    1.15276214256319,
+    null
+   ],
+   "size": 0.310947576897204,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 1.53436547997798,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g20",
+   "model": "ll4",
+   "parameters": [
+    3.76545179191367,
+    11.0053827168696,
+    12.7093211499852,
+    1.15276214256319,
+    null
+   ],
+   "size": 1.2709321149985202,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.120981296227684,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g18",
+   "model": "log_gauss_probit_monotone",
+   "parameters": [
+    1.44104995932416,
+    8.95766075143667,
+    10.8189039848361,
+    0.433933879297129,
+    0
+   ],
+   "size": 0.349388707077158,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.583197102203454,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g18",
+   "model": "log_gauss_probit_monotone",
+   "parameters": [
+    1.44104995932416,
+    8.95766075143667,
+    10.8189039848361,
+    0.433933879297129,
+    0
+   ],
+   "size": 1.08189039848361,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 2.32949554040678,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g86",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    1.92527527177245,
+    12.0516156131922,
+    12.0516156131922,
+    0.748541553967571,
+    -2.05455512009912
+   ],
+   "size": 0.438447244176665,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 3.23834026035582,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g86",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    1.92527527177245,
+    12.0516156131922,
+    12.0516156131922,
+    0.748541553967571,
+    -2.05455512009912
+   ],
+   "size": 1.01466237773534,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 6.13807833047403,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g48",
+   "model": "linear",
+   "parameters": [
+    -0.0835065771596736,
+    null,
+    9.97969733701291,
+    null,
+    null
+   ],
+   "size": 0.51256991171585,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 11.9507919932231,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g48",
+   "model": "linear",
+   "parameters": [
+    -0.0835065771596736,
+    null,
+    9.97969733701291,
+    null,
+    null
+   ],
+   "size": 0.997969733701291,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 1.25966335515013,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g56",
+   "model": "log_gauss_probit",
+   "parameters": [
+    0.507452439522931,
+    15.2011366658571,
+    14.1637010769082,
+    1.13960119236329,
+    -0.442600717262333
+   ],
+   "size": 0.165823547817434,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g56",
+   "model": "log_gauss_probit",
+   "parameters": [
+    0.507452439522931,
+    15.2011366658571,
+    14.1637010769082,
+    1.13960119236329,
+    -0.442600717262333
+   ],
+   "size": 1.4163701076908202,
+   "status": "not reached"
+  },
+  {
+   "bmd": 12.5902915114052,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g44",
+   "model": "linear",
+   "parameters": [
+    -0.0320833446009677,
+    null,
+    14.3302706687514,
+    null,
+    null
+   ],
+   "size": 0.403938661187051,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g44",
+   "model": "linear",
+   "parameters": [
+    -0.0320833446009677,
+    null,
+    14.3302706687514,
+    null,
+    null
+   ],
+   "size": 1.4330270668751401,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.0118380664642368,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g27",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.50682358410517,
+    10.5007788731775,
+    10.5007788731775,
+    0.197509694225383,
+    -2.04016714352515
+   ],
+   "size": 0.356532093165657,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.034782505831856,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g27",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.50682358410517,
+    10.5007788731775,
+    10.5007788731775,
+    0.197509694225383,
+    -2.04016714352515
+   ],
+   "size": 1.05007788731775,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.00344659394824998,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g105",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    2.55429411332985,
+    11.0538420628937,
+    11.0538420628937,
+    0.271908333968528,
+    -1.85282280495227
+   ],
+   "size": 0.429342023686216,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": 0.0202737619295734,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g105",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    2.55429411332985,
+    11.0538420628937,
+    11.0538420628937,
+    0.271908333968528,
+    -1.85282280495227
+   ],
+   "size": 1.1053842062893702,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 7.77537062862977,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g128",
+   "model": "linear",
+   "parameters": [
+    -0.0345960172056732,
+    null,
+    13.5672496374817,
+    null,
+    null
+   ],
+   "size": 0.268996856048561,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g128",
+   "model": "linear",
+   "parameters": [
+    -0.0345960172056732,
+    null,
+    13.5672496374817,
+    null,
+    null
+   ],
+   "size": 1.35672496374817,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 2.74495134683101,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g127",
+   "model": "ll4",
+   "parameters": [
+    2.03815037624438,
+    14.7309973381103,
+    13.8308286226263,
+    4.76480841592544,
+    null
+   ],
+   "size": 0.220779842391403,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NaN",
+   "id": "g127",
+   "model": "ll4",
+   "parameters": [
+    2.03815037624438,
+    14.7309973381103,
+    13.8308286226263,
+    4.76480841592544,
+    null
+   ],
+   "size": 1.38308286226263,
+   "status": "not reached"
+  },
+  {
+   "bmd": 4.58268857731454,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g84",
+   "model": "ll4",
+   "parameters": [
+    3.60514677580869,
+    9.32684954955754,
+    10.7462222439966,
+    5.98640797384458,
+    null
+   ],
+   "size": 0.392051754719447,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 8.20584955436678,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g84",
+   "model": "ll4",
+   "parameters": [
+    3.60514677580869,
+    9.32684954955754,
+    10.7462222439966,
+    5.98640797384458,
+    null
+   ],
+   "size": 1.0746222243996602,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 14.0718402786457,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g70",
+   "model": "exponential",
+   "parameters": [
+    0.0419714470403167,
+    null,
+    14.2398692169068,
+    7.78377159121786,
+    null
+   ],
+   "size": 0.213940384699082,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 27.6578804517171,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g70",
+   "model": "exponential",
+   "parameters": [
+    0.0419714470403167,
+    null,
+    14.2398692169068,
+    7.78377159121786,
+    null
+   ],
+   "size": 1.4239869216906802,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 11.1567609045089,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g65",
+   "model": "exponential",
+   "parameters": [
+    -0.271960053228505,
+    null,
+    9.90085160176074,
+    12.2999172842274,
+    null
+   ],
+   "size": 0.401692867792991,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 18.8783272704965,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g65",
+   "model": "exponential",
+   "parameters": [
+    -0.271960053228505,
+    null,
+    9.90085160176074,
+    12.2999172842274,
+    null
+   ],
+   "size": 0.9900851601760741,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 1.57657210686853,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g7",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    1.50987328147449,
+    12.0675494833171,
+    12.0675494833171,
+    0.123111544721249,
+    -1.14742738337438
+   ],
+   "size": 0.421681326574894,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 3.88813161754898,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g7",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    1.50987328147449,
+    12.0675494833171,
+    12.0675494833171,
+    0.123111544721249,
+    -1.14742738337438
+   ],
+   "size": 1.09239300402844,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 13.7695230572992,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g41",
+   "model": "linear",
+   "parameters": [
+    0.0251888077558761,
+    null,
+    13.2457331167209,
+    null,
+    null
+   ],
+   "size": 0.346837869180413,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g41",
+   "model": "linear",
+   "parameters": [
+    0.0251888077558761,
+    null,
+    13.2457331167209,
+    null,
+    null
+   ],
+   "size": 1.32457331167209,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.00016221964417373,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g30",
+   "model": "log_gauss_probit",
+   "parameters": [
+    4.47749955295919,
+    11.5292951482265,
+    12.8060617054675,
+    0.0268602668455028,
+    1.1383020218579
+   ],
+   "size": 0.431564163636276,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g30",
+   "model": "log_gauss_probit",
+   "parameters": [
+    4.47749955295919,
+    11.5292951482265,
+    12.8060617054675,
+    0.0268602668455028,
+    1.1383020218579
+   ],
+   "size": 1.28060617054675,
+   "status": "not reached"
+  },
+  {
+   "bmd": 20.145211559365,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g64",
+   "model": "exponential",
+   "parameters": [
+    0.0123114130225738,
+    null,
+    10.7454492471188,
+    6.07780560035972,
+    null
+   ],
+   "size": 0.326376873796746,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 27.2317173577737,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g64",
+   "model": "exponential",
+   "parameters": [
+    0.0123114130225738,
+    null,
+    10.7454492471188,
+    6.07780560035972,
+    null
+   ],
+   "size": 1.0745449247118801,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 7.07694398395928,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g36",
+   "model": "linear",
+   "parameters": [
+    0.0686978965713691,
+    null,
+    9.76646007536608,
+    null,
+    null
+   ],
+   "size": 0.486171165851408,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 14.2165343668417,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g36",
+   "model": "linear",
+   "parameters": [
+    0.0686978965713691,
+    null,
+    9.76646007536608,
+    null,
+    null
+   ],
+   "size": 0.976646007536608,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.00373814029603633,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g85",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.79891202496252,
+    13.8953013843441,
+    14.1848474109379,
+    0.0762406442171744,
+    -1.1616685065276
+   ],
+   "size": 0.29865911309511,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g85",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.79891202496252,
+    13.8953013843441,
+    14.1848474109379,
+    0.0762406442171744,
+    -1.1616685065276
+   ],
+   "size": 1.4184847410937902,
+   "status": "not reached"
+  },
+  {
+   "bmd": 20.1082640608512,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g43",
+   "model": "linear",
+   "parameters": [
+    -0.0264139782723383,
+    null,
+    10.1832211939804,
+    null,
+    null
+   ],
+   "size": 0.531139249997767,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g43",
+   "model": "linear",
+   "parameters": [
+    -0.0264139782723383,
+    null,
+    10.1832211939804,
+    null,
+    null
+   ],
+   "size": 1.01832211939804,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 29.5256549420366,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g72",
+   "model": "linear",
+   "parameters": [
+    0.0154559289902312,
+    null,
+    10.9015932953701,
+    null,
+    null
+   ],
+   "size": 0.456346426174188,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g72",
+   "model": "linear",
+   "parameters": [
+    0.0154559289902312,
+    null,
+    10.9015932953701,
+    null,
+    null
+   ],
+   "size": 1.09015932953701,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 25.0641348548507,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g63",
+   "model": "linear",
+   "parameters": [
+    -0.00950692444435381,
+    null,
+    14.584910738079,
+    null,
+    null
+   ],
+   "size": 0.23828283632816,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g63",
+   "model": "linear",
+   "parameters": [
+    -0.00950692444435381,
+    null,
+    14.584910738079,
+    null,
+    null
+   ],
+   "size": 1.4584910738079,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.046697891695912,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g124",
+   "model": "log_gauss_probit",
+   "parameters": [
+    0.669085835696187,
+    9.29380350706979,
+    8.18548385159637,
+    0.0894945478432985,
+    0.650494663069325
+   ],
+   "size": 0.58891343536474,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.0582731894394542,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g124",
+   "model": "log_gauss_probit",
+   "parameters": [
+    0.669085835696187,
+    9.29380350706979,
+    8.18548385159637,
+    0.0894945478432985,
+    0.650494663069325
+   ],
+   "size": 0.818548385159637,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 13.5649003659903,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g87",
+   "model": "linear",
+   "parameters": [
+    -0.0445963213987048,
+    null,
+    11.4658862418564,
+    null,
+    null
+   ],
+   "size": 0.604944656463112,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 25.7103857050177,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g87",
+   "model": "linear",
+   "parameters": [
+    -0.0445963213987048,
+    null,
+    11.4658862418564,
+    null,
+    null
+   ],
+   "size": 1.14658862418564,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 22.6676971780809,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g81",
+   "model": "linear",
+   "parameters": [
+    -0.0272947855347714,
+    null,
+    8.58469843718615,
+    null,
+    null
+   ],
+   "size": 0.618709933042861,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g81",
+   "model": "linear",
+   "parameters": [
+    -0.0272947855347714,
+    null,
+    8.58469843718615,
+    null,
+    null
+   ],
+   "size": 0.858469843718615,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 19.1940739833745,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g23",
+   "model": "linear",
+   "parameters": [
+    0.0187113894568036,
+    null,
+    13.3357630499572,
+    null,
+    null
+   ],
+   "size": 0.35914779356562,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g23",
+   "model": "linear",
+   "parameters": [
+    0.0187113894568036,
+    null,
+    13.3357630499572,
+    null,
+    null
+   ],
+   "size": 1.33357630499572,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 10.4862126378378,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g38",
+   "model": "linear",
+   "parameters": [
+    0.033511034580955,
+    null,
+    10.3170758239652,
+    null,
+    null
+   ],
+   "size": 0.351403834329831,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g38",
+   "model": "linear",
+   "parameters": [
+    0.033511034580955,
+    null,
+    10.3170758239652,
+    null,
+    null
+   ],
+   "size": 1.03170758239652,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 12.7480800200253,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g79",
+   "model": "linear",
+   "parameters": [
+    -0.0288522761116428,
+    null,
+    13.0259992308411,
+    null,
+    null
+   ],
+   "size": 0.367811124631087,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g79",
+   "model": "linear",
+   "parameters": [
+    -0.0288522761116428,
+    null,
+    13.0259992308411,
+    null,
+    null
+   ],
+   "size": 1.30259992308411,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 11.0641220142401,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g96",
+   "model": "linear",
+   "parameters": [
+    -0.0231850484568923,
+    null,
+    11.3143250021016,
+    null,
+    null
+   ],
+   "size": 0.256522205033126,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g96",
+   "model": "linear",
+   "parameters": [
+    -0.0231850484568923,
+    null,
+    11.3143250021016,
+    null,
+    null
+   ],
+   "size": 1.1314325002101602,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g66",
+   "model": "linear",
+   "parameters": [
+    -0.0238568074896651,
+    null,
+    12.9171165015188,
+    null,
+    null
+   ],
+   "size": 0.77667990391423,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g66",
+   "model": "linear",
+   "parameters": [
+    -0.0238568074896651,
+    null,
+    12.9171165015188,
+    null,
+    null
+   ],
+   "size": 1.2917116501518802,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.00885216742299606,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g32",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    3.91638252983613,
+    8.01372738990379,
+    8.01372738990379,
+    1.3618398148027,
+    1.38398784026997
+   ],
+   "size": 0.60546885373063,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": 0.0227036777199082,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g32",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    3.91638252983613,
+    8.01372738990379,
+    8.01372738990379,
+    1.3618398148027,
+    1.38398784026997
+   ],
+   "size": 0.8013727389903791,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.986036831301091,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g118",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    0.573776346146739,
+    11.3483744783532,
+    11.3483744783532,
+    0.140728008649577,
+    0.586119468522439
+   ],
+   "size": 0.370744894425478,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g118",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    0.573776346146739,
+    11.3483744783532,
+    11.3483744783532,
+    0.140728008649577,
+    0.586119468522439
+   ],
+   "size": 1.19171272582365,
+   "status": "not reached"
+  },
+  {
+   "bmd": 0.394616008741706,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g35",
+   "model": "exponential",
+   "parameters": [
+    -0.488917742595697,
+    null,
+    14.3110810713367,
+    -0.406021342580852,
+    null
+   ],
+   "size": 0.303930893166585,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NaN",
+   "id": "g35",
+   "model": "exponential",
+   "parameters": [
+    -0.488917742595697,
+    null,
+    14.3110810713367,
+    -0.406021342580852,
+    null
+   ],
+   "size": 1.43110810713367,
+   "status": "not reached"
+  },
+  {
+   "bmd": 11.4628041776797,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g106",
+   "model": "linear",
+   "parameters": [
+    0.0280729788244781,
+    null,
+    11.1371582156481,
+    null,
+    null
+   ],
+   "size": 0.32179505894914,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g106",
+   "model": "linear",
+   "parameters": [
+    0.0280729788244781,
+    null,
+    11.1371582156481,
+    null,
+    null
+   ],
+   "size": 1.11371582156481,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.297296752037521,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g5",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    2.3396044040853,
+    11.4102852220832,
+    11.4102852220832,
+    3.89825356874381,
+    -0.813604917929241
+   ],
+   "size": 0.444291283715456,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g5",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    2.3396044040853,
+    11.4102852220832,
+    11.4102852220832,
+    3.89825356874381,
+    -0.813604917929241
+   ],
+   "size": 1.14102852220832,
+   "status": "not reached"
+  },
+  {
+   "bmd": 18.7072338353167,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g16",
+   "model": "linear",
+   "parameters": [
+    -0.0198184914023793,
+    null,
+    10.6745192185314,
+    null,
+    null
+   ],
+   "size": 0.370749152927522,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g16",
+   "model": "linear",
+   "parameters": [
+    -0.0198184914023793,
+    null,
+    10.6745192185314,
+    null,
+    null
+   ],
+   "size": 1.06745192185314,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.0943907749947303,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g26",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.77789862512591,
+    14.3682710673104,
+    14.3682710673104,
+    0.912659396527271,
+    -0.752135243051208
+   ],
+   "size": 0.333151684858092,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g26",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.77789862512591,
+    14.3682710673104,
+    14.3682710673104,
+    0.912659396527271,
+    -0.752135243051208
+   ],
+   "size": 1.43682710673104,
+   "status": "not reached"
+  },
+  {
+   "bmd": 0.00766803083293324,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g33",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    8.50310107973183,
+    13.4699745898898,
+    13.4699745898898,
+    2527.17449757931,
+    0.624950112051343
+   ],
+   "size": 0.204653949463164,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g33",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    8.50310107973183,
+    13.4699745898898,
+    13.4699745898898,
+    2527.17449757931,
+    0.624950112051343
+   ],
+   "size": 1.3469974589889802,
+   "status": "not reached"
+  },
+  {
+   "bmd": 15.0356978462248,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g42",
+   "model": "linear",
+   "parameters": [
+    0.0280565292645233,
+    null,
+    10.7080314277247,
+    null,
+    null
+   ],
+   "size": 0.421849496635136,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g42",
+   "model": "linear",
+   "parameters": [
+    0.0280565292645233,
+    null,
+    10.7080314277247,
+    null,
+    null
+   ],
+   "size": 1.07080314277247,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.095846627096669,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g50",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    4.12347306513829,
+    9.9407732100145,
+    9.9407732100145,
+    6.71904740366207,
+    -0.947058218042792
+   ],
+   "size": 0.556806249119849,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g50",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    4.12347306513829,
+    9.9407732100145,
+    9.9407732100145,
+    6.71904740366207,
+    -0.947058218042792
+   ],
+   "size": 0.9940773210014501,
+   "status": "not reached"
+  },
+  {
+   "bmd": 6.05985450872504,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g62",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    3.02515873246086,
+    10.5653737027016,
+    10.5653737027016,
+    1.9984904650682,
+    0.913823562538003
+   ],
+   "size": 0.363552934113606,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g62",
+   "model": "gauss_probit_symmetric",
+   "parameters": [
+    3.02515873246086,
+    10.5653737027016,
+    10.5653737027016,
+    1.9984904650682,
+    0.913823562538003
+   ],
+   "size": 1.13000470063143,
+   "status": "not reached"
+  },
+  {
+   "bmd": 0.229466492372486,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g89",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.28780969670021,
+    13.1757587098135,
+    13.1757587098135,
+    1.46550640791601,
+    1.23153821054132
+   ],
+   "size": 0.436808971415373,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g89",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.28780969670021,
+    13.1757587098135,
+    13.1757587098135,
+    1.46550640791601,
+    1.23153821054132
+   ],
+   "size": 1.31757587098135,
+   "status": "not reached"
+  },
+  {
+   "bmd": 0.448145920086591,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g11",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.22537733774908,
+    9.27841101480451,
+    9.27841101480451,
+    3.53322575043574,
+    2.2169608283827
+   ],
+   "size": 0.536014171978776,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.701083094358456,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g11",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.22537733774908,
+    9.27841101480451,
+    9.27841101480451,
+    3.53322575043574,
+    2.2169608283827
+   ],
+   "size": 0.9278411014804511,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.01134665755398,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g46",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.10112189074152,
+    12.3123523596228,
+    11.6407691023986,
+    0.0466064285998388,
+    0.950002720686509
+   ],
+   "size": 0.484096507388679,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.0334445363772008,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g46",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.10112189074152,
+    12.3123523596228,
+    11.6407691023986,
+    0.0466064285998388,
+    0.950002720686509
+   ],
+   "size": 1.16407691023986,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 0.884232052153546,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g55",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    2.08044926412368,
+    10.3539486390991,
+    10.3539486390991,
+    6.26660363316189,
+    -0.663052286852936
+   ],
+   "size": 0.42575118219857,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g55",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    2.08044926412368,
+    10.3539486390991,
+    10.3539486390991,
+    6.26660363316189,
+    -0.663052286852936
+   ],
+   "size": 1.03539486390991,
+   "status": "not reached"
+  },
+  {
+   "bmd": 13.9003409139348,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g57",
+   "model": "linear",
+   "parameters": [
+    0.0226003196557243,
+    null,
+    11.3477901031445,
+    null,
+    null
+   ],
+   "size": 0.314152147978469,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g57",
+   "model": "linear",
+   "parameters": [
+    0.0226003196557243,
+    null,
+    11.3477901031445,
+    null,
+    null
+   ],
+   "size": 1.1347790103144502,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 18.3496789018347,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g31",
+   "model": "linear",
+   "parameters": [
+    0.0297566650626972,
+    null,
+    11.0155330344427,
+    null,
+    null
+   ],
+   "size": 0.546025249089937,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g31",
+   "model": "linear",
+   "parameters": [
+    0.0297566650626972,
+    null,
+    11.0155330344427,
+    null,
+    null
+   ],
+   "size": 1.1015533034442702,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g14",
+   "model": "linear",
+   "parameters": [
+    0.0118599840956237,
+    null,
+    11.5097806389031,
+    null,
+    null
+   ],
+   "size": 0.402109067962037,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g14",
+   "model": "linear",
+   "parameters": [
+    0.0118599840956237,
+    null,
+    11.5097806389031,
+    null,
+    null
+   ],
+   "size": 1.15097806389031,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 15.5482847393809,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g60",
+   "model": "linear",
+   "parameters": [
+    -0.0208199152547924,
+    null,
+    13.0020850873335,
+    null,
+    null
+   ],
+   "size": 0.323713970631293,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g60",
+   "model": "linear",
+   "parameters": [
+    -0.0208199152547924,
+    null,
+    13.0020850873335,
+    null,
+    null
+   ],
+   "size": 1.3002085087333501,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 18.3899933641852,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g126",
+   "model": "linear",
+   "parameters": [
+    0.0267474750162981,
+    null,
+    9.10747509303135,
+    null,
+    null
+   ],
+   "size": 0.49188588805843,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g126",
+   "model": "linear",
+   "parameters": [
+    0.0267474750162981,
+    null,
+    9.10747509303135,
+    null,
+    null
+   ],
+   "size": 0.9107475093031351,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.275692057702761,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g34",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.29420958881946,
+    11.0341729978817,
+    11.0341729978817,
+    1.42872110907445,
+    1.06499184775859
+   ],
+   "size": 0.474694907414527,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g34",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.29420958881946,
+    11.0341729978817,
+    11.0341729978817,
+    1.42872110907445,
+    1.06499184775859
+   ],
+   "size": 1.1034172997881702,
+   "status": "not reached"
+  },
+  {
+   "bmd": 13.3108675003779,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g69",
+   "model": "linear",
+   "parameters": [
+    0.0238218424206319,
+    null,
+    10.8447453559859,
+    null,
+    null
+   ],
+   "size": 0.317089388075913,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g69",
+   "model": "linear",
+   "parameters": [
+    0.0238218424206319,
+    null,
+    10.8447453559859,
+    null,
+    null
+   ],
+   "size": 1.08447453559859,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 1.26916279621913,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g115",
+   "model": "gauss_probit",
+   "parameters": [
+    1.55306103639388,
+    9.6746220691828,
+    10.0337450752984,
+    3.25940355270401,
+    -1.32297246626945
+   ],
+   "size": 0.465251219525626,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 2.20657410284769,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g115",
+   "model": "gauss_probit",
+   "parameters": [
+    1.55306103639388,
+    9.6746220691828,
+    10.0337450752984,
+    3.25940355270401,
+    -1.32297246626945
+   ],
+   "size": 0.988105079225705,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 24.436947542629,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g17",
+   "model": "linear",
+   "parameters": [
+    -0.00947079441038397,
+    null,
+    15.5791089976874,
+    null,
+    null
+   ],
+   "size": 0.231437306193576,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g17",
+   "model": "linear",
+   "parameters": [
+    -0.00947079441038397,
+    null,
+    15.5791089976874,
+    null,
+    null
+   ],
+   "size": 1.55791089976874,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g68",
+   "model": "linear",
+   "parameters": [
+    0.00897058138458399,
+    null,
+    9.69803063036836,
+    null,
+    null
+   ],
+   "size": 0.454296023179242,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g68",
+   "model": "linear",
+   "parameters": [
+    0.00897058138458399,
+    null,
+    9.69803063036836,
+    null,
+    null
+   ],
+   "size": 0.9698030630368359,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g82",
+   "model": "linear",
+   "parameters": [
+    -0.0156635368163796,
+    null,
+    8.6628960344023,
+    null,
+    null
+   ],
+   "size": 0.533951073017612,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g82",
+   "model": "linear",
+   "parameters": [
+    -0.0156635368163796,
+    null,
+    8.6628960344023,
+    null,
+    null
+   ],
+   "size": 0.86628960344023,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.0026504782108523,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g108",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.73414595889872,
+    12.8054505750719,
+    12.8054505750719,
+    0.0181139589399747,
+    0.386137713817457
+   ],
+   "size": 0.208934938132195,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g108",
+   "model": "log_gauss_probit_symmetric",
+   "parameters": [
+    1.73414595889872,
+    12.8054505750719,
+    12.8054505750719,
+    0.0181139589399747,
+    0.386137713817457
+   ],
+   "size": 1.2805450575071902,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g119",
+   "model": "linear",
+   "parameters": [
+    0.0202890004279368,
+    null,
+    7.75790453852681,
+    null,
+    null
+   ],
+   "size": 0.913640172320674,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g119",
+   "model": "linear",
+   "parameters": [
+    0.0202890004279368,
+    null,
+    7.75790453852681,
+    null,
+    null
+   ],
+   "size": 0.775790453852681,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g12",
+   "model": "linear",
+   "parameters": [
+    -0.00655466711216399,
+    null,
+    10.2479626312958,
+    null,
+    null
+   ],
+   "size": 0.333758151285416,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g12",
+   "model": "linear",
+   "parameters": [
+    -0.00655466711216399,
+    null,
+    10.2479626312958,
+    null,
+    null
+   ],
+   "size": 1.0247962631295802,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g29",
+   "model": "linear",
+   "parameters": [
+    0.0157515383445809,
+    null,
+    8.60523063072049,
+    null,
+    null
+   ],
+   "size": 0.506565815520027,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g29",
+   "model": "linear",
+   "parameters": [
+    0.0157515383445809,
+    null,
+    8.60523063072049,
+    null,
+    null
+   ],
+   "size": 0.8605230630720491,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g9",
+   "model": "linear",
+   "parameters": [
+    0.00316849576141195,
+    null,
+    15.3426955546991,
+    null,
+    null
+   ],
+   "size": 0.427229241607055,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g9",
+   "model": "linear",
+   "parameters": [
+    0.00316849576141195,
+    null,
+    15.3426955546991,
+    null,
+    null
+   ],
+   "size": 1.5342695554699102,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 18.5953062489854,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g58",
+   "model": "linear",
+   "parameters": [
+    -0.0343389460548488,
+    null,
+    9.04360765564271,
+    null,
+    null
+   ],
+   "size": 0.638543218157302,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 26.3362994344602,
+   "bmr": "xfold",
+   "code": "value",
+   "id": "g58",
+   "model": "linear",
+   "parameters": [
+    -0.0343389460548488,
+    null,
+    9.04360765564271,
+    null,
+    null
+   ],
+   "size": 0.904360765564271,
+   "status": "within the doses"
+  },
+  {
+   "bmd": 26.8886761000049,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g112",
+   "model": "linear",
+   "parameters": [
+    0.010102932085496,
+    null,
+    11.2896522898919,
+    null,
+    null
+   ],
+   "size": 0.271654468507249,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g112",
+   "model": "linear",
+   "parameters": [
+    0.010102932085496,
+    null,
+    11.2896522898919,
+    null,
+    null
+   ],
+   "size": 1.12896522898919,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 27.0674470122804,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g80",
+   "model": "linear",
+   "parameters": [
+    0.0114840633873338,
+    null,
+    10.0153020260967,
+    null,
+    null
+   ],
+   "size": 0.310844277222329,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g80",
+   "model": "linear",
+   "parameters": [
+    0.0114840633873338,
+    null,
+    10.0153020260967,
+    null,
+    null
+   ],
+   "size": 1.00153020260967,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g107",
+   "model": "linear",
+   "parameters": [
+    -0.00283520928329985,
+    null,
+    14.4342737105085,
+    null,
+    null
+   ],
+   "size": 0.357230613163859,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g107",
+   "model": "linear",
+   "parameters": [
+    -0.00283520928329985,
+    null,
+    14.4342737105085,
+    null,
+    null
+   ],
+   "size": 1.44342737105085,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 29.2789741836498,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g77",
+   "model": "linear",
+   "parameters": [
+    0.010627202164671,
+    null,
+    10.1837492005077,
+    null,
+    null
+   ],
+   "size": 0.311153577823831,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g77",
+   "model": "linear",
+   "parameters": [
+    0.010627202164671,
+    null,
+    10.1837492005077,
+    null,
+    null
+   ],
+   "size": 1.0183749200507701,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 21.3998708960886,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g104",
+   "model": "linear",
+   "parameters": [
+    -0.0185211947714028,
+    null,
+    13.3614361856183,
+    null,
+    null
+   ],
+   "size": 0.396351176949332,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g104",
+   "model": "linear",
+   "parameters": [
+    -0.0185211947714028,
+    null,
+    13.3614361856183,
+    null,
+    null
+   ],
+   "size": 1.33614361856183,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g45",
+   "model": "linear",
+   "parameters": [
+    -0.00306824144655373,
+    null,
+    11.364868463826,
+    null,
+    null
+   ],
+   "size": 0.388819151605199,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g45",
+   "model": "linear",
+   "parameters": [
+    -0.00306824144655373,
+    null,
+    11.364868463826,
+    null,
+    null
+   ],
+   "size": 1.1364868463826,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 21.4523411438442,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g76",
+   "model": "linear",
+   "parameters": [
+    -0.00829154557514602,
+    null,
+    13.1448757858201,
+    null,
+    null
+   ],
+   "size": 0.177873064287764,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g76",
+   "model": "linear",
+   "parameters": [
+    -0.00829154557514602,
+    null,
+    13.1448757858201,
+    null,
+    null
+   ],
+   "size": 1.31448757858201,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g67",
+   "model": "linear",
+   "parameters": [
+    0.00202255706528459,
+    null,
+    12.3389714260307,
+    null,
+    null
+   ],
+   "size": 0.189481596715813,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g67",
+   "model": "linear",
+   "parameters": [
+    0.00202255706528459,
+    null,
+    12.3389714260307,
+    null,
+    null
+   ],
+   "size": 1.23389714260307,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 29.2282949930191,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g99",
+   "model": "linear",
+   "parameters": [
+    -0.00834283135340863,
+    null,
+    14.0978506756145,
+    null,
+    null
+   ],
+   "size": 0.243846735874437,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g99",
+   "model": "linear",
+   "parameters": [
+    -0.00834283135340863,
+    null,
+    14.0978506756145,
+    null,
+    null
+   ],
+   "size": 1.40978506756145,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 25.8531523832024,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g4",
+   "model": "linear",
+   "parameters": [
+    0.0187409662222808,
+    null,
+    11.6293238913613,
+    null,
+    null
+   ],
+   "size": 0.484513055553074,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g4",
+   "model": "linear",
+   "parameters": [
+    0.0187409662222808,
+    null,
+    11.6293238913613,
+    null,
+    null
+   ],
+   "size": 1.16293238913613,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g21",
+   "model": "linear",
+   "parameters": [
+    -0.00444036104308665,
+    null,
+    10.4012150749608,
+    null,
+    null
+   ],
+   "size": 0.466635285544192,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g21",
+   "model": "linear",
+   "parameters": [
+    -0.00444036104308665,
+    null,
+    10.4012150749608,
+    null,
+    null
+   ],
+   "size": 1.0401215074960801,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g90",
+   "model": "linear",
+   "parameters": [
+    -0.00648790267826581,
+    null,
+    11.1304896413961,
+    null,
+    null
+   ],
+   "size": 0.457965426380389,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g90",
+   "model": "linear",
+   "parameters": [
+    -0.00648790267826581,
+    null,
+    11.1304896413961,
+    null,
+    null
+   ],
+   "size": 1.11304896413961,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g97",
+   "model": "linear",
+   "parameters": [
+    0.00218439142238208,
+    null,
+    15.0623392956267,
+    null,
+    null
+   ],
+   "size": 0.276509613115712,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g97",
+   "model": "linear",
+   "parameters": [
+    0.00218439142238208,
+    null,
+    15.0623392956267,
+    null,
+    null
+   ],
+   "size": 1.50623392956267,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g8",
+   "model": "linear",
+   "parameters": [
+    -0.00855564461978352,
+    null,
+    12.1007122683161,
+    null,
+    null
+   ],
+   "size": 0.36194390225783,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g8",
+   "model": "linear",
+   "parameters": [
+    -0.00855564461978352,
+    null,
+    12.1007122683161,
+    null,
+    null
+   ],
+   "size": 1.21007122683161,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 0.000866005918931514,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g103",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.60492364654373,
+    10.8979796230749,
+    11.170968558493,
+    0.00627804501128585,
+    -0.707013062902374
+   ],
+   "size": 0.359710380736547,
+   "status": "below the lowest dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g103",
+   "model": "log_gauss_probit",
+   "parameters": [
+    1.60492364654373,
+    10.8979796230749,
+    11.170968558493,
+    0.00627804501128585,
+    -0.707013062902374
+   ],
+   "size": 1.1170968558493,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g111",
+   "model": "linear",
+   "parameters": [
+    0.00227188326739311,
+    null,
+    12.4203646098898,
+    null,
+    null
+   ],
+   "size": 0.213352739749656,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g111",
+   "model": "linear",
+   "parameters": [
+    0.00227188326739311,
+    null,
+    12.4203646098898,
+    null,
+    null
+   ],
+   "size": 1.24203646098898,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g78",
+   "model": "linear",
+   "parameters": [
+    0.0064488421006597,
+    null,
+    10.7906134461414,
+    null,
+    null
+   ],
+   "size": 0.240636383865801,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g78",
+   "model": "linear",
+   "parameters": [
+    0.0064488421006597,
+    null,
+    10.7906134461414,
+    null,
+    null
+   ],
+   "size": 1.07906134461414,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g49",
+   "model": "linear",
+   "parameters": [
+    -0.00672298605480642,
+    null,
+    9.74583330134135,
+    null,
+    null
+   ],
+   "size": 0.339300167769352,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g49",
+   "model": "linear",
+   "parameters": [
+    -0.00672298605480642,
+    null,
+    9.74583330134135,
+    null,
+    null
+   ],
+   "size": 0.974583330134135,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g61",
+   "model": "linear",
+   "parameters": [
+    -0.00297120113749548,
+    null,
+    11.2570124192606,
+    null,
+    null
+   ],
+   "size": 0.298050804215423,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g61",
+   "model": "linear",
+   "parameters": [
+    -0.00297120113749548,
+    null,
+    11.2570124192606,
+    null,
+    null
+   ],
+   "size": 1.12570124192606,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g113",
+   "model": "linear",
+   "parameters": [
+    -0.00266741346606374,
+    null,
+    11.7802607017861,
+    null,
+    null
+   ],
+   "size": 0.214924450923925,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g113",
+   "model": "linear",
+   "parameters": [
+    -0.00266741346606374,
+    null,
+    11.7802607017861,
+    null,
+    null
+   ],
+   "size": 1.17802607017861,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g10",
+   "model": "linear",
+   "parameters": [
+    -0.00912604180149305,
+    null,
+    11.8746268301839,
+    null,
+    null
+   ],
+   "size": 0.444115372508636,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g10",
+   "model": "linear",
+   "parameters": [
+    -0.00912604180149305,
+    null,
+    11.8746268301839,
+    null,
+    null
+   ],
+   "size": 1.18746268301839,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": 22.2539784487228,
+   "bmr": "zSD",
+   "code": "value",
+   "id": "g28",
+   "model": "linear",
+   "parameters": [
+    0.019276992609327,
+    null,
+    9.53529673309161,
+    null,
+    null
+   ],
+   "size": 0.428989778084152,
+   "status": "within the doses"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g28",
+   "model": "linear",
+   "parameters": [
+    0.019276992609327,
+    null,
+    9.53529673309161,
+    null,
+    null
+   ],
+   "size": 0.9535296733091609,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g74",
+   "model": "linear",
+   "parameters": [
+    -0.00266496103877532,
+    null,
+    9.36945889692815,
+    null,
+    null
+   ],
+   "size": 0.364598553262016,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g74",
+   "model": "linear",
+   "parameters": [
+    -0.00266496103877532,
+    null,
+    9.36945889692815,
+    null,
+    null
+   ],
+   "size": 0.936945889692815,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g93",
+   "model": "linear",
+   "parameters": [
+    -0.00384169465145374,
+    null,
+    13.048209666501,
+    null,
+    null
+   ],
+   "size": 0.219570218183647,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g93",
+   "model": "linear",
+   "parameters": [
+    -0.00384169465145374,
+    null,
+    13.048209666501,
+    null,
+    null
+   ],
+   "size": 1.3048209666501,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g117",
+   "model": "linear",
+   "parameters": [
+    -0.00600309189052451,
+    null,
+    10.3009038439117,
+    null,
+    null
+   ],
+   "size": 0.344415493942562,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g117",
+   "model": "linear",
+   "parameters": [
+    -0.00600309189052451,
+    null,
+    10.3009038439117,
+    null,
+    null
+   ],
+   "size": 1.03009038439117,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g47",
+   "model": "linear",
+   "parameters": [
+    -0.00670207771982271,
+    null,
+    11.493589235645,
+    null,
+    null
+   ],
+   "size": 0.239194818316082,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g47",
+   "model": "linear",
+   "parameters": [
+    -0.00670207771982271,
+    null,
+    11.493589235645,
+    null,
+    null
+   ],
+   "size": 1.1493589235645,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g52",
+   "model": "linear",
+   "parameters": [
+    0.00836855771708802,
+    null,
+    11.7828799098625,
+    null,
+    null
+   ],
+   "size": 0.394518628725565,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g52",
+   "model": "linear",
+   "parameters": [
+    0.00836855771708802,
+    null,
+    11.7828799098625,
+    null,
+    null
+   ],
+   "size": 1.17828799098625,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g2",
+   "model": "linear",
+   "parameters": [
+    0.00485118560533063,
+    null,
+    9.48897667100781,
+    null,
+    null
+   ],
+   "size": 0.603546183418983,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g2",
+   "model": "linear",
+   "parameters": [
+    0.00485118560533063,
+    null,
+    9.48897667100781,
+    null,
+    null
+   ],
+   "size": 0.948897667100781,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g1",
+   "model": "linear",
+   "parameters": [
+    0.00242466128141485,
+    null,
+    9.70937302356477,
+    null,
+    null
+   ],
+   "size": 0.476430601171361,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g1",
+   "model": "linear",
+   "parameters": [
+    0.00242466128141485,
+    null,
+    9.70937302356477,
+    null,
+    null
+   ],
+   "size": 0.9709373023564771,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g0",
+   "model": "linear",
+   "parameters": [
+    -0.00263124442224311,
+    null,
+    11.5858482115803,
+    null,
+    null
+   ],
+   "size": 0.297372845594725,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g0",
+   "model": "linear",
+   "parameters": [
+    -0.00263124442224311,
+    null,
+    11.5858482115803,
+    null,
+    null
+   ],
+   "size": 1.15858482115803,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g39",
+   "model": "linear",
+   "parameters": [
+    -2.62522452189235e-05,
+    null,
+    14.9705988469681,
+    null,
+    null
+   ],
+   "size": 0.215020093734513,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g39",
+   "model": "linear",
+   "parameters": [
+    -2.62522452189235e-05,
+    null,
+    14.9705988469681,
+    null,
+    null
+   ],
+   "size": 1.4970598846968102,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g94",
+   "model": "linear",
+   "parameters": [
+    0.00774998092733621,
+    null,
+    12.5885996239654,
+    null,
+    null
+   ],
+   "size": 0.285593307847572,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g94",
+   "model": "linear",
+   "parameters": [
+    0.00774998092733621,
+    null,
+    12.5885996239654,
+    null,
+    null
+   ],
+   "size": 1.2588599623965402,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g114",
+   "model": "linear",
+   "parameters": [
+    -0.00197865168967485,
+    null,
+    10.6744338868891,
+    null,
+    null
+   ],
+   "size": 0.323782996193696,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g114",
+   "model": "linear",
+   "parameters": [
+    -0.00197865168967485,
+    null,
+    10.6744338868891,
+    null,
+    null
+   ],
+   "size": 1.06744338868891,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g13",
+   "model": "linear",
+   "parameters": [
+    0.0204177119432464,
+    null,
+    8.39143324923528,
+    null,
+    null
+   ],
+   "size": 0.623954756293213,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g13",
+   "model": "linear",
+   "parameters": [
+    0.0204177119432464,
+    null,
+    8.39143324923528,
+    null,
+    null
+   ],
+   "size": 0.8391433249235281,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g51",
+   "model": "linear",
+   "parameters": [
+    -0.00533677848955579,
+    null,
+    11.0028527465583,
+    null,
+    null
+   ],
+   "size": 0.362618125191478,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g51",
+   "model": "linear",
+   "parameters": [
+    -0.00533677848955579,
+    null,
+    11.0028527465583,
+    null,
+    null
+   ],
+   "size": 1.10028527465583,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g73",
+   "model": "linear",
+   "parameters": [
+    0.00336799750757602,
+    null,
+    15.259936188575,
+    null,
+    null
+   ],
+   "size": 0.19112050197834,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g73",
+   "model": "linear",
+   "parameters": [
+    0.00336799750757602,
+    null,
+    15.259936188575,
+    null,
+    null
+   ],
+   "size": 1.5259936188575,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g83",
+   "model": "linear",
+   "parameters": [
+    0.00539233587502398,
+    null,
+    11.9239933019404,
+    null,
+    null
+   ],
+   "size": 0.267220395184696,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g83",
+   "model": "linear",
+   "parameters": [
+    0.00539233587502398,
+    null,
+    11.9239933019404,
+    null,
+    null
+   ],
+   "size": 1.1923993301940399,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g98",
+   "model": "linear",
+   "parameters": [
+    -0.00337805128771613,
+    null,
+    8.94288622477174,
+    null,
+    null
+   ],
+   "size": 0.450388794019424,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g98",
+   "model": "linear",
+   "parameters": [
+    -0.00337805128771613,
+    null,
+    8.94288622477174,
+    null,
+    null
+   ],
+   "size": 0.8942886224771741,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g100",
+   "model": "linear",
+   "parameters": [
+    -0.00413794331220039,
+    null,
+    9.43770141835537,
+    null,
+    null
+   ],
+   "size": 0.447579698993503,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g100",
+   "model": "linear",
+   "parameters": [
+    -0.00413794331220039,
+    null,
+    9.43770141835537,
+    null,
+    null
+   ],
+   "size": 0.9437701418355371,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g109",
+   "model": "linear",
+   "parameters": [
+    0.00129712380804692,
+    null,
+    10.6236968981041,
+    null,
+    null
+   ],
+   "size": 0.407258509761704,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g109",
+   "model": "linear",
+   "parameters": [
+    0.00129712380804692,
+    null,
+    10.6236968981041,
+    null,
+    null
+   ],
+   "size": 1.06236968981041,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g120",
+   "model": "linear",
+   "parameters": [
+    -0.00171765894838802,
+    null,
+    8.92671553880841,
+    null,
+    null
+   ],
+   "size": 0.771147922587887,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g120",
+   "model": "linear",
+   "parameters": [
+    -0.00171765894838802,
+    null,
+    8.92671553880841,
+    null,
+    null
+   ],
+   "size": 0.892671553880841,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g22",
+   "model": "linear",
+   "parameters": [
+    -0.000436171762689276,
+    null,
+    10.2778867032068,
+    null,
+    null
+   ],
+   "size": 0.435710778454799,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g22",
+   "model": "linear",
+   "parameters": [
+    -0.000436171762689276,
+    null,
+    10.2778867032068,
+    null,
+    null
+   ],
+   "size": 1.02778867032068,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g121",
+   "model": "linear",
+   "parameters": [
+    -0.00373878421580823,
+    null,
+    10.5638850059363,
+    null,
+    null
+   ],
+   "size": 0.471547750342187,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g121",
+   "model": "linear",
+   "parameters": [
+    -0.00373878421580823,
+    null,
+    10.5638850059363,
+    null,
+    null
+   ],
+   "size": 1.05638850059363,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g24",
+   "model": "linear",
+   "parameters": [
+    0.00825113571794043,
+    null,
+    9.15684302075101,
+    null,
+    null
+   ],
+   "size": 0.587774324487756,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g24",
+   "model": "linear",
+   "parameters": [
+    0.00825113571794043,
+    null,
+    9.15684302075101,
+    null,
+    null
+   ],
+   "size": 0.9156843020751011,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g37",
+   "model": "linear",
+   "parameters": [
+    0.00315057031401349,
+    null,
+    9.33875759462051,
+    null,
+    null
+   ],
+   "size": 0.50137055119611,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g37",
+   "model": "linear",
+   "parameters": [
+    0.00315057031401349,
+    null,
+    9.33875759462051,
+    null,
+    null
+   ],
+   "size": 0.933875759462051,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g75",
+   "model": "linear",
+   "parameters": [
+    0.00513686120301975,
+    null,
+    13.581986961778,
+    null,
+    null
+   ],
+   "size": 0.227053833337025,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g75",
+   "model": "linear",
+   "parameters": [
+    0.00513686120301975,
+    null,
+    13.581986961778,
+    null,
+    null
+   ],
+   "size": 1.3581986961778,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g92",
+   "model": "linear",
+   "parameters": [
+    0.00169300216527136,
+    null,
+    14.0068072232457,
+    null,
+    null
+   ],
+   "size": 0.306118159164347,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g92",
+   "model": "linear",
+   "parameters": [
+    0.00169300216527136,
+    null,
+    14.0068072232457,
+    null,
+    null
+   ],
+   "size": 1.40068072232457,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g3",
+   "model": "linear",
+   "parameters": [
+    0.00231292489954345,
+    null,
+    12.639276490322,
+    null,
+    null
+   ],
+   "size": 0.228457027301465,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g3",
+   "model": "linear",
+   "parameters": [
+    0.00231292489954345,
+    null,
+    12.639276490322,
+    null,
+    null
+   ],
+   "size": 1.2639276490322002,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g15",
+   "model": "linear",
+   "parameters": [
+    -0.00290094110632317,
+    null,
+    11.49072188039,
+    null,
+    null
+   ],
+   "size": 0.251220545367421,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g15",
+   "model": "linear",
+   "parameters": [
+    -0.00290094110632317,
+    null,
+    11.49072188039,
+    null,
+    null
+   ],
+   "size": 1.149072188039,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g19",
+   "model": "linear",
+   "parameters": [
+    -0.00328238587891058,
+    null,
+    12.1504664753028,
+    null,
+    null
+   ],
+   "size": 0.305382225180926,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g19",
+   "model": "linear",
+   "parameters": [
+    -0.00328238587891058,
+    null,
+    12.1504664753028,
+    null,
+    null
+   ],
+   "size": 1.2150466475302801,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g59",
+   "model": "linear",
+   "parameters": [
+    0.000519751947403184,
+    null,
+    10.8007876886441,
+    null,
+    null
+   ],
+   "size": 0.308763889831083,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g59",
+   "model": "linear",
+   "parameters": [
+    0.000519751947403184,
+    null,
+    10.8007876886441,
+    null,
+    null
+   ],
+   "size": 1.08007876886441,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g91",
+   "model": "linear",
+   "parameters": [
+    0.00211572262566742,
+    null,
+    8.39245469826393,
+    null,
+    null
+   ],
+   "size": 0.52173030307133,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g91",
+   "model": "linear",
+   "parameters": [
+    0.00211572262566742,
+    null,
+    8.39245469826393,
+    null,
+    null
+   ],
+   "size": 0.8392454698263929,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g116",
+   "model": "linear",
+   "parameters": [
+    0.00516823664813841,
+    null,
+    11.9853512682909,
+    null,
+    null
+   ],
+   "size": 0.393043922796551,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g116",
+   "model": "linear",
+   "parameters": [
+    0.00516823664813841,
+    null,
+    11.9853512682909,
+    null,
+    null
+   ],
+   "size": 1.19853512682909,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g71",
+   "model": "linear",
+   "parameters": [
+    -0.00380552439696049,
+    null,
+    8.38611368763697,
+    null,
+    null
+   ],
+   "size": 0.767958685773641,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g71",
+   "model": "linear",
+   "parameters": [
+    -0.00380552439696049,
+    null,
+    8.38611368763697,
+    null,
+    null
+   ],
+   "size": 0.838611368763697,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g54",
+   "model": "linear",
+   "parameters": [
+    -0.00534774289681309,
+    null,
+    10.339566287682,
+    null,
+    null
+   ],
+   "size": 0.615595686415742,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g54",
+   "model": "linear",
+   "parameters": [
+    -0.00534774289681309,
+    null,
+    10.339566287682,
+    null,
+    null
+   ],
+   "size": 1.0339566287682,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g102",
+   "model": "linear",
+   "parameters": [
+    -0.00390122236563026,
+    null,
+    13.7155144567554,
+    null,
+    null
+   ],
+   "size": 0.228664698756143,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g102",
+   "model": "linear",
+   "parameters": [
+    -0.00390122236563026,
+    null,
+    13.7155144567554,
+    null,
+    null
+   ],
+   "size": 1.3715514456755402,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g95",
+   "model": "linear",
+   "parameters": [
+    0.00112963507609688,
+    null,
+    11.6501664881397,
+    null,
+    null
+   ],
+   "size": 0.3763764557404,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g95",
+   "model": "linear",
+   "parameters": [
+    0.00112963507609688,
+    null,
+    11.6501664881397,
+    null,
+    null
+   ],
+   "size": 1.16501664881397,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g6",
+   "model": "linear",
+   "parameters": [
+    -0.00262816739937825,
+    null,
+    12.3958703258392,
+    null,
+    null
+   ],
+   "size": 0.369686076464427,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g6",
+   "model": "linear",
+   "parameters": [
+    -0.00262816739937825,
+    null,
+    12.3958703258392,
+    null,
+    null
+   ],
+   "size": 1.23958703258392,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g88",
+   "model": "linear",
+   "parameters": [
+    -0.00190634007586988,
+    null,
+    10.8484212629865,
+    null,
+    null
+   ],
+   "size": 0.375992614746978,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g88",
+   "model": "linear",
+   "parameters": [
+    -0.00190634007586988,
+    null,
+    10.8484212629865,
+    null,
+    null
+   ],
+   "size": 1.08484212629865,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g110",
+   "model": "linear",
+   "parameters": [
+    -0.00109711145470652,
+    null,
+    9.52979565930135,
+    null,
+    null
+   ],
+   "size": 0.409010868154192,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g110",
+   "model": "linear",
+   "parameters": [
+    -0.00109711145470652,
+    null,
+    9.52979565930135,
+    null,
+    null
+   ],
+   "size": 0.952979565930135,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g122",
+   "model": "linear",
+   "parameters": [
+    -0.000162634932248853,
+    null,
+    11.0472123312812,
+    null,
+    null
+   ],
+   "size": 0.370074207127376,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g122",
+   "model": "linear",
+   "parameters": [
+    -0.000162634932248853,
+    null,
+    11.0472123312812,
+    null,
+    null
+   ],
+   "size": 1.10472123312812,
+   "status": "not reached"
+  },
+  {
+   "bmd": null,
+   "bmr": "zSD",
+   "code": "NA",
+   "id": "g123",
+   "model": "linear",
+   "parameters": [
+    0.00081197464751963,
+    null,
+    14.4801178066159,
+    null,
+    null
+   ],
+   "size": 0.402547127667334,
+   "status": "above the top dose"
+  },
+  {
+   "bmd": null,
+   "bmr": "xfold",
+   "code": "NA",
+   "id": "g123",
+   "model": "linear",
+   "parameters": [
+    0.00081197464751963,
+    null,
+    14.4801178066159,
+    null,
+    null
+   ],
+   "size": 1.44801178066159,
+   "status": "not reached"
+  }
+ ]
+}

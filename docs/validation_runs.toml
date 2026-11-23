@@ -4,6 +4,7 @@
 
 "activity.py" = "d9bf973658c0"
 "anndata_conversion.py" = "3f4b53bf6a0a"
+"benchmark_doses.py" = "5bda9c055968"
 "combined_p_values_and_replication.py" = "22d61d58f5fc"
 "composition_tests.py" = "f490f4150d23"
 "cube.py" = "2140b06ef23c"
@@ -21,7 +22,7 @@
 "dose_curves.py" = "f2319a57694f"
 "dose_design.py" = "968197121549"
 "dose_gate.py" = "819961d5824f"
-"dose_response_calibration.py" = "e4de8160a93e"
+"dose_response_calibration.py" = "c80e1df32648"
 "dose_response_signatures.py" = "a31294190080"
 "dose_response_tests.py" = "f92a9775fdc2"
 "dream.py" = "8c67586802c1"
