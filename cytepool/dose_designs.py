@@ -502,9 +502,8 @@ def check_dose_design(
     Raises:
         TypeError: If ``data`` is not a Cube, PathwayScores or Activities, ``design``
             not a Design, ``dose`` not a DoseAxis, an option has the wrong type, the
-            dose column does not hold
-            real numbers, or ``groups`` or ``min_cells`` is or holds a numpy masked
-            array.
+            dose column does not hold real numbers, or ``groups`` or ``min_cells`` is
+            or holds a numpy masked array.
         ValueError: If the design has random effects that are not random
             intercepts, has no ``sample_id`` column, names samples the cube does not
             have or names a sample twice; if its terms use the dose column or the

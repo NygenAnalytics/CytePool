@@ -390,9 +390,9 @@ class DoseResponseResult:
       fitting a shape is MCP-Mod's modelling step, not implemented yet), its ``t``,
       ``df`` (of the multivariate t), ``p_value`` (adjusted for the gene's
       contrasts, the single-step max-t test) and ``p_value_error`` (its Monte Carlo
-      standard error), ``adjusted_p_value`` (Benjamini-Hochberg over the cell type's genes)
-      and ``adjusted_p_value_across_groups``. Each contrast's weights on the treated
-      doses are in the cell type's entry of ``provenance["groups"]``
+      standard error), ``adjusted_p_value`` (Benjamini-Hochberg over the cell
+      type's genes) and ``adjusted_p_value_across_groups``. Each contrast's weights
+      on the treated doses are in the cell type's entry of ``provenance["groups"]``
       (``contrast_tests``).
     - ``"each_dose"``: each treated dose the cell type compares against the vehicle,
       the rows of a dose together, doses ascending, each dose's genes in the cube's
@@ -715,9 +715,8 @@ class DoseResponseResult:
         with the reasons, why turns could not be checked for a dose group that drives
         them (``turns_unchecked``, empty when they could), the genes, the scores left
         out with their reasons (``left_out``, empty for a cube's genes), or why the
-        cell type has none). With ``models``,
-        ``curves`` also holds each model's mean and parameters, the sizes of the grids
-        and the refinement's settings.
+        cell type has none). With ``models``, ``curves`` also holds each model's mean
+        and parameters, the sizes of the grids and the refinement's settings.
         """
         record: dict[str, Any] = json.loads(self._record)
         return record
@@ -1367,8 +1366,9 @@ def dose_response(
     explains the tests and how to read them.
 
     Three multiple contrast tests run when named, each two-sided, or one-sided with
-    ``direction``, with one error rate for the gene's contrasts (the single-step max-t test, from the multivariate
-    t distribution on the gene's df) and Benjamini-Hochberg across genes:
+    ``direction``, with one error rate for the gene's contrasts (the single-step
+    max-t test, from the multivariate t distribution on the gene's df) and
+    Benjamini-Hochberg across genes:
 
     - ``"dunnett"``: each dose against the vehicle (Dunnett 1955).
     - ``"williams"``: the Williams-type test (Bretz 2006), the vehicle against the
@@ -1475,10 +1475,10 @@ def dose_response(
             more, and ``"mcp"`` two treated doses; a cell type that compares one
             treated dose does not run ``"mcp"``, with the reason. The gate's test,
             the spline by default (the Williams-type test with ``direction``), also
-            runs when ``tests`` does not name it, and
-            decides which genes pass the gate and whose lowest effective doses are
-            called: ``tests="williams"`` runs the spline too, and
-            ``gate={"test": "williams"}`` makes the Williams-type test decide.
+            runs when ``tests`` does not name it, and decides which genes pass the
+            gate and whose lowest effective doses are called: ``tests="williams"``
+            runs the spline too, and ``gate={"test": "williams"}`` makes the
+            Williams-type test decide.
         direction: ``"up"`` or ``"down"`` for tests of a rise or a fall with dose
             only, DoseFinding's ``"increasing"`` and ``"decreasing"``, of the tests
             with a sign that ``tests`` names; None (default) for two-sided tests.
