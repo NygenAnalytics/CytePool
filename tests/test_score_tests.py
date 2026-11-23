@@ -243,6 +243,9 @@ def test_what_limma_cannot_test_is_refused() -> None:
         limma(values[where], design(), sample_ids=single)
     with pytest.raises(ValueError, match="none of the samples of the data is in"):
         limma(values, design(), sample_ids=[f"X{i}" for i in range(len(values))])
+    without_ids = full.samples.select(["donor", "condition"])
+    with pytest.raises(ValueError, match="no 'sample_id' column, so its rows cannot"):
+        limma(result, design(without_ids))
     with pytest.raises(
         ValueError, match=re.escape("data has 11 rows and the design 12")
     ):
