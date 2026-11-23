@@ -955,6 +955,40 @@ def test_descriptive_scores_get_curves_without_lack_of_fit() -> None:
     assert_allclose(fits.parameters, direct.parameters, rtol=1e-12)
 
 
+def test_benchmark_doses_of_scores() -> None:
+    # Scores get the BMDs of their curves as genes do, named by gene set, in the
+    # direction of the simulated scores: "rising" up, "falling" down; under constant
+    # variance "rising", which misses a value, has no curve.
+    from cytepool import BenchmarkResponse
+    from cytepool.stats.potency import benchmark_doses
+
+    scores = scores_of(limma_reference()["scores"]["missing"], "full")
+    bmr = BenchmarkResponse.absolute(0.5)
+    for variance in ("constant", "weighted", "moderated"):
+        result = dose_response(
+            scores,
+            design_of(scores),
+            dose=AXIS,
+            models="ll4",
+            variance=variance,
+            bmr=bmr,
+            flags="ntp_2018",
+        )
+        table = result.table(name="benchmark_doses")
+        assert table.columns[:3] == ("gene_set", "passes_gate", "bmr")
+        first = table.filter(table["bmr"] == bmr.label)
+        direction = dict(zip(first["gene_set"].tolist(), first["direction"].tolist()))
+        assert direction["falling"] == "down"
+        assert direction.get("rising", "up") == "up"
+        assert ("rising" in direction) == (variance != "constant")
+        assert set(direction.values()) <= {"up", "down", ""}
+        direct = benchmark_doses(result.curve_fits(), bmr)
+        assert_array_equal(np.asarray(table["bmd"]), direct.bmd.ravel())
+        assert_array_equal(np.asarray(table["bmdl"]), direct.bmdl.ravel())
+        names = result.benchmark_doses().table(flags="ntp_2018")["feature_id"]
+        assert names.tolist() == table["gene_set"].tolist()
+
+
 # Records.
 
 

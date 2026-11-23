@@ -175,6 +175,32 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### pybmds
+
+The set of checks `"bmds_2026"` in `cytepool/stats/_benchmark_dose_flags.py` reproduces the default rules of the model recommendation for continuous models of pybmds 25.2, the Python package of EPA's Benchmark Dose Software, as its wheel's `pybmds/recommender/default.json` and `pybmds/recommender/checks.py` define them: which checks are enabled, their thresholds, bins and strict inequalities, and a BMDL of 0 counted as not estimated. No code is copied. pybmds is distributed under the MIT License:
+
+```
+MIT License
+
+Copyright (c) 2024 U.S. Federal Government (in countries where recognized)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ## Test, validation and documentation data
 
 The files under `tests/data/` are written by the scripts in `validation/`. Except for the two GEO series below, their inputs are generated with fixed random seeds. Reference values in those files come from the packages each script names.

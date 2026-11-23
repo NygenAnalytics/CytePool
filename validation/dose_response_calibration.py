@@ -33,6 +33,31 @@ design supports and the spline's default size.
   shape; for ``"dromics"``, the share of best fits that turn among the true bells, the
   other responsive genes and the flat ones, and the share of those turns that one
   dose group drives.
+- Potency rows: the benchmark doses of the same ``"epa"`` curves under constant,
+  weighted and moderated variance at a 1.1-fold change, ``bmr`` of a change of
+  log2(1.1), among the genes whose true shape lies in the set (hill, exponential,
+  linear, power) and whose true benchmark dose at that change (``bmd_fold_change``)
+  lies within the doses: the share with a BMD, the median and interquartile range of
+  log10 of the estimated over the true BMD, and one-sided BMDL and BMDU coverage of the
+  true BMD, also by the gene's expected counts per profile at the vehicle (below 10,
+  10 to 100, 100 or more), since the prior counts of log-CPM values compress the
+  observed changes of genes with few counts, and by whether the best model contains
+  the true shape; and log10 of the 1 SD BMD over the true BMD at one SD of true
+  expression (``bmd_expression_sd``), as bias only, since the observed SD includes
+  counting noise.
+- Straight-line rows: lines with normal errors simulated directly at K = 9 x 3, whose
+  one-sided BMDLs have exact references: Fieller's t-based bound for a change of 0.4
+  and the noncentral t bound for 1.349 SD, each of which must cover the true BMD in 95%
+  of datasets within 4 standard errors (calibrated), beside the coverage of
+  ``benchmark_doses``'s profile-likelihood BMDL and BMDU of the line, and of the
+  bound of a change held at 1.349 times the vehicle replicates' sample SD, which
+  ignores that SD's error.
+- Named-model rows: Hill curves with normal errors simulated directly at K = 9 x 3 and
+  9 x 8, fitted with the ``"epa"`` set and read with the true model named
+  (``model="hill"``), so that no model is chosen: one-sided BMDL and BMDU coverage of
+  the true BMD at a change of 0.5 and at 1.349 SD, and how often BMDL to BMDU holds it,
+  which shows what the chi-square threshold gives at few replicates when the model is
+  right.
 - Band rows: 12 datasets of K = 9 x 3 replicates, one cell type of 600 genes of which
   30% respond, with 3,000 cells per profile, so that counting compresses no change.
   At each treated dose, the share of the curves' pointwise 95% bands that hold the
@@ -77,15 +102,18 @@ Seeds: ``numpy.random.default_rng([20261201, kind, design_cell, dataset])``, wit
 for power, 1 for null, 2 for the band's and 4 for the vehicle-only datasets, the design
 cells numbered in the order of the grid, as each row prints, and the band's and the
 vehicle-only design numbered 0; the multiple contrast tests of a dataset take their
-seed from kind 3, and the permutation checks theirs from kind 5. Each estimate comes with its
-Monte Carlo standard error between datasets and, for shares of p-values, the binomial
-bound of that error, which p-values that a dataset's moderation ties together exceed.
-Every row is information but the spline and fold-change gates' rows at 3
-replicates, the permutation check's rows and the control rows, which fail the run
-when they fail.
+seed from kind 3, the permutation checks theirs from kind 5, the straight lines from
+kind 6 with the true BMD's case, and the named Hill curves from kind 7 with the
+replicates. Each estimate comes with its Monte Carlo standard
+error between datasets and, for shares of p-values and coverages, the binomial bound
+of that error, which p-values that a dataset's moderation ties together exceed. Every
+row is information but the spline and fold-change gates' rows at 3 replicates, the
+permutation check's rows, the control rows and the straight lines' exact references,
+which fail the run when they fail.
 
 Requirements:
-    Python 3.13 with numpy and numba, run from the repository root.
+    Python 3.13 with numpy and numba, and scipy for the straight lines' references,
+    run from the repository root.
 
 Usage:
     PYTHONPATH=. python validation/dose_response_calibration.py
@@ -101,6 +129,7 @@ from typing import Any
 
 import numpy as np
 
+from cytepool.benchmark_responses import BenchmarkResponse
 from cytepool.design import Design
 from cytepool.dose_axes import DoseAxis
 from cytepool.dose_responses import dose_response
@@ -110,7 +139,7 @@ from cytepool.stats.distributions import t_ppf
 from cytepool.stats.multiple_contrasts import stage_wise_adjusted_p_values
 
 SEED = 20261201
-POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS = 0, 1, 2, 3, 4, 5
+POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS, LINES, NAMED = range(8)
 FDR = 0.05
 AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
 DOSES = {
@@ -135,6 +164,20 @@ CHECK_RUNS = 100
 VEHICLE_ONLY_DOSES = [0.0, 0.1, 1.0, 10.0]
 VEHICLE_ONLY_REPLICATES = 6
 VEHICLE_ONLY_DATASETS = 200
+# The benchmark response of the truth's bmd_fold_change, a 1.1-fold change.
+POTENCY_CHANGE = float(np.log2(1.1))
+IN_EPA_SET = ("hill", "exponential", "linear", "power")
+COUNT_STRATA = ((0.0, 10.0), (10.0, 100.0), (100.0, np.inf))
+LINE_DATASETS = 4000
+LINE_SD = 0.3
+LINE_CHANGE = 0.4
+LINE_SD_MULTIPLE = 1.349
+LINE_BMDS = (1.0, 10.0)
+# Hill curves g + v x^n / (k^n + x^n), the model named, with normal errors.
+NAMED_HILL = {"g": 6.0, "v": 1.0, "k": 1.0, "n": 1.5}
+NAMED_CHANGE = 0.5
+NAMED_DATASETS = 2000
+NAMED_REPLICATES = (3, 8)
 
 
 @dataclass(frozen=True)
@@ -906,14 +949,22 @@ def vehicle_only_rows(datasets: int) -> list[tuple[str, ...]]:
 
 
 def shape_rows(cell: DesignCell) -> list[tuple[str, ...]]:
-    """How often the best curve of each set and mode finds the true shape, on the
-    power datasets of a design cell."""
+    """How often the best curve of each set and mode finds the true shape, and the
+    benchmark doses of the "epa" curves, on the power datasets of a design cell."""
     found: dict[tuple[str, str, str], list[float]] = {}
+    potency = Potency()
     for dataset in range(POWER_DATASETS):
         cube, truth = series(cell, POWER, dataset)
         for model_set, variance in CURVE_RUNS:
-            result = analyse(cube, models=model_set, variance=variance)
+            options = (
+                {"bmr": BenchmarkResponse.absolute(POTENCY_CHANGE)}
+                if model_set == "epa"
+                else {}
+            )
+            result = analyse(cube, models=model_set, variance=variance, **options)
             for group in result.groups:
+                if model_set == "epa":
+                    potency.add(variance, dataset, result, group, truth)
                 fits = result.curve_fits(group)
                 table = truth.table(group)
                 info = {
@@ -1009,6 +1060,313 @@ def shape_rows(cell: DesignCell) -> list[tuple[str, ...]]:
                 "info",
             )
         )
+    return rows + potency.rows(cell)
+
+
+# The potency rows.
+
+
+@dataclass
+class Potency:
+    """Per variance mode, one record per dataset of the genes whose true shape lies in
+    the "epa" set and whose true BMD at a 1.1-fold change lies within the doses: their
+    expected counts per profile at the vehicle, whether the best model contains the
+    true shape, the estimated BMD, BMDL and BMDU, the true BMD, and the 1 SD BMD with
+    the true BMD at one SD of true expression."""
+
+    records: dict[str, list[dict[str, np.ndarray]]] = field(default_factory=dict)
+
+    def add(
+        self, variance: str, dataset: int, result: Any, group: str, truth: Any
+    ) -> None:
+        fits = result.curve_fits(group)
+        doses = result.benchmark_doses(group)
+        table = truth.table(group)
+        genes = result.table(group, "curves")["feature_id"][
+            :: len(fits.models)
+        ].tolist()
+        position = {gene: i for i, gene in enumerate(table["feature_id"].tolist())}
+        rows = np.array([position[gene] for gene in genes], dtype=np.int64)
+        shape = np.asarray(table["shape"])[rows]
+        true = np.asarray(table["bmd_fold_change"], dtype=float)[rows]
+        positive = fits.doses[fits.doses > 0.0]
+        with np.errstate(invalid="ignore"):
+            kept = (
+                np.isin(shape, IN_EPA_SET)
+                & (true >= positive[0])
+                & (true <= fits.doses[-1])
+            )
+        best = [fits.models[b] if b >= 0 else "" for b in fits.best]
+        contains = np.array(
+            [best[g] in CONTAINING["epa"].get(shape[g], ()) for g in range(len(genes))]
+        )
+        counts = np.asarray(table["counts_per_cell"], dtype=float)[rows] * CELLS
+        # The 1 SD comparison is the last BMR.
+        record = {
+            "counts": counts[kept],
+            "contains": contains[kept],
+            "true": true[kept],
+            "bmd": doses.bmd[0][kept],
+            "bmdl": doses.bmdl[0][kept],
+            "bmdu": doses.bmdu[0][kept],
+            "bmd_sd": doses.bmd[-1][kept],
+            "true_sd": np.asarray(table["bmd_expression_sd"], dtype=float)[rows][kept],
+        }
+        per_dataset = self.records.setdefault(variance, [])
+        if len(per_dataset) <= dataset:
+            per_dataset.append(record)
+        else:
+            per_dataset[dataset] = {
+                key: np.concatenate([per_dataset[dataset][key], value])
+                for key, value in record.items()
+            }
+
+    def rows(self, cell: DesignCell) -> list[tuple[str, ...]]:
+        out = []
+        source = f"seed [{SEED}, {POWER}, {cell.number}, dataset]"
+        for variance, datasets in self.records.items():
+            every = {
+                key: np.concatenate([d[key] for d in datasets]) for key in datasets[0]
+            }
+            found = np.isfinite(every["bmd"])
+
+            def coverage(select: Any) -> str:
+                """One-sided BMDL and BMDU coverage of the genes with a BMD, with the
+                SE between datasets and the binomial bound."""
+                parts = []
+                for bound, holds in (
+                    ("BMDL", lambda d: d["bmdl"] <= d["true"]),
+                    ("BMDU", lambda d: d["bmdu"] >= d["true"]),
+                ):
+                    hits, shares = [], []
+                    for d in datasets:
+                        mask = select(d) & np.isfinite(d["bmd"])
+                        if mask.any():
+                            hits.append(holds(d)[mask])
+                            shares.append(float(np.mean(holds(d)[mask])))
+                    pooled = np.concatenate(hits) if hits else np.zeros(0)
+                    if pooled.size == 0:
+                        return "no genes"
+                    share = float(np.mean(pooled))
+                    between = (
+                        float(np.std(shares, ddof=1) / np.sqrt(len(shares)))
+                        if len(shares) > 1
+                        else float("nan")
+                    )
+                    binomial = float(np.sqrt(0.95 * 0.05 / pooled.size))
+                    parts.append(
+                        f"{bound} {share:.3f} (SE {between:.3f}; binomial {binomial:.3f})"
+                    )
+                count = int(
+                    sum(
+                        np.count_nonzero(select(d) & np.isfinite(d["bmd"]))
+                        for d in datasets
+                    )
+                )
+                return ", ".join(parts) + f", {count:,} genes"
+
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ratio = np.log10(every["bmd"][found] / every["true"][found])
+                ok_sd = np.isfinite(every["bmd_sd"]) & np.isfinite(every["true_sd"])
+                ratio_sd = np.log10(every["bmd_sd"][ok_sd] / every["true_sd"][ok_sd])
+            q1, median, q3 = np.quantile(ratio, [0.25, 0.5, 0.75])
+            s1, sd_median, s3 = np.quantile(ratio_sd, [0.25, 0.5, 0.75])
+            strata = "; ".join(
+                f"counts per profile {low:g} to {high:g}: "
+                + coverage(
+                    lambda d, low=low, high=high: (
+                        (d["counts"] >= low) & (d["counts"] < high)
+                    )
+                )
+                if np.isfinite(high)
+                else f"counts per profile {low:g} or more: "
+                + coverage(lambda d, low=low: d["counts"] >= low)
+                for low, high in COUNT_STRATA
+            )
+            text = (
+                f"BMD found {np.mean(found):.3f}; log10(BMD / true BMD) median "
+                f"{median:+.3f}, interquartile range {q1:+.3f} to {q3:+.3f}; coverage "
+                f"{coverage(lambda d: np.ones(d['bmd'].size, dtype=bool))}; {strata}; "
+                "best model contains the true shape: "
+                f"{coverage(lambda d: d['contains'])}; it does not: "
+                f"{coverage(lambda d: ~d['contains'])}; 1 SD BMD against the true BMD at "
+                f"one SD of true expression, log10 median {sd_median:+.3f}, "
+                f"interquartile range {s1:+.3f} to {s3:+.3f} (bias only)"
+            )
+            out.append(
+                (
+                    f"{cell.label}: benchmark doses of 'epa', {variance} variance, at a "
+                    f"1.1-fold change, {every['bmd'].size:,} genes of the set's shapes "
+                    f"with a true BMD within the doses, {len(datasets)} datasets",
+                    source,
+                    text,
+                    "n/a",
+                    "info",
+                )
+            )
+        return out
+
+
+# The straight-line rows.
+
+
+def line_rows() -> list[tuple[str, ...]]:
+    """Coverage of one-sided BMDLs of straight lines with normal errors against their
+    exact references: Fieller's t-based bound for an absolute change, and for a
+    multiple of the SD the bound that inverts the noncentral t of the slope over its
+    standard error; with benchmark_doses's profile-likelihood bounds beside."""
+    from scipy.stats import chi2, nct
+    from scipy.stats import t as student_t
+
+    from cytepool.stats.dose_curves import fit_dose_curves
+    from cytepool.stats.potency import benchmark_doses
+
+    doses = np.repeat(np.array(DOSES[9]), 3)
+    n = doses.size
+    sxx = float(np.sum((doses - doses.mean()) ** 2))
+    quantile = float(student_t.ppf(0.95, n - 2))
+    rows = []
+    for case, true_bmd in enumerate(LINE_BMDS):
+        rng = np.random.default_rng([SEED, LINES, case, 0])
+        slope = LINE_CHANGE / true_bmd
+        values = (
+            6.0 + slope * doses[:, None] + rng.normal(0.0, LINE_SD, (n, LINE_DATASETS))
+        )
+        estimate = (doses - doses.mean()) @ (values - values.mean(axis=0)) / sxx
+        residuals = (
+            values - values.mean(axis=0) - np.outer(doses - doses.mean(), estimate)
+        )
+        s = np.sqrt(np.sum(residuals**2, axis=0) / (n - 2))
+        error = s / np.sqrt(sxx)
+        # Fieller: the slope's upper t bound gives the BMDL of a change R.
+        fieller = LINE_CHANGE / (estimate + quantile * error)
+        # The SD-based BMD is v / (b1 / sigma); the slope over its standard error has
+        # a noncentral t distribution on n - 2 degrees of freedom with noncentrality
+        # (b1 / sigma) sqrt(Sxx), whose upper 95% bound gives the BMDL.
+        t_observed = estimate / error
+        low, high = np.full(LINE_DATASETS, -50.0), np.full(LINE_DATASETS, 200.0)
+        for _ in range(100):
+            middle = 0.5 * (low + high)
+            above = nct.cdf(t_observed, n - 2, middle) > 0.05
+            low = np.where(above, middle, low)
+            high = np.where(above, high, middle)
+        noncentral = LINE_SD_MULTIPLE * np.sqrt(sxx) / (0.5 * (low + high))
+        true_sd_bmd = LINE_SD_MULTIPLE * LINE_SD / slope
+        # The bound of a change held at 1.349 times the vehicle replicates' sample SD,
+        # which ignores that SD's error: the line's profile bound of a fixed change R
+        # is R / (b1 + sqrt((exp(chi2 / n) - 1) RSS / Sxx)).
+        vehicle_sd = np.std(values[doses == 0.0], axis=0, ddof=1)
+        rss = np.sum(residuals**2, axis=0)
+        widening = np.sqrt(np.expm1(float(chi2.ppf(0.90, 1)) / n) * rss / sxx)
+        held = LINE_SD_MULTIPLE * vehicle_sd / (estimate + widening)
+        fits = fit_dose_curves(doses, values, models="epa")
+        found = benchmark_doses(
+            fits,
+            [
+                BenchmarkResponse.absolute(LINE_CHANGE),
+                BenchmarkResponse.sd(LINE_SD_MULTIPLE),
+            ],
+            model="linear",
+        )
+        for label, reference, truth, row in (
+            (f"a change of {LINE_CHANGE:g}", fieller, true_bmd, 0),
+            (f"{LINE_SD_MULTIPLE:g} SD", noncentral, true_sd_bmd, 1),
+        ):
+            share = float(np.mean(reference <= truth))
+            standard = float(np.sqrt(0.95 * 0.05 / LINE_DATASETS))
+            ours_low = float(np.mean(found.bmdl[row] <= truth))
+            ours_high = float(np.mean(found.bmdu[row] >= truth))
+            ours_both = float(
+                np.mean((found.bmdl[row] <= truth) & (found.bmdu[row] >= truth))
+            )
+            exact = "Fieller's t-based bound" if row == 0 else "the noncentral t bound"
+            rows.append(
+                (
+                    f"Straight lines with normal errors, K = 9 x 3, SD {LINE_SD:g}, true "
+                    f"BMD {truth:g} at {label}, {LINE_DATASETS:,} datasets: {exact}",
+                    f"seed [{SEED}, {LINES}, {case}, 0]",
+                    f"BMDL coverage {share:.4f} (SE {standard:.4f})",
+                    "0.95 within 4 SE",
+                    "pass" if abs(share - 0.95) <= 4 * standard else "FAIL",
+                )
+            )
+            rows.append(
+                (
+                    f"Straight lines, true BMD {truth:g} at {label}: benchmark_doses's "
+                    "profile-likelihood bounds of the line",
+                    f"seed [{SEED}, {LINES}, {case}, 0]",
+                    f"BMDL coverage {ours_low:.4f}, BMDU coverage {ours_high:.4f} (SE "
+                    f"{standard:.4f}); BMDL to BMDU {ours_both:.4f}",
+                    "n/a",
+                    "info",
+                )
+            )
+        rows.append(
+            (
+                f"Straight lines, true BMD {true_sd_bmd:g} at {LINE_SD_MULTIPLE:g} SD: "
+                f"the bound of a change held at {LINE_SD_MULTIPLE:g} times the vehicle "
+                "replicates' sample SD, which benchmark_doses does not compute",
+                f"seed [{SEED}, {LINES}, {case}, 0]",
+                f"BMDL coverage {float(np.mean(held <= true_sd_bmd)):.4f} (SE "
+                f"{np.sqrt(0.95 * 0.05 / LINE_DATASETS):.4f})",
+                "n/a",
+                "info",
+            )
+        )
+    return rows
+
+
+# The named-model rows.
+
+
+def named_model_rows() -> list[tuple[str, ...]]:
+    """Coverage of the profile-likelihood bounds of Hill curves with normal errors,
+    the Hill model named, at 3 and 8 replicates: with the model right and chosen by
+    no one, what remains is the chi-square threshold's approximation."""
+    from cytepool.stats.dose_curves import fit_dose_curves
+    from cytepool.stats.potency import benchmark_doses
+
+    g, v, k, n = (NAMED_HILL[name] for name in ("g", "v", "k", "n"))
+    rows = []
+    for replicates in NAMED_REPLICATES:
+        rng = np.random.default_rng([SEED, NAMED, replicates, 0])
+        doses = np.repeat(np.array(DOSES[9]), replicates)
+        positive = np.where(doses > 0, doses, 1.0)
+        mean = g + v * (doses > 0) / (1.0 + (k / positive) ** n)
+        values = mean[:, None] + rng.normal(0.0, LINE_SD, (doses.size, NAMED_DATASETS))
+        found = benchmark_doses(
+            fit_dose_curves(doses, values, models="epa"),
+            [
+                BenchmarkResponse.absolute(NAMED_CHANGE),
+                BenchmarkResponse.sd(LINE_SD_MULTIPLE),
+            ],
+            model="hill",
+        )
+        for row, (label, change) in enumerate(
+            (
+                (f"a change of {NAMED_CHANGE:g}", NAMED_CHANGE),
+                (f"{LINE_SD_MULTIPLE:g} SD", LINE_SD_MULTIPLE * LINE_SD),
+            )
+        ):
+            truth = k / (v / change - 1.0) ** (1.0 / n)
+            bounded = np.isfinite(found.bmd[row]) & ~np.isnan(found.bmdl[row])
+            low = found.bmdl[row][bounded] <= truth
+            high = found.bmdu[row][bounded] >= truth
+            standard = float(np.sqrt(0.95 * 0.05 / max(int(bounded.sum()), 1)))
+            rows.append(
+                (
+                    f"Hill curves with normal errors, the model named, K = 9 x "
+                    f"{replicates}, SD {LINE_SD:g}, true BMD {truth:.4g} at {label}, "
+                    f"{int(bounded.sum()):,} of {NAMED_DATASETS:,} datasets with "
+                    "bounds: benchmark_doses's profile-likelihood bounds",
+                    f"seed [{SEED}, {NAMED}, {replicates}, 0]",
+                    f"BMDL coverage {float(np.mean(low)):.4f}, BMDU coverage "
+                    f"{float(np.mean(high)):.4f} (SE {standard:.4f}); BMDL to BMDU "
+                    f"{float(np.mean(low & high)):.4f}",
+                    "n/a",
+                    "info",
+                )
+            )
     return rows
 
 
@@ -1171,6 +1529,8 @@ def main() -> int:
             rows += shape_rows(cell)
     rows += vehicle_only_rows(arguments.vehicle_only_datasets)
     rows += band_rows()
+    rows += line_rows()
+    rows += named_model_rows()
     print("| check | reference | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- |")
     for row in rows:

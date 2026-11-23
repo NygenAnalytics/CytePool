@@ -33,10 +33,11 @@ question they answer, the default first:
   cell type, :func:`check_dose_design`, :class:`DoseDesignReport`; which genes
   respond to dose in each cell type, :func:`dose_response`,
   :class:`DoseResponseResult`, with the candidate shapes of its MCP step, the test of
-  MCP-Mod (multiple comparison procedure and modelling), :class:`CandidateShapes`;
-  whether its true doses pass more genes through its gate than permuted doses,
-  :func:`permutation_check`, :class:`PermutationCheck`; simulated dose series with
-  known curves, :func:`simulate_dose_series`, :class:`DoseTruth`.
+  MCP-Mod (multiple comparison procedure and modelling), :class:`CandidateShapes`,
+  and with the change from the vehicle that defines each gene's benchmark dose,
+  :class:`BenchmarkResponse`; whether its true doses pass more genes through its gate
+  than permuted doses, :func:`permutation_check`, :class:`PermutationCheck`; simulated
+  dose series with known curves, :func:`simulate_dose_series`, :class:`DoseTruth`.
 
 The building blocks, which work on arrays, are in ``cytepool.stats`` (linear and
 mixed models, empirical Bayes moderation, voom, count models, multiple testing,
@@ -67,6 +68,7 @@ def _installed_version() -> str:
 __version__: str = _installed_version()
 
 from .activity import Activities, mlm, ulm, weighted_aggregate  # noqa: E402
+from .benchmark_responses import BenchmarkResponse  # noqa: E402
 from .composition import CompositionResult, propeller  # noqa: E402
 from .candidate_shapes import CandidateShapes  # noqa: E402
 from .cube import Cube, CubeCollection, from_bulk, from_cells  # noqa: E402
@@ -190,6 +192,7 @@ __all__ = [
     "dose_response",
     "DoseResponseResult",
     "CandidateShapes",
+    "BenchmarkResponse",
     "permutation_check",
     "PermutationCheck",
     "simulate_dose_series",

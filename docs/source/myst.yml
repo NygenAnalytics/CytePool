@@ -101,6 +101,8 @@ project:
       title: Composition tests
     - file: statistics/dose_response.md
       title: Dose response
+    - file: statistics/potency.md
+      title: Potency and points of departure
     - title: Gene sets and pathways
       children:
       - file: statistics/gene_set_tests.md

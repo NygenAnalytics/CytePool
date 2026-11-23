@@ -102,7 +102,7 @@ def grid_bases(
 
 
 @jit_numpy_errors
-def _whiten(root: FloatArray, columns: FloatArray, out: FloatArray) -> None:
+def whiten(root: FloatArray, columns: FloatArray, out: FloatArray) -> None:
     """out = R columns for the lower-triangular factor R; a vector v is whitened as
     the one column ``v.reshape((k, 1))``."""
     k, q = columns.shape
@@ -262,7 +262,7 @@ def _same_sign_fit(columns: FloatArray, z: FloatArray, alpha: FloatArray) -> flo
 
 
 @jit_numpy_errors
-def _residuals(
+def whitened_residuals(
     kind: int,
     theta: FloatArray,
     x: FloatArray,
@@ -278,7 +278,7 @@ def _residuals(
     for i in range(k):
         fitted[i] = mean_value(kind, theta, x[i])
         raw[i] = ybar[i] - fitted[i]
-    _whiten(root, raw.reshape((k, 1)), out.reshape((k, 1)))
+    whiten(root, raw.reshape((k, 1)), out.reshape((k, 1)))
     total = 0.0
     for i in range(k):
         total += out[i] * out[i]
@@ -288,7 +288,7 @@ def _residuals(
 
 
 @jit_numpy_errors
-def _jacobian(
+def whitened_jacobian(
     kind: int,
     theta: FloatArray,
     x: FloatArray,
@@ -303,7 +303,7 @@ def _jacobian(
         mean_gradient(kind, theta, x[i], gradient)
         for j in range(p):
             raw[i, j] = gradient[j]
-    _whiten(root, raw, out)
+    whiten(root, raw, out)
     for i in range(k):
         for j in range(p):
             out[i, j] = -out[i, j]
@@ -369,7 +369,7 @@ def _resolve_linear(
         basis_row(kind, phi0, phi1, x[i], row)
         for j in range(q):
             columns[i, j] = row[j]
-    _whiten(root, columns, whitened)
+    whiten(root, columns, whitened)
     value = point_fit(linear, whitened, z, q, alpha)
     assemble(kind, phi0, phi1, alpha, theta)
     return value
@@ -460,7 +460,9 @@ def _single_steps(
                 _resolve_linear(
                     kind, linear, q, trial, x, z, root, columns, whitened, alpha, row
                 )
-                new_value = _residuals(kind, trial, x, ybar, root, fitted, raw, r_trial)
+                new_value = whitened_residuals(
+                    kind, trial, x, ybar, root, fitted, raw, r_trial
+                )
                 if new_value < value:
                     return new_value
             damping *= 10.0
@@ -504,12 +506,12 @@ def refine(
     columns, whitened = np.zeros((k, q)), np.zeros((k, q))
     alpha, row = np.zeros(q), np.zeros(q)
     _resolve_linear(kind, linear, q, theta, x, z, root, columns, whitened, alpha, row)
-    value = _residuals(kind, theta, x, ybar, root, fitted, raw, r)
+    value = whitened_residuals(kind, theta, x, ybar, root, fitted, raw, r)
     if not math.isfinite(value):
         return value, False
     damping = _DAMPING_START
     for _ in range(max_iterations):
-        _jacobian(kind, theta, x, root, gradient, raw_jac, jac)
+        whitened_jacobian(kind, theta, x, root, gradient, raw_jac, jac)
         # Hold a parameter at a bound while the descent direction -J'r points out.
         any_moving = False
         for j in range(p):
@@ -555,7 +557,9 @@ def refine(
                 _resolve_linear(
                     kind, linear, q, trial, x, z, root, columns, whitened, alpha, row
                 )
-                new_value = _residuals(kind, trial, x, ybar, root, fitted, raw, r_trial)
+                new_value = whitened_residuals(
+                    kind, trial, x, ybar, root, fitted, raw, r_trial
+                )
             if new_value < value:
                 break
             damping *= 10.0
@@ -596,7 +600,7 @@ def refine(
                 break
         for j in range(p):
             theta[j] = trial[j]
-        value = _residuals(kind, theta, x, ybar, root, fitted, raw, r)
+        value = whitened_residuals(kind, theta, x, ybar, root, fitted, raw, r)
         damping = max(damping / 10.0, _DAMPING_MIN)
     return value, False
 
@@ -628,7 +632,7 @@ def fit_gene(
     solve."""
     k = x.size
     z = np.zeros(k)
-    _whiten(root, ybar.reshape((k, 1)), z.reshape((k, 1)))
+    whiten(root, ybar.reshape((k, 1)), z.reshape((k, 1)))
     alpha = np.zeros(q)
     whitened = np.zeros((k, q))
     if kind == LINE or kind == POLYNOMIAL:
@@ -647,9 +651,9 @@ def fit_gene(
         if shared:
             grid_values[point] = point_fit(constraint, bases[point], z, q, alpha)
         else:
-            _whiten(root, bases[point], whitened)
+            whiten(root, bases[point], whitened)
             grid_values[point] = point_fit(constraint, whitened, z, q, alpha)
-    starts = _grid_minima(grid_values, inner)
+    starts = grid_minima(grid_values, inner)
     low, high = lower.copy(), upper.copy()
     candidate = np.zeros(theta.size)
     best, best_converged = math.inf, False
@@ -659,7 +663,7 @@ def fit_gene(
         if shared:
             point_fit(constraint, bases[start], z, q, alpha)
         else:
-            _whiten(root, bases[start], whitened)
+            whiten(root, bases[start], whitened)
             point_fit(constraint, whitened, z, q, alpha)
         phi1 = points[start, 1] if points.shape[1] > 1 else 0.0
         assemble(kind, points[start, 0], phi1, alpha, candidate)
@@ -697,7 +701,7 @@ def fit_gene(
 
 
 @jit_numpy_errors
-def _grid_minima(values: FloatArray, inner: int) -> npt.NDArray[np.int64]:
+def grid_minima(values: FloatArray, inner: int) -> npt.NDArray[np.int64]:
     """The positions of the lowest local minima of a grid's values, at most
     ``STARTS``, lowest first, -1 where there are fewer; a point is a local minimum
     when no neighbour along either axis is lower. The second axis has ``inner``
@@ -883,8 +887,20 @@ def whiten_bases(bases: FloatArray, root: FloatArray) -> FloatArray:
     """The columns of every grid point whitened by one factor R."""
     out = np.empty_like(bases)
     for p in range(bases.shape[0]):
-        _whiten(root, bases[p], out[p])
+        whiten(root, bases[p], out[p])
     return out
+
+
+def whitening_roots(
+    covariance: FloatArray, n_samples: FloatArray, constant: bool
+) -> FloatArray:
+    """The whitening factors R = L^-1 of the means' covariance C = L L': one for all
+    genes under constant variance, diag(sqrt(n_k)), else one per gene."""
+    if constant:
+        return np.diag(np.sqrt(n_samples))[None]
+    root = np.linalg.inv(np.linalg.cholesky(covariance))
+    # The inverse of a lower-triangular matrix is lower triangular; zero the rounding.
+    return np.ascontiguousarray(np.tril(root))
 
 
 def fitter_settings(model_set: str) -> dict[str, Any]:

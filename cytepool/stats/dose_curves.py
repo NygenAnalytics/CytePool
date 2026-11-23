@@ -134,6 +134,7 @@ from cytepool.stats._dose_curve_search import (
     fit_genes_serial,
     grid_bases,
     whiten_bases,
+    whitening_roots,
 )
 from cytepool.stats._result_tables import feature_id_column
 from cytepool.stats.distributions import f_sf
@@ -193,6 +194,10 @@ class DoseCurveFits:
             :func:`~cytepool.dose_response` (``"weighted"``); or its moderated
             variance (``"moderated"``).
         df: ``(n_genes,)`` the degrees of freedom of ``covariance_scale``.
+        within_group_sd: ``(n_genes, K)`` under constant variance, the sample SD of
+            each dose group's values, with n_k - 1 in the denominator; NaN for a
+            group of one sample, and in the weighted and moderated modes, whose
+            means come from a fit rather than from samples.
         parameters: ``(n_genes, n_models, n_parameter_names)`` the parameters of
             each fit, NaN where a model has no such parameter or was not fitted.
         log_likelihood: ``(n_genes, n_models)``: under constant variance that of the
@@ -254,6 +259,7 @@ class DoseCurveFits:
     covariance: FloatArray
     covariance_scale: FloatArray
     df: FloatArray
+    within_group_sd: FloatArray
     parameters: FloatArray
     log_likelihood: FloatArray
     aic: FloatArray
@@ -669,6 +675,7 @@ def _fit_means(
         covariance=read_only(data.covariance),
         covariance_scale=read_only(data.covariance_scale),
         df=read_only(data.df),
+        within_group_sd=read_only(_within_group_sd(data)),
         parameters=read_only(parameters),
         log_likelihood=read_only(statistics["log_likelihood"]),
         aic=read_only(statistics["aic"]),
@@ -685,6 +692,18 @@ def _fit_means(
         best=read_only(best),
         turn_driven_by_dose=read_only(driven),
     )
+
+
+def _within_group_sd(data: _CurveData) -> FloatArray:
+    """Each dose group's sample SD under constant variance, NaN for a group of one
+    sample; NaN in the modes whose means come from a fit."""
+    shape = data.means.shape
+    if data.within is None:
+        return np.full(shape, np.nan)
+    replicated = data.n_samples > 1.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sd = np.sqrt(data.within / (data.n_samples - 1.0))
+    return np.where(replicated, sd, np.nan)
 
 
 def _models_not_fitted(model_set: str, n_groups: int) -> dict[str, str]:
@@ -727,16 +746,6 @@ def _not_fitted_reasons(data: _CurveData, model: Model) -> np.ndarray:
     return reasons
 
 
-def _roots(data: _CurveData) -> FloatArray:
-    """The whitening factors R = L^-1 of the covariance C = L L' of the means, one
-    per gene, or one for all under constant variance."""
-    if data.within is not None:
-        return np.diag(np.sqrt(data.n_samples))[None]
-    root = np.linalg.inv(np.linalg.cholesky(data.covariance))
-    # The inverse of a lower-triangular matrix is lower triangular; zero the rounding.
-    return np.ascontiguousarray(np.tril(root))
-
-
 def _objective_scales(data: _CurveData) -> FloatArray:
     """The scale of each gene's objective, against which the refinement's decrease is
     small: the within-group sum of squares, or s^2 K."""
@@ -753,7 +762,7 @@ def _fit_set(data: _CurveData, model_set: str) -> _SetFits:
     fitted_models = tuple(m for m in SETS[model_set] if m.name not in not_fitted)
     scale = DoseScale.of(data.doses)
     gap = exponential_sign_gap(scale)
-    root = _roots(data)
+    root = whitening_roots(data.covariance, data.n_samples, data.within is not None)
     shared = root.shape[0] == 1
     scales = _objective_scales(data)
     n_genes = data.means.shape[0]

@@ -338,6 +338,38 @@ def test_plug_in_likelihood_aicc_and_residuals_by_hand(model_set: str) -> None:
     assert checked >= 6
 
 
+def test_within_group_sds_are_the_samples_sds() -> None:
+    """Under constant variance, each dose group's sample SD with n_k - 1 in the
+    denominator, NaN for a group of one sample; NaN for means of a fit."""
+    doses = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 3.0, 10.0, 10.0, 10.0])
+    rng = np.random.default_rng(4)
+    values = 5.0 + rng.normal(0.0, 0.3, (doses.size, 2))
+    values[doses == 10.0, 1] = 6.0
+    fits = fit_dose_curves(doses, values, models="epa")
+    for g in range(2):
+        expected = [
+            np.std(values[doses == level, g], ddof=1)
+            if np.sum(doses == level) > 1
+            else np.nan
+            for level in (0.0, 1.0, 3.0, 10.0)
+        ]
+        assert_allclose(fits.within_group_sd[g], expected, rtol=1e-12, equal_nan=True)
+    assert fits.within_group_sd[1, 3] == 0.0
+    with pytest.raises(ValueError, match="read-only"):
+        fits.within_group_sd[0, 0] = 1.0
+    data = _CurveData(
+        "weighted",
+        np.array([0.0, 0.1, 0.4, 1.7, 9.0]),
+        np.array([3.0, 2, 3, 3, 2]),
+        np.array([[5.0, 5.4, 5.6, 6.3, 8.1]]),
+        np.diag(1.0 / np.array([3.0, 2, 3, 3, 2]))[None],
+        np.array([0.04]),
+        np.array([7.0]),
+        None,
+    )
+    assert np.isnan(_fit_means(data, "epa").within_group_sd).all()
+
+
 def test_constant_scaled_residuals_by_hand() -> None:
     """BMDS's scaled residuals of a straight line: (ybar_k - f_k) / (sigma / sqrt(n_k))
     with sigma^2 the residual sum of squares of the samples over n."""
