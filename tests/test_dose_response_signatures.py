@@ -1286,3 +1286,38 @@ def test_the_chapter_s_signature_example_runs() -> None:
     emax = result.candidates.emax[1]
     assert f"reaches half its change at {emax:.1f} ug/kg" in signatures_text
     assert result.table(name="mcp")["contrast"].tolist()[0] == "emax_2"
+
+
+def test_the_average_change_of_scores() -> None:
+    # The average change of scores is the same contrast, in the scores' units.
+    result = job_result("ladder", tests=("average_change",))
+    group = result.groups[0]
+    entry = result.provenance["groups"][0]
+    doses = np.asarray(entry["doses"][1:])
+    u = np.log10(doses)
+    weights = np.r_[u[1] - u[0], u[2:] - u[:-2], u[-1] - u[-2]] / 2.0 / (u[-1] - u[0])
+    each = result.table(group, "each_dose")
+    estimates = np.asarray(each["estimate"], dtype=float).reshape(doses.size, -1).T
+    assert_allclose(
+        result.table(group, "average_change")["estimate"],
+        estimates @ weights,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_ec50s_of_scores() -> None:
+    # The EC50s of scores are read from their curves, in the scores' units, each named
+    # by its gene set.
+    from cytepool.stats.potency import ec50s
+
+    result = job_result("ladder", models="ll4")
+    group = result.groups[0]
+    table = result.table(group, "ec50s")
+    assert table.columns[0] == "gene_set"
+    fits = result.curve_fits(group)
+    expected = ec50s(fits).table(feature_ids=table["gene_set"])
+    rest = table.select(
+        [c for c in table.columns if c not in ("gene_set", "passes_gate")]
+    )
+    assert rest.equals(expected.select(list(rest.columns)))

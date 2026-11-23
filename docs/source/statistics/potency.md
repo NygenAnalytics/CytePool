@@ -1,10 +1,10 @@
 ---
-description: Benchmark doses of fitted dose-response curves with one-sided 95% profile-likelihood bounds, where each lies against the doses, the checks of guidance, and NTP's and ETAP's workflows.
+description: Benchmark doses with one-sided 95% profile-likelihood bounds, the checks of guidance and NTP's and ETAP's workflows; EC50s with two-sided 95% intervals, Hill slopes and plateaus.
 ---
 
 # Potency and points of departure
 
-[Dose response](dose_response.md) fitted curves of named models to each gene's dose groups. A curve says what shape a response takes; a toxicologist also asks at which dose the response reaches a size that matters, and reads that dose as a benchmark dose (BMD): the dose at which the curve's change from its level at dose 0 reaches a stated benchmark response (BMR), with a lower bound (BMDL) and an upper bound (BMDU) [@crump1984; @usepa2012]. A pharmacologist's measure of potency, the EC50, is the dose of half a curve's full change, such as the Hill model's k in the table of curves; a BMD is the dose of a stated change, and EC50s of every model, with intervals, are not implemented yet. {api}`dose_response` with `bmr` computes BMDs for every gene with a curve in each cell type, and {api}`benchmark_doses` for curves fitted outside a cube; [Dose response per cell type](../guides/dose_response.ipynb) runs both on a simulated series. The lowest dose that a test calls against the vehicle answers a neighbouring question, at an error rate and without a curve ([Choosing a method](choosing_a_method.md#from-which-dose)).
+[Dose response](dose_response.md) fitted curves of named models to each gene's dose groups. A curve says what shape a response takes; a toxicologist also asks at which dose the response reaches a size that matters, and reads that dose as a benchmark dose (BMD): the dose at which the curve's change from its level at dose 0 reaches a stated benchmark response (BMR), with a lower bound (BMDL) and an upper bound (BMDU) [@crump1984; @usepa2012]. {api}`dose_response` with `bmr` computes BMDs for every gene with a curve in each cell type, and {api}`benchmark_doses` for curves fitted outside a cube; [Dose response per cell type](../guides/dose_response.ipynb) runs both on a simulated series. The lowest dose that a test calls against the vehicle answers a neighbouring question, at an error rate and without a curve ([Choosing a method](choosing_a_method.md#from-which-dose)). A pharmacologist reads the same curve as its potency, steepness and efficacy: the EC50, the dose of half the curve's full change, with its interval, the Hill slope and the plateaus ([EC50s, Hill slopes and plateaus](#ec50s)); a BMD is the dose of a stated change.
 
 (benchmark-doses)=
 ## Benchmark doses
@@ -175,6 +175,57 @@ In the hepatocytes of the example, 63 of the 88 genes that pass the gate have no
 
 An SD-based BMR is a different change in each cell type: the SD of a pseudobulk profile shrinks as its cells add up, so 1.349 SD is a smaller change in a cell type of many cells per profile than in one of few, and its BMDs are lower for the same curve. In the example, 1.349 SD is a median change of 0.49 log2 units in the hepatocytes, with 300 cells per profile, and of 0.59 in the stellate cells, with 60. Compare cell types on an absolute BMR, and read `bmr_change` to see what an SD-based BMR amounts to in each. An absolute BMR compares like with like where counts suffice: log-CPM values compress the observed changes of genes with few counts, so that at 100 cells per profile a median of 0.40 of a true change was seen below 1 expected count per profile and 0.95 from 2 to 5 ([Validation](../validation.md#validation-simulate-dose-series)), more so in a cell type of few cells per profile. Compare the absolute BMDs of genes with enough counts in both cell types.
 
+(ec50s)=
+## EC50s, Hill slopes and plateaus
+
+How potent and how steep is each response, as a pharmacologist reads it? A Hill curve answers with three numbers [@neubig2003]: its potency, the EC50, the dose of half the curve's change from its level at dose 0 to its plateau at high doses, the relative EC50 of @sebaugh2011; its steepness, the Hill slope; and its efficacy, the change between its two plateaus. `table(group, "ec50s")` of {api}`DoseResponseResult` reads them from each gene's Hill curve, the log-logistic curve of `models="ll4"` and `"dromics"` or the Hill model of `"epa"` and of `"bmdexpress"`, the set the [rule sets](#rule-sets) fit, for every gene it was fitted to, whether or not it is the gene's best model, as `best_model` says. {api}`DoseResponseResult.ec50s` returns the same EC50s as an {api}`EC50s`, whose printout counts where they lie, the genes with two doses beyond each bend, the limits and the open intervals, and says why an interval was not computed; {api}`ec50s` reads them from curves fitted outside a cube, and {api}`EC50s.table` gives the table without the gene's symbol and the gate's call. On the series of [Dose response](dose_response.md#dose-response-tests):
+
+```python
+ll4 = cp.dose_response(cube, cp.Design(cube.samples, "~ 1"), dose=axis, models="ll4")
+potencies = ll4.table("hepatocyte", "ec50s")
+```
+
+Of the hepatocytes' 817 genes, 611 have an EC50 within the doses, 101 below the lowest dose and 105 above the top dose: most genes do not respond, and the EC50 of a flat curve is arbitrary, with an interval from 0 to infinity, and so are its slope and its bends. Read the EC50s of the genes that pass the gate, beside `passes_gate`: 32 of the 88 have an EC50 within the doses, a closed interval and two doses beyond each bend.
+
+| Column | What it holds |
+| --- | --- |
+| `feature_id`, `symbol`, `passes_gate` | The gene, its symbol, and the gate's call where the gate ran |
+| `best_model` | Whether the Hill curve is the gene's best model by AICc; always True with `"ll4"`, a set of one model |
+| `ec50`, `ec50_lower`, `ec50_upper` | The EC50 and its two-sided 95% interval ([Intervals for EC50s](#ec50-intervals)), in the doses' unit |
+| `hill_slope` | The steepness, positive for a rise and negative for a fall |
+| `bottom_plateau`, `top_plateau` | The two levels, in log2 units for expression |
+| `ec50_status` | `within the doses`, `below the lowest dose`, `above the top dose`, or `no curve` for a gene without one |
+| `two_doses_beyond_each_bend` | Whether the EC50 is reportable by the rule of @sebaugh2011 (below) |
+| `parameters_at_bounds` | `ec50` or `hill_slope` where the fit sits at a bound or within 0.01% of it, a limit rather than an estimate |
+
+The Hill slope takes GraphPad Prism's sign, positive for a rise and negative for a fall, the convention of the program named in 38% of 101,457 full texts on EC50s or IC50s, so that GraphPad's equation, Y = Bottom + (Top - Bottom) / (1 + 10^((log10 EC50 - X) HillSlope)) with X = log10 dose, gives the fitted curve with the table's values [@graphpad2026]. The curves' own parameters follow other conventions:
+
+| Curve | Its parameters | EC50 | Hill slope | Bottom and Top |
+| --- | --- | --- | --- | --- |
+| `"ll4"`: c + (d - c) / (1 + (x/e)^b) | b of at least 0.1, d at dose 0 and c at high doses, as DRomics writes it | e | b for a rise (c > d), -b for a fall | the lower and higher of c and d |
+| `"hill"` of `"epa"` and `"bmdexpress"`: g + v x^n / (k^n + x^n) | n of at least 1, g at dose 0 and g + v at high doses, as BMDS writes it | k | n for a rise (v > 0), -n for a fall | the lower and higher of g and g + v |
+| drc's `LL.4`, the same mean | b below 0 for a rise when d is the upper plateau | e | -b sign(d - c) | the lower and higher of c and d |
+
+The IC50 of an inhibitor is the EC50 of a fall. log10 of `ec50`, `ec50_lower` and `ec50_upper` gives Prism's LogEC50 and its interval; drc's `ED()` prints the EC50 itself. `top_plateau - bottom_plateau`, with the sign of `hill_slope`, gives the efficacy as a change in log2 units.
+
+The plateau at high doses, `top_plateau` of a rise and `bottom_plateau` of a fall, is an extrapolation when the EC50 lies above the top dose: no dose was tested there, and with the EC50 at 5 times the top dose and the slope at 18 the plateau lies up to about 4 × 10^12 times the change at the top dose away, further in `"bmdexpress"`, whose EC50 can reach 1,000 times the top dose. `parameters_at_bounds` names the numbers that sit at a bound of the fit, or within 0.01% of one where the fit stopped short of a bound it was moving toward, which are limits rather than estimates: slopes of 0.1 and 18 for `"ll4"` and of 1 and 18 for the Hill model, and EC50s of a hundredth of the lowest positive dose (0 for the Hill model, whose slope is then NaN, since it no longer changes the curve at positive doses) and of 5 times the top dose (1,000 times in `"bmdexpress"`). A step between two doses fits with its slope at 18. 662 of the hepatocytes' 817 genes have a parameter at a bound, most of them flat genes whose EC50 the data do not pin down.
+
+An EC50 is reportable when two tested doses lie beyond each bend of the curve, where the curve stops being nearly straight on log dose [@sebaugh2011]. The bends [@sebaugh2003] lie where the curve has covered 17.6% and 82.4% of its change, at EC50 / 4.6805^(1/|h|) and EC50 × 4.6805^(1/|h|), h the Hill slope, with the constant 4.6805 as @micheli2021 give it. `two_doses_beyond_each_bend` is True when two positive doses or more lie strictly below the lower bend and two or more strictly above the upper one. The vehicle is not counted, so a curve whose plateau at low doses only the vehicle measures fails the rule. To count the vehicle as one of the two doses below, ask for one positive dose below the lower bend, EC50 / 4.6805^(1/|h|). The rule needs four positive doses or more. A design of four dose groups has no EC50s, since a Hill curve needs five. With the vehicle and four doses, the rule holds only when no dose lies between the bends: a Hill slope above 1.34 on doses a decade apart.
+
+(ec50-intervals)=
+## Intervals for EC50s
+
+How precisely do the doses pin each EC50 down? `ec50_lower` and `ec50_upper` give its two-sided 95% profile-likelihood interval: the EC50s whose profile lies not too far below the curve's maximum, where the profile at an EC50 E is the curve's fit with its EC50 held at E. A Hill curve with its EC50 held is linear in its two plateaus and has one other parameter, its slope, so each point of the profile is a fit of its own. The deviance at E is the increase of the curve's weighted sum of squares over a variance, read against an F quantile at 0.95:
+
+- **Constant variance.** The curve's residual variance, (S_w + Q) / (n - 4), with S_w the within-group sum of squares and Q the curve's weighted sum of squares about the dose-group means, against F(1, n - 4): the extra-sum-of-squares F test of the curve with its EC50 held against the curve, the two differing by one parameter, as GraphPad Prism computes its profile-likelihood intervals [@graphpad2026; @venzon1988]. For a curve linear in its parameters the interval is exact.
+- **Weighted or moderated variance.** The variance of the cell type's fit on its degrees of freedom df, against F(1, df), and chi-square(1) where df is infinite.
+
+The ends are the lowest and highest EC50s of the region within the threshold, over the range of EC50s the fit allows: from a hundredth of the lowest positive dose (from 0 for the Hill model) to 5 times the top dose (1,000 times in `"bmdexpress"`). The profile is read at the EC50s of the fit's own grid over that range, 48 (96 in `"bmdexpress"`), and Brent's method finds each end between the region's extreme and the grid's next EC50 beyond it; `ec50_lower` is 0 where the region reaches the range's lowest EC50, and `ec50_upper` infinity where it reaches the highest. Prism instead moves out from the best fit until the F test's P value reaches 0.05, and prints "???" where it finds no limit, so it can stop at the nearer end of a region in two pieces, where these ends are the extremes; and Prism's slope has no bound, where the profile holds it at or below 18, as the fit does, which sets the ends of a steep curve's interval ([Limits and differences](#potency-limits)). An interval is the same on dose and on log10 dose, so its log10 is the interval of the log EC50. Where the grid's own curves at an EC50 already lie within the threshold, the EC50 is inside without a fit of its own, so a gene costs about 7 ms of computing, a flat one least: 35 s for 10,000 genes on 2 threads in the benchmark; the result does not depend on the threads.
+
+The intervals need replicates within dose groups. {api}`ec50s` refuses them for curves of dose groups without replicates, where Prism computes one from the residuals about the curve alone: those residuals hold any misfit of the curve as well as the noise, and CytePool reports such designs as description, without p-values or bounds. `intervals=False` gives the EC50s alone, as cell types that support only description get them. The intervals are also NaN where the values lie on the curve without spread, so that the variance is 0 to rounding. Both ends are NaN, and the printout of {api}`EC50s` counts the gene, where the profile found a curve better than the fit, which was then not the maximum; a fit that stopped at its iteration limit before converging (`converged` in the curves table) is read as it stands, and loses its interval only that way.
+
+drc's `ED(interval = "delta")` gives an interval symmetric on the dose scale, whose lower end fell below 0 for 2 of the 7 genes of the validation where drc reached CytePool's fit, and the `"fls"` interval of its `LL2.4`, back-transformed from the log scale, rests on the same delta method ([Validation](../validation.md#validation-ec50)); pertpy returns an EC50 with a standard error and no interval. On curves with normal errors that the log-logistic model fits exactly, at 9 dose groups with 2 or 3 replicates, the intervals held the true EC50 in 92.7% to 93.2% of genes for an EC50 midway along the doses, below the 95% they claim, and in 95.2% to 95.7% for one near the top dose. On simulated series of counts, OPEN_SHARE of the intervals of Hill genes with a true EC50 within the doses were open at an end, and an open end holds every EC50 beyond it; the closed intervals held the true EC50 in CLOSED_3 of genes at 3 replicates and CLOSED_2 at 2, and those of genes that pass the gate with two doses beyond each bend in READABLE_3 and READABLE_2 ([Validation](../validation.md#validation-dose-response-calibration)).
+
 (potency-defaults)=
 ## Defaults and choices
 
@@ -184,6 +235,7 @@ An SD-based BMR is a different change in each cell type: the SD of a pseudobulk 
 - **Bounds.** One-sided 95% profile-likelihood bounds; none for cell types that support only description, and {api}`benchmark_doses` refuses them for curves of dose groups without replicates.
 - **The search.** From a hundredth of the lowest positive dose to 50 times the top dose.
 - **Variance.** That of the curves: constant until simulations show that weighted fits keep their coverage ([Curves of named models](dose_response.md#dose-response-model-curves)). The curves are functions of dose, so the offset of a vehicle on the axis changes no BMD.
+- **EC50s.** Those of the set's Hill curve, for every gene it was fitted to, with two-sided 95% profile-likelihood intervals at GraphPad's F threshold, the Hill slope in GraphPad's sign, and two doses beyond each bend, the vehicle not counted, as the reporting rule. Intervals need replicates within dose groups; `intervals=False` gives the EC50s alone.
 
 (potency-limits)=
 ## Limits and differences
@@ -200,11 +252,17 @@ An SD-based BMR is a different change in each cell type: the SD of a pseudobulk 
 - **Williams' p-values.** A p-value near 0.05 has a Monte Carlo SD of about 0.003 at 10,000 permutations, so a gene near the threshold can pass the prefilter at one seed and not at another, and BMDExpress fixes a seed of its own: on the rat livers, the rule sets' prefilter calls agreed with BMDExpress's for 99.7% of the probes.
 - **Relative BMRs.** A share of a log2 level has no meaning for expression, and log2 CPM can be 0 or negative; a relative change of expression is an absolute BMR on log2 values.
 - **Flags.** Each set is a convention of its guidance, without error control [@efsa2022].
+- **EC50 intervals given the Hill curve.** An interval assumes the Hill curve's shape: a response of another shape, such as a bell, gets the EC50 of the Hill curve that fits it best, whose interval says nothing of the misfit; read `best_model` and the curves' lack-of-fit p-values beside it.
+- **Low counts.** The prior counts of log-CPM values compress the observed changes of genes with few counts, so their plateaus lie closer together than the true ones, and their EC50s and slopes move with them.
+- **EC50 intervals at a few replicates.** GraphPad's F interval is exact only for a curve linear in its parameters, and the Hill curve is not linear in its EC50 and slope: with normal errors at 9 dose groups × 2 or 3, the intervals of EC50s midway along the doses held the truth in about 93% of genes, against 95% ([Intervals for EC50s](#ec50-intervals)).
+- **Steep curves.** The profile holds the slope at or below 18, as the fit does, where Prism's slope has no bound. For a step between two doses the data cannot place the EC50 within the gap: with an unbounded slope, every EC50 in the gap fits as well. The bounded slope cuts off the gap's outer parts, so a step between doses 3 and 10 got the interval [3.17, 9.54], and a true step just above dose 3 falls outside it. Where `hill_slope` sits at its bound, read the interval as at least the gap between the doses around the EC50.
+- **Thresholds of the two potencies.** Under constant variance BMD bounds read chi-square and EC50 intervals F, each as its community's tool reads it: BMDS for BMDs, Prism for EC50s. At few samples F's interval is the wider.
+- **drc.** drc's `LL.4` stopped below CytePool's maximum for 16 of 23 genes of the validation, 10 of them steep curves whose slope CytePool holds at its bound of 18 ([Validation](../validation.md#validation-ec50)).
 
 (potency-checks)=
 ## Checks and further reading
 
-Benchmark doses and their bounds are compared with DRomics, pybmds, scipy and mpmath, run as separate programs on the same inputs, and the flag sets with the same rules coded in R ([Validation](#validation-benchmark-doses)); their coverage of true BMDs is in [the calibration](#validation-dose-response-calibration). The rule sets are compared with BMDExpress 2.30.520 on the rat liver counts of @gwinn2020, and BMDS's recommended model with pybmds 25.2 ([Validation](#validation-toxicology-rule-sets)).
+Benchmark doses and their bounds are compared with DRomics, pybmds, scipy and mpmath, run as separate programs on the same inputs, and the flag sets with the same rules coded in R ([Validation](#validation-benchmark-doses)); their coverage of true BMDs is in [the calibration](#validation-dose-response-calibration). The rule sets are compared with BMDExpress 2.30.520 on the rat liver counts of @gwinn2020, and BMDS's recommended model with pybmds 25.2 ([Validation](#validation-toxicology-rule-sets)). EC50 intervals are compared with the documented profile computed by mpmath, the Hill slope's sign with drc and the map to GraphPad's equation with the equation itself ([Validation](#validation-ec50)).
 
 Further reading:
 
@@ -213,5 +271,7 @@ Further reading:
 - @moerbeek2004 compared the coverage of profile-likelihood, delta-method and bootstrap bounds of BMDs.
 - @thomas2007 argued for 1.349 SD as the BMR of genes whose adverse direction is unknown.
 - @efsa2022 gives EFSA's guidance on benchmark dose modelling and its indicators; @fieller1954 derived the exact bound of a ratio.
+- @neubig2003 define potency, efficacy and the Hill slope for pharmacology; @sebaugh2011 sets out how to estimate and report EC50s, and @sebaugh2003 defines the bend points.
+- @venzon1988 search for the ends of profile-likelihood intervals, as GraphPad Prism does [@graphpad2026].
 
 [Gene-set tests](gene_set_tests.md) begins the part that turns the results for genes into results for pathways and regulators.

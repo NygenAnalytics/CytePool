@@ -58,6 +58,16 @@ design supports and the spline's default size.
   the true BMD at a change of 0.5 and at 1.349 SD, and how often BMDL to BMDU holds it,
   which shows what the chi-square threshold gives at few replicates when the model is
   right.
+- EC50 rows: the ``"ll4"`` curves under constant variance on the power datasets of
+  K = 9, read as EC50s (``table(group, "ec50s")``), among the genes whose true shape
+  is a Hill curve with a true EC50 within the doses: the share with an EC50, the median
+  and interquartile range of log10 of the estimated over the true EC50, and the
+  coverage of the two-sided 95% interval, also among the genes whose true curve has
+  two positive doses beyond each bend, at Sebaugh and McCray's (2003) bend points,
+  and by expected counts per profile. And ll4 curves with normal errors simulated
+  directly at K = 9 x 2 and 9 x 3, where the curve is the true model: the coverage of
+  the interval for changes of 1 and 0.5 midway, a shallow change and a change near the
+  top dose.
 - Band rows: 12 datasets of K = 9 x 3 replicates, one cell type of 600 genes of which
   30% respond, with 3,000 cells per profile, so that counting compresses no change.
   At each treated dose, the share of the curves' pointwise 95% bands that hold the
@@ -103,8 +113,9 @@ for power, 1 for null, 2 for the band's and 4 for the vehicle-only datasets, the
 cells numbered in the order of the grid, as each row prints, and the band's and the
 vehicle-only design numbered 0; the multiple contrast tests of a dataset take their
 seed from kind 3, the permutation checks theirs from kind 5, the straight lines from
-kind 6 with the true BMD's case, and the named Hill curves from kind 7 with the
-replicates. Each estimate comes with its Monte Carlo standard
+kind 6 with the true BMD's case, the named Hill curves from kind 7 with the
+replicates, and the ll4 curves with normal errors from kind 8 with the design and the
+curve. Each estimate comes with its Monte Carlo standard
 error between datasets and, for shares of p-values and coverages, the binomial bound
 of that error, which p-values that a dataset's moderation ties together exceed. Every
 row is information but the spline and fold-change gates' rows at 3 replicates, the
@@ -139,7 +150,7 @@ from cytepool.stats.distributions import t_ppf
 from cytepool.stats.multiple_contrasts import stage_wise_adjusted_p_values
 
 SEED = 20261201
-POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS, LINES, NAMED = range(8)
+POWER, NULL, BAND, CONTRASTS, VEHICLE_ONLY, CHECKS, LINES, NAMED, EC50_CURVES = range(9)
 FDR = 0.05
 AXIS = DoseAxis("dose", unit="ug/kg", metric="administered")
 DOSES = {
@@ -178,6 +189,17 @@ NAMED_HILL = {"g": 6.0, "v": 1.0, "k": 1.0, "n": 1.5}
 NAMED_CHANGE = 0.5
 NAMED_DATASETS = 2000
 NAMED_REPLICATES = (3, 8)
+BEND = 4.6805  # Sebaugh and McCray's (2003) bend points, at EC50 BEND^(+-1/slope)
+# ll4 curves with normal errors of SD 0.25 from a level of 6 at dose 0: (label, slope,
+# change, EC50), the curve the true model.
+EC50_CURVES_TRUE = (
+    ("a change of 1 midway", 1.5, 1.0, 0.3),
+    ("a change of 0.5 midway", 1.5, 0.5, 0.3),
+    ("a shallow change of 1", 0.8, 1.0, 0.3),
+    ("a change of 1 near the top dose", 1.5, 1.0, 5.0),
+)
+EC50_SD = 0.25
+EC50_GENES = 2000
 
 
 @dataclass(frozen=True)
@@ -241,6 +263,7 @@ CURVE_RUNS = (
     ("epa", "constant"),
     ("epa", "weighted"),
     ("epa", "moderated"),
+    ("ll4", "constant"),
     ("ll4", "weighted"),
     ("dromics", "weighted"),
 )
@@ -953,6 +976,7 @@ def shape_rows(cell: DesignCell) -> list[tuple[str, ...]]:
     benchmark doses of the "epa" curves, on the power datasets of a design cell."""
     found: dict[tuple[str, str, str], list[float]] = {}
     potency = Potency()
+    ec50 = EC50Records()
     for dataset in range(POWER_DATASETS):
         cube, truth = series(cell, POWER, dataset)
         for model_set, variance in CURVE_RUNS:
@@ -965,6 +989,8 @@ def shape_rows(cell: DesignCell) -> list[tuple[str, ...]]:
             for group in result.groups:
                 if model_set == "epa":
                     potency.add(variance, dataset, result, group, truth)
+                if (model_set, variance) == ("ll4", "constant"):
+                    ec50.add(dataset, result, group, truth)
                 fits = result.curve_fits(group)
                 table = truth.table(group)
                 info = {
@@ -1060,7 +1086,7 @@ def shape_rows(cell: DesignCell) -> list[tuple[str, ...]]:
                 "info",
             )
         )
-    return rows + potency.rows(cell)
+    return rows + potency.rows(cell) + ec50.rows(cell)
 
 
 # The potency rows.
@@ -1486,6 +1512,173 @@ def band_rows() -> list[tuple[str, ...]]:
     return rows
 
 
+# The EC50 rows.
+
+
+@dataclass
+class EC50Records:
+    """One record per dataset of the genes whose true shape is a Hill curve with a true
+    EC50 within the doses: their expected counts per profile at the vehicle, whether the
+    true curve has two positive doses beyond each bend, the true EC50, the EC50 and
+    interval of their "ll4" curve under constant variance, and whether the gene passes
+    the gate with two doses beyond each bend of its fitted curve, the EC50s the potency
+    chapter advises reading."""
+
+    records: list[dict[str, np.ndarray]] = field(default_factory=list)
+
+    def add(self, dataset: int, result: Any, group: str, truth: Any) -> None:
+        found = result.table(group, "ec50s")
+        table = truth.table(group)
+        position = {gene: i for i, gene in enumerate(table["feature_id"].tolist())}
+        rows = np.array(
+            [position[gene] for gene in found["feature_id"].tolist()], dtype=np.int64
+        )
+        shape = np.asarray(table["shape"])[rows]
+        true = np.asarray(table["ec50"], dtype=float)[rows]
+        slope = np.asarray(table["slope"], dtype=float)[rows]
+        doses = np.asarray(result.curve_fits(group).doses)
+        positive = doses[doses > 0.0]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            kept = (shape == "hill") & (true >= positive[0]) & (true <= doses[-1])
+            spread = BEND ** (1.0 / slope)
+            below = np.sum(positive[None, :] < (true / spread)[:, None], axis=1)
+            above = np.sum(positive[None, :] > (true * spread)[:, None], axis=1)
+        counts = np.asarray(table["counts_per_cell"], dtype=float)[rows] * CELLS
+        gate = (
+            np.asarray(found["passes_gate"], dtype=bool)
+            if "passes_gate" in found.columns
+            else np.zeros(len(found), dtype=bool)
+        )
+        readable = gate & np.asarray(found["two_doses_beyond_each_bend"], dtype=bool)
+        record = {
+            "counts": counts[kept],
+            "bends": ((below >= 2) & (above >= 2))[kept],
+            "true": true[kept],
+            "ec50": np.asarray(found["ec50"], dtype=float)[kept],
+            "lower": np.asarray(found["ec50_lower"], dtype=float)[kept],
+            "upper": np.asarray(found["ec50_upper"], dtype=float)[kept],
+            "readable": readable[kept],
+        }
+        if len(self.records) <= dataset:
+            self.records.append(record)
+        else:
+            self.records[dataset] = {
+                key: np.concatenate([self.records[dataset][key], value])
+                for key, value in record.items()
+            }
+
+    def rows(self, cell: DesignCell) -> list[tuple[str, ...]]:
+        if not self.records:
+            return []
+        datasets = self.records
+
+        def coverage(select: Any) -> str:
+            """The share of the genes with an interval whose interval holds the true
+            EC50, with the SE between datasets and the binomial bound."""
+            hits, shares = [], []
+            for d in datasets:
+                mask = select(d) & np.isfinite(d["lower"])
+                if mask.any():
+                    holds = (d["lower"] <= d["true"]) & (d["true"] <= d["upper"])
+                    hits.append(holds[mask])
+                    shares.append(float(np.mean(holds[mask])))
+            pooled = np.concatenate(hits) if hits else np.zeros(0)
+            if pooled.size == 0:
+                return "no genes"
+            between = (
+                float(np.std(shares, ddof=1) / np.sqrt(len(shares)))
+                if len(shares) > 1
+                else float("nan")
+            )
+            binomial = float(np.sqrt(0.95 * 0.05 / pooled.size))
+            return (
+                f"{float(np.mean(pooled)):.3f} (SE {between:.3f}; binomial "
+                f"{binomial:.3f}), {pooled.size:,} genes"
+            )
+
+        def closed(d: dict[str, np.ndarray]) -> np.ndarray:
+            """Intervals with both ends finite and above 0: an open end holds every
+            EC50 beyond it, so an open interval covers by construction."""
+            return (d["lower"] > 0.0) & np.isfinite(d["upper"])
+
+        every = {key: np.concatenate([d[key] for d in datasets]) for key in datasets[0]}
+        found = np.isfinite(every["ec50"])
+        computed = np.isfinite(every["lower"])
+        open_share = float(np.mean(~closed(every)[computed]))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.log10(every["ec50"][found] / every["true"][found])
+        q1, median, q3 = np.quantile(ratio, [0.25, 0.5, 0.75])
+        strata = "; ".join(
+            f"counts per profile {low:g} to {high:g}: "
+            + coverage(
+                lambda d, low=low, high=high: (
+                    (d["counts"] >= low) & (d["counts"] < high)
+                )
+            )
+            if np.isfinite(high)
+            else f"counts per profile {low:g} or more: "
+            + coverage(lambda d, low=low: d["counts"] >= low)
+            for low, high in COUNT_STRATA
+        )
+        text = (
+            f"EC50 found {np.mean(found):.3f}; log10(EC50 / true EC50) median "
+            f"{median:+.3f}, interquartile range {q1:+.3f} to {q3:+.3f}; coverage of "
+            "the 95% interval "
+            f"{coverage(lambda d: np.ones(d['ec50'].size, dtype=bool))}; intervals "
+            f"open at an end {open_share:.3f}; closed intervals: {coverage(closed)}; "
+            "closed, of genes that pass the gate with two doses beyond each bend of "
+            f"the fitted curve: {coverage(lambda d: closed(d) & d['readable'])}; true "
+            f"curve with two doses beyond each bend: {coverage(lambda d: d['bends'])}; "
+            f"without: {coverage(lambda d: ~d['bends'])}; {strata}"
+        )
+        return [
+            (
+                f"{cell.label}: EC50s of 'll4', constant variance, "
+                f"{every['ec50'].size:,} Hill genes with a true EC50 within the doses, "
+                f"{len(datasets)} datasets",
+                f"seed [{SEED}, {POWER}, {cell.number}, dataset]",
+                text,
+                "n/a",
+                "info",
+            )
+        ]
+
+
+def ec50_curve_rows() -> list[tuple[str, ...]]:
+    """The coverage of the EC50 interval on ll4 curves with normal errors of constant
+    variance, where the curve is the true model, at K = 9 x 2 and 9 x 3."""
+    from cytepool.stats.dose_curves import fit_dose_curves
+    from cytepool.stats.potency import ec50s
+
+    out = []
+    for d, replicates in enumerate(REPLICATES):
+        x = np.repeat(DOSES[9], replicates)
+        for c, (label, slope, change, ec50) in enumerate(EC50_CURVES_TRUE):
+            rng = np.random.default_rng([SEED, EC50_CURVES, d, c])
+            with np.errstate(divide="ignore"):
+                share = np.where(x > 0, (x / ec50) ** slope, 0.0)
+            mean = 6.0 + change * share / (1.0 + share)
+            values = mean[:, None] + rng.normal(0.0, EC50_SD, (x.size, EC50_GENES))
+            found = ec50s(fit_dose_curves(x, values, models="ll4"))
+            ok = np.isfinite(found.ec50_lower)
+            holds = (found.ec50_lower[ok] <= ec50) & (ec50 <= found.ec50_upper[ok])
+            share_held = float(np.mean(holds))
+            error = float(np.sqrt(share_held * (1.0 - share_held) / holds.size))
+            median = float(np.median(np.log10(found.ec50[ok] / ec50)))
+            out.append(
+                (
+                    f"EC50 intervals of ll4 curves with normal errors, K = 9 x "
+                    f"{replicates}, {label}",
+                    f"seed [{SEED}, {EC50_CURVES}, {d}, {c}]",
+                    f"coverage {share_held:.3f} (SE {error:.3f}) of {holds.size:,} genes; "
+                    f"median log10(EC50 / true EC50) {median:+.3f}",
+                    "n/a",
+                    "info",
+                )
+            )
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -1531,6 +1724,7 @@ def main() -> int:
     rows += band_rows()
     rows += line_rows()
     rows += named_model_rows()
+    rows += ec50_curve_rows()
     print("| check | reference | value | tolerance | result |")
     print("| --- | --- | --- | --- | --- |")
     for row in rows:

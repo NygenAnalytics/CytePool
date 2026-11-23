@@ -31,7 +31,11 @@ cube that supports tests, in one call, or the scores of one cell type's samples
    vehicle against the pooled top doses (Bretz 2006); and ``mcp``, the MCP step, the
    multiple comparison procedure, of MCP-Mod (multiple comparison procedure and
    modelling): the contrasts that best detect each of a few candidate shapes (Bretz,
-   Pinheiro and Branson 2005; Pinheiro et al. 2014).
+   Pinheiro and Branson 2005; Pinheiro et al. 2014). Also when named,
+   ``average_change``, the average of the treated doses' changes from the vehicle
+   along the axis: the area between the changes and 0 by the trapezoidal rule,
+   divided by the axis length, the form of the activity areas of drug screens
+   (Barretina et al. 2012).
 4. The gate, which decides which genes count as responding: one test of any
    response at a stated false discovery rate, after the dose-blind expression
    filter (Bourgon, Gentleman and Huber 2010), with any fold change in the null
@@ -134,6 +138,10 @@ References:
     Tukey JW, Ciminera JL, Heyse JF (1985). Testing the statistical certainty of a
     response to increasing doses of a drug. Biometrics 41, 295-301.
     doi:10.2307/2530666
+
+    Barretina J, Caponigro G, Stransky N, et al. (2012). The Cancer Cell Line
+    Encyclopedia enables predictive modelling of anticancer drug sensitivity. Nature
+    483, 603-607. doi:10.1038/nature11003
 
     Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a practical
     and powerful approach to multiple testing. Journal of the Royal Statistical
@@ -283,11 +291,13 @@ from .stats.potency import (
     BEST,
     BMDS_2026,
     BenchmarkDoses,
+    EC50s,
     _benchmark_record,
     _bmds_at_changes,
     _checked_responses,
     _status_counts,
     benchmark_doses,
+    ec50s,
 )
 from .stats.smoothing import NaturalSplineBasis
 from .stats.trend_tests import williams_trend_test
@@ -297,14 +307,19 @@ __all__ = ["DoseResponseResult", "dose_response"]
 
 FloatArray = npt.NDArray[np.float64]
 
-SPLINE, NONLINEARITY, LINEAR_TREND, DOSE_GROUPS = (
+SPLINE, NONLINEARITY, LINEAR_TREND, AVERAGE_CHANGE, DOSE_GROUPS = (
     "spline",
     "nonlinearity",
     "linear_trend",
+    "average_change",
     "dose_groups",
 )
-TESTS = (SPLINE, NONLINEARITY, LINEAR_TREND, DOSE_GROUPS)
-"""The tests, in the order of tables and printouts; ``spline`` is read first."""
+TESTS = (SPLINE, NONLINEARITY, LINEAR_TREND, AVERAGE_CHANGE, DOSE_GROUPS)
+"""The tests of one moderated fit, in the order of tables and printouts; ``spline``
+is read first, and ``average_change`` runs only when named."""
+ONE_CONTRAST_TESTS = (LINEAR_TREND, AVERAGE_CHANGE)
+"""The tests of one contrast, moderated t-tests in the analysis's table of a
+contrast; the others are F-tests."""
 DUNNETT, WILLIAMS, MCP = "dunnett", "williams", "mcp"
 CONTRAST_TESTS = (DUNNETT, WILLIAMS, MCP)
 """The multiple contrast tests, run only when named, in the order of tables and
@@ -321,7 +336,7 @@ UP, DOWN = "up", "down"
 DIRECTIONS = (UP, DOWN)
 """The directions of one-sided tests: a rise or a fall with dose, DoseFinding's
 ``"increasing"`` and ``"decreasing"``."""
-SIGNED_TESTS = (LINEAR_TREND, *CONTRAST_TESTS)
+SIGNED_TESTS = (*ONE_CONTRAST_TESTS, *CONTRAST_TESTS)
 """The tests of a change with a sign, which ``direction`` makes one-sided."""
 # The alternative of the multiple contrast tests in each direction: the contrasts rise
 # with dose, so a fall is a contrast below 0.
@@ -337,6 +352,10 @@ BENCHMARK_DOSES = "benchmark_doses"
 """The table of the benchmark doses of the curves, built on demand."""
 RULE_SET = "rule_set"
 """The table of the rule set's steps of each gene, with rules."""
+EC50S = "ec50s"
+"""The table of the EC50s of the curves' Hill curves, computed when asked for."""
+# The tables that a result builds when asked for, beside those of its tests.
+_BUILT_TABLES = (CURVES, BENCHMARK_DOSES, EC50S)
 # The options of the analyses that change the values a fit would use, which curves of
 # cell types that support only description use too.
 _VALUE_OPTIONS = ("expression_filter", "normalization", "prior_count")
@@ -417,10 +436,12 @@ class DoseResponseResult:
       denominator degrees of freedom with the same p-value. The numerator degrees of
       freedom are in the cell type's entry of ``provenance["groups"]``
       (``f_test_df1``).
-    - ``"linear_trend"``: the analysis's table of a contrast, whose
-      ``log2_fold_change`` is the slope of the straight line, the change in log2
-      expression per log10 unit of dose on a log10 axis (of dose plus the offset,
-      with the vehicle on the axis) or per unit of dose on a linear one, with
+    - ``"linear_trend"`` and ``"average_change"``: the analysis's table of a
+      contrast. For ``"linear_trend"``, ``log2_fold_change`` is the slope of the
+      straight line, the change in log2 expression per log10 unit of dose on a log10
+      axis (of dose plus the offset, with the vehicle on the axis) or per unit of
+      dose on a linear one. For ``"average_change"``, it is the average change from
+      the vehicle over the treated doses along the axis, in log2 units. Both have
       ``standard_error`` (not for dream), ``average_log2_cpm``, ``t``, ``p_value``,
       ``adjusted_p_value``, ``adjusted_p_value_across_groups`` and ``log_odds``;
       dream adds ``df`` and ``z_statistic``.
@@ -461,6 +482,15 @@ class DoseResponseResult:
       where the gate ran) after ``feature_id``, and a column of failed checks per set
       of ``flags``, built from :meth:`benchmark_doses` when asked for; for cell types
       that support only description, without bounds or ``passes_gate``.
+    - ``"ec50s"``, with ``models`` or ``rules``: one row per gene with curves, the
+      columns of :meth:`EC50s.table <cytepool.stats.potency.EC50s.table>` with
+      ``symbol`` and ``passes_gate`` after ``feature_id``, as for the benchmark doses:
+      each gene's EC50 with its two-sided 95% profile-likelihood interval, Hill slope
+      and plateaus, read from the Hill curve of the set, built from :meth:`ec50s`
+      when asked for; for cell types that support only description, without
+      intervals or ``passes_gate``. Each call computes the EC50s again, at about 7 ms of computing
+      per gene, shared among the threads: 35 s for 10,000 genes on 2 threads in the
+      benchmark.
     - ``"rule_set"``, with ``rules``: one row per gene the rule set kept in the cell
       type (mean count of at least 5), with ``feature_id``, ``symbol`` (when the cube
       has one), ``anova_p_value``, ``anova_adjusted_p_value``,
@@ -473,8 +503,8 @@ class DoseResponseResult:
       the BMD fails, joined by "; ", NTP's flag of a gene it keeps ending "(NTP keeps
       the gene)"; the ``flags_<set>`` column of the benchmark-dose table at the first
       BMR, under the rule set's name) and ``accepted``. Under ``rules`` the tables
-      ``"curves"`` and ``"benchmark_doses"`` hold the rule set's curves of the genes
-      that pass its prefilter, without ``passes_gate``.
+      ``"curves"``, ``"benchmark_doses"`` and ``"ec50s"`` hold the rule set's curves of
+      the genes that pass its prefilter, without ``passes_gate``.
 
     The tables of pathway scores or activities have one row per gene set or source,
     in the scores' order, with the columns :func:`~cytepool.limma` gives scores:
@@ -690,8 +720,8 @@ class DoseResponseResult:
     @property
     def tables(self) -> Mapping[tuple[str, str], Table]:
         """The tables of the tests, by (cell type, test), (cell type, ``"each_dose"``)
-        and (cell type, ``"gate"``); the tables of curves and benchmark doses are built
-        by :meth:`table` when asked for."""
+        and (cell type, ``"gate"``); the tables of curves, benchmark doses and EC50s
+        are built by :meth:`table` when asked for."""
         return self._tables
 
     @property
@@ -725,9 +755,9 @@ class DoseResponseResult:
     @property
     def tests(self) -> tuple[str, ...]:
         """The tests of the design, those named or, when none were, those it
-        supports, in the order spline, nonlinearity, linear_trend and dose_groups,
-        then the multiple contrast tests named, in the order dunnett, williams and
-        mcp; the gate's test is among them, named or not."""
+        supports, in the order spline, nonlinearity, linear_trend, average_change
+        and dose_groups, then the multiple contrast tests named, in the order
+        dunnett, williams and mcp; the gate's test is among them, named or not."""
         return tuple(json.loads(self._record)["tests"])
 
     @property
@@ -826,12 +856,13 @@ class DoseResponseResult:
         Args:
             group: A cell type; it may be left out when one cell type was checked.
             name: A test the cell type ran, ``"spline"``, ``"nonlinearity"``,
-                ``"linear_trend"``, ``"dose_groups"``, ``"dunnett"``, ``"williams"``
-                or ``"mcp"``; ``"each_dose"`` for each dose against the vehicle;
-                ``"gate"`` for the gate's calls; ``"curves"`` for the curves of
-                named models; ``"benchmark_doses"`` for their benchmark doses; or
-                ``"rule_set"`` for the rule set's steps of each gene. The class
-                documentation gives the columns.
+                ``"linear_trend"``, ``"average_change"``, ``"dose_groups"``,
+                ``"dunnett"``, ``"williams"`` or ``"mcp"``; ``"each_dose"`` for each
+                dose against the vehicle; ``"gate"`` for the gate's calls;
+                ``"curves"`` for the curves of named models; ``"benchmark_doses"``
+                for their benchmark doses; ``"ec50s"`` for the EC50s of their Hill
+                curves; or ``"rule_set"`` for the rule set's steps of each gene. The
+                class documentation gives the columns.
 
         Raises:
             ValueError: If ``group`` is left out and several cell types were
@@ -839,7 +870,8 @@ class DoseResponseResult:
             TypeError: If ``group`` is not a string.
             KeyError: If the cell type was not checked or not tested, or the test, or
                 the gate's test, or the rule set, was not run there, or it has no
-                curves; the message says why.
+                curves, or, for ``"ec50s"``, its Hill curve was not fitted; the message
+                says why.
         """
         group = self._group(group)
         name = only_key(name, self._table_names(), "name", "tables")
@@ -865,6 +897,15 @@ class DoseResponseResult:
             # analysis's, so its tables carry no gate calls.
             gate = self._tables.get((group, GATE)) if rules is None else None
             return _with_gene_columns(table, genes, rows, gate)
+        if name == EC50S:
+            genes, _ = self._curve_pair(group)
+            rules = self.settings.get("rules")
+            return _with_gene_columns(
+                self.ec50s(group).table(),
+                genes,
+                np.arange(len(genes)),
+                self._tables.get((group, GATE)) if rules is None else None,
+            )
         found = self._tables.get((group, name))
         if found is not None:
             return found
@@ -882,18 +923,19 @@ class DoseResponseResult:
             raise KeyError(
                 f"{name!r} was not run in {group!r}: {entry['tests_not_run'][name]}"
             )
-        known = [*_ALL_TESTS, EACH_DOSE, GATE, CURVES, BENCHMARK_DOSES, RULE_SET]
+        known = [*_ALL_TESTS, EACH_DOSE, GATE, *_BUILT_TABLES, RULE_SET]
         raise KeyError(
             f"no table {name!r}; the tables are: "
             f"{listing(self._table_names())}{close_matches(str(name), known)}"
         )
 
     def _table_names(self) -> list[str]:
-        """The names of the tables: the tests, each dose, the gate and, with models,
-        curves, and with bmr, benchmark doses."""
+        """The names of the tables: the tests, each dose, the gate and, with models
+        or rules, curves and EC50s, with bmr or rules, benchmark doses, and with
+        rules, the rule set's steps."""
         settings = self.settings
         rules = settings.get("rules") is not None
-        curves = [CURVES] if settings.get("models") is not None or rules else []
+        curves = [CURVES, EC50S] if settings.get("models") is not None or rules else []
         doses = [BENCHMARK_DOSES] if settings.get("bmr") is not None or rules else []
         return [
             *self.tests,
@@ -903,6 +945,13 @@ class DoseResponseResult:
             *doses,
             *([RULE_SET] if rules else []),
         ]
+
+    def _n_threads(self) -> int | None:
+        """The threads the analysis was given, which the tables built when asked for
+        use; None for scores, whose analysis records none."""
+        settings = self.provenance.get("analysis_settings") or {}
+        found = settings.get("n_threads")
+        return None if found is None else int(found)
 
     def fit(self, group: str | None = None) -> GroupFit:
         """Compute the fit of a tested cell type again: its values, weights and
@@ -1254,6 +1303,46 @@ class DoseResponseResult:
             )
         return found
 
+    def ec50s(self, group: str | None = None) -> EC50s:
+        """Return the EC50s, Hill slopes and plateaus of a cell type's Hill curves,
+        with the EC50s' intervals and the genes' ids, computed when called.
+
+        The EC50s of :func:`~cytepool.stats.potency.ec50s` on :meth:`curve_fits`,
+        with the analysis's threads; without intervals for a cell type that supports
+        only description. Their printout counts the EC50s by where they lie, the
+        genes with two doses beyond each bend, the limits and the open intervals,
+        and says why an interval was not computed. Each call computes them again,
+        at about 7 ms of computing per gene, shared among the threads.
+
+        Args:
+            group: A cell type with curves; it may be left out when one cell type
+                was checked.
+
+        Raises:
+            ValueError: If ``group`` is left out and several cell types were
+                checked.
+            TypeError: If ``group`` is not a string.
+            KeyError: If the cell type was not checked or has no curves, or its Hill
+                curve was not fitted; the message says why.
+        """
+        group = self._group(group)
+        genes, fits = self._curve_pair(group)
+        entry = next(e for e in self.provenance["groups"] if e["group_id"] == group)
+        try:
+            found = ec50s(
+                fits,
+                intervals=entry["status"] == INFERENTIAL,
+                n_threads=self._n_threads(),
+            )
+        except ValueError as error:
+            raise KeyError(f"no EC50s in {group!r}: {error}") from error
+        return replace(
+            found,
+            feature_ids=read_only(
+                np.asarray(genes[genes.columns[0]].tolist(), dtype=object)
+            ),
+        )
+
     def _curve_pair(self, group: str) -> tuple[Table, DoseCurveFits]:
         """The genes and curves of a checked cell type, which must have curves."""
         found = self._curves.get(group)
@@ -1361,7 +1450,7 @@ class DoseResponseResult:
             )
         if name in groups:
             return name
-        if name in (*_ALL_TESTS, EACH_DOSE, GATE, CURVES, BENCHMARK_DOSES):
+        if name in (*_ALL_TESTS, EACH_DOSE, GATE, *_BUILT_TABLES):
             raise KeyError(
                 f"{name!r} is a table, not a cell type; pass name={name!r}, with the "
                 "cell type as group, which may be left out when one was checked"
@@ -1680,6 +1769,18 @@ def dose_response(
     https://docs.nygen.io/CytePool/statistics/dose-response#dose-response-tests
     explains the tests and how to read them.
 
+    ``"average_change"`` runs when named: the average of the treated doses' changes
+    from the vehicle along the axis, by a moderated t-test, in log2 units: the area
+    between the changes and 0 by the trapezoidal rule, from the lowest to the top
+    treated dose that the cell type compares, divided by the axis length between
+    them, so that a gene whose every dose lies 0.7 above the vehicle has an average
+    change of 0.7. A gene that responds from a low dose on has a larger one than a
+    gene of the same size that responds at the top dose only, so the average change
+    sums potency and size, as the activity areas of drug screens do (Barretina et
+    al. 2012), and compares across cell types over the same doses. Changes of
+    opposite signs cancel, so it is no test of any response
+    (https://docs.nygen.io/CytePool/statistics/dose-response#average-change).
+
     Three multiple contrast tests run when named, each two-sided, or one-sided with
     ``direction``, with one error rate for the gene's contrasts (the single-step
     max-t test, from the multivariate t distribution on the gene's df) and
@@ -1743,6 +1844,11 @@ def dose_response(
     (:func:`~cytepool.stats.potency.benchmark_doses`), in the table
     ``"benchmark_doses"`` and in :meth:`DoseResponseResult.benchmark_doses`;
     https://docs.nygen.io/CytePool/statistics/potency#benchmark-doses explains them.
+    The table ``"ec50s"`` and :meth:`DoseResponseResult.ec50s` read each gene's Hill
+    curve as pharmacologists read it: the EC50 with its two-sided 95%
+    profile-likelihood interval, the Hill slope and the two plateaus
+    (:func:`~cytepool.stats.potency.ec50s`;
+    https://docs.nygen.io/CytePool/statistics/potency#ec50s).
 
     The pathway scores or activities of one cell type's samples, such as those of
     ``gsva(cube, sets, group="pDC")``, are tested in place of the genes, with every
@@ -1755,12 +1861,12 @@ def dose_response(
 
     With ``direction``, the tests with a sign are one-sided: ``"dunnett"`` and
     ``"williams"`` test a change from the vehicle that way, ``"linear_trend"`` a
-    slope, and ``"mcp"`` agreement with the candidate shapes or their mirror
-    images, which a response that moves the other way at some doses can show. The
-    F-tests have no direction and are refused with it; each dose against the
-    vehicle, the curves and the lowest effective doses stay two-sided. Use a
-    direction fixed before the data, such as the expected effect of a drug on a
-    pharmacodynamic signature
+    slope, ``"average_change"`` an average change, and ``"mcp"`` agreement with the
+    candidate shapes or their mirror images, which a response that moves the other
+    way at some doses can show. The F-tests have no direction and are refused with
+    it; each dose against the vehicle, the curves and the lowest effective doses stay
+    two-sided. Use a direction fixed before the data, such as the expected effect of
+    a drug on a pharmacodynamic signature
     (https://docs.nygen.io/CytePool/statistics/dose-response#one-sided-dose-tests).
 
     The design is checked first by :func:`~cytepool.check_dose_design`, with
@@ -1788,20 +1894,21 @@ def dose_response(
         dose: The :class:`~cytepool.DoseAxis` of the series. The dose groups are the
             distinct doses of the design's samples.
         tests: A test name, or a list of them, among ``"spline"``,
-            ``"nonlinearity"``, ``"linear_trend"``, ``"dose_groups"``, ``"dunnett"``,
-            ``"williams"`` and ``"mcp"``; None runs the first four that the design
-            supports (not with ``direction``), leaving out in each cell type a test
-            of the same hypothesis as another, which happens when the dose groups
-            are few. ``"spline"`` and ``"linear_trend"`` need two doses on the axis
-            (the treated doses when the vehicle is a group of its own, every dose
-            when it is on the axis), ``"nonlinearity"`` a spline of two columns or
-            more, and ``"mcp"`` two treated doses; a cell type that compares one
-            treated dose does not run ``"mcp"``, with the reason. The gate's test,
-            the spline by default (the Williams-type test with ``direction``), also
-            runs when ``tests`` does not name it, and decides which genes pass the
-            gate and whose lowest effective doses are called: ``tests="williams"``
-            runs the spline too, and ``gate={"test": "williams"}`` makes the
-            Williams-type test decide.
+            ``"nonlinearity"``, ``"linear_trend"``, ``"average_change"``,
+            ``"dose_groups"``, ``"dunnett"``, ``"williams"`` and ``"mcp"``; None runs
+            the spline, nonlinearity, linear trend and dose groups tests that the
+            design supports (not with ``direction``), leaving out in each cell type a
+            test of the same hypothesis as another, which happens when the dose
+            groups are few. ``"spline"`` and ``"linear_trend"`` need two doses on
+            the axis (the treated doses when the vehicle is a group of its own, every
+            dose when it is on the axis), ``"nonlinearity"`` a spline of two columns
+            or more, and ``"average_change"`` and ``"mcp"`` two treated doses; a cell
+            type that compares one treated dose does not run them, with the reason.
+            The gate's test, the spline by default (the Williams-type test with
+            ``direction``), also runs when ``tests`` does not name it, and decides
+            which genes pass the gate and whose lowest effective doses are called:
+            ``tests="williams"`` runs the spline too, and
+            ``gate={"test": "williams"}`` makes the Williams-type test decide.
         direction: ``"up"`` or ``"down"`` for tests of a rise or a fall with dose
             only, DoseFinding's ``"increasing"`` and ``"decreasing"``, of the tests
             with a sign that ``tests`` names; None (default) for two-sided tests.
@@ -2102,10 +2209,10 @@ def dose_response(
                     extra,
                 )
             if fit.result is not None:
-                if side is not None and LINEAR_TREND in fit.tables:
-                    fit.tables[LINEAR_TREND] = _one_sided(
-                        fit.tables[LINEAR_TREND], side
-                    )
+                if side is not None:
+                    for test in ONE_CONTRAST_TESTS:
+                        if test in fit.tables:
+                            fit.tables[test] = _one_sided(fit.tables[test], side)
                 # The first stage, computed once for the tests and the curves.
                 needed = comparison.contrast_tests or model_set is not None
                 if needed and isinstance(fit.result, DifferentialExpressionResult):
@@ -2310,10 +2417,15 @@ def _gate_setting(value: Any) -> dict[str, Any]:
     test = value.get("test")
     if test is not None and not isinstance(test, str):
         raise TypeError(f"gate['test'] must be a test name, got {type(test).__name__}")
-    if test in (LINEAR_TREND, NONLINEARITY):
+    if test in (LINEAR_TREND, NONLINEARITY, AVERAGE_CHANGE):
+        what = (
+            "an average change, in which changes of opposite signs cancel"
+            if test == AVERAGE_CHANGE
+            else "a straight line or a departure from one"
+        )
         raise ValueError(
-            f"gate['test'] is {test!r}, which tests a straight line or a departure from "
-            f"one, not any response; the gate's tests are {quoted(GATE_TESTS)}"
+            f"gate['test'] is {test!r}, which tests {what}, not any response; the "
+            f"gate's tests are {quoted(GATE_TESTS)}"
         )
     if test is not None and test not in (*GATE_TESTS, EACH_DOSE):
         hint = (
@@ -2646,7 +2758,12 @@ def _splines(
             f"spline of two columns or more, and the spline has {df}; {fix}"
         )
     slope_basis = axis.spline_basis(samples, df=1)
-    supported = [test for test in TESTS if test != NONLINEARITY or df >= 2]
+    # The average change runs only when named.
+    supported = [
+        test
+        for test in TESTS
+        if (test != NONLINEARITY or df >= 2) and test != AVERAGE_CHANGE
+    ]
     chosen = supported if given is None else [t for t in TESTS if t in given]
     return _Splines(basis, slope_basis, tuple(chosen))
 
@@ -2775,6 +2892,17 @@ def _comparison(
         else:
             contrasts[LINEAR_TREND] = line[-1, 1:]
             tests[LINEAR_TREND] = [LINEAR_TREND]
+    if AVERAGE_CHANGE in wanted:
+        if levels.size < 3:
+            not_run[AVERAGE_CHANGE] = (
+                "the average change runs along the treated doses, and this cell type "
+                f"compares one, {dose_text(levels[1:], axis.unit)}"
+            )
+        else:
+            contrasts[AVERAGE_CHANGE] = _average_change_weights(
+                axis.positions(levels[1:])
+            )
+            tests[AVERAGE_CHANGE] = [AVERAGE_CHANGE]
     if DOSE_GROUPS in wanted:
         tests[DOSE_GROUPS] = names
     if by_default:
@@ -2922,6 +3050,22 @@ def _spline_weights(
     return weights
 
 
+def _average_change_weights(
+    positions: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """The weights on the treated doses' differences from the vehicle that give their
+    average along the axis: the trapezoidal rule's area between the changes and 0, at
+    the m >= 2 positions u_1 < ... < u_m, divided by the length u_m - u_1. A dose's
+    weight is half the length to its neighbours, (u_(k+1) - u_(k-1)) / 2, and
+    (u_2 - u_1) / 2 and (u_m - u_(m-1)) / 2 at the ends; the weights sum to 1."""
+    gaps = np.diff(positions)
+    weights = np.zeros(positions.size)
+    weights[:-1] += gaps / 2.0
+    weights[1:] += gaps / 2.0
+    average: npt.NDArray[np.float64] = weights / (positions[-1] - positions[0])
+    return average
+
+
 def _no_spline_reason(
     axis: DoseAxis,
     basis: NaturalSplineBasis | None,
@@ -3038,7 +3182,7 @@ def _fit_cell_type(
     tables: dict[str, Table] = {}
     for test in comparison.tests:
         table = result.table(group, test)
-        if test != LINEAR_TREND:
+        if test not in ONE_CONTRAST_TESTS:
             table = table.select(
                 [c for c in table.columns if not c.startswith("log2_fold_change_")]
             )
@@ -3110,7 +3254,7 @@ def _fit_scores(
     tables: dict[str, Table] = {}
     f_test_df1: dict[str, int] = {}
     for test in comparison.tests:
-        if test == LINEAR_TREND:
+        if test in ONE_CONTRAST_TESTS:
             tables[test] = contrast_table(
                 scores.id_column, scores.ids, moderated, names.index(test)
             )
@@ -3352,7 +3496,7 @@ def _contrasts(
     f_tests = {
         test: members
         for test, members in comparison.tests.items()
-        if test != LINEAR_TREND
+        if test not in ONE_CONTRAST_TESTS
     }
     return contrasts, f_tests
 
@@ -3920,8 +4064,8 @@ def _group_record(fit: _CellTypeFit) -> dict[str, Any]:
         entry["tests"] = {test: list(names) for test, names in comparison.tests.items()}
         entry["tests_not_run"] = dict(comparison.not_run)
         group, contrasts = fit.record["fit"], fit.record["contrasts"]
-        trend = {LINEAR_TREND: 1} if LINEAR_TREND in fit.tables else {}
-        df1 = {**group["f_test_df1"], **trend}
+        single = {test: 1 for test in ONE_CONTRAST_TESTS if test in fit.tables}
+        df1 = {**group["f_test_df1"], **single}
         entry["f_test_df1"] = {test: df1[test] for test in TESTS if test in df1}
         entry["contrasts"] = contrasts
         entry["contrast_tests"] = {
