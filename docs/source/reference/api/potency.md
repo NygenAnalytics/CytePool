@@ -6,7 +6,7 @@ myst:
 
 # Potency
 
-Benchmark doses of fitted dose-response curves, with their bounds and the checks of BMDS, NTP 2018, EPA's ETAP 2024 and EFSA 2022; [Potency and points of departure](../statistics/potency/) explains them.
+Benchmark doses of fitted dose-response curves, with their bounds and the checks of BMDS, NTP 2018, EPA's ETAP 2024 and EFSA 2022; [Potency and points of departure](../statistics/potency/) explains them, and [NTP's and ETAP's rule sets](../statistics/potency/#rule-sets) the documents' choices of model.
 
 ```{eval-rst}
 .. automodule:: cytepool.stats.potency
