@@ -715,6 +715,87 @@ def test_small_boxes_keep_their_relative_accuracy() -> None:
         assert result.error <= 0.01 * result.probability
 
 
+def t_cdf(x: float, df: float) -> float:
+    """P(T <= x), from scipy's regularized incomplete beta function, or the normal."""
+    if math.isinf(df):
+        return float(special.ndtr(x))
+    tail = 0.5 * float(special.betainc(df / 2.0, 0.5, df / (df + x * x)))
+    return tail if x < 0 else 1.0 - tail
+
+
+@pytest.mark.parametrize(
+    ("lam", "limit", "df", "bound"),
+    [
+        # Highly correlated contrasts, limits far below 0: the smallest probability of a
+        # coordinate's interval bounds the box.
+        ([0.95, 0.9, 0.97, 0.8, 0.93], -3.0, 12.0, "marginal"),
+        ([0.95, 0.9, 0.97, 0.8, 0.93], -6.0, 40.0, "marginal"),
+        ([0.95, 0.9, 0.97, 0.8, 0.93], -2.4, math.inf, "marginal"),
+        # A pair of opposite loadings, correlated -0.72: its box bounds the others.
+        ([0.9, -0.8, 0.7], -1.0, math.inf, "pair"),
+        ([0.9, -0.8, 0.7, 0.6], -1.2, 9.0, "pair"),
+    ],
+)
+def test_complements_skip_boxes_bounded_within_their_target(
+    lam, limit, df, bound
+) -> None:
+    """With ``relative_to="complement"``, a box whose probability is bounded within
+    the complement's target is not integrated: its probability is 0 and its
+    complement 1, with the bound as their error, and the complement of Dunnett's
+    integral lies within that error."""
+    lam = np.asarray(lam)
+    k = lam.size
+    correlation = product_correlation(lam)
+    result = multivariate_t_cdf(
+        [limit] * k, correlation, df, relative_to="complement", rng=1
+    )
+    probability, complement = product_box(lam, [limit] * k, df, False)
+    marginal = t_cdf(limit, df)
+    if bound == "marginal":
+        assert result.error == pytest.approx(marginal, rel=1e-12)
+    else:
+        # The marginal bound alone is beyond the target; the pair's settles it.
+        assert marginal > 0.01
+        assert result.error < marginal
+    assert result.error >= probability
+    assert result.probability == 0.0 and result.complement == 1.0
+    assert result.error <= 0.01 * result.complement
+    assert abs(result.complement - complement) <= result.error
+    # The default rule integrates the box to 1% of its own probability.
+    default = multivariate_t_cdf([limit] * k, correlation, df, rng=1)
+    within_errors(default.probability, probability, default.error)
+    assert default.error <= 0.01 * default.probability
+
+
+def test_complements_of_other_boxes_are_those_of_the_default_rule() -> None:
+    """One-sided boxes that no bound settles, and every two-sided box, are computed
+    as without ``relative_to``, to the last bit: the complement's target is met by the
+    smaller side's. Limits of 0.005 give a two-sided box of probability 8.7e-10, which
+    a bound of its coordinates' intervals would put within the target."""
+    correlation = product_correlation(np.array([0.8, 0.75, 0.9, 0.7]))
+    for limits, two_sided in (
+        ([2.2, 2.6, 2.4, 3.0], False),
+        ([-0.3] * 4, False),
+        ([0.005] * 4, True),
+        ([0.6] * 4, True),
+        ([2.5] * 4, True),
+        ([4.0] * 4, True),
+    ):
+        default = multivariate_t_cdf(
+            limits, correlation, 7.0, two_sided=two_sided, rng=3
+        )
+        complement = multivariate_t_cdf(
+            limits,
+            correlation,
+            7.0,
+            two_sided=two_sided,
+            relative_to="complement",
+            rng=3,
+        )
+        for field in ("probability", "complement", "error"):
+            assert getattr(complement, field) == getattr(default, field)
+
+
 def test_the_point_limit_is_reported(monkeypatch) -> None:
     monkeypatch.setattr(multivariate_t, "_MOST_POINTS", 16)
     result = multivariate_t_cdf(
@@ -867,6 +948,13 @@ def test_quantiles_broadcast_and_give_nan() -> None:
             "relative_error",
         ),
         (([2.0, 2.0], np.eye(2), 5.0), {"two_sided": 1}, TypeError, "two_sided"),
+        (
+            ([2.0, 2.0], np.eye(2), 5.0),
+            {"relative_to": "probability"},
+            ValueError,
+            "relative_to must be one of 'smaller', 'complement'",
+        ),
+        (([2.0, 2.0], np.eye(2), 5.0), {"relative_to": 1}, TypeError, "relative_to"),
         (([2.0, 2.0], np.eye(2), 5.0), {"rng": "seed"}, TypeError, "rng"),
         (
             ([[2.0, 2.0]] * 2, np.eye(2), [5.0, 6.0, 7.0]),

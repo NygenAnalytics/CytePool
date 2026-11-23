@@ -318,9 +318,9 @@ class MultipleContrastTest:
     (Hothorn, Bretz and Westfall 2008). The arrays are read-only. The repr counts
     the features whose ``adjusted_p_value`` of :meth:`table` is below 0.05, and, as
     ``p_values_short_of_relative_error``, the p-values whose standard error exceeds
-    ``relative_error`` of the smaller of p and 1 - p, which happens only when the
-    computation stopped at its limit of 2^20 points: use them with their
-    ``p_value_error``, or ask for a larger ``relative_error``.
+    ``relative_error`` of p, and for a two-sided test of 1 - p too, which happens
+    only when the computation stopped at its limit of 2^20 points: use them with
+    their ``p_value_error``, or ask for a larger ``relative_error``.
 
     Attributes:
         names: The contrast names, which label the columns of ``estimate``, ``t``
@@ -337,15 +337,17 @@ class MultipleContrastTest:
             ``"less"``. Within a feature they never decrease as t becomes less
             extreme.
         p_value_error: ``(n_features, n_contrasts)`` the standard error of each
-            p-value (the quadrature's error bound with two contrasts, 0 with one).
+            p-value (the quadrature's error bound with two contrasts, 0 with one, and
+            for a one-sided p-value of 1 that a bound settles, that bound on its
+            error).
         correlation: ``(n_features, n_contrasts, n_contrasts)`` the correlation of
             each feature's t-statistics, which
             :func:`~cytepool.stats.multivariate_t.multivariate_t_quantile` turns
             into the critical value of simultaneous confidence intervals.
         df: ``(n_features,)`` degrees of freedom of the t-statistics.
         alternative: ``"two-sided"``, ``"greater"`` or ``"less"``.
-        relative_error: The requested standard error of the smaller of each p-value
-            and 1 minus it, as a fraction of it.
+        relative_error: The requested standard error of each p-value, and for a
+            two-sided test of 1 minus it too, as a fraction of it.
     """
 
     names: tuple[str, ...]
@@ -431,7 +433,9 @@ class MultipleContrastTest:
         _, adjusted = _feature_test(self.t, self.p_value, self.alternative)
         called = int(np.count_nonzero(adjusted < 0.05))
         # 1 - p of a p-value near 1 is known only to the rounding of p.
-        smaller = np.minimum(self.p_value, 1.0 - self.p_value)
+        smaller = self.p_value
+        if self.alternative == "two-sided":
+            smaller = np.minimum(self.p_value, 1.0 - self.p_value)
         allowed = self.relative_error * smaller + _EPS * self.p_value
         short = int(np.count_nonzero(self.p_value_error > allowed))
         return (
@@ -592,8 +596,12 @@ def multiple_contrast_test(
             are matched to; required by them. Left out with a ``ModeratedFit``.
         alternative: ``"two-sided"``, ``"greater"`` (the contrasts are larger than
             0) or ``"less"``.
-        relative_error: The largest standard error of the smaller of each adjusted
-            p-value and 1 minus it, as a fraction of it, between 0 and 1.
+        relative_error: The largest standard error of each adjusted p-value, and
+            for a two-sided test of 1 minus it too, as a fraction of it, between 0
+            and 1. A one-sided p-value near 1, of a contrast of the other sign, is
+            not computed to a relative accuracy of 1 minus it, which would cost up
+            to 2^20 points per contrast: when a bound puts 1 - p within
+            ``relative_error``, p is 1, with the bound as its error.
         rng: A numpy random generator, an integer seed, or None; a seed gives the
             same p-values whatever the number of threads. Two or fewer contrasts use
             no random numbers.
@@ -727,6 +735,9 @@ def multiple_contrast_test(
             feature_df[:, None],
             two_sided=side == "two-sided",
             relative_error=relative_error,
+            # A one-sided p-value is the complement of a box whose probability falls
+            # towards 0 as the contrast turns the other way.
+            relative_to="smaller" if side == "two-sided" else "complement",
             rng=rng,
         )
     p_value, p_value_error = _monotone(

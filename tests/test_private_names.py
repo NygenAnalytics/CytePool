@@ -67,6 +67,11 @@ SHARED_FROM_THEIR_MODULE = {
     ("cytepool.design.checks", "_random_checks"): _CHECKS,
     ("cytepool.design.checks", "_relation"): _CHECKS,
     ("cytepool.design.checks", "_same_partition"): _CHECKS,
+    ("cytepool.differential_expression", "_limma_f_test"): (
+        "limma's moderated F-test of contrasts of a moderated fit, beside the F-tests "
+        "of limma_voom and limma_trend it was written for, which dose_response runs "
+        "on the fit of scores"
+    ),
     ("cytepool.design.model_matrix", "_Covariate"): _VARIABLES,
     ("cytepool.design.model_matrix", "_Factor"): _VARIABLES,
     ("cytepool.design.model_matrix", "_build_model_matrix"): _VARIABLES,

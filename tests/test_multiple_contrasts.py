@@ -27,6 +27,7 @@ from cytepool.stats.multiple_contrasts import (
     williams_contrasts,
 )
 from cytepool.stats.multiple_testing import adjust_p_values
+from cytepool.stats.multivariate_t import multivariate_t_cdf
 
 FIXTURES = Path(__file__).parent / "data" / "multiple_contrast_tests"
 CALIBRATED = 5.5
@@ -354,6 +355,92 @@ def test_less_at_t_is_greater_at_minus_t() -> None:
     )  # fmt: skip
     np.testing.assert_array_equal(greater.p_value, less.p_value)
     np.testing.assert_array_equal(greater.t, -less.t)
+
+
+def test_one_sided_p_values_of_the_other_sign_come_from_a_bound() -> None:
+    # Doses that all fall well below the vehicle: a test for a rise gives each of
+    # Dunnett's contrasts a p-value near 1, 1 minus the chance that every t stays
+    # below the contrast's. That chance is at most the chance of one t below it, from
+    # the t distribution, or of the least correlated pair, which is within the
+    # p-value's target, so it is not integrated: p is 1, with the bound as its error.
+    # A third feature rises at two doses and falls at one: its rising contrasts are
+    # integrated, and every p-value meets its target of 1% of p.
+    names = ["vehicle", "low", "mid", "high"]
+    variance = 0.2 / np.array([4.0, 3.0, 3.0, 4.0])
+    means = np.array([[5.0, 3.6, 3.2, 2.8], [5.0, 4.0, 3.8, 3.6], [5.0, 5.9, 4.0, 6.2]])
+    covariances = np.broadcast_to(np.diag(variance), (3, 4, 4))
+    test = multiple_contrast_test(
+        means, covariances, dunnett_contrasts(names), df=10.0, estimate_names=names,
+        alternative="greater", rng=1,
+    )  # fmt: skip
+    assert np.all(test.t[:2] < -2.5)
+    assert test.t[2, 0] > 2.5 and test.t[2, 1] < -2.5 and test.t[2, 2] > 2.5
+    assert np.all(test.p_value_error <= 0.01 * test.p_value)
+    assert test.p_value[2, 2] < 0.01
+    p, error = test.p_value[:2], test.p_value_error[:2]
+    # The bound settles each falling feature's contrasts: p is 1, and its error is at
+    # most the chance of one t below the contrast's.
+    assert np.all(p == 1.0)
+    assert np.all(error <= stats.t.cdf(test.t[:2], 10.0) * (1 + 1e-9))
+    assert "p_values_short_of_relative_error=0" in repr(test)
+    # The p-value lies within its error of 1 minus the box integrated to 1% of its own
+    # probability, whose rule the validation checks against Dunnett's integral.
+    for i in range(2):
+        for j in range(3):
+            box = multivariate_t_cdf(
+                np.full(3, test.t[i, j]), test.correlation[i], 10.0, rng=2
+            )
+            assert box.probability < 0.01
+            allowed = error[i, j] + CALIBRATED * box.error
+            assert abs(p[i, j] - box.complement) <= allowed
+
+
+def test_two_sided_p_values_near_1_keep_their_relative_error() -> None:
+    # Doses whose means all lie within 0.01 of the vehicle's: two-sided, each
+    # contrast's p-value is near 1, and its error meets 1% of 1 - p, the smaller
+    # side's rule, with nothing settled by a bound and nothing short of its target.
+    names = ["vehicle", "low", "mid", "high"]
+    covariance = np.diag(0.2 / np.array([4.0, 3.0, 3.0, 4.0]))
+    means = np.array([5.0, 5.01, 4.99, 5.005])
+    test = multiple_contrast_test(
+        means, covariance, dunnett_contrasts(names), df=10.0, estimate_names=names,
+        alternative="two-sided", rng=1,
+    )  # fmt: skip
+    p, error = test.p_value[0], test.p_value_error[0]
+    assert np.all(np.abs(test.t[0]) < 0.05)
+    assert np.all(p < 1.0) and np.all(p > 0.9999)
+    assert np.all(error <= 0.01 * (1.0 - p))
+    assert "p_values_short_of_relative_error=0" in repr(test)
+
+
+def test_p_values_from_a_bound_keep_their_order_and_their_errors() -> None:
+    # Tukey's contrasts of 4 groups, of rank 3, tested for a rise on 5 df, a feature
+    # of the validation: the bound settles the boxes of contrasts that point the
+    # other way, while more extreme contrasts are integrated. Each p-value lies within
+    # its error of its box integrated to 1% of itself, which a p-value raised to a
+    # more extreme contrast's with that contrast's error would not, and the p-values
+    # never decrease as t becomes less extreme.
+    contrasts = np.array(
+        [
+            [-1.0, -1.0, -1.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, -1.0, -1.0, 0.0],
+            [0.0, 1.0, 0.0, 1.0, 0.0, -1.0],
+            [0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+        ]
+    )
+    means = np.array([5.398828, 5.037879, 3.725184, 5.777614])
+    covariance = np.diag([0.717891, 0.430735, 1.076837, 0.538419])
+    test = multiple_contrast_test(
+        means, covariance, contrasts, df=5.0, alternative="greater", rng=1
+    )
+    t, p, error = test.t[0], test.p_value[0], test.p_value_error[0]
+    assert np.any(p == 1.0) and np.any(p < 0.5)
+    order = np.argsort(-t, kind="stable")
+    assert np.all(np.diff(p[order]) >= 0.0)
+    for j in range(t.size):
+        box = multivariate_t_cdf(np.full(t.size, t[j]), test.correlation[0], 5.0, rng=2)
+        allowed = CALIBRATED * math.hypot(error[j], box.error)
+        assert abs(p[j] - box.complement) <= allowed, j
 
 
 def test_p_values_never_decrease_as_t_becomes_less_extreme() -> None:

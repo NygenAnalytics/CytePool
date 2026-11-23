@@ -1,5 +1,5 @@
 ---
-description: Dose axes, what a dose series supports, which genes respond to dose in each cell type and how, a gate checked against noise, from which dose, curves of named models, and simulated dose series.
+description: Dose axes, what a dose series supports, which genes and signatures respond to dose per cell type and how, a gate checked against noise, from which dose, curves of named models and simulated series.
 ---
 
 # Dose response
@@ -579,6 +579,72 @@ In the hepatocytes, 159 of the 817 genes have a best fit that turns. 120 of them
 
 A cell type that supports only description ([Checking a dose design](#dose-design-check)) gets curves under constant variance in every mode, from the values a fit would compute, the check's samples, the analysis's expression filter with the model of the dose groups as its design, TMM factors and voom's or limma-trend's log2 CPM, without lack-of-fit p-values: its within-group variance comes from the vehicle's replicates alone, if any. With other terms than dose in the design, such a cell type gets no curves, with the reason, since constant variance fits dose alone.
 
+(dose-response-signatures)=
+## Signatures along dose
+
+Does a signature scored in each sample respond to the dose, in the direction expected? Pharmacodynamic trials, such as those in lupus, follow a predefined score: of 61 clinical studies that profiled people at two or more doses, the one that fitted a dose model ran MCP-Mod on a 22-gene type I interferon score of blood, measured by TaqMan assays and analysed as each patient's change from baseline, in a phase 2 trial of litifilimab [@furie2025], and EPA's high-throughput transcriptomics pipeline fits concentration-response curves to signature scores [@harrill2024b]. {api}`dose_response` takes the scores of one cell type's samples in place of a cube, the pathway scores of {api}`gsva`, {api}`ssgsea`, {api}`combined_z_scores` or {api}`plage`, or the activities of {api}`ulm`, {api}`mlm` or {api}`weighted_aggregate`, and every test, table and curve of this chapter runs on them. On the series of [Which genes respond to dose](#dose-response-tests), a signature of the 30 hepatocyte genes whose expression falls along Hill curves, and 30 flat genes as its control:
+
+```python
+import numpy as np
+
+genes = truth.table("hepatocyte")
+ids = np.array(genes["feature_id"].tolist())
+change = np.asarray(genes["max_log2_change"])
+falling = (np.array(genes["shape"].tolist()) == "hill") & (change < 0)
+sets = {"falling": ids[falling].tolist(), "flat": ids[change == 0][:30].tolist()}
+scores = cp.gsva(cube, sets, group="hepatocyte")
+signatures = cp.dose_response(
+    scores,
+    cp.Design(cube.samples, "~ 1"),
+    dose=axis,
+    tests=("linear_trend", "mcp"),
+    direction="down",
+    rng=1,
+)
+trend, mcp = signatures.table(name="linear_trend"), signatures.table(name="mcp")
+for i, name in enumerate(trend["gene_set"]):
+    print(
+        f"{name}: slope {trend['estimate'][i]:+.2f}, p {trend['p_value'][i]:.2g}; "
+        f"MCP {mcp['contrast'][i]}, t {mcp['t'][i]:.1f}, p {mcp['p_value'][i]:.2g}"
+    )
+```
+
+```text
+falling: slope -0.29, p 9.5e-08; MCP emax_2, t -8.9, p 1e-07
+flat: slope +0.02, p 0.7; MCP beta, t -1.0, p 0.44
+```
+
+The falling set's score drops by 0.29 GSVA units per log10 unit of dose, and the MCP step finds its fall most like `emax_2`, the Emax shape that reaches half its change at 2.1 ug/kg; the flat set shows no fall. Of the falling set's 30 genes, the 15 that pass the expression filter were scored, as `scores.n_genes` says. With two scores there is no moderation, and each p-value is that of the score's own linear model.
+
+What differs from the tests of genes:
+
+- **The fit.** A score is not a count, so it gets no voom weights: the scores are fitted as {api}`limma` fits them, by limma's linear model of the dose groups and empirical Bayes moderation across the scores, as GSVA's guide tests its scores [@haenzelmann2013; @smyth2004], with limma's options `trend` and `robust`. The design's samples are matched to the scores' profiles by `sample_id`; those without a score, such as the samples that {api}`gsva` left out for having too few cells, are left out, with the reason in `result.design_report.samples`, and a score with missing values is fitted on the samples it has. A score that does not vary beyond what the model of the dose groups fits, such as an assay at its floor, has residuals of rounding alone, which limma would test: it is fitted as a missing score, out of the moderation, with the reason in the fit's record (`scores_not_tested`). Infinite scores are refused.
+- **How many scores.** limma does not moderate one or two scores, so a signature tested alone, or beside one control set, gets the tests of its own linear model, the model DoseFinding's `MCTtest` fits: on null series, a GSVA score tested alone had p-values below 0.05 in 3.9% to 7.3% of series. Moderate 30 sets or more with `trend=scores.n_genes`, which lets the prior variance follow the set sizes, or `trend=activities.n_targets.mean(axis=0)` for sources: then 4.6% to 6.2% of the null sets in each third by size had p-values below 0.05. With fewer sets, test each set alone, one call per set on the scores of `gsva(cube, {name: genes}, group=...)`, and adjust the sets' p-values together with {api}`adjust_p_values` ([Validation](../validation.md#validation-dose-response-signatures) gives the rates of every design).
+- **The tables.** One row per gene set or source, with the columns {api}`limma` gives scores: `gene_set` or `source`, `estimate`, the change in the scores' units (per log10 unit of dose for the linear trend), and `average`, the mean score over the samples fitted. `curve()`, the curves of named models and the lowest effective doses name them alike.
+- **One cell type per call.** Scores belong to the cell type they were computed in, and `groups`, `min_cells` and `min_counts`, which choose a cube's samples, stay at their defaults; scores of an array form the cell type `"bulk"`. {api}`DoseResponseResult.fit` computes a cube's fit again and refuses scores, whose tables and curves come from the fit the result keeps. The [gate](#dose-response-gate) takes no fold change, which a score does not have, and {api}`permutation_check`, which runs a cube's analysis again, refuses a result of scores.
+- **The sign of a score.** A direction means what the score's sign means. GSVA's default score, ssGSEA's and the combined z-scores rise when the set's genes rise; CytePool's PLAGE score rises with the set's mean standardized expression, where GSVA's PLAGE score takes an arbitrary sign; a ULM activity rises with the source's activity. GSVA's Kuiper score (`score_type="kuiper"`) is at least 0 and rises when the set's genes move either way, so test it two-sided, or with `direction="up"` for a change of its genes either way.
+- **Ranks within a sample.** GSVA and ssGSEA rank each sample's genes against one another, so a broad response of other genes moves a set's score: a flat set scored beside the signature, as above, shows how far. GSVA and the z-scores also set each gene against the samples scored, so score the series' samples together.
+- **Curves of scores.** The exponential forms of `"epa"` need positive means, which scores centred on 0 rarely have, so those fits are declined; `"ll4"` and `"dromics"` fit scores of any sign.
+- **Scores of other assays.** A score measured by another assay, such as a TaqMan panel, enters through its genes' values: {api}`combined_z_scores` or {api}`gsva` of an array of samples x genes, with `feature_ids` and `sample_ids`, gives the scores of the cell type `"bulk"`. A score given as one value per sample, without its genes, is not taken yet.
+
+(one-sided-dose-tests)=
+## Tests in one direction
+
+Did the response go the way it was expected to? A two-sided test finds a change either way. A one-sided test spends its whole error rate on one direction, so it finds a change that way with fewer samples. `direction="up"` or `"down"`, DoseFinding's `"increasing"` and `"decreasing"`, makes the tests with a sign one-sided, for genes and scores alike, and each test calls a change of its own:
+
+| Test | `"up"` | `"down"` |
+| --- | --- | --- |
+| `linear_trend` | A positive slope along the axis, through the treated doses when the vehicle is a group of its own | A negative slope |
+| `dunnett` | A dose above the vehicle | A dose below the vehicle |
+| `williams` | The pooled top doses above the vehicle | The pooled top doses below the vehicle |
+| `mcp` | Agreement with one of the candidate shapes, as they rise | Agreement with one of their mirror images, as DoseFinding's `Mods(direction = "decreasing")` gives them |
+
+For one t-statistic, the one-sided p-value is half the two-sided one when t points the stated way, and 1 minus half of it otherwise. The multiple contrast tests refer the largest of their t-statistics in the stated direction to the multivariate t distribution [@hothorn2008]: their contrast need not be the one of largest \|t\|, so their p-values are not halves of the two-sided ones. Dunnett's and the Williams-type tests compare doses with the vehicle, so a test for a fall calls no response that stays above the vehicle. The MCP step's contrasts and the linear trend compare the dose groups among themselves, so for a fall they can call a score that never falls below the vehicle: the MCP step a rise at the top doses, which follows the mirror image of the umbrella shape, a U, and both a rise in the middle doses or at the lowest dose that returns, which follows the mirror images of the exponential and Emax shapes and slopes down through the treated doses. `CandidateShapes.spread(dose, design.samples, n_beta=0)` leaves the umbrella out of the MCP step's candidates. Standard errors, t-statistics and `log_odds`, limma's B-statistic, stay those of the two-sided tests. A gene or score that moves the other way gets a p-value near 1, often exactly 1, with a bound on its distance from 1 as its `p_value_error` ([Multivariate t probabilities](multiple_testing.md#multivariate-t-probabilities)).
+
+The F-tests `spline`, `nonlinearity` and `dose_groups` test a change in any direction and have no one-sided form in limma's model, so `direction` refuses them, and the default tests with them: name the tests, as `tests=("linear_trend", "mcp")` does. Each dose against the vehicle, the curves and their bands stay two-sided. The [gate](#dose-response-gate) takes the direction too: its test is one-sided, the Williams-type test by default, which then runs as well, since it compares the top doses with the vehicle, or Dunnett's or the MCP test when the gate names them, and a gate of an F-test or a fold change is refused. A one-sided gate still tests, at its level, that every dose equals the vehicle, the hypothesis that the closed test behind the lowest effective doses needs, and each dose's call stays two-sided, so a dose called after a gate for a fall can be a rise.
+
+DoseFinding's `MCTtest` is one-sided by default, at a level of 0.025, and reports positive t-statistics for decreasing models, where CytePool reports negative ones of its rising contrasts. At the gate's default FDR of 0.05, a one-sided test is about as lenient in its direction as a two-sided test at 0.10, and exactly so for one t-statistic; `gate={"fdr": 0.025}` calls at `MCTtest`'s level. Use a direction fixed before the data, such as a drug's expected effect on its pharmacodynamic signature: a direction chosen after looking halves a p-value without new evidence.
+
 (simulated-dose-series)=
 ## Simulated dose series with known curves
 
@@ -670,6 +736,8 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **The spline.** 2 columns when the axis holds 4 doses or more, otherwise 1, in the restricted cubic form, with knots at quantiles of the distinct doses of the design's samples.
 - **FDR.** Benjamini-Hochberg within each cell type and test, and across the cell types that ran a test. With 2 replicates per dose, a cell type in which no gene responds has a call more often than 1 time in 20; {api}`permutation_check` tests whether a series' true doses pass more genes than permuted ones ([Limits and differences](#dose-response-limits)).
 - **Curves.** None; with `models`, constant variance, as BMDS fits a gene's samples, the best model by AICc, and the F-test of lack of fit read at 0.1 ([Curves of named models](#dose-response-model-curves)).
+- **Direction.** Two-sided tests; `direction="up"` or `"down"` for the tests with a sign, with the Williams-type test as the gate ([Tests in one direction](#one-sided-dose-tests)).
+- **Scores.** Fitted as {api}`limma` fits them, moderated across the scores given, with a constant prior variance (`trend=False`) as in limma ([Signatures along dose](#dose-response-signatures)).
 - **Cells per profile.** Reported, with no threshold beyond `min_cells`. In muscat's benchmark of differential state tests, methods on pseudobulk profiles performed decently from about 100 cells per cell type and sample, with moderate gains beyond [@crowell2020], which makes `n_cells_min` worth reading.
 
 (dose-response-limits)=
@@ -707,6 +775,10 @@ The random draws come in independent streams, so a cell type's curves and expres
 - **What the runs repeat.** Each run repeats the analysis up to the gate: the fit and the gate's test alone. Curves and the other tests do not run, since the gate does not read them, and a gate of a multiple contrast test costs its test in every run ([Could the calls come from noise?](#dose-permutation-check) gives the times).
 - **limma's standard errors.** With `contrast_standard_errors="limma"`, the F-tests of the spline use limma's approximate standard errors, which depend on the spline's columns: the F-statistics of R's `ns()` columns and of the restricted cubic columns of the same spline differ by up to half ([Validation](#validation-dose-response-tests)). The exact default and {api}`limma_trend` do not depend on them. The multiple contrast tests refuse limma's standard errors, as {api}`multiple_contrast_test` does: they give no covariance of a gene's doses' estimates, and on a simulated series of 9 dose groups the Williams-type and MCP p-values moved by up to 100-fold with them.
 - **Curves of dream fits and beyond the doses.** {api}`DoseResponseResult.curve` gives no curve for results of {api}`dream_voom`, whose tests run in full, and no value outside the doses a cell type compares.
+- **Scores that follow subtypes.** A score can move with a shift between the subtypes of a cell type, as when a dose favours an activated state, rather than with a change within each cell: a composition test of the series, {api}`propeller` with dose in the design, shows such a shift ([Composition tests](composition.md)).
+- **Scores of few cells.** Scores carry no precision weights, so the score of a profile of few cells, noisier than the others, weighs as much in the fit.
+- **Few moderated scores.** limma estimates the prior variance from the scores' own variances and then treats it as known, which gives null sets p-values below 0.05 too often when 3 to 10 are moderated together; [Signatures along dose](#dose-response-signatures) says when to moderate.
+- **Designs of scores.** No random intercepts or sample weights: pool the samples of each donor at each dose with {api}`Cube.collapse_samples` before scoring.
 - **What a simulated series leaves out.** In {api}`simulate_dose_series`, a gene's biological SD is the same at every dose, the constant variance that BMDS fits by default; genes are independent given their curves, so gene-set methods meet no correlation between genes; each cell type draws its responsive genes on its own, so few genes respond in several cell types; bells are symmetric, and no curve is hormetic; the counts hold no ambient RNA; and library sizes move with dose, by a median of 0.08 log2 at the top dose of default series, which TMM removes for the most part, leaving about 0.01 log2 on the flat genes at the top dose.
 
 (dose-response-checks)=
@@ -720,6 +792,7 @@ Dose axes, dose designs, dose tests, curves of named models and simulated dose s
 - {api}`dose_response`: the samples, dose groups and genes of each cell type, its F-tests, slopes, each dose against the vehicle, adjusted p-values and curves with their bands against limma 3.62.1 and edgeR 4.4.0 run on R's own knots and spline columns, the exact default against each gene's weighted least squares in R, exact (1e-10); the spline's sums of squares against rms 8.2-1, exact; the dream route against variancePartition 1.36.2, close (1e-6); DRomics, dreamlet and muscat on the same profiles, as information ([Validation](#validation-dose-response-tests)); error rates under the null, power and the coverage of the bands on simulated series ([Validation](#validation-dose-response-calibration)).
 - {api}`fit_dose_curves` and the curves of {api}`dose_response`: each fit's maximum against pybmds 25.2, drc 4.0-0's LL.4 and a 200-start scipy 1.18.1 search on the same data, never lower by more than 1e-8 of the residual variance, and against DRomics 2.6.3's `drcfit`, never higher in AICc by more than 0.005, the rounding of its printed criteria, with the parameters where both reach the maximum; the AIC's penalty, and test 4 from the F-test, against pybmds; the F-test of lack of fit against R's `anova` under constant variance and limma 3.62.1 otherwise, with the means, covariance and variances of the weighted and moderated modes, exact; and whether each best fit turns, and the dose group that drives a turn, against the rules coded apart ([Validation](#validation-dose-curves)).
 - {api}`plot_dose_response`: the drawn curves, bands and points against limma-trend's spline in R, and the curves of a model against drc's log-logistic formula evaluated in R, exact ([Validation](#validation-plotting)).
+- {api}`dose_response` on pathway scores, and `direction`: the samples fitted, every test's statistics and p-values, and the curves and bands against limma 3.62.1 with R's own knots and spline columns, exact (1e-10), close (1e-6) with `robust=True`; the one-sided linear trend against `pt`, exact; the MCP step's contrasts and t-statistics on one score against DoseFinding 1.4-2's `optContr` and `MCTtest`, Dunnett's and Williams-type t against multcomp 1.4-32, exact, and their p-values in both directions within simulation error of 10 million draws of the multivariate t; curves of one score against DoseFinding's `fitMod`, close; activities, which take the same path, by a unit test of identical statistics; and the check of scores against the check of their cube ([Validation](#validation-dose-response-signatures)).
 - {api}`CandidateShapes`, {api}`optimal_contrasts`, the three multiple contrast tests, {api}`stage_wise_adjusted_p_values` and {api}`DoseResponseResult.lowest_effective_doses`: shapes against DoseFinding 1.4-2's `Mods`, `getResp` and `guesst`; contrasts against `optContr` and `MCTtest`; the tests' statistics against limma 3.62.1 and variancePartition 1.36.2 fits in R with multcomp 1.4-32, exact (1e-10), close (1e-6) for dream; their p-values against mvtnorm 1.4-2 and scipy 1.18.1 within simulation error; stage-wise p-values and lowest effective doses against stageR 1.28.0 and a closed test enumerated in R, exact and identical ([Validation](#validation-dose-contrasts)); error rates and power on simulated series ([Validation](#validation-dose-response-calibration)).
 - The gate of {api}`dose_response` and {api}`permutation_check`: the dose-group gate's p-values against limma 3.62.1 from the counts, under voom's weights and with `classifyTestsF`, exact (1e-10) and close (1e-6) with robust priors; each dose's TREAT p-values against `treat` and `topTreat`, exact; the genes passed, and the lowest effective doses under a fold-change gate against stageR 1.28.0, identical; the units, the assignments that R counts and enumerates, and the genes passed in every run and the ties of designs of 90 and 36 assignments, refitted by limma in R, identical; runs under dream against variancePartition 1.36.2, close ([Validation](#validation-dose-gate)); the share of null cell types that each gate passes, and the check's runs against it, on simulated series ([Validation](#validation-dose-response-calibration)).
 
@@ -733,6 +806,7 @@ Further reading:
 - @ema2014 qualified MCP-Mod for phase 2 dose finding, with its minimum numbers of doses; @bretz2005 introduced the combination of multiple comparisons and modelling behind it, and @pinheiro2014 its generalization to estimates and their covariance from any model; @duda2022 applied it gene by gene to expression data.
 - @ich1994 sets out the dose-response information that supports drug registration, including the effect of the lowest recommended dose; @heller2009 and @vandenberge2017 describe the stage-wise testing behind the lowest effective doses.
 - @hurvich1989 derived the AICc for small samples, and @burnham2002 explain Akaike weights; @larras2018 introduced DRomics' models and their selection; @ringblom2014 showed how often benchmark doses of curves without a spare dose group mislead; @efsa2021 weighs the evidence for non-monotone dose responses.
+- @furie2025 analysed a 22-gene interferon score along the doses of a phase 2 trial by MCP-Mod, and @harrill2024b fit concentration-response curves to signature scores of high-throughput transcriptomics screens.
 - @nault2022 benchmarked tests of single-cell dose series simulated from the EPA's benchmark-dose equations; @crowell2020 and @song2024 describe the simulators of muscat and scDesign3; @crump1984 introduced the benchmark dose, and @kappenberg2023 reviews the design and analysis of 5,670 toxicological dose-response analyses.
 - @bourgon2010 showed that a filter before a test keeps the test's control of errors when the filter's statistic and the test's are independent under the null hypothesis, and that some filters in use lose it; @mccarthy2009 introduced TREAT, which tests changes against a fold-change threshold instead of filtering on the estimated changes.
 - @lee2024 measured how often a benchmark-dose workflow gives a point of departure from vehicle-only zebrafish embryos placed in mock dose groups, and how pooling embryos lowers it; @bruns2026 compared five workflows on one dose series, which reported 70 to 3,618 responsive genes at 4 h, and ran them on permuted concentration labels; @phipson2010 showed why permutation p-values should never be zero, and how to compute exact ones when the permutations are drawn at random.

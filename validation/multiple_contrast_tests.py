@@ -83,7 +83,8 @@ Checks:
   contrasts of 6 estimates), with df 5, 12, 40 and the normal and every alternative,
   against ``summary(glht(parm(b, V, df), linfct = K))``: estimates, standard errors and
   t (exact) and the single-step p-values from 1e-3 to 1 (calibrated, multcomp's
-  standard error its error attribute over 3); below 1e-3, multcomp's default absolute
+  standard error its error attribute over 3), with the one-sided p-values of 1 that
+  the bound of their box settles counted; below 1e-3, multcomp's default absolute
   error of 1e-3 cannot resolve them, and their ratios to CytePool's are information;
   and, as controls, Bonferroni's p-values
   (``adjusted("bonferroni")``) of the correlated families, which must exceed
@@ -2078,7 +2079,7 @@ def compare_multcomp(rows: Rows, inputs: dict, r: dict, ours: dict) -> None:
             chosen = [
                 i for i, x in enumerate(features) if x["alternative"] == alternative
             ]
-            statistics, z, compared = 0.0, [], 0
+            statistics, z, compared, bounded = 0.0, [], 0, 0
             for i in chosen:
                 values = r["multcomp"][offset + i]
                 estimate, se, t, p = (values[j * m : (j + 1) * m] for j in range(4))
@@ -2095,6 +2096,11 @@ def compare_multcomp(rows: Rows, inputs: dict, r: dict, ours: dict) -> None:
                 resolved = p >= MULTCOMP_ABSEPS
                 z += list(((mine["p_value"] - p) / combined)[resolved])
                 compared += int(resolved.sum())
+                # One-sided p-values whose box the bound settled: 1, with the bound
+                # as their error.
+                if alternative != "two-sided":
+                    settled = (mine["p_value"] == 1.0) & (mine["p_value_error"] > 0.0)
+                    bounded += int((settled & resolved).sum())
                 unresolved += list(zip(mine["p_value"][~resolved], p[~resolved]))
                 for j in range(m):
                     if 1e-3 <= mine["p_value"][j] <= 0.5:
@@ -2116,6 +2122,9 @@ def compare_multcomp(rows: Rows, inputs: dict, r: dict, ours: dict) -> None:
                 "to 1",
                 "multcomp summary(glht)",
                 np.array(z),
+                ""
+                if alternative == "two-sided"
+                else f"{bounded} of 1 from the bound of their box",
             )
         if "random" not in family["label"] and gaps:
             rows.control(
@@ -2597,7 +2606,11 @@ def benchmark(n_genes: int = 20_000) -> None:
 
         seconds = median_seconds(run)
         test = result["test"]
-        smaller = np.minimum(test.p_value, 1.0 - test.p_value)
+        # The target of a one-sided p-value is on p alone, of a two-sided one on the
+        # smaller of p and 1 - p, as the test's repr counts them.
+        smaller = test.p_value
+        if alternative == "two-sided":
+            smaller = np.minimum(test.p_value, 1.0 - test.p_value)
         allowed = relative_error * smaller + np.finfo(float).eps * test.p_value
         short = int(np.count_nonzero(test.p_value_error > allowed))
         print(f"| {label} | {seconds:.2f} | {seconds / n_genes * 1e3:.3f} | "

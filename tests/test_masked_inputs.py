@@ -339,7 +339,7 @@ def _dose_design(context: Context) -> dict[str, Any]:
         "sex": ["F", "M", "F", "M"],
     }
     return {
-        "cube": from_bulk(COUNTS, samples=samples),
+        "data": from_bulk(COUNTS, samples=samples),
         "design": Design(samples, "~ 1"),
         "dose": DOSE_AXIS,
         "batch": "lane",
@@ -360,10 +360,12 @@ def _dose_response(context: Context) -> dict[str, Any]:
         "lane": ["a", "b", "a", "b"],
     }
     return {
-        "cube": from_bulk(COUNTS, samples=samples),
+        "data": from_bulk(COUNTS, samples=samples),
         "design": Design(samples, "~ 1"),
         "dose": DOSE_AXIS,
-        "tests": ["dose_groups", "mcp"],
+        # Tests with a sign, which a direction makes one-sided.
+        "tests": ["linear_trend", "mcp"],
+        "direction": "up",
         "spline_df": 1,
         "candidates": CandidateShapes(emax=[1.0]),
         "analysis": limma_voom,
@@ -372,7 +374,8 @@ def _dose_response(context: Context) -> dict[str, Any]:
         "min_cells": 10,
         "min_counts": 1,
         "rng": 1,
-        "gate": {"test": "dose_groups", "fdr": 0.1},
+        # A gate with a sign, as the direction asks.
+        "gate": {"test": "mcp", "fdr": 0.1},
         "models": "epa",
         "variance": "constant",
         # An option of the analysis, which dose_response passes on.
@@ -2038,10 +2041,11 @@ ENTRY_POINTS: dict[str, Entry] = {
             "df": 6.0,
             "two_sided": True,
             "relative_error": 0.05,
+            "relative_to": "complement",
             "rng": 1,
         },
         {"upper": "NaN", "correlation": "NaN", "df": "NaN"},
-        options=("two_sided", "relative_error", "rng"),
+        options=("two_sided", "relative_error", "relative_to", "rng"),
     ),
     "cytepool.stats.multivariate_t.multivariate_t_quantile": Entry(
         lambda c: {
@@ -2266,7 +2270,7 @@ ENTRY_POINTS: dict[str, Entry] = {
         _dose_design,
         {"groups": None, "min_cells": None},
         options=("batch", "rules", "sex", "min_counts"),
-        objects=("cube", "design", "dose"),
+        objects=("data", "design", "dose"),
     ),
     # The dose tests of each cell type: the groups, tests and min_cells, as
     # check_dose_design takes them; a curve's genes and doses.
@@ -2279,8 +2283,16 @@ ENTRY_POINTS: dict[str, Entry] = {
             "gate": None,
             "expression_filter": None,
         },
-        options=("spline_df", "batch", "min_counts", "rng", "models", "variance"),
-        objects=("cube", "design", "dose", "candidates", "analysis"),
+        options=(
+            "spline_df",
+            "batch",
+            "min_counts",
+            "rng",
+            "models",
+            "variance",
+            "direction",
+        ),
+        objects=("data", "design", "dose", "candidates", "analysis"),
     ),
     # The permutation check of a gate: the cell types checked.
     "cytepool.permutation_checks.permutation_check": Entry(

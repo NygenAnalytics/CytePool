@@ -567,6 +567,11 @@ OPTIONS = {
     "the fold-change gate": {"gate": {"fold_change": 1.5}},
     "the Williams-type gate": {"gate": {"test": "williams"}, "rng": 7},
     "Dunnett's gate": {"gate": {"test": "dunnett"}, "rng": 3},
+    "Dunnett's gate for a rise": {
+        "tests": "dunnett",
+        "direction": "up",
+        "gate": {"test": "dunnett"},
+    },
     "the MCP gate": {
         "gate": {"test": "mcp"},
         "candidates": CandidateShapes(emax=[0.5, 5.0]),

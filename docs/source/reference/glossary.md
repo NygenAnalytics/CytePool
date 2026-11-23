@@ -134,6 +134,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Normalized enrichment score.** A GSEA score divided by the mean of the scores of random sets of its sign, so that sets of different sizes compare. [p-values from random sets](../statistics/over_representation_and_gsea.md#gsea-p-values)
 
+**One-sided test.** A test of a change in one stated direction, such as a fall with dose, which spends its whole error rate on that direction; for one t-statistic its p-value is half the two-sided one when t points the stated way, and 1 minus half of it otherwise. [Tests in one direction](../statistics/dose_response.md#one-sided-dose-tests)
+
 **Optimal contrast.** The contrast of group means that best detects an expected shape, the one whose t-statistic has the largest non-centrality: for independent groups, each group's weight is proportional to its samples times the difference between the shape's mean in the group and the shape's mean weighted by the groups' samples. [Trends, doses against the vehicle and candidate shapes](../statistics/dose_response.md#dose-response-contrasts)
 
 **Overall false discovery rate (OFDR).** The expected share of the genes called with at least one false call, the screen's or one of their contrasts', which stage-wise testing controls. [Calling contrasts across genes](../statistics/multiple_testing.md#stage-wise-testing)

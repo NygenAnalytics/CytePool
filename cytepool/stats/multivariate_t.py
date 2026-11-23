@@ -7,9 +7,9 @@ of T stays below its limit, or within plus or minus its limit, and the complemen
 the chance that some coordinate leaves its interval, which is the adjusted p-value of
 a max-t test. :func:`multivariate_t_quantile` gives the equicoordinate quantile, the
 critical value of such a test. Each value comes with its error, and the computation
-stops when the error of the smaller of the probability and its complement is at most
-a requested fraction of it, so that a p-value of 1e-10 is as accurate, relative to
-its size, as one of 0.04.
+stops when the error of the smaller of the probability and its complement is at most a
+requested fraction of it, so that a p-value of 1e-10 is as accurate, relative to its
+size, as one of 0.04.
 https://docs.nygen.io/CytePool/statistics/multiple-testing#multivariate-t-probabilities
 explains the method and its accuracy.
 
@@ -63,6 +63,18 @@ Methods:
       the tilt t = -df d / (df + d) gives S^2 the mean (df + d) / df that it has given
       such a box. So the requested relative error applies to the smaller of the
       probability and its complement, and small boxes cost about what large ones do.
+      A one-sided box whose limits lie far below 0 is the exception: its probability
+      falls exponentially, and at 1% of it, one such box of 5 correlated contrasts
+      took 24 s. A one-sided max-t p-value needs only the complement's accuracy, and
+      with ``relative_to="complement"`` such a box is bounded instead: its
+      probability is at most the smallest probability of its coordinates'
+      intervals, exact from the t distribution, and at most that of its least
+      correlated pair; when that bound is at most ``relative_error``, the box is not
+      integrated: its probability is 0 and its complement 1, with the bound as their
+      error, which bounds the difference from the true values. So a max-t p-value
+      near 1 is 1, never below that of a more extreme contrast of the same test,
+      whose box is larger. Every other box, two-sided ones included, is computed as
+      without it, to the smaller side's target, which meets the complement's too.
     - Points and errors. Randomly shifted Kronecker points, x_n = frac(n alpha + Delta)
       with alpha_j the fractional part of the square root of the j-th prime, folded by
       the baker's transform 1 - |2 x - 1|; 16 random shifts are drawn once per call,
@@ -129,7 +141,12 @@ from numpy.typing import ArrayLike, NDArray
 
 from cytepool._jit import by_chunks, jit, jit_numpy_errors
 from cytepool._masked_arrays import read_only, real_array, unmasked_array
-from cytepool._options import checked_flag, random_generator, real_number
+from cytepool._options import (
+    checked_choice,
+    checked_flag,
+    random_generator,
+    real_number,
+)
 from cytepool.stats.distributions import (
     chi2_ppf_scalar,
     norm_cdf_scalar,
@@ -234,7 +251,10 @@ class MultivariateTProbability:
             adjusted p-value of a max-t test.
         error: The estimated error of both: the standard error of the Monte Carlo
             estimate with three or more coordinates, the error bound of the quadrature
-            with two, and 0 with one.
+            with two, and 0 with one; with ``relative_to="complement"``, a one-sided
+            box that a bound settles has probability 0 and that bound on its
+            probability as its error, which bounds the difference from the true
+            value.
 
     Each is a float for one problem, and a read-only array of the problems' shape
     otherwise.
@@ -1071,15 +1091,50 @@ def _sampled_box(
     table: FloatArray,
     table_df: float,
     table_points: int,
+    on_complement: bool,
 ) -> tuple[float, float, float, FloatArray, float, int]:
     """The probability, complement and standard error of a box of three or more
-    coordinates, with the chi-squared table for the next problem."""
+    coordinates, with the chi-squared table for the next problem; with
+    ``on_complement``, a one-sided box whose probability is bounded within the
+    complement's target is not integrated: it gets probability 0, complement 1 and
+    the bound as their error."""
     k = correlation.shape[0]
     lower = -upper if two_sided else np.full(k, -_INF)
     factor = 2.0 if two_sided else 1.0
     tails = np.empty(k)
     for i in range(k):
         tails[i] = factor * t_sf_scalar(upper[i], df)
+    if on_complement and not two_sided:
+        # The box lies within each coordinate's interval and each pair's box, so
+        # its probability is at most the smallest of their probabilities; when
+        # that bound is within the target of a complement near 1, the probability
+        # lies in [0, bound] whatever an integral gives. The complement is given as
+        # 1, the end that a less extreme contrast's p-value can never fall below.
+        bound = 1.0
+        for i in range(k):
+            bound = min(bound, t_sf_scalar(-upper[i], df))
+        if relative_error < bound <= 0.5:
+            # Of the pairs, the one of the smallest correlation, whose box is the
+            # smallest when the limits are equal, as those of a max-t p-value are.
+            # At a correlation of at least 0, a pair's box is at least the product
+            # of its coordinates' interval probabilities (Slepian's inequality,
+            # given S and then over S by Jensen's inequality), so at least the bound
+            # squared: then it cannot settle the box when that square is beyond the
+            # target.
+            first, second = 0, 1
+            for i in range(k):
+                for j in range(i + 1, k):
+                    if correlation[i, j] < correlation[first, second]:
+                        first, second = i, j
+            rho = correlation[first, second]
+            if rho < 0.0 or bound * bound <= relative_error:
+                pair = np.empty(2)
+                pair[0] = upper[first]
+                pair[1] = upper[second]
+                inside, _, error = _plane_box(rho, pair, df, False)
+                bound = min(bound, inside + error)
+        if bound <= relative_error:
+            return 0.0, 1.0, bound, table, table_df, table_points
     order = np.argsort(-tails, kind="mergesort")
     factors = np.zeros((k, k, k))
     loads = np.zeros((k, k))
@@ -1189,6 +1244,7 @@ def _box(
     table: FloatArray,
     table_df: float,
     table_points: int,
+    on_complement: bool,
 ) -> tuple[float, float, float, FloatArray, float, int]:
     """One problem: the coordinates with an infinite limit are dropped, then one, two
     or more remain."""
@@ -1229,6 +1285,7 @@ def _box(
         table,
         table_df,
         table_points,
+        on_complement,
     )
 
 
@@ -1242,6 +1299,7 @@ def _boxes(
     which_df: np.ndarray,
     two_sided: bool,
     relative_error: float,
+    on_complement: bool,
     most_points: int,
     alpha: FloatArray,
     shifts: FloatArray,
@@ -1267,6 +1325,7 @@ def _boxes(
             table,
             table_df,
             table_points,
+            on_complement,
         )
         out[p, 0] = probability
         out[p, 1] = complement
@@ -1283,6 +1342,7 @@ def _boxes_parallel(
     which_df: np.ndarray,
     two_sided: bool,
     relative_error: float,
+    on_complement: bool,
     most_points: int,
     alpha: FloatArray,
     shifts: FloatArray,
@@ -1300,6 +1360,7 @@ def _boxes_parallel(
             which_df,
             two_sided,
             relative_error,
+            on_complement,
             most_points,
             alpha,
             shifts,
@@ -1319,6 +1380,7 @@ def _boxes_serial(
     which_df: np.ndarray,
     two_sided: bool,
     relative_error: float,
+    on_complement: bool,
     most_points: int,
     alpha: FloatArray,
     shifts: FloatArray,
@@ -1333,6 +1395,7 @@ def _boxes_serial(
         which_df,
         two_sided,
         relative_error,
+        on_complement,
         most_points,
         alpha,
         shifts,
@@ -1793,6 +1856,7 @@ def multivariate_t_cdf(
     *,
     two_sided: bool = False,
     relative_error: float = 0.01,
+    relative_to: str = "smaller",
     rng: np.random.Generator | int | None = None,
 ) -> MultivariateTProbability:
     """Probability that every coordinate of a multivariate t vector stays within its
@@ -1829,6 +1893,16 @@ def multivariate_t_cdf(
             and its complement, as a fraction of it, between 0 and 1; the default
             gives two significant digits. The computation stops at 2^20 points per
             problem whatever the error, which ``error`` then shows.
+        relative_to: ``"smaller"`` (default) for the error of the smaller of the
+            probability and its complement, or ``"complement"`` for the error of the
+            complement alone, as a one-sided max-t p-value needs: a one-sided box of
+            three or more coordinates whose probability is at most
+            ``relative_error``, by the smallest probability of its coordinates'
+            intervals or of its least correlated pair, is then not integrated, and
+            gets probability 0 and complement 1, with that bound as their error.
+            Such a box, whose limits lie far below 0, costs up to 2^20 points to
+            reach its own relative error. Every other box is computed as with
+            ``"smaller"``, whose target meets the complement's too.
         rng: A numpy random generator, a non-negative integer seed, or None. One
             set of 16 random shifts is drawn per call and serves every problem, so a
             seed gives the same values whatever the order of the problems and the
@@ -1843,7 +1917,8 @@ def multivariate_t_cdf(
         ValueError: If ``correlation`` is not square, symmetric, of unit diagonal or
             positive semidefinite, has no coordinates or an infinite entry, the
             shapes do not broadcast, a two-sided limit is negative, df is not
-            positive, or ``relative_error`` is not between 0 and 1.
+            positive, ``relative_error`` is not between 0 and 1, or ``relative_to``
+            is neither ``"smaller"`` nor ``"complement"``.
         TypeError: If an argument has the wrong type or is a numpy masked array.
 
     Example:
@@ -1872,6 +1947,10 @@ def multivariate_t_cdf(
             f"{upper_values[upper_values < 0.0].flat[0]}"
         )
     target = _checked_relative_error(relative_error)
+    on_complement = (
+        checked_choice(relative_to, "relative_to", ("smaller", "complement"))
+        == "complement"
+    )
     alpha, shifts = _lattice(k, rng)
     correlation_batch = correlation_values.shape[:-2]
     upper_batch = upper_values.shape[:-1]
@@ -1891,6 +1970,7 @@ def multivariate_t_cdf(
         _positions(df_values.shape, batch),
         flag,
         target,
+        on_complement,
         _MOST_POINTS,
         alpha,
         shifts,

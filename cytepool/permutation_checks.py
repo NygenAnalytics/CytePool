@@ -361,10 +361,10 @@ def permutation_check(
             ``n_permutations`` is not an integer, or ``groups`` or ``rng`` has the
             wrong type, or is or holds a numpy masked array.
         ValueError: If ``n_permutations`` is below 1, ``groups`` is empty or names a
-            cell type twice, ``rng`` is a negative seed, the result keeps no cube
-            and design, its design has more than one random effect or a random
-            slope, a cell type's true doses do not give the result's gate again, or
-            a run does not run the gate.
+            cell type twice, ``rng`` is a negative seed, the result tests pathway
+            scores or activities or keeps no cube and design, its design has more
+            than one random effect or a random slope, a cell type's true doses do
+            not give the result's gate again, or a run does not run the gate.
         KeyError: If a cell type asked for is not in the cube, was not checked by
             the result, not tested, or did not run the gate.
     """
@@ -444,6 +444,12 @@ class _Rerun:
     @classmethod
     def of(cls, result: DoseResponseResult) -> "_Rerun":
         cube, design = result.cube, result.design
+        if result.provenance.get("scores") is not None:
+            raise ValueError(
+                "permutation_check runs a cube's analysis again with the doses "
+                "permuted, and this result tests pathway scores or activities, which "
+                "it does not keep; check the genes of the cube they were scored from"
+            )
         if cube is None or design is None:
             raise ValueError(
                 "the result keeps no cube and design, so its cell types cannot be run "
@@ -471,6 +477,7 @@ class _Rerun:
             arguments={
                 # A fold change reads each dose's fit, which every test holds.
                 "tests": [DOSE_GROUPS if test == EACH_DOSE else test],
+                "direction": settings["direction"],
                 "spline_df": settings["spline_df"],
                 "candidates": result.candidates if test == MCP else None,
                 "gate": gate,

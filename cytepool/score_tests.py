@@ -28,18 +28,15 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from ._columns import text_column
 from ._masked_arrays import real_array, reject_masked, unmasked_array
 from ._messages import listing, quoted
+from ._sample_scores import NO_SAMPLE_IDS, contrast_table, fit_scores, sample_scores
 from .activity import Activities
 from .design import Contrasts, Design
 from .design._design_matrices import refuse_random_effects
 from .design.checks import _aliasing, _contrast_violations
 from .pathway_scores import PathwayScores
 from .stats._result_tables import feature_id_column
-from .stats.empirical_bayes import moderated_statistics
-from .stats.linear_models import contrasts_fit, fit_linear_model
-from .stats.multiple_testing import adjust_p_values
 from .table import Table
 
 __all__ = ["limma"]
@@ -163,30 +160,15 @@ def limma(
             + listing(violations[0], separator="; ")
         )
     columns = tuple(design.columns[j] for j in kept)
-    fit = fit_linear_model(
-        np.ascontiguousarray(values[data_rows]),
-        np.ascontiguousarray(x[:, kept]),
+    moderated = fit_scores(
+        values[data_rows],
+        x[:, kept],
+        Contrasts(chosen.matrix[kept], (name,), columns),
         weights=_weights(weights, values.shape, data_rows),
-        coefficient_names=columns,
+        trend=trend,
+        robust=robust,
     )
-    tested = contrasts_fit(
-        fit, Contrasts(chosen.matrix[kept], (name,), columns), method="exact"
-    )
-    moderated = moderated_statistics(tested, trend=trend, robust=robust)
-    p_value = moderated.p_value[:, 0]
-    return Table(
-        {
-            id_column: ids,
-            "estimate": tested.coefficients[:, 0],
-            "standard_error": tested.stdev_unscaled[:, 0]
-            * np.sqrt(moderated.posterior_variance),
-            "average": fit.mean_expression,
-            "t": moderated.t[:, 0],
-            "p_value": p_value,
-            "adjusted_p_value": adjust_p_values(p_value, "bh"),
-            "log_odds": moderated.log_odds[:, 0],
-        }
-    )
+    return contrast_table(id_column, ids, moderated, 0)
 
 
 def _scores(
@@ -202,21 +184,8 @@ def _scores(
                     f"{name} applies to an array; the {type(data).__name__} name "
                     "their samples and scores"
                 )
-    if isinstance(data, PathwayScores):
-        rows = data.profiles["sample_id"].tolist()
-        ids = text_column(list(data.gene_sets))
-        return np.asarray(data.scores, dtype=np.float64), rows, "gene_set", ids
-    if isinstance(data, Activities):
-        if "sample_id" not in data.profiles:
-            raise ValueError(
-                "limma tests scores of samples, and these activities are of the "
-                "statistics of contrasts (their profiles are groups and contrasts, "
-                "with no sample_id), which are tested already; score the samples of a "
-                "cube's group, as ulm(cube, network, group=...) does"
-            )
-        rows = data.profiles["sample_id"].tolist()
-        ids = text_column(list(data.sources))
-        return np.asarray(data.scores, dtype=np.float64), rows, "source", ids
+        scores = sample_scores(data, "limma")
+        return scores.values, scores.sample_ids, scores.id_column, scores.ids
     if not isinstance(data, np.ndarray | list | tuple):
         raise TypeError(
             "data must be PathwayScores, Activities of samples, or an array of values "
@@ -290,11 +259,7 @@ def _matched(rows: list[str] | None, design: Design) -> tuple[list[int], list[in
         every = list(range(design.n_samples))
         return every, every
     if "sample_id" not in design.samples:
-        raise ValueError(
-            "the design's sample table has no 'sample_id' column, so its rows cannot "
-            "be matched to the samples of the scores; build the Design from the "
-            "cube's samples"
-        )
+        raise ValueError(NO_SAMPLE_IDS)
     position = {
         value: i for i, value in enumerate(design.samples["sample_id"].tolist())
     }
