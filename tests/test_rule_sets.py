@@ -1114,6 +1114,37 @@ def test_bmds_recommends_by_aic_within_3_fold_and_by_bmdl_beyond() -> None:
     ].tolist() == [1]
 
 
+def test_bmds_s_choice_by_bmdl_does_not_depend_on_the_dose_unit() -> None:
+    """Two seeded Hill rises whose viable BMDLs lie more than 3-fold apart: BMDS
+    recommends the lowest BMDL, the Hill fit, with the doses in their unit and in one
+    a billion times larger, where an absolute tie of 1e-8 took a line of fewer
+    parameters."""
+    rng = np.random.default_rng(7)
+    doses = np.repeat([0.0, 0.3, 1.0, 3.0, 10.0, 30.0], 4)
+    columns = []
+    for g in range(120):
+        shape, sd = g % 4, rng.uniform(0.1, 0.4)
+        if shape == 0:
+            k = 10 ** rng.uniform(-0.5, 1.5)
+            mean = 5 + 1.5 * doses**2 / (k**2 + doses**2)
+        elif shape == 1:
+            mean = 5 + 1.0 * (1 - np.exp(-doses / 0.5))
+        elif shape == 2:
+            mean = 5 + 0.04 * doses
+        else:
+            mean = 5 + 1.2 * (doses / 30) ** 3
+        columns.append(mean + rng.normal(0, sd, doses.size))
+    values = np.column_stack(columns)[:, [28, 82]]
+    for unit in (1.0, 1e-9):
+        fits = fit_dose_curves(doses * unit, values, models="epa")
+        found = benchmark_doses(fits, BenchmarkResponse.sd(1.0), model="bmds_2026")
+        assert found.gene_models.tolist() == ["hill", "hill"]
+        assert (
+            found.model_choice.tolist()
+            == ["lowest BMDL of the viable models, BMDLs more than 3-fold apart"] * 2
+        )
+
+
 def test_acceptance_at_each_threshold() -> None:
     """NTP pp. 8 to 9 and ETAP Sec. 3.4.5.3, each criterion at its edge, as the
     documents state them: below the highest dose, fit p-value above 0.1, BMDU / BMDL
