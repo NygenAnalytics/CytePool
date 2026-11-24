@@ -32,20 +32,20 @@ The bounds:
 
 EC50s, Hill slopes and plateaus:
     :func:`ec50s` reads each gene's Hill curve, the log-logistic curve of the sets
-    ``"ll4"`` and ``"dromics"`` or the Hill model of ``"epa"`` and ``"bmdexpress"``,
-    as pharmacologists read it (Neubig et al. 2003): the EC50, the dose of half the curve's change from
-    its level at dose 0 to its plateau at high doses (Sebaugh 2011's relative EC50);
-    the Hill slope, in GraphPad Prism's sign, positive for a rise; and the two
-    plateaus. The EC50's two-sided 95% interval holds the EC50s whose profile, the
-    curve's fit with the EC50 held there, lies within an F quantile at 0.95 of the
+    ``"ll4"`` and ``"dromics"`` or the Hill model of ``"epa"`` and ``"bmdexpress"``, as
+    pharmacologists read it (Neubig et al. 2003): the EC50, the dose of half the curve's
+    change from its level at dose 0 to its plateau at high doses (Sebaugh 2011's
+    relative EC50); the Hill slope, in GraphPad Prism's sign, positive for a rise; and
+    the two plateaus. The EC50's two-sided 95% interval holds the EC50s whose profile,
+    the curve's fit with the EC50 held there, lies within an F quantile at 0.95 of the
     maximum: F(1, n - 4) on the curve's residual variance under constant variance,
     Prism's extra-sum-of-squares F test, searched as Venzon and Moolgavkar (1988)
-    describe, or F(1, df) on the variance of a moderated fit. An EC50 is reportable
-    with two tested doses beyond each bend of the curve (Sebaugh 2011), where the curve
-    has covered 17.6% and 82.4% of its change: at EC50 / 4.6805^(1/|h|) and EC50 x
+    describe, or F(1, df) on the variance of a moderated fit. An EC50 is reportable with
+    two tested doses beyond each bend of the curve (Sebaugh 2011), where the curve has
+    covered 17.6% and 82.4% of its change: at EC50 / 4.6805^(1/|h|) and EC50 x
     4.6805^(1/|h|), h the Hill slope (Sebaugh and McCray 2003, as Micheli et al. 2021
-    give the constant). https://docs.nygen.io/CytePool/statistics/potency#ec50s
-    explains them.
+    give the constant). https://docs.nygen.io/CytePool/statistics/potency#ec50s explains
+    them.
 
 References:
     Crump KS (1984). A new method for determining allowable daily intakes.
@@ -1695,25 +1695,24 @@ def ec50s(
     """Read every gene's Hill curve as an EC50, Hill slope and plateaus, with the
     EC50's two-sided 95% profile-likelihood interval.
 
-    The Hill curve is the set's: the log-logistic curve of ``"ll4"`` and
-    ``"dromics"``, or the Hill model of ``"epa"`` and ``"bmdexpress"``, for every
-    gene it was fitted to, whether or not it is the gene's best model (``best_model``
-    says). The EC50 is the dose of half the curve's change from its level at dose 0
-    to its plateau at high doses (Sebaugh 2011's relative EC50), the Hill slope its
-    steepness in GraphPad Prism's sign, positive for a rise and negative for a fall,
-    and the plateaus its two levels, in the values' units. The interval holds the
-    EC50s whose profile, the curve's fit with the EC50 held there, lies within the F
-    quantile at 0.95 of the maximum: under constant variance F(1, n - 4) on the curve's residual
-    variance, as Prism's extra-sum-of-squares F test reads it; with the variance of a
-    moderated fit, F(1, df) on it. Its ends are the region's lowest and highest EC50
-    over the fit's range of EC50s, open (0 or infinity) where the region reaches the
-    range's ends. Two positive doses beyond each bend of the curve, where it has
-    covered 17.6% and 82.4% of its change, make an EC50 reportable (Sebaugh 2011).
-    The intervals take about 5 ms of computing per gene, shared among the threads:
-    23 s for 10,000 genes on 2 threads in the benchmark; they do not depend on the
-    threads. They need replicates within dose groups: the variance then comes from
-    the replicates as well as from the curve's residuals, where Prism, given one
-    value per dose, reads the residuals alone.
+    The Hill curve is the set's: the log-logistic curve of ``"ll4"`` and ``"dromics"``,
+    or the Hill model of ``"epa"`` and ``"bmdexpress"``, for every gene it was fitted
+    to, whether or not it is the gene's best model (``best_model`` says). The EC50 is
+    the dose of half the curve's change from its level at dose 0 to its plateau at high
+    doses (Sebaugh 2011's relative EC50), the Hill slope its steepness in GraphPad
+    Prism's sign, positive for a rise and negative for a fall, and the plateaus its two
+    levels, in the values' units. The interval holds the EC50s whose profile, the
+    curve's fit with the EC50 held there, lies within the F quantile at 0.95 of the
+    maximum: under constant variance F(1, n - 4) on the curve's residual variance, as
+    Prism's extra-sum-of-squares F test reads it; with the variance of a moderated fit,
+    F(1, df) on it. Its ends are the region's lowest and highest EC50 over the fit's
+    range of EC50s, open (0 or infinity) where the region reaches the range's ends. Two
+    positive doses beyond each bend of the curve, where it has covered 17.6% and 82.4%
+    of its change, make an EC50 reportable (Sebaugh 2011). The intervals take about 5 ms
+    of computing per gene, shared among the threads: 23 s for 10,000 genes on 2 threads
+    in the benchmark; they do not depend on the threads. They need replicates within
+    dose groups: the variance then comes from the replicates as well as from the curve's
+    residuals, where Prism, given one value per dose, reads the residuals alone.
     https://docs.nygen.io/CytePool/statistics/potency#ec50s explains each number and
     https://docs.nygen.io/CytePool/statistics/potency#ec50-intervals the interval.
 

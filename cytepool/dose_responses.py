@@ -3055,9 +3055,9 @@ def _average_change_weights(
 ) -> npt.NDArray[np.float64]:
     """The weights on the treated doses' differences from the vehicle that give their
     average along the axis: the trapezoidal rule's area between the changes and 0, at
-    the m >= 2 positions u_1 < ... < u_m, divided by the length u_m - u_1. A dose's
-    weight is half the length to its neighbours, (u_(k+1) - u_(k-1)) / 2, and
-    (u_2 - u_1) / 2 and (u_m - u_(m-1)) / 2 at the ends; the weights sum to 1."""
+    the m >= 2 positions u_1 < ... < u_m, divided by the length L = u_m - u_1. A dose's
+    weight is half the length to its neighbours over L, (u_(k+1) - u_(k-1)) / (2L), and
+    (u_2 - u_1) / (2L) and (u_m - u_(m-1)) / (2L) at the ends; the weights sum to 1."""
     gaps = np.diff(positions)
     weights = np.zeros(positions.size)
     weights[:-1] += gaps / 2.0
