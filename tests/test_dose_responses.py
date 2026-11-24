@@ -66,6 +66,15 @@ ON_AXIS = DoseAxis(
     "dose", unit="ug/kg", metric="administered", vehicle="on_axis", offset=0.001
 )
 TESTS = ("spline", "nonlinearity", "linear_trend", "dose_groups")
+# The tests of the fixture's jobs, which R ran: the four and the average change, in the
+# order of tables and printouts.
+FIXTURE_TESTS = (
+    "spline",
+    "nonlinearity",
+    "linear_trend",
+    "average_change",
+    "dose_groups",
+)
 NORMAL_QUANTILE = 1.959963984540054  # the 0.975 quantile of the standard normal
 
 
@@ -102,7 +111,7 @@ def fixture_result(analysis: str, standard_errors: str = "exact") -> DoseRespons
         cube,
         Design(cube.samples, "~ 1"),
         dose=AXIS,
-        tests=list(TESTS),
+        tests=list(FIXTURE_TESTS),
         spline_df=2,
         analysis=limma_voom if analysis == "voom" else limma_trend,
         **options,
@@ -155,7 +164,7 @@ def check_against_r(
         for test, values in theirs["tests"].items():
             table = result.table(group, test)
             assert table["feature_id"].tolist() == genes
-            if test == "linear_trend":
+            if test in ("linear_trend", "average_change"):
                 assert_scaled(table["log2_fold_change"], values["logFC"])
                 assert_scaled(table["standard_error"], values[prefix + "se"])
                 assert_scaled(table["t"], values[prefix + "t"])
@@ -1016,7 +1025,11 @@ def test_results_do_not_depend_on_order_units_or_threads() -> None:
     # The design's rows in another order.
     order = np.random.default_rng(1).permutation(cube.n_samples)
     shuffled = dose_response(
-        cube, Design(cube.samples.take(order), "~ 1"), dose=AXIS, spline_df=2
+        cube,
+        Design(cube.samples.take(order), "~ 1"),
+        dose=AXIS,
+        tests=list(FIXTURE_TESTS),
+        spline_df=2,
     )
     for key, table in base.tables.items():
         column = next(c for c in ("f_statistic", "t", "p_value") if c in table)
@@ -1219,13 +1232,13 @@ def test_infinite_prior_degrees_of_freedom_give_bands_on_the_pooled_df() -> None
 def test_the_result_reads_back(tmp_path: Path) -> None:
     result = fixture_result("voom")
     assert result.groups == ("full", "depleted")
-    assert result.tests == TESTS
+    assert result.tests == FIXTURE_TESTS
     assert result.method == "limma_voom"
     assert result.dose == AXIS
     assert result.spline_basis is not None and result.spline_basis.df == 2
     assert isinstance(result.design_report, DoseDesignReport)
     settings = result.settings
-    assert settings["tests"] == list(TESTS) and settings["spline_df"] == 2
+    assert settings["tests"] == list(FIXTURE_TESTS) and settings["spline_df"] == 2
     assert settings["dose"] == AXIS.to_dict()
     assert settings["min_cells"] == 10 and "options" not in settings
     record = result.provenance
@@ -1237,6 +1250,7 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
         "spline": 3,
         "nonlinearity": 1,
         "linear_trend": 1,
+        "average_change": 1,
         "dose_groups": 5,
     }
     # Each test's contrasts, named by the rules of the module: the spline's
@@ -1247,9 +1261,12 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
         "spline": spline,
         "nonlinearity": spline[2:],
         "linear_trend": ["linear_trend"],
+        "average_change": ["average_change"],
         "dose_groups": doses,
     }
-    assert sorted(entry["contrasts"]) == sorted([*doses, *spline, "linear_trend"])
+    assert sorted(entry["contrasts"]) == sorted(
+        [*doses, *spline, "linear_trend", "average_change"]
+    )
     assert record["analysis_settings"]["contrast_standard_errors"] == "exact"
     # The fit computed again tests those contrasts.
     fit = result.fit("full")
@@ -1267,17 +1284,18 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
     )
     for test in ("spline", "nonlinearity", "dose_groups"):
         assert result.table("full", test).columns == f_columns
-    assert result.table("full", "linear_trend").columns == (
-        "feature_id",
-        "log2_fold_change",
-        "standard_error",
-        "average_log2_cpm",
-        "t",
-        "p_value",
-        "adjusted_p_value",
-        "adjusted_p_value_across_groups",
-        "log_odds",
-    )
+    for test in ("linear_trend", "average_change"):
+        assert result.table("full", test).columns == (
+            "feature_id",
+            "log2_fold_change",
+            "standard_error",
+            "average_log2_cpm",
+            "t",
+            "p_value",
+            "adjusted_p_value",
+            "adjusted_p_value_across_groups",
+            "log_odds",
+        )
     assert result.table("full", "each_dose").columns == (
         "feature_id",
         "dose",
@@ -1323,7 +1341,7 @@ def test_the_result_reads_back(tmp_path: Path) -> None:
         test: int(
             np.count_nonzero(result.table("full", test)["adjusted_p_value"] <= 0.05)
         )
-        for test in TESTS
+        for test in FIXTURE_TESTS
     }
     assert (
         f"{calls['spline']} pass the gate; calls at 5% FDR: "
@@ -3059,7 +3077,7 @@ def test_the_tables_of_the_tests_do_not_change_with_curves() -> None:
             fixture_cube(),
             Design(fixture_cube().samples, "~ 1"),
             dose=AXIS,
-            tests=list(TESTS),
+            tests=list(FIXTURE_TESTS),
             spline_df=2,
             models="ll4",
             variance=variance,
@@ -4334,3 +4352,221 @@ def test_the_record_names_the_threshold_of_each_bmr() -> None:
         reached = np.isfinite(found.bmd[1]) & np.isfinite(found.bmdl[1])
         assert np.all(found.threshold[1][reached] > 2.7055)
         assert np.allclose(found.threshold[0][np.isfinite(found.bmd[0])], 2.705543454)
+
+
+# The average change along the dose axis.
+
+
+def trapezoid_by_hand(positions: list[float]) -> np.ndarray:
+    """The average change's weights for treated doses at these axis positions: half
+    the length to each neighbour, over the length from the lowest to the top dose."""
+    u = np.asarray(positions, dtype=float)
+    length = u[-1] - u[0]
+    weights = np.empty(u.size)
+    weights[0] = (u[1] - u[0]) / 2.0 / length
+    weights[-1] = (u[-1] - u[-2]) / 2.0 / length
+    for k in range(1, u.size - 1):
+        weights[k] = (u[k + 1] - u[k - 1]) / 2.0 / length
+    return weights
+
+
+@pytest.mark.parametrize(
+    ("doses", "axis", "weights"),
+    [
+        # Even steps of half a log10 unit: (1/2, 1, 1, 1, 1/2) / 4.
+        ((0, 1, 10**0.5, 10, 10**1.5, 100), AXIS, [0.125, 0.25, 0.25, 0.25, 0.125]),
+        # Two treated doses, the fewest: their mean.
+        ((0, 1, 10), AXIS, [0.5, 0.5]),
+        # Positions 0, 1 and 3: (1/6, 1/2, 1/3).
+        ((0, 1, 10, 1000), AXIS, [1 / 6, 1 / 2, 1 / 3]),
+        # The vehicle on the axis at an offset of 1: treated positions 1, 2 and 3.
+        (
+            (0, 9, 99, 999),
+            DoseAxis(
+                "dose",
+                unit="ug/kg",
+                metric="administered",
+                vehicle="on_axis",
+                offset=1.0,
+            ),
+            [0.25, 0.5, 0.25],
+        ),
+        # A linear axis: positions 1, 2 and 4.
+        (
+            (0, 1, 2, 4),
+            DoseAxis("dose", unit="ug/kg", metric="administered", scale="linear"),
+            [1 / 6, 1 / 2, 1 / 3],
+        ),
+    ],
+)
+def test_average_change_weights_by_hand(
+    doses: tuple[float, ...], axis: DoseAxis, weights: list[float]
+) -> None:
+    result = run(doses, axis, tests=["average_change"])
+    group = result.groups[0]
+    average = result.table(group, "average_change")
+    each = result.table(group, "each_dose")
+    k = len(doses) - 1
+    expected = by_dose(each, "log2_fold_change", k) @ np.asarray(weights)
+    assert_allclose(average["log2_fold_change"], expected, rtol=1e-12, atol=1e-12)
+    assert_allclose(sum(weights), 1.0)
+    assert_allclose(trapezoid_by_hand(axis.positions(np.asarray(doses[1:]))), weights)
+    entry = result.provenance["groups"][0]
+    assert entry["f_test_df1"]["average_change"] == 1
+    # The same contrast written by hand on the dose groups' indicators, in limma_voom.
+    cube = series(doses)
+    samples = cube.samples.filter(np.isin(cube.samples["dose"], doses))
+    given = np.asarray(samples["dose"])
+    indicators = {f"d{i}": (given == d).astype(float) for i, d in enumerate(doses[1:])}
+    by_hand = limma_voom(
+        cube,
+        Design(samples.with_columns(indicators), "~ " + " + ".join(indicators)),
+        contrasts={"average": [0.0, *weights]},
+    )
+    theirs = by_hand.table(group, "average")
+    for name in ("log2_fold_change", "standard_error", "t", "p_value"):
+        assert_allclose(average[name], theirs[name], rtol=1e-10)
+
+
+def test_a_constant_change_averages_to_itself() -> None:
+    for positions in (
+        [0.0, 0.5, 1.0],
+        [-2.0, -1.5, 0.0, 3.0],
+        [1.0, 2.0, 4.0, 8.0, 16.0],
+    ):
+        weights = dose_responses._average_change_weights(np.asarray(positions))
+        assert_allclose(weights, trapezoid_by_hand(positions), rtol=1e-14)
+        assert_allclose(weights @ np.full(len(positions), 0.7), 0.7, rtol=1e-14)
+
+
+def test_average_change_runs_only_when_named() -> None:
+    doses = (0, 0.1, 1, 10, 30, 100)
+    default = run(doses)
+    assert "average_change" not in default.tests
+    named = run(doses, tests=["spline", "average_change"])
+    assert named.tests == ("spline", "average_change")
+    with pytest.raises(
+        ValueError, match="'average_change', which tests an average change"
+    ):
+        run(doses, gate={"test": "average_change"})
+    # One-sided with a direction: P(T >= t) from the two-sided p.
+    up = run(doses, tests=["average_change"], direction="up")
+    two = named.table("cell_type_1", "average_change")
+    t = np.asarray(two["t"])
+    p = np.asarray(two["p_value"])
+    assert_allclose(
+        up.table("cell_type_1", "average_change")["p_value"],
+        np.where(t >= 0, p / 2, 1 - p / 2),
+        rtol=1e-14,
+    )
+    # One treated dose on the axis: refused before anything runs; with the vehicle on
+    # the axis, the cell type does not run it, with the reason.
+    with pytest.raises(ValueError, match="'average_change' runs along the dose axis"):
+        run((0, 10), tests=["average_change"])
+    one = run((0, 10), ON_AXIS, tests=["average_change", "dose_groups"])
+    entry = one.provenance["groups"][0]
+    assert ("cell_type_1", "average_change") not in one.tables
+    assert entry["tests_not_run"]["average_change"].startswith(
+        "the average change runs along the treated doses, and this cell type compares one"
+    )
+    with pytest.raises(KeyError, match="'average_change' was not run in 'cell_type_1'"):
+        one.table("cell_type_1", "average_change")
+
+
+def test_average_change_of_a_cell_type_that_drops_a_dose() -> None:
+    # The depleted cell type keeps no sample at the top dose, so its average runs over
+    # the doses it compares, with the vehicle on the axis.
+    cube, _ = simulate_dose_series(
+        [0, 0.1, 1, 10, 100],
+        replicates=3,
+        cell_types=["full", "depleted"],
+        cells=[300.0, 300.0],
+        composition={"depleted": [1.0, 1.0, 1.0, 1.0, 0.001]},
+        n_genes=120,
+        rng=11,
+    )
+    result = dose_response(
+        cube,
+        Design(cube.samples, "~ 1"),
+        dose=ON_AXIS,
+        tests=["average_change", "spline"],
+    )
+    for group, kept in (("full", [0.1, 1, 10, 100]), ("depleted", [0.1, 1, 10])):
+        entry = next(e for e in result.provenance["groups"] if e["group_id"] == group)
+        assert entry["doses"][1:] == kept
+        weights = trapezoid_by_hand(ON_AXIS.positions(np.asarray(kept)).tolist())
+        each = result.table(group, "each_dose")
+        expected = by_dose(each, "log2_fold_change", len(kept)) @ weights
+        assert_allclose(
+            result.table(group, "average_change")["log2_fold_change"],
+            expected,
+            atol=1e-12,
+        )
+
+
+# The EC50s of the curves.
+
+
+@pytest.mark.parametrize("variance", ["constant", "weighted", "moderated"])
+def test_ec50s_are_those_of_each_cell_type_s_curves(variance: str) -> None:
+    """result.ec50s(g) is ec50s of each cell type's curves with each gene's id, and
+    table(g, "ec50s") its table with the gate's call beside each gene, computed when
+    asked for."""
+    from cytepool.stats.potency import ec50s
+
+    result = curves_result(variance, "ll4")
+    for group in result.groups:
+        fits = result.curve_fits(group)
+        expected = ec50s(fits)
+        genes = result.table(group, "curves")["feature_id"][:: len(fits.models)]
+        found = result.ec50s(group)
+        assert found.feature_ids.tolist() == genes.tolist()
+        assert found.table().equals(expected.table(feature_ids=genes))
+        assert repr(found) == repr(expected)
+        table = result.table(group, "ec50s")
+        assert table.columns[:2] == ("feature_id", "passes_gate")
+        gate = result.table(group, "gate")
+        calls = dict(zip(gate["feature_id"].tolist(), gate["passes_gate"].tolist()))
+        assert table["passes_gate"].tolist() == [calls[g] for g in genes.tolist()]
+        rest = table.select([c for c in table.columns if c != "passes_gate"])
+        assert rest.equals(expected.table(feature_ids=genes))
+        assert np.isfinite(np.asarray(table["ec50_lower"])).any()
+    assert "ec50s" in result._table_names()
+    assert ("full", "ec50s") not in result.tables  # built when asked for
+
+
+def test_ec50s_of_descriptive_cell_types_and_where_none_can_be_read() -> None:
+    cube, _ = simulate_dose_series(
+        [0.0, 0.1, 0.3, 1.0, 3.0, 10.0],
+        replicates=[3, 1, 1, 1, 1, 1],
+        cell_types=1,
+        n_genes=120,
+        rng=33,
+    )
+    result = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS, models="ll4")
+    group = result.groups[0]
+    table = result.table(group, "ec50s")
+    # Without replicates there is no interval, and without a gate no call.
+    assert "passes_gate" not in table.columns
+    assert np.isfinite(np.asarray(table["ec50"])).any()
+    assert np.isnan(np.asarray(table["ec50_lower"])).all()
+    assert not result.ec50s(group).intervals
+    # Without models there are no curves, and at 4 dose groups no Hill curve.
+    plain = dose_response(cube, Design(cube.samples, "~ 1"), dose=AXIS)
+    with pytest.raises(
+        KeyError, match="no curves were fitted: dose_response ran without models"
+    ):
+        plain.table(group, "ec50s")
+    four = series((0, 0.1, 1, 10))
+    small = dose_response(four, Design(four.samples, "~ 1"), dose=AXIS, models="epa")
+    for read in (lambda: small.table("cell_type_1", "ec50s"), small.ec50s):
+        with pytest.raises(
+            KeyError,
+            match=r"no EC50s in 'cell_type_1': model 'hill' was not fitted: no spare",
+        ):
+            read()
+    with pytest.raises(KeyError, match="'ec50s' is a table, not a cell type"):
+        small.table("ec50s")
+    only = dose_response(four, Design(four.samples, "~ 1"), dose=AXIS, models="ll4")
+    with pytest.raises(KeyError, match="no curves in 'cell_type_1'"):
+        only.table("cell_type_1", "ec50s")

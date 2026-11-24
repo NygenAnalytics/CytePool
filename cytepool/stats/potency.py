@@ -30,6 +30,23 @@ The bounds:
     straight line; an SD-based BMR's profile adds the likelihood of s^2 and reads
     chi-square(1).
 
+EC50s, Hill slopes and plateaus:
+    :func:`ec50s` reads each gene's Hill curve, the log-logistic curve of the sets
+    ``"ll4"`` and ``"dromics"`` or the Hill model of ``"epa"`` and ``"bmdexpress"``, as
+    pharmacologists read it (Neubig et al. 2003): the EC50, the dose of half the curve's
+    change from its level at dose 0 to its plateau at high doses (Sebaugh 2011's
+    relative EC50); the Hill slope, in GraphPad Prism's sign, positive for a rise; and
+    the two plateaus. The EC50's two-sided 95% interval holds the EC50s whose profile,
+    the curve's fit with the EC50 held there, lies within an F quantile at 0.95 of the
+    maximum: F(1, n - 4) on the curve's residual variance under constant variance,
+    Prism's extra-sum-of-squares F test, searched as Venzon and Moolgavkar (1988)
+    describe, or F(1, df) on the variance of a moderated fit. An EC50 is reportable with
+    two tested doses beyond each bend of the curve (Sebaugh 2011), where the curve has
+    covered 17.6% and 82.4% of its change: at EC50 / 4.6805^(1/|h|) and EC50 x
+    4.6805^(1/|h|), h the Hill slope (Sebaugh and McCray 2003, as Micheli et al. 2021
+    give the constant). https://docs.nygen.io/CytePool/statistics/potency#ec50s explains
+    them.
+
 References:
     Crump KS (1984). A new method for determining allowable daily intakes.
     Fundamental and Applied Toxicology 4, 854-871. doi:10.1016/0272-0590(84)90107-6
@@ -39,6 +56,25 @@ References:
 
     Fieller EC (1954). Some problems in interval estimation. Journal of the Royal
     Statistical Society, Series B 16, 175-185. doi:10.1111/j.2517-6161.1954.tb00159.x
+
+    Neubig RR, Spedding M, Kenakin T, Christopoulos A (2003). International Union of
+    Pharmacology Committee on Receptor Nomenclature and Drug Classification. XXXVIII.
+    Update on terms and symbols in quantitative pharmacology. Pharmacological Reviews
+    55, 597-606. doi:10.1124/pr.55.4.4
+
+    Sebaugh JL (2011). Guidelines for accurate EC50/IC50 estimation. Pharmaceutical
+    Statistics 10, 128-134. doi:10.1002/pst.426
+
+    Sebaugh JL, McCray PD (2003). Defining the linear portion of a sigmoid-shaped
+    curve: bend points. Pharmaceutical Statistics 2, 167-174. doi:10.1002/pst.62
+
+    Micheli P, Ribeiro R, Giorgetti A (2021). A mechanistic model of NMDA and AMPA
+    receptor-mediated synaptic transmission in individual hippocampal CA3-CA1
+    synapses: a computational multiscale approach. International Journal of
+    Molecular Sciences 22, 1536. doi:10.3390/ijms22041536
+
+    Venzon DJ, Moolgavkar SH (1988). A method for computing profile-likelihood-based
+    confidence intervals. Applied Statistics 37, 87-94. doi:10.2307/2347496
 """
 
 from collections.abc import Callable, Sequence
@@ -79,8 +115,15 @@ from cytepool.stats._benchmark_dose_search import (
     S2,
     THRESHOLD,
     VALUE,
+    EC50_ESTIMATE,
+    EC50_OBJECTIVE,
+    EC50_S2,
+    EC50_SCALE,
+    EC50_THRESHOLD,
     bounds_parallel,
     bounds_serial,
+    ec50_intervals_parallel,
+    ec50_intervals_serial,
     first_crossings,
     scan_doses,
     search_range,
@@ -89,6 +132,7 @@ from cytepool.stats._dose_curve_models import (
     C_MAX,
     EXPONENT_MAX,
     EXPONENT_MIN,
+    LOG_LOGISTIC,
     SET_PARAMETERS,
     SETS,
     DoseScale,
@@ -109,7 +153,7 @@ from cytepool.stats.distributions import chi2_ppf, chi2_sf, f_ppf
 from cytepool.stats.dose_curves import TIE, DoseCurveFits
 from cytepool.table import Table
 
-__all__ = ["BenchmarkDoses", "benchmark_doses"]
+__all__ = ["BenchmarkDoses", "EC50s", "benchmark_doses", "ec50s"]
 
 FloatArray = npt.NDArray[np.float64]
 
@@ -1458,3 +1502,422 @@ def _first_with_bounds(
         remaining[rows[~ok], best[~ok]] = False
         undecided[rows] &= remaining[rows].any(axis=1)
     return chosen
+
+
+# ---------------------------------------------------------------------------------------
+# EC50s, Hill slopes and plateaus
+# ---------------------------------------------------------------------------------------
+
+EC50_LEVEL = 0.95
+INTERVAL = "two-sided 95% profile-likelihood interval"
+HILL_CURVES = {"ll4": "ll4", "dromics": "ll4", "epa": "hill", "bmdexpress": "hill"}
+"""The Hill curve of each set, whose EC50s are read."""
+BEND = 4.6805
+"""Sebaugh and McCray's (2003) constant: a Hill curve's bends lie at EC50 / BEND^(1/|h|)
+and EC50 x BEND^(1/|h|), where it has covered 1 / (1 + BEND) and BEND / (1 + BEND) of
+its change."""
+# A slope or EC50 this near a bound of the fit, relative to the bound, is at it: the
+# refinement stops where the objective keeps falling toward a bound by less than its
+# stopping rule, which left slopes up to 1e-4 short of 18 with the bound's objective
+# within 2e-10 of the fit's.
+AT_BOUND = 1e-4
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class EC50s:
+    """The EC50, Hill slope and plateaus of every gene's Hill curve, with the EC50's
+    profile-likelihood interval.
+
+    Arrays have one entry per gene, in the fits' order, and are read-only.
+    https://docs.nygen.io/CytePool/statistics/potency#ec50s defines each number and
+    how to read it.
+
+    Attributes:
+        model_set: The set of the curves: ``"ll4"``, ``"dromics"``, ``"epa"`` or
+            ``"bmdexpress"``.
+        model: The Hill curve whose EC50s are read: ``"ll4"``, or ``"hill"`` for
+            ``"epa"`` and ``"bmdexpress"``.
+        variance: How the curves weighed the dose-group means: ``"constant"``,
+            ``"weighted"`` or ``"moderated"``.
+        intervals: Whether intervals were computed; a cell type that supports only
+            description gets none.
+        lowest_dose: The lowest positive dose of the fits.
+        top_dose: The highest dose of the fits.
+        ec50: The dose of half the curve's change from its level at dose 0 to its
+            plateau at high doses, in the doses' unit; NaN without a curve. Its
+            log10 is GraphPad Prism's LogEC50; drc's ``ED()`` prints the EC50 itself.
+        ec50_lower: The interval's lower end: 0 where the region of the profile
+            likelihood reaches the lowest EC50 a curve can have, a hundredth of the
+            lowest positive dose for the log-logistic curve and 0 for the Hill model;
+            NaN without an interval.
+        ec50_upper: The interval's upper end: infinity where the region reaches the
+            highest, 5 times the top dose, or 1,000 times in ``"bmdexpress"``; NaN
+            without an interval.
+        hill_slope: The curve's steepness as GraphPad Prism writes it, positive for a
+            rise and negative for a fall: b of the log-logistic curve or n of the Hill
+            model, with that sign. NaN where the curve's two levels are equal, and at
+            an EC50 of 0, where the slope no longer changes the curve at positive
+            doses. The slope of a nearly flat curve, such as a gene's that does not
+            respond, is as arbitrary as its EC50.
+        bottom_plateau: The lower of the curve's two levels, GraphPad's Bottom, in
+            the values' units, such as log2 for expression.
+        top_plateau: The higher, GraphPad's Top. The plateau at high doses, the top
+            plateau of a rise and the bottom plateau of a fall, is an extrapolation
+            when the EC50 lies above the top dose: with the EC50 at 5 times the top
+            dose and the slope at 18, it lies up to about 4 x 10^12 times the change
+            at the top dose away, and further in ``"bmdexpress"``, whose EC50 can
+            reach 1,000 times the top dose.
+        status: Where the EC50 lies: ``"within the doses"``, from the lowest
+            positive dose to the top dose, ``"below the lowest dose"``, ``"above the
+            top dose"``, or ``"no curve"`` where the Hill curve was not fitted to the
+            gene.
+        two_doses_beyond_each_bend: Whether two positive doses or more lie strictly
+            below the curve's lower bend and two or more strictly above its upper bend,
+            Sebaugh's (2011) condition for reporting an EC50; the bends are where the
+            curve has covered 17.6% and 82.4% of its change, and the vehicle is not
+            counted. False without a slope.
+        best_model: Whether the Hill curve is the gene's best model by AICc; always
+            True with ``"ll4"``, a set of one model.
+        parameters_at_bounds: ``"ec50"``, ``"hill_slope"`` or both, comma-separated,
+            where the fit sits at a bound of the parameter, or within 0.01% of it,
+            whose value is then a limit, not an estimate: slopes of 0.1 and 18 for
+            the log-logistic curve and 1 and 18 for the Hill model, and EC50s at the
+            ends of the interval's range; empty for none.
+        threshold: The F quantile at 0.95 that each interval read: F(1, n - 4) under
+            constant variance, F(1, df) otherwise; NaN where no interval was computed.
+        feature_ids: ``(n_genes,)`` the genes' ids that :meth:`table` writes, from
+            :meth:`DoseResponseResult.ec50s <cytepool.DoseResponseResult.ec50s>`; None
+            from :func:`ec50s`, whose table numbers the genes.
+    """
+
+    model_set: str
+    model: str
+    variance: str
+    intervals: bool
+    lowest_dose: float
+    top_dose: float
+    ec50: FloatArray
+    ec50_lower: FloatArray
+    ec50_upper: FloatArray
+    hill_slope: FloatArray
+    bottom_plateau: FloatArray
+    top_plateau: FloatArray
+    status: np.ndarray
+    two_doses_beyond_each_bend: np.ndarray
+    best_model: np.ndarray
+    parameters_at_bounds: np.ndarray
+    threshold: FloatArray
+    feature_ids: np.ndarray | None = None
+
+    def table(self, *, feature_ids: Any = None) -> Table:
+        """Return the EC50s as a table, one row per gene in the fits' order.
+
+        Columns: ``feature_id``, ``best_model``, ``ec50``, ``ec50_lower``,
+        ``ec50_upper``, ``hill_slope``, ``bottom_plateau``, ``top_plateau``,
+        ``ec50_status``, ``two_doses_beyond_each_bend`` and
+        ``parameters_at_bounds``.
+
+        Args:
+            feature_ids: One id per gene, as text; by default the result's
+                ``feature_ids``, or ``feature_0``, ``feature_1``, ... without them.
+
+        Raises:
+            ValueError: If ``feature_ids`` does not give one id per gene.
+            TypeError: If an id is not text, or ``feature_ids`` is a numpy masked
+                array.
+        """
+        given = self.feature_ids if feature_ids is None else feature_ids
+        return Table(
+            {
+                "feature_id": feature_id_column(given, self.ec50.size),
+                "best_model": self.best_model,
+                "ec50": self.ec50,
+                "ec50_lower": self.ec50_lower,
+                "ec50_upper": self.ec50_upper,
+                "hill_slope": self.hill_slope,
+                "bottom_plateau": self.bottom_plateau,
+                "top_plateau": self.top_plateau,
+                "ec50_status": text_column(self.status.tolist()),
+                "two_doses_beyond_each_bend": self.two_doses_beyond_each_bend,
+                "parameters_at_bounds": text_column(self.parameters_at_bounds.tolist()),
+            }
+        )
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        values = {item.name: getattr(self, item.name) for item in fields(self)}
+        return (_frozen_ec50s, (values,))
+
+    def __repr__(self) -> str:
+        n = self.ec50.size
+        intervals = INTERVAL if self.intervals else "no intervals"
+        lines = [
+            f"EC50s ({self.model} curve of the {self.model_set!r} set, "
+            f"{self.variance} variance): {n:,} gene{'' if n == 1 else 's'}; "
+            f"{intervals}",
+            f"  {_status_counts(self.status)}",
+            "  two doses beyond each bend: "
+            f"{int(np.count_nonzero(self.two_doses_beyond_each_bend)):,}",
+        ]
+        bounded = int(np.count_nonzero(self.parameters_at_bounds != ""))
+        if bounded:
+            lines.append(
+                "  genes with a parameter at a bound (a limit, not an estimate): "
+                f"{bounded:,}"
+            )
+        computed = np.isfinite(self.threshold)
+        if np.any(computed):
+            low = int(np.count_nonzero(computed & (self.ec50_lower == 0.0)))
+            high = int(np.count_nonzero(computed & np.isinf(self.ec50_upper)))
+            lines.append(f"  intervals open below: {low:,}; open above: {high:,}")
+            missing = int(np.count_nonzero(computed & np.isnan(self.ec50_lower)))
+            if missing:
+                lines.append(
+                    f"  intervals not computed for {missing:,} gene"
+                    f"{'' if missing == 1 else 's'}: the profile found a curve better "
+                    "than the fit"
+                )
+        return "\n".join(lines)
+
+
+def _frozen_ec50s(values: dict[str, Any]) -> EC50s:
+    """EC50s of read-only arrays, as ec50s builds them; pickled results are rebuilt by
+    it."""
+    frozen: dict[str, Any] = {
+        name: read_only(value) if isinstance(value, np.ndarray) else value
+        for name, value in values.items()
+    }
+    return EC50s(**frozen)
+
+
+def ec50s(
+    fits: DoseCurveFits, *, intervals: bool = True, n_threads: int | None = None
+) -> EC50s:
+    """Read every gene's Hill curve as an EC50, Hill slope and plateaus, with the
+    EC50's two-sided 95% profile-likelihood interval.
+
+    The Hill curve is the set's: the log-logistic curve of ``"ll4"`` and ``"dromics"``,
+    or the Hill model of ``"epa"`` and ``"bmdexpress"``, for every gene it was fitted
+    to, whether or not it is the gene's best model (``best_model`` says). The EC50 is
+    the dose of half the curve's change from its level at dose 0 to its plateau at high
+    doses (Sebaugh 2011's relative EC50), the Hill slope its steepness in GraphPad
+    Prism's sign, positive for a rise and negative for a fall, and the plateaus its two
+    levels, in the values' units. The interval holds the EC50s whose profile, the
+    curve's fit with the EC50 held there, lies within the F quantile at 0.95 of the
+    maximum: under constant variance F(1, n - 4) on the curve's residual variance, as
+    Prism's extra-sum-of-squares F test reads it; with the variance of a moderated fit,
+    F(1, df) on it. Its ends are the region's lowest and highest EC50 over the fit's
+    range of EC50s, open (0 or infinity) where the region reaches the range's ends. Two
+    positive doses beyond each bend of the curve, where it has covered 17.6% and 82.4%
+    of its change, make an EC50 reportable (Sebaugh 2011). The intervals take about 5 ms
+    of computing per gene, shared among the threads: 23 s for 10,000 genes on 2 threads
+    in the benchmark; they do not depend on the threads. They need replicates within
+    dose groups: the variance then comes from the replicates as well as from the curve's
+    residuals, where Prism, given one value per dose, reads the residuals alone.
+    https://docs.nygen.io/CytePool/statistics/potency#ec50s explains each number and
+    https://docs.nygen.io/CytePool/statistics/potency#ec50-intervals the interval.
+
+    Args:
+        fits: Curves of a set of named models, from
+            :func:`~cytepool.stats.dose_curves.fit_dose_curves` or
+            :meth:`DoseResponseResult.curve_fits <cytepool.DoseResponseResult.curve_fits>`.
+        intervals: False gives EC50s without intervals, as for curves of dose groups
+            without replicates.
+        n_threads: The most threads to use; None keeps numba's setting.
+
+    Returns:
+        The EC50s, Hill slopes and plateaus, with the intervals and where each EC50
+        lies.
+
+    Raises:
+        TypeError: If ``fits`` is not a ``DoseCurveFits``, ``intervals`` not True or
+            False, or ``n_threads`` not an integer or None.
+        ValueError: If the set's Hill curve was not fitted, as at 4 dose groups,
+            intervals are asked for curves without replicates, or ``n_threads`` is
+            below 1.
+
+    Example:
+        >>> import numpy as np
+        >>> from cytepool.stats.dose_curves import fit_dose_curves
+        >>> doses = np.repeat([0.0, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0], 3)
+        >>> mean = 6.0 + 2.0 / (1.0 + (0.3 / np.maximum(doses, 1e-12)) ** 1.5)
+        >>> noise = np.tile([-0.2, 0.0, 0.2], 9)
+        >>> fits = fit_dose_curves(doses, (mean + noise)[:, None], models="ll4")
+        >>> found = ec50s(fits)
+        >>> [round(float(found.ec50[0]), 3), round(float(found.hill_slope[0]), 2)]
+        [0.3, 1.5]
+        >>> [round(float(found.ec50_lower[0]), 3), round(float(found.ec50_upper[0]), 3)]
+        [0.225, 0.403]
+    """
+    if not isinstance(fits, DoseCurveFits):
+        raise TypeError(f"fits must be a DoseCurveFits, got {type(fits).__name__}")
+    with_intervals = checked_flag(intervals, "intervals")
+    if with_intervals and not np.all(fits.df > 0):
+        raise ValueError(
+            "intervals need replicates within dose groups: these fits have no degrees "
+            "of freedom for the variance (df 0), as for a cell type that supports "
+            "only description; pass intervals=False for EC50s without intervals"
+        )
+    name = HILL_CURVES[fits.model_set]
+    chosen = _chosen_models(fits, name)
+    m = fits.models.index(name)
+    fitted = chosen >= 0
+    genes = _GeneFits.of(fits, chosen)
+    kind = model_of(fits.model_set, name).kind
+    n_genes = fits.means.shape[0]
+    theta = np.full((n_genes, 4), np.nan)
+    for g in np.flatnonzero(fitted):
+        theta[g] = genes.theta[g]
+    ec50, hill_slope, bottom, top = _graphpad_terms(kind, theta)
+    positive = fits.doses[fits.doses > 0.0]
+    with thread_limit(n_threads):
+        lower, upper, thresholds = _ec50_intervals(
+            fits, genes, kind, theta, fitted & with_intervals
+        )
+    status = np.full(n_genes, NO_CURVE, dtype=object)
+    with np.errstate(invalid="ignore"):
+        status[fitted & (ec50 < positive[0])] = BELOW
+        status[fitted & (ec50 > fits.doses[-1])] = ABOVE
+        status[fitted & (ec50 >= positive[0]) & (ec50 <= fits.doses[-1])] = WITHIN
+    return EC50s(
+        model_set=fits.model_set,
+        model=name,
+        variance=fits.variance,
+        intervals=with_intervals,
+        lowest_dose=float(positive[0]),
+        top_dose=float(fits.doses[-1]),
+        ec50=read_only(ec50),
+        ec50_lower=read_only(lower),
+        ec50_upper=read_only(upper),
+        hill_slope=read_only(hill_slope),
+        bottom_plateau=read_only(bottom),
+        top_plateau=read_only(top),
+        status=read_only(status),
+        two_doses_beyond_each_bend=read_only(_beyond_bends(ec50, hill_slope, positive)),
+        best_model=read_only(np.asarray(fits.best == m)),
+        parameters_at_bounds=read_only(_hill_at_bounds(fits, kind, theta)),
+        threshold=read_only(thresholds),
+    )
+
+
+def _graphpad_terms(
+    kind: int, theta: FloatArray
+) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
+    """The EC50, Hill slope, Bottom and Top of Hill curves as GraphPad's Y = Bottom +
+    (Top - Bottom) / (1 + 10^((log10 EC50 - log10 x) HillSlope)) writes them: from the
+    log-logistic curve's (b, c, d, e), d at dose 0, c at high doses and b > 0, or the
+    Hill model's (g, v, k, n), g at dose 0 and g + v at high doses; NaN rows give
+    NaN."""
+    with np.errstate(invalid="ignore"):
+        if kind == LOG_LOGISTIC:
+            slope, start, end, ec50 = theta[:, 0], theta[:, 2], theta[:, 1], theta[:, 3]
+        else:
+            start, ec50 = theta[:, 0], theta[:, 2]
+            end = start + theta[:, 1]
+            # At an EC50 of 0 the curve is a step at dose 0, whatever its slope.
+            slope = np.where(ec50 > 0.0, theta[:, 3], np.nan)
+        rise = np.sign(end - start)
+        hill_slope = np.where(rise != 0.0, rise * slope, np.nan)
+    return ec50, hill_slope, np.fmin(start, end), np.fmax(start, end)
+
+
+def _hill_at_bounds(fits: DoseCurveFits, kind: int, theta: FloatArray) -> np.ndarray:
+    """``"ec50"``, ``"hill_slope"`` or both, comma-separated, where a curve's EC50 or
+    slope lies at a bound of the fit or within ``AT_BOUND`` of it, relative to the
+    bound; empty for none and without a curve. Both parameters' bounds are 0 or
+    positive."""
+    low, high = bounds(kind, DoseScale.of(fits.doses), fits.model_set)
+    ec50, slope = (3, 0) if kind == LOG_LOGISTIC else (2, 3)
+    hits = []
+    with np.errstate(invalid="ignore"):
+        for column, label in ((ec50, "ec50"), (slope, "hill_slope")):
+            values = theta[:, column]
+            near = (values <= low[column] * (1.0 + AT_BOUND)) | (
+                values >= high[column] * (1.0 - AT_BOUND)
+            )
+            hits.append((near, label))
+    return np.array(
+        [
+            ", ".join(label for near, label in hits if near[g])
+            for g in range(theta.shape[0])
+        ],
+        dtype=object,
+    )
+
+
+def _beyond_bends(
+    ec50: FloatArray, hill_slope: FloatArray, positive: FloatArray
+) -> np.ndarray:
+    """Whether two positive doses or more lie strictly below each curve's lower bend
+    and two or more strictly above its upper bend; False without a slope."""
+    with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
+        spread = BEND ** (1.0 / np.abs(hill_slope))
+        below = np.sum(positive[None, :] < (ec50 / spread)[:, None], axis=1)
+        above = np.sum(positive[None, :] > (ec50 * spread)[:, None], axis=1)
+    return np.asarray((below >= 2) & (above >= 2) & np.isfinite(hill_slope))
+
+
+def _ec50_intervals(
+    fits: DoseCurveFits,
+    genes: _GeneFits,
+    kind: int,
+    theta: FloatArray,
+    fitted: np.ndarray,
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """The interval of each gene asked for and the threshold it read; NaN where the
+    values lie on the curve without spread, so that the variance has no scale."""
+    n_genes, n_groups = fits.means.shape
+    with np.errstate(invalid="ignore", divide="ignore"):
+        if fits.variance == "constant":
+            n = float(fits.n_samples.sum())
+            within = _within_sum(fits)
+            s2 = (within + genes.q_min) / (n - 4.0)
+            thresholds = np.full(n_genes, float(f_ppf(EC50_LEVEL, 1.0, n - 4.0)))
+            scales = within
+        else:
+            s2 = fits.covariance_scale
+            thresholds = np.asarray(f_ppf(EC50_LEVEL, 1.0, fits.df), dtype=np.float64)
+            scales = fits.covariance_scale * n_groups
+    rows = np.flatnonzero(fitted & _spread(s2, genes) & np.isfinite(thresholds))
+    lower = np.full(n_genes, np.nan)
+    upper = np.full(n_genes, np.nan)
+    if rows.size:
+        scale = DoseScale.of(fits.doses)
+        points, inner = grid(kind, scale, fits.model_set)
+        if kind == LOG_LOGISTIC:  # (slope, EC50), the EC50 fastest
+            slopes, scan, position = points[::inner, 0], points[:inner, 1], 3
+        else:  # (EC50, exponent), 0 the first EC50
+            slopes, scan, position = points[:inner, 1], points[::inner, 0], 2
+        low, high = bounds(kind, scale, fits.model_set)
+        numbers = np.empty((rows.size, 5))
+        numbers[:, EC50_ESTIMATE] = theta[rows, position]
+        numbers[:, EC50_SCALE] = scales[rows]
+        numbers[:, EC50_OBJECTIVE] = genes.q_min[rows]
+        numbers[:, EC50_S2] = s2[rows]
+        numbers[:, EC50_THRESHOLD] = thresholds[rows]
+        roots = genes.roots if genes.roots.shape[0] == 1 else genes.roots[rows]
+        ends = np.full((rows.size, 2), np.nan)
+        hill = (
+            kind,
+            position,
+            np.ascontiguousarray(scan),
+            np.ascontiguousarray(slopes),
+            low,
+            high,
+        )
+        by_chunks(
+            ec50_intervals_parallel,
+            ec50_intervals_serial,
+            (
+                hill,
+                fits.doses,
+                np.ascontiguousarray(fits.means[rows]),
+                np.ascontiguousarray(roots),
+                numbers,
+                ends,
+            ),
+            rows.size,
+        )
+        lower[rows], upper[rows] = ends[:, 0], ends[:, 1]
+    computed = np.zeros(n_genes, dtype=bool)
+    computed[rows] = True
+    return lower, upper, np.where(computed, thresholds, np.nan)

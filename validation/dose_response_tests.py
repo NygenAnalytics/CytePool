@@ -21,7 +21,9 @@ the knots with R's own rule (``attr(ns(unique(x), df), "knots")`` on the positio
 the design's samples), fits the spline to the means of the dose groups with its own
 columns, ``ns()`` for the spline, Hmisc's ``rcspline.eval`` for the non-linearity and
 the line ``x - min(x)`` for the linear trend, each group weighted by its samples, and
-tests the rows of A = (Z'NZ)^-1 Z'N as contrasts: ``contrasts.fit``, ``eBayes``,
+tests the rows of A = (Z'NZ)^-1 Z'N as contrasts, with the trapezoidal rule's weights
+at the treated doses' positions, over the axis length between the lowest and the top
+one, for the average change: ``contrasts.fit``, ``eBayes``,
 ``topTable(sort.by = "none")`` for t-tests and ``classifyTestsF`` for F-tests, with
 p-values from ``pf`` per gene, as ``topTable`` of several columns refers every gene
 to the first gene's degrees of freedom when those are infinite, and ``p.adjust`` within
@@ -89,7 +91,7 @@ CURVE_POINTS = 50
 FIXTURE_CURVE_POINTS = 30
 FIXTURE_CURVE_GENES = 20  # the genes whose curves the fixture keeps
 RMS_GENES = 50
-TESTS = ("spline", "nonlinearity", "linear_trend", "dose_groups")
+TESTS = ("spline", "nonlinearity", "linear_trend", "average_change", "dose_groups")
 
 LIMMA = r"""
 suppressPackageStartupMessages({
@@ -150,6 +152,10 @@ for (name in names(input$jobs)) {
       A1 <- least_squares(cbind(1, treated_column(compared), line_at(compared)), n)
       if (!is.null(A1)) rows$linear_trend <- A1[nrow(A1), -1, drop = FALSE]
     }
+    if ("average_change" %in% job$tests) {
+      w <- average_change_row(position, compared)
+      if (!is.null(w)) rows$average_change <- w
+    }
     if ("dose_groups" %in% job$tests) rows$dose_groups <- diag(k)
     rows$each_dose <- diag(k)
     L <- do.call(cbind, lapply(rows, pad))
@@ -173,7 +179,7 @@ for (name in names(input$jobs)) {
                 df_prior = eb$df.prior, s2_post = s2, df_total = eb$df.total, tests = list())
     for (test in setdiff(names(rows), "each_dose")) {
       cols <- which(owner == test)
-      if (test == "linear_trend") {
+      if (test %in% c("linear_trend", "average_change")) {
         top <- topTable(eb, coef = cols, sort.by = "none", number = Inf)
         r <- list(logFC = top$logFC, t = top$t, p = top$P.Value, adj = top$adj.P.Val,
                   se = eb$stdev.unscaled[, cols] * sqrt(s2), B = top$B)
@@ -306,6 +312,15 @@ least_squares <- function(Z, n) {
   if (qr(Z)$rank < ncol(Z)) return(NULL)
   solve(crossprod(Z, Z * n), t(Z * n))
 }
+# The average change along the axis: the trapezoidal rule's weights at the treated
+# doses' positions, divided by the axis length from the lowest to the top one; NULL
+# with fewer than two treated doses.
+average_change_row <- function(position, compared) {
+  u <- position(compared[-1])
+  if (length(u) < 2) return(NULL)
+  g <- diff(u)
+  matrix((c(g, 0) + c(0, g)) / 2 / (u[length(u)] - u[1]), nrow = 1)
+}
 # The samples a cell type keeps, its dose groups, and the contrasts of each test on
 # the treated doses compared (rows), from R's own knots and columns.
 cell_type_of <- function(case, ct, df, tests, min_cells) {
@@ -338,6 +353,10 @@ cell_type_of <- function(case, ct, df, tests, min_cells) {
   A1 <- least_squares(cbind(1, tr(compared), columns_of(position, knots[c(1, length(knots))], "line")(compared)), n)
   if ("linear_trend" %in% tests && !is.null(A1)) {
     rows$linear_trend <- A1[nrow(A1), -1, drop = FALSE]
+  }
+  if ("average_change" %in% tests) {
+    w <- average_change_row(position, compared)
+    if (!is.null(w)) rows$average_change <- w
   }
   if ("dose_groups" %in% tests) rows$dose_groups <- diag(length(treated))
   list(data = d, counts = y[, used, drop = FALSE], indicators = ind, compared = compared,
@@ -956,12 +975,13 @@ def compare_limma(
                 table = result.table(ct, test)
                 prefix = "exact_" if exact else ""
                 across = table["adjusted_p_value_across_groups"]
-                if test == "linear_trend":
+                if test in ("linear_trend", "average_change"):
                     se = values[prefix + "se"] if exact else values["se"]
                     t = values["exact_t"] if exact else values["t"]
                     p = values["exact_p"] if exact else values["p"]
+                    what = "slopes" if test == "linear_trend" else "average changes"
                     checks.record(
-                        f"{name}: slopes, standard errors and t",
+                        f"{name}: {what}, standard errors and t",
                         max(
                             scaled(table["log2_fold_change"], values["logFC"]),
                             scaled(table["standard_error"], se),
@@ -1088,7 +1108,7 @@ def compare_dream(item: Series, job: Job, reference: dict, checks: Checks) -> No
         )
         for test, values in theirs["tests"].items():
             table = result.table(ct, test)
-            if test == "linear_trend":
+            if test in ("linear_trend", "average_change"):
                 checks.record(
                     "dream: F-statistics, slopes and t",
                     max(

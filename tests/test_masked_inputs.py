@@ -85,7 +85,7 @@ from cytepool.stats import distributions, special
 from cytepool.stats.deseq2 import deseq2_dispersions, deseq2_wald_test, fit_deseq2
 from cytepool.stats.distributions import norm_cdf, t_sf_scalar
 from cytepool.stats.dose_curves import fit_dose_curves
-from cytepool.stats.potency import benchmark_doses
+from cytepool.stats.potency import benchmark_doses, ec50s
 from cytepool.stats.trend_tests import williams_trend_test
 from cytepool.stats.empirical_bayes import moderated_statistics, squeeze_variances
 from cytepool.stats.linear_models import contrasts_fit, fit_linear_model
@@ -395,6 +395,16 @@ def _curve_fits() -> Any:
     return fit_dose_curves(
         [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0],
         np.log2(COUNTS[[0, 1, 2, 3, 0, 1, 2, 3]] + 1.0),
+    )
+
+
+def _hill_fits() -> Any:
+    """Log-logistic curves of eight genes of two samples per dose group, at five dose
+    groups, the fewest at which the curve has a spare degree of freedom."""
+    return fit_dose_curves(
+        [0.0, 0.0, 0.1, 0.1, 1.0, 1.0, 10.0, 10.0, 100.0, 100.0],
+        np.log2(COUNTS[[0, 1, 2, 3, 0, 1, 2, 3, 0, 1]] + 1.0),
+        models="ll4",
     )
 
 
@@ -2435,6 +2445,17 @@ ENTRY_POINTS: dict[str, Entry] = {
             _curve_fits(), BenchmarkResponse.absolute(0.5), bounds=False
         ),
     ),
+    "cytepool.stats.potency.ec50s": Entry(
+        lambda c: {"fits": _hill_fits(), "intervals": True, "n_threads": 1},
+        {},
+        options=("intervals", "n_threads"),
+        objects=("fits",),
+    ),
+    "cytepool.stats.potency.EC50s.table": Entry(
+        lambda c: {"feature_ids": [f"g{j}" for j in range(8)]},
+        {"feature_ids": None},
+        instance=lambda c: ec50s(_hill_fits(), intervals=False),
+    ),
     # Simulated dose series: doses, the values per dose and per cell type, the shares
     # of shapes and the composition factors; the truth's doses, tables and genes.
     "cytepool.simulated_dose_series.simulate_dose_series": Entry(
@@ -3443,6 +3464,10 @@ NO_ARRAY_INPUT = {
         ("group",),
         "a cell type, looked up",
     ),
+    "cytepool.dose_responses.DoseResponseResult.ec50s": (
+        ("group",),
+        "a cell type, looked up",
+    ),
     "cytepool.dose_responses.DoseResponseResult.table": (
         ("group", "name"),
         "a cell type and a table name, looked up",
@@ -3576,6 +3601,7 @@ RECORDS = {
     "cytepool.activity.Activities",
     "cytepool.stats.dose_curves.DoseCurveFits",
     "cytepool.stats.potency.BenchmarkDoses",
+    "cytepool.stats.potency.EC50s",
     "cytepool.stats.trend_tests.WilliamsTrendTest",
 }
 

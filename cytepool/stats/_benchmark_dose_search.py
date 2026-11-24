@@ -1,4 +1,5 @@
-"""The search for benchmark doses and their profile-likelihood bounds.
+"""The searches of potency: benchmark doses and their profile-likelihood bounds, and
+the profile-likelihood interval of a Hill curve's EC50.
 
 A gene's curve f(x; theta) changes from dose 0 by c(x; theta) = f(x) - f(0). Its BMD is
 the lowest dose x in (0, U] with |c(x)| = R, R the benchmark response's size. Its
@@ -33,6 +34,15 @@ parameters in theta, their bounds and the gap that keeps the sign of DRomics'
 exponential rate. Each gene's numbers travel as one row of the columns ``FORM`` to
 ``PIECE``.
 
+The EC50's interval: with its EC50 held at E, a Hill curve (the log-logistic curve or
+BMDS's Hill model) is linear in its two levels and has one other parameter, its slope,
+so the profile at E, the smallest weighted sum of squares of the means about a curve
+with that EC50, is the curves' own fit with the EC50's bounds set to [E, E], from the
+grid of the slope at E. :func:`ec50_interval` reads it at the EC50s of the fit's own
+grid, after the grid's curves at each: their lowest sum of squares bounds the profile
+from above, so a deviance at most the threshold there puts the EC50 inside the region
+with no fit of its own. The ends are the region's extremes, found by Brent's method.
+
 Every gene's search is the same sequence of operations whatever the threads, so
 results do not depend on them.
 
@@ -54,6 +64,8 @@ from cytepool.stats._dose_curve_models import (
     C_MAX,
     CONE,
     DROMICS_EXPONENTIAL,
+    FREE,
+    LOG_LOGISTIC,
     NON_NEGATIVE,
     SAME_SIGN,
     assemble,
@@ -62,8 +74,13 @@ from cytepool.stats._dose_curve_models import (
     mean_value,
 )
 from cytepool.stats._dose_curve_search import (
+    MAX_ITERATIONS as FIT_ITERATIONS,
     STARTS,
+    fit_gene,
+    grid_bases,
     grid_minima,
+    point_fit,
+    refine,
     whiten,
     whitened_jacobian,
     whitened_residuals,
@@ -93,7 +110,7 @@ SCAN_PER_DECADE = 8
 MAX_ITERATIONS = 200
 MAX_CARRIED = 2  # optima carried from one dose of the scan to the next
 GRID_MARGIN = 20.0  # starts this far above the threshold in deviance are not refined
-ROOT_TOLERANCE = 1e-10  # on ln dose
+ROOT_TOLERANCE = 1e-10  # on ln dose, or on an EC50 over its bracket's end from 0
 ABOVE_FIT = 1e-6  # a profile this far below the fit's objective: the fit was no maximum
 STOP = 1e-13
 HELD = 1e-8  # of a parameter's range: this near a bound, it can be held on it
@@ -1432,3 +1449,247 @@ def bounds_serial(
         0,
         means.shape[0],
     )
+
+
+# ---------------------------------------------------------------------------------------
+# The EC50's profile-likelihood interval
+# ---------------------------------------------------------------------------------------
+
+# A Hill curve's fixed description travels as one tuple, ``hill``: its kind, the position
+# of its EC50 in theta, the EC50s of the scan, the grid of its slope, and its bounds.
+# Each gene's numbers travel as one row: its EC50, the scale of its objective against
+# which the refinement stops, the objective at the fit, the variance s^2 and the
+# threshold.
+EC50_ESTIMATE, EC50_SCALE, EC50_OBJECTIVE, EC50_S2, EC50_THRESHOLD = range(5)
+# Refinements of a profile point that stop at the fit's iteration limit continue from
+# where they stopped, at most this many times: a shallow curve far beyond the doses,
+# whose plateaus move with its slope, can take more steps than one refinement allows.
+EXTRA_REFINEMENTS = 3
+
+
+@jit_numpy_errors
+def _ec50_points(kind: int, ec50: float, slopes: FloatArray) -> FloatArray:
+    """The grid of a Hill curve's slope at one EC50, in the order of the fit's grid:
+    (slope, EC50) for the log-logistic curve, (EC50, exponent) for the Hill model."""
+    n = slopes.size
+    points = np.empty((n, 2))
+    for i in range(n):
+        if kind == LOG_LOGISTIC:
+            points[i, 0], points[i, 1] = slopes[i], ec50
+        else:
+            points[i, 0], points[i, 1] = ec50, slopes[i]
+    return points
+
+
+@jit_numpy_errors
+def ec50_profile(
+    hill: tuple,  # type: ignore[type-arg]
+    ec50: float,
+    x: FloatArray,
+    ybar: FloatArray,
+    root: FloatArray,
+    scale: float,
+) -> float:
+    """The profile objective at an EC50 of a Hill curve: the smallest weighted sum of
+    squares of the means about a curve with that EC50, which is linear in its two
+    levels and has one other parameter, its slope. It is the fit of the curves with
+    the EC50's bounds set to [ec50, ec50], from a grid of the slope alone, so that
+    the refinement holds the EC50 there."""
+    kind, position, _, slopes, lower, upper = hill
+    points = _ec50_points(kind, ec50, slopes)
+    inner = 1 if kind == LOG_LOGISTIC else slopes.size
+    bases, usable = grid_bases(kind, 2, points, x)
+    low, high = lower.copy(), upper.copy()
+    low[position] = ec50
+    high[position] = ec50
+    theta = np.zeros(lower.size)
+    fitted = np.zeros(x.size)
+    value, converged = fit_gene(
+        kind,
+        FREE,
+        2,
+        points,
+        inner,
+        bases,
+        usable,
+        False,
+        x,
+        ybar,
+        root,
+        low,
+        high,
+        0.0,
+        scale,
+        theta,
+        fitted,
+    )
+    if not converged:
+        z = np.zeros(x.size)
+        whiten(root, ybar.reshape((x.size, 1)), z.reshape((x.size, 1)))
+        for _ in range(EXTRA_REFINEMENTS):
+            value, converged = refine(
+                kind, FREE, 2, theta, low, high, x, ybar, z, root, scale, FIT_ITERATIONS
+            )
+            if converged:
+                break
+    return value
+
+
+@jit_numpy_errors
+def ec50_grid_objective(
+    hill: tuple,  # type: ignore[type-arg]
+    ec50: float,
+    x: FloatArray,
+    z: FloatArray,
+    root: FloatArray,
+) -> float:
+    """The lowest weighted sum of squares over the grid of the slope at an EC50, the
+    levels solved at each slope: an upper bound of the profile there, since each grid
+    point is a curve with that EC50. ``z`` is R ybar, the whitened means."""
+    kind, slopes = hill[0], hill[3]
+    points = _ec50_points(kind, ec50, slopes)
+    bases, usable = grid_bases(kind, 2, points, x)
+    whitened = np.zeros((x.size, 2))
+    alpha = np.zeros(2)
+    best = math.inf
+    for p in range(points.shape[0]):
+        if usable[p]:
+            whiten(root, bases[p], whitened)
+            best = min(best, point_fit(FREE, whitened, z, 2, alpha))
+    return best
+
+
+@jit_numpy_errors
+def ec50_interval(
+    hill: tuple,  # type: ignore[type-arg]
+    x: FloatArray,
+    ybar: FloatArray,
+    root: FloatArray,
+    numbers: FloatArray,
+    ends: FloatArray,
+) -> None:
+    """The interval of one gene's EC50, written to ``ends``: the lowest and highest EC50
+    of the region where the deviance (Q_p(E) - Q_fit) / s^2 is at most the threshold,
+    the estimate in it. The deviance is read at every EC50 of the scan, the fit's own
+    grid of the EC50, from the grid's curves where they settle a point inside the
+    region and from the profile otherwise; an end is 0 or infinity where the region
+    reaches the scan's first or last point, and otherwise Brent's root between the
+    region's extreme and the scan point beyond it, on ln E, or on E over the extreme
+    from an EC50 of 0, so that the tolerance is relative either way. Both ends are NaN
+    where a deviance falls below -ABOVE_FIT: the profile found a curve better than the
+    fit, which was not the maximum."""
+    scan = hill[2]
+    m = scan.size
+    estimate, scale = numbers[EC50_ESTIMATE], numbers[EC50_SCALE]
+    objective, s2 = numbers[EC50_OBJECTIVE], numbers[EC50_S2]
+    threshold = numbers[EC50_THRESHOLD]
+    deviance = np.empty(m)
+    z = np.zeros(x.size)
+    whiten(root, ybar.reshape((x.size, 1)), z.reshape((x.size, 1)))
+    short = False
+    for point in range(m):
+        # The grid's bound settles a point inside the region; outside it, refine.
+        d = (ec50_grid_objective(hill, scan[point], x, z, root) - objective) / s2
+        if d > threshold:
+            d = (ec50_profile(hill, scan[point], x, ybar, root, scale) - objective) / s2
+        deviance[point] = d
+        short = short or d < -ABOVE_FIT
+    low, high = estimate, estimate
+    for point in range(m):
+        if deviance[point] <= threshold:
+            low = min(low, scan[point])
+            high = max(high, scan[point])
+    state = np.zeros(8)
+    for side in range(2):
+        inside = low if side == 0 else high
+        if side == 0 and inside <= scan[0]:
+            ends[0] = 0.0
+            continue
+        if side == 1 and inside >= scan[m - 1]:
+            ends[1] = math.inf
+            continue
+        # The scan point beyond the extreme lies outside the region.
+        beyond = 0
+        if side == 0:
+            beyond = m - 1
+            while scan[beyond] >= inside:
+                beyond -= 1
+        else:
+            while scan[beyond] <= inside:
+                beyond += 1
+        # The deviance at the extreme: the grid's bound, which has its sign, or the
+        # profile; 0 at the estimate.
+        f_inside = -threshold
+        for point in range(m):
+            if scan[point] == inside:
+                f_inside = deviance[point] - threshold
+        logs = scan[beyond] > 0.0
+        a = math.log(scan[beyond]) if logs else 0.0
+        b = math.log(inside) if logs else 1.0
+        root_start(state, a, deviance[beyond] - threshold, b, f_inside)
+        u, done = root_point(state, ROOT_TOLERANCE)
+        while not done:
+            e = math.exp(u) if logs else u * inside
+            q = ec50_profile(hill, e, x, ybar, root, scale)
+            d = (q - objective) / s2
+            short = short or d < -ABOVE_FIT
+            root_update(state, u, d - threshold)
+            u, done = root_point(state, ROOT_TOLERANCE)
+        ends[side] = math.exp(u) if logs else u * inside
+    if short:
+        ends[0] = ends[1] = math.nan
+
+
+@jit_numpy_errors
+def _ec50_range(
+    hill: tuple,  # type: ignore[type-arg]
+    x: FloatArray,
+    means: FloatArray,
+    roots: FloatArray,
+    numbers: FloatArray,
+    ends: FloatArray,
+    start: int,
+    stop: int,
+) -> None:
+    for g in range(start, stop):
+        root = roots[0] if roots.shape[0] == 1 else roots[g]
+        ec50_interval(hill, x, means[g], root, numbers[g], ends[g])
+
+
+@jit(parallel=True)
+def ec50_intervals_parallel(
+    hill: tuple,  # type: ignore[type-arg]
+    x: FloatArray,
+    means: FloatArray,
+    roots: FloatArray,
+    numbers: FloatArray,
+    ends: FloatArray,
+    n_runs: int,
+) -> None:
+    """The EC50 intervals of every gene, ``(n_genes, 2)``, in ``n_runs`` runs of genes
+    on numba's threads."""
+    n = means.shape[0]
+    for run in prange(n_runs):
+        _ec50_range(
+            hill,
+            x,
+            means,
+            roots,
+            numbers,
+            ends,
+            run * n // n_runs,
+            (run + 1) * n // n_runs,
+        )
+
+
+@jit
+def ec50_intervals_serial(
+    hill: tuple,  # type: ignore[type-arg]
+    x: FloatArray,
+    means: FloatArray,
+    roots: FloatArray,
+    numbers: FloatArray,
+    ends: FloatArray,
+) -> None:
+    """The EC50 intervals of every gene on the calling thread."""
+    _ec50_range(hill, x, means, roots, numbers, ends, 0, means.shape[0])

@@ -16,11 +16,15 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **ANOVA pre-modelling test.** NTP's and ETAP's first test of a data set: a one-way ANOVA of each gene's dose groups, adjusted across genes by Benjamini-Hochberg; when no gene's adjusted p-value is below 0.05, the data set is inactive and goes no further. [NTP's and ETAP's rule sets](../statistics/potency.md#rule-sets)
 
+**Average change.** The average of the treated doses' changes from the vehicle along the dose axis: the area between those changes and 0 by the trapezoidal rule, divided by the axis length, which sums how far and how early a gene moves, as the activity areas of drug screens do. [Average change along the dose axis](../statistics/dose_response.md#average-change)
+
 **B-statistic.** The log-odds that a gene's coefficient or contrast is not zero. [The B-statistic](../statistics/empirical_bayes.md#b-statistic)
 
 **Benchmark dose (BMD).** The lowest dose at which a dose-response curve departs from its level at dose 0 by a stated change, the benchmark response (BMR), such as 1 SD of a vehicle replicate or a fold change of 1.1. [Benchmark doses](../statistics/potency.md#benchmark-doses)
 
 **Benchmark response (BMR).** The change from a dose-response curve's level at dose 0 that defines a benchmark dose: a multiple of the SD of a vehicle replicate, such as 1 or 1.349 SD, or an absolute change, such as a 1.5-fold change of expression. [Benchmark doses](../statistics/potency.md#benchmark-doses)
+
+**Bend points.** The two doses where a Hill curve has covered 17.6% and 82.4% of its change, between which it is nearly straight on log dose; an EC50 is reportable with two tested doses beyond each. [EC50s, Hill slopes and plateaus](../statistics/potency.md#ec50s)
 
 **Between-study variance (τ²).** The variance of the studies' true effects around their mean in a random-effects meta-analysis, zero in the fixed-effect model. [The between-study variance](../statistics/meta_analysis.md#between-study-variance)
 
@@ -64,7 +68,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Dunnett's test.** The comparison of each treatment or dose with the control at one family-wise error rate, which refers the largest of the contrasts' correlated t-statistics to the multivariate t distribution. [Dunnett's and Williams-type contrasts](../statistics/multiple_testing.md#dunnett-and-williams-contrasts)
 
-**EC50.** The dose that gives half of a curve's maximal change. [Simulated dose series with known curves](../statistics/dose_response.md#simulated-dose-series)
+**EC50.** The dose that gives half of a curve's change from its level at dose 0 to its plateau at high doses, the relative EC50; the IC50 of an inhibitor is the EC50 of a fall. [EC50s, Hill slopes and plateaus](../statistics/potency.md#ec50s)
 
 **Effective library size.** A library size times its normalization factor, by which counts per million and the offsets of count models scale the counts. [Normalization factors and size factors](../statistics/normalization_and_filtering.md#normalization-and-size-factors)
 
@@ -89,6 +93,8 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 **Group.** The first axis of a cube, usually a cell type, whose cells are pooled per sample, so that one group's layers form a samples x features matrix; a bulk cube has one group. [The layers](../statistics/cubes.md#cube-layers)
 
 **Heterogeneity.** How much the studies of a meta-analysis disagree beyond their sampling error, measured by Cochran's Q, I² and the between-study variance. [Tests and heterogeneity](../statistics/meta_analysis.md#heterogeneity)
+
+**Hill slope.** The steepness of a Hill curve on log dose, positive for a rise and negative for a fall as GraphPad Prism writes it; 1 is the slope of a curve that rises from 10% to 90% of its change over 1.9 log10 units of dose. [EC50s, Hill slopes and plateaus](../statistics/potency.md#ec50s)
 
 **I².** The share of the variation between the studies of a meta-analysis that comes from heterogeneity rather than from sampling error, reported as a proportion. [Tests and heterogeneity](../statistics/meta_analysis.md#heterogeneity)
 
@@ -162,7 +168,7 @@ description: The terms the CytePool documentation uses, each in one sentence, wi
 
 **Prior degrees of freedom.** How much the value that all genes share counts in empirical Bayes moderation, as a number of degrees of freedom added to each gene's own. [The model](../statistics/empirical_bayes.md#empirical-bayes-model)
 
-**Profile likelihood.** The largest log-likelihood of a model with one quantity held at a value, such as a curve's change at a dose; the values whose profile lies within half a chi-square quantile of the maximum, so that the deviance, twice the drop, lies within the quantile, form a confidence interval. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
+**Profile likelihood.** The largest log-likelihood of a model with one quantity held at a value, such as a curve's change at a dose or its EC50. The values whose deviance, twice the profile's drop from the maximum, lies within a chi-square quantile form a confidence interval; where a variance is estimated apart from the curve, the increase of the sum of squares over that variance, an extra-sum-of-squares F statistic, is read against an F quantile instead. [Bounds by profile likelihood](../statistics/potency.md#benchmark-dose-bounds)
 
 **Proportion of true nulls (π₀).** The share of a family's tests without an effect, estimated from the p-values above a threshold, since those of tests without an effect are uniform. [The proportion of true nulls](../statistics/multiple_testing.md#proportion-of-true-nulls)
 

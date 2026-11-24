@@ -458,6 +458,13 @@ def test_rules_and_their_outcomes_read_back(series, etap) -> None:
     assert etap.settings["rules"] == "etap_2024" and etap.settings["seed"] == 5
     assert "flags_etap_2024" in etap.table(group, "benchmark_doses").columns
     assert "passes_gate" not in etap.table(group, "benchmark_doses").columns
+    # The EC50s of the rule set's Hill curves, without gate calls either.
+    found = etap.ec50s(group)
+    assert (found.model_set, found.model) == ("bmdexpress", "hill")
+    ec50 = etap.table(group, "ec50s")
+    assert "passes_gate" not in ec50.columns
+    assert ec50["feature_id"].tolist() == found.feature_ids.tolist()
+    np.testing.assert_array_equal(ec50["ec50_upper"], found.ec50_upper)
     with pytest.raises(ValueError, match="ran without a rule set"):
         dose_response(
             series[0], Design(series[0].samples, "~ 1"), dose=AXIS, tests="dose_groups"
@@ -1510,9 +1517,10 @@ def test_the_chapter_s_rule_set_examples_run() -> None:
     """The chapter's examples of ETAP's rule set and BMDS's recommended model, on the
     chapter's series, and the numbers its text states."""
     text = " ".join(CHAPTER.read_text().split())
+    # The series, the rule set and BMDS's model; the EC50 example follows them.
     series, rules_block, bmds_block = re.findall(
         r"```python\n(.*?)```", CHAPTER.read_text(), re.S
-    )
+    )[:3]
     namespace: dict = {}
     # The series and its axis, without the chapter's first analysis.
     exec(series[: series.index("bmr = [")], namespace)  # noqa: S102
